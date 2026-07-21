@@ -137,4 +137,47 @@ describe("WS4 metadata-only retention (SDK)", () => {
     expect(session.dataState).toBe("active");
     expect(session.contentPurgedAt).toBeUndefined();
   });
+
+  it.each(["parent resolver", "parent events", "child events"] as const)(
+    "preserves exact thrown-object identity for %s failures",
+    async (failurePoint) => {
+      const sentinel = new AexApiError(418, `sentinel ${failurePoint}`, { failurePoint });
+      let sessionReads = 0;
+      const stub: typeof fetch = async (input) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        const pathname = new URL(url).pathname;
+        if (pathname === `/api/sessions/${SID}`) {
+          sessionReads += 1;
+          if (failurePoint === "parent resolver" && sessionReads === 2) throw sentinel;
+          return json({ session: ACTIVE_RECORD });
+        }
+        if (pathname === `/api/sessions/${SID}/children`) {
+          return json({
+            children: [{
+              id: "child-failure",
+              parentSessionId: SID,
+              status: "running",
+              createdAt: "2026-07-21T00:00:00.000Z",
+              updatedAt: "2026-07-21T00:00:01.000Z"
+            }]
+          });
+        }
+        if (pathname === `/api/sessions/${SID}/events` && failurePoint === "parent events") throw sentinel;
+        if (pathname === "/api/sessions/child-failure/events" && failurePoint === "child events") throw sentinel;
+        throw new Error(`unexpected request ${pathname}`);
+      };
+      const client = new Aex({ apiKey: TOKEN, baseUrl: BASE, fetch: stub, retry: false });
+      const parent = await openHandle(client);
+      const stream = failurePoint === "child events"
+        ? (await parent.children())[0]!.events.stream()
+        : parent.events.stream();
+      const drain = async (): Promise<void> => {
+        for await (const _event of stream) {
+          // The selected failure occurs before the first yield.
+        }
+      };
+
+      expect(await captureRejected(drain)).toBe(sentinel);
+    }
+  );
 });
