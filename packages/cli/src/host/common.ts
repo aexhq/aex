@@ -484,6 +484,11 @@ export type ApiErrorDetails = Readonly<Record<string, unknown>> & {
   readonly remedy?: never;
 };
 
+/** Optional presentation applied after the thrown error is safely described. */
+export interface ApiErrorEmissionOptions {
+  readonly messagePrefix?: string;
+}
+
 /**
  * Describe an SDK/API failure and emit its command-specific CLI JSON envelope.
  * Command details retain their insertion order before the optional centrally
@@ -493,10 +498,14 @@ export function emitApiError(
   io: CliIO,
   code: string,
   err: unknown,
-  details: ApiErrorDetails = {}
+  details: ApiErrorDetails = {},
+  options: ApiErrorEmissionOptions = {}
 ): CliExitCode {
   const described = describeApiError(err);
-  return emitJsonError(io, code, described.message, {
+  const message = options.messagePrefix
+    ? `${options.messagePrefix}${described.message}`
+    : described.message;
+  return emitJsonError(io, code, message, {
     ...details,
     ...(described.status !== undefined ? { status: described.status } : {}),
     ...(described.remedy ? { remedy: described.remedy } : {})

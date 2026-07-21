@@ -531,8 +531,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     );
     return RUNTIME_ERR;
   } catch (err) {
-    io.stderr(`final status fetch failed: ${(err as Error).message}\n`);
-    return RUNTIME_ERR;
+    return emitApiError(io, "session_failed", err, { sessionId: session.id }, { messagePrefix: "final status fetch failed: " });
   }
 }
 

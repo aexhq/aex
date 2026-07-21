@@ -67,6 +67,10 @@ const flush = async (n = 6): Promise<void> => {
 function makeIo(opts: {
   argv: readonly string[];
   finalStatuses?: readonly string[];
+  sessionReadErrors?: Readonly<Record<number, {
+    readonly status: number;
+    readonly body: Readonly<Record<string, unknown>>;
+  }>>;
   sessionStatus?: string;
   runless?: boolean;
   noWs?: boolean;
@@ -149,8 +153,16 @@ function makeIo(opts: {
         );
       }
       // getSession (final record read; sessionId === sessionId)
-      const status = finalStatuses[Math.min(finalReadCount, finalStatuses.length - 1)]!;
+      const readIndex = finalReadCount;
       finalReadCount += 1;
+      const readError = opts.sessionReadErrors?.[readIndex];
+      if (readError) {
+        return new Response(JSON.stringify(readError.body), {
+          status: readError.status,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      const status = finalStatuses[Math.min(readIndex, finalStatuses.length - 1)]!;
       const run = {
         sessionId: "session-x",
         runId: "run-1",
@@ -290,6 +302,46 @@ describe("aex tail", () => {
     ws.message(evt(0, "RUN_FINISHED", { outcome: "cancelled" }));
     await done;
     expect(cap.exit()).toBe(1);
+  });
+
+  it("enriches a failed final-status read and preserves the consistency check", async () => {
+    const cap = makeIo({
+      argv: ["tail", "session-x", "--json", ...COMMON],
+      sessionReadErrors: {
+        1: {
+          status: 403,
+          body: {
+            error: "insufficient_scope",
+            message: "the token does not carry the required scope",
+            requiredScope: "sessions:read"
+          }
+        }
+      }
+    });
+    const done = executeCli(cap.io);
+    const ws = await cap.nextSocket();
+    ws.message(evt(0, "TEXT_MESSAGE_CONTENT", { text: "kept" }));
+    ws.message(evt(1, "RUN_FINISHED"));
+    await done;
+
+    expect(cap.exit()).toBe(1);
+    expect(cap.out().trim().split("\n").map((line) => (JSON.parse(line) as AexEvent).sequence)).toEqual([0, 1]);
+    const diagnostics = cap.err().trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics[0]).toMatchObject({
+      error: "tail_failed",
+      sessionId: "session-x",
+      lastSeq: 1,
+      status: 403,
+      remedy: "token lacks permission for this workspace/action"
+    });
+    expect(diagnostics[0]!.message).toMatch(/^final status fetch failed: /);
+    expect(diagnostics[1]).toEqual({
+      error: "run_terminal_inconsistent",
+      sessionId: "session-x",
+      lastSeq: 1,
+      status: "unknown"
+    });
   });
 
   it("times out a quiet stream with exit 3", async () => {
@@ -447,6 +499,43 @@ describe("aex start --follow", () => {
     const final = JSON.parse(cap.out().trim().split("\n").at(-1)!) as { id: string; status: string };
     expect(final).toMatchObject({ id: "session-x", status: "running" });
     expect(cap.err()).toContain("run_terminal_inconsistent");
+  });
+
+  it("retains streamed output and enriches a failed final-status read", async () => {
+    const cap = makeIo({
+      argv: [
+        "start",
+        "--model", "claude-haiku-4-5",
+        "--prompt", "hi",
+        "--anthropic-api-key", "sk-ant-test",
+        "--follow",
+        ...COMMON
+      ],
+      sessionReadErrors: {
+        0: {
+          status: 404,
+          body: { error: "session_not_found", message: "session not found" }
+        }
+      }
+    });
+    const done = executeCli(cap.io);
+    const ws = await cap.nextSocket();
+    ws.message(evt(0, "TEXT_MESSAGE_CONTENT", { text: "kept" }));
+    ws.message(evt(1, "RUN_FINISHED"));
+    await done;
+
+    expect(cap.exit()).toBe(1);
+    const stdoutLines = cap.out().trim().split("\n");
+    expect(stdoutLines).toHaveLength(3);
+    expect(JSON.parse(stdoutLines[0]!)).toMatchObject({ id: "session-x", status: "running" });
+    expect(stdoutLines.slice(1).map((line) => (JSON.parse(line) as AexEvent).sequence)).toEqual([0, 1]);
+    expect(JSON.parse(cap.err())).toMatchObject({
+      error: "session_failed",
+      message: expect.stringMatching(/^final status fetch failed: /),
+      sessionId: "session-x",
+      status: 404,
+      remedy: "no such run/resource — verify the id"
+    });
   });
 });
 

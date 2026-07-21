@@ -18,6 +18,7 @@ import {
   RUNTIME_ERR,
   TIMEOUT_ERR,
   USAGE_ERR,
+  emitApiError,
   emitJsonError,
   isSessionNonProgressing,
   makeHttpClient,
@@ -89,7 +90,7 @@ export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promis
     try {
       session = await operations.getSession(http, sessionId);
     } catch (err) {
-      return emitJsonError(io, "wait_failed", (err as Error).message, { sessionId });
+      return emitApiError(io, "wait_failed", err, { sessionId });
     }
 
     if (isSessionNonProgressing(session.status)) {

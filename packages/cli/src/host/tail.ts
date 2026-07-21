@@ -187,7 +187,7 @@ export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promis
     const session = await operations.getSession(http, sessionId);
     finalStatus = session.status;
   } catch (err) {
-    io.stderr(`final status fetch failed: ${(err as Error).message}\n`);
+    emitApiError(io, "tail_failed", err, { sessionId, lastSeq }, { messagePrefix: "final status fetch failed: " });
   }
   if (debug) {
     debug(`tail done: events=${eventCount} lastSeq=${lastSeq} durationMs=${Date.now() - startMs} finalStatus=${finalStatus}`);

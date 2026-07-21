@@ -361,6 +361,35 @@ describe("aex wait", () => {
     expect(JSON.parse(cap.stdout.trim())).toMatchObject({ status: "error" });
   });
 
+  it("retains status and remedy when a session poll fails", async () => {
+    const cap = makeHostIo({
+      argv: ["wait", "session-denied", ...COMMON],
+      fetchHandler: () =>
+        new Response(JSON.stringify({
+          error: "insufficient_scope",
+          message: "the token does not carry the required scope",
+          requiredScope: "sessions:read"
+        }), {
+          status: 403,
+          headers: { "content-type": "application/json" }
+        })
+    });
+
+    await executeCli(cap.io);
+
+    expect(cap.exitCode).toBe(1);
+    expect(cap.calls).toHaveLength(1);
+    expect(cap.stdout).toBe("");
+    const error = JSON.parse(cap.stderr) as Record<string, unknown>;
+    expect(error).toMatchObject({
+      error: "wait_failed",
+      sessionId: "session-denied",
+      status: 403,
+      remedy: "token lacks permission for this workspace/action"
+    });
+    expect(error.message).toContain('"requiredScope":"sessions:read"');
+  });
+
   it("exits 3 (TIMEOUT_ERR) with a JSON error when --timeout elapses before parked", async () => {
     const cap = makeHostIo({
       argv: ["wait", "session-slow", "--timeout", "0ms", ...COMMON],

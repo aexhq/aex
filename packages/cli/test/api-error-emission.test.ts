@@ -7,7 +7,8 @@ import type { CliIO } from "../src/internal.js";
 import {
   RUNTIME_ERR,
   emitApiError,
-  type ApiErrorDetails
+  type ApiErrorDetails,
+  type ApiErrorEmissionOptions
 } from "../src/host/common.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -61,9 +62,53 @@ describe("emitApiError", () => {
     expect(cap.stderr()).toBe('{"error":"session_failed","message":"submission exploded"}\n');
   });
 
+  it("prefixes the safely described message without losing API diagnostics", () => {
+    const cap = captureIo();
+    const error = new AexApiError(404, "session not found", {
+      error: "session_not_found",
+      message: "session not found",
+      requestId: "req-4"
+    });
+
+    const exit = emitApiError(
+      cap.io,
+      "session_failed",
+      error,
+      { sessionId: "session-4" },
+      { messagePrefix: "final status fetch failed: " }
+    );
+
+    expect(exit).toBe(RUNTIME_ERR);
+    expect(cap.stdout()).toBe("");
+    expect(cap.stderr()).toBe(
+      '{"error":"session_failed","message":"final status fetch failed: session not found — {\\"requestId\\":\\"req-4\\"}","sessionId":"session-4","status":404,"remedy":"no such run/resource — verify the id"}\n'
+    );
+  });
+
+  it("does not fabricate status or remedy when prefixing a generic error", () => {
+    const cap = captureIo();
+    const exit = emitApiError(
+      cap.io,
+      "tail_failed",
+      new Error("socket unavailable"),
+      { sessionId: "session-1", lastSeq: 3 },
+      { messagePrefix: "final status fetch failed: " }
+    );
+
+    expect(exit).toBe(RUNTIME_ERR);
+    expect(JSON.parse(cap.stderr())).toEqual({
+      error: "tail_failed",
+      message: "final status fetch failed: socket unavailable",
+      sessionId: "session-1",
+      lastSeq: 3
+    });
+  });
+
   it("types command context without permitting centrally owned envelope keys", () => {
     const details: ApiErrorDetails = { sessionId: "session-1", lastSeq: 2 };
+    const options: ApiErrorEmissionOptions = { messagePrefix: "context: " };
     expect(details).toEqual({ sessionId: "session-1", lastSeq: 2 });
+    expect(options).toEqual({ messagePrefix: "context: " });
 
     if (false) {
       const cap = captureIo();
@@ -109,9 +154,12 @@ const COMMAND_ERROR_MATRIX = [
   { source: "orgs-cmd.ts", path: "orgs members", call: 'emitApiError(io, "org_members_failed", err)' },
   { source: "orgs-cmd.ts", path: "orgs invite", call: 'emitApiError(io, "org_invite_failed", err)' },
   { source: "start-cmd.ts", path: "start submit", call: 'emitApiError(io, "session_failed", err)' },
+  { source: "start-cmd.ts", path: "start final status", call: 'emitApiError(io, "session_failed", err, { sessionId: session.id }, { messagePrefix: "final status fetch failed: " })' },
   { source: "status.ts", path: "status", call: 'emitApiError(io, "status_failed", err, { sessionId })' },
   { source: "tail.ts", path: "tail header read", call: 'emitApiError(io, "tail_failed", err, { sessionId })' },
   { source: "tail.ts", path: "tail event poll", call: 'emitApiError(io, "tail_failed", err, { sessionId, lastSeq })' },
+  { source: "tail.ts", path: "tail final status", call: 'emitApiError(io, "tail_failed", err, { sessionId, lastSeq }, { messagePrefix: "final status fetch failed: " })' },
+  { source: "wait.ts", path: "wait poll", call: 'emitApiError(io, "wait_failed", err, { sessionId })' },
   { source: "webhooks-cmd.ts", path: "webhooks secret", call: 'emitApiError(io, "webhooks_secret_failed", err)' },
   { source: "whoami.ts", path: "whoami", call: 'emitApiError(io, "whoami_failed", err)' },
   { source: "workspaces-cmd.ts", path: "workspaces list", call: 'emitApiError(io, "workspaces_list_failed", err)' },
@@ -120,8 +168,8 @@ const COMMAND_ERROR_MATRIX = [
 ] as const;
 
 describe("SDK/API error source ownership", () => {
-  it("covers all 37 current command failure paths through the common emitter", () => {
-    expect(COMMAND_ERROR_MATRIX).toHaveLength(37);
+  it("covers all 40 current command failure paths through the common emitter", () => {
+    expect(COMMAND_ERROR_MATRIX).toHaveLength(40);
     const expectedCalls = new Map<string, number>();
     for (const row of COMMAND_ERROR_MATRIX) {
       const key = `${row.source}\0${row.call}`;

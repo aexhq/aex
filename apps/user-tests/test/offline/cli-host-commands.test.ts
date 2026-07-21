@@ -389,17 +389,29 @@ describe("installed CLI host commands", () => {
     expect(messageReq.body).toEqual({ input: ["hello_from_installed_cli"] });
   });
 
-  it("preserves the described API error envelope in the packed CLI binary", async () => {
-    const result = await runCommand(
+  it("preserves described API error envelopes in the packed CLI binary", async () => {
+    const status = await runCommand(
       binPath,
       ["status", "session-denied", "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
+    expect(status.exitCode).toBe(1);
+    expect(status.stdout).toBe("");
+    expect(status.stderr).toBe(
       '{"error":"status_failed","message":"insufficient_scope: the token does not carry sessions:read — {\\"requestId\\":\\"req-packed-cli-error\\"}","sessionId":"session-denied","status":403,"remedy":"token lacks permission for this workspace/action"}\n'
+    );
+
+    const wait = await runCommand(
+      binPath,
+      ["wait", "session-denied", "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl],
+      { cwd: install.installDir, timeoutMs: 30_000 }
+    );
+
+    expect(wait.exitCode).toBe(1);
+    expect(wait.stdout).toBe("");
+    expect(wait.stderr).toBe(
+      '{"error":"wait_failed","message":"insufficient_scope: the token does not carry sessions:read — {\\"requestId\\":\\"req-packed-cli-error\\"}","sessionId":"session-denied","status":403,"remedy":"token lacks permission for this workspace/action"}\n'
     );
   });
 
