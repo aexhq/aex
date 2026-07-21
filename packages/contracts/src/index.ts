@@ -92,6 +92,7 @@ export {
 } from "./stable.js";
 export * from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
+export * from "./canonical-sha256.js";
 export * from "./session-config.js";
 export * from "./bundle-manifest.js";
 export * from "./runtime-types.js";

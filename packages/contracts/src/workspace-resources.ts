@@ -1,4 +1,5 @@
 import type { ToolInputSchema } from "./session-config.js";
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
 
 /** Immutable bytes in the workspace content-addressed asset store. */
 export interface AssetIdentity {
@@ -99,7 +100,7 @@ export function assertPinnedWorkspaceResource(
   if (typeof value.assetId !== "string" || value.assetId.length === 0) {
     throw new Error(`${path}.assetId must be a non-empty string`);
   }
-  if (!/^sha256:[0-9a-f]{64}$/.test(value.contentHash)) {
+  if (!CANONICAL_SHA256_DIGEST_PATTERN.test(value.contentHash)) {
     throw new Error(`${path}.contentHash must be a sha256 digest`);
   }
   const expectedAssetId = `asset_${value.contentHash.slice("sha256:".length)}`;
