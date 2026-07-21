@@ -9,9 +9,45 @@ import {
   SESSION_LIFECYCLE_STATUSES,
   SESSION_TERMINAL_OUTCOMES,
   isTerminalSessionStatus,
+  type SessionLifecycleStatus,
   type SessionTerminalOutcome,
   type SessionStatus
 } from "../src/index.js";
+import {
+  SESSION_LIFECYCLE_STATUSES as STATUS_MODULE_LIFECYCLE_STATUSES,
+  SESSION_STATUSES as STATUS_MODULE_STATUSES
+} from "../src/status.js";
+
+type IsExactly<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends
+  (<Value>() => Value extends Right ? 1 : 2)
+    ? (<Value>() => Value extends Right ? 1 : 2) extends
+      (<Value>() => Value extends Left ? 1 : 2)
+      ? true
+      : false
+    : false;
+
+type Assert<Condition extends true> = Condition;
+
+type ExactSessionLifecycleTuple = readonly [
+  "creating",
+  "running",
+  "idle",
+  "suspending",
+  "suspended",
+  "awaiting_approval",
+  "error",
+  "cancelling",
+  "deleting",
+  "deleted",
+  "expired"
+];
+
+type _SessionNamesShareOneType = Assert<IsExactly<SessionStatus, SessionLifecycleStatus>>;
+type _SessionStatusesRetainExactTuple = Assert<IsExactly<typeof SESSION_STATUSES, ExactSessionLifecycleTuple>>;
+type _SessionLifecycleStatusesRetainExactTuple = Assert<
+  IsExactly<typeof SESSION_LIFECYCLE_STATUSES, ExactSessionLifecycleTuple>
+>;
 
 describe("session lifecycle and run outcome vocabularies", () => {
   it("keeps run outcomes out of resumable session statuses", () => {
@@ -21,8 +57,31 @@ describe("session lifecycle and run outcome vocabularies", () => {
     }
   });
 
-  it("defines SESSION_STATUSES solely from thread lifecycle states", () => {
-    expect([...SESSION_STATUSES]).toEqual([...SESSION_LIFECYCLE_STATUSES]);
+  it("exports both public names as one exact lifecycle tuple", () => {
+    expect(SESSION_STATUSES).toBe(SESSION_LIFECYCLE_STATUSES);
+    expect(SESSION_STATUSES).toBe(STATUS_MODULE_STATUSES);
+    expect(SESSION_LIFECYCLE_STATUSES).toBe(STATUS_MODULE_LIFECYCLE_STATUSES);
+    expect(SESSION_STATUSES).toEqual([
+      "creating",
+      "running",
+      "idle",
+      "suspending",
+      "suspended",
+      "awaiting_approval",
+      "error",
+      "cancelling",
+      "deleting",
+      "deleted",
+      "expired"
+    ]);
+
+    const statusTuple: ExactSessionLifecycleTuple = SESSION_STATUSES;
+    const lifecycleTuple: ExactSessionLifecycleTuple = SESSION_LIFECYCLE_STATUSES;
+    const statusAlias: typeof SESSION_LIFECYCLE_STATUSES = SESSION_STATUSES;
+    const lifecycleAlias: typeof SESSION_STATUSES = SESSION_LIFECYCLE_STATUSES;
+
+    expect(statusTuple).toBe(lifecycleTuple);
+    expect(statusAlias).toBe(lifecycleAlias);
   });
 
   it("keeps error and approval holds resumable", () => {
@@ -44,5 +103,15 @@ describe("session lifecycle and run outcome vocabularies", () => {
     // @ts-expect-error - invalid values cannot satisfy the run outcome vocabulary.
     const bad = ["succeeded", "not_a_ses_outcome"] as const satisfies readonly SessionTerminalOutcome[];
     expect(bad.length).toBe(2);
+  });
+
+  it("[compile-time] keeps session lifecycle and run outcome types separate", () => {
+    // @ts-expect-error - a lifecycle status cannot be used as a completed run outcome.
+    const lifecycleAsOutcome: SessionTerminalOutcome = "idle";
+    // @ts-expect-error - a completed run outcome cannot be used as a session lifecycle status.
+    const outcomeAsLifecycle: SessionStatus = "succeeded";
+
+    expect(lifecycleAsOutcome).toBe("idle");
+    expect(outcomeAsLifecycle).toBe("succeeded");
   });
 });
