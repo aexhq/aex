@@ -2,7 +2,7 @@ import { extractErrorCode, redactUrl } from "./sdk-errors.js";
 import {
   abortableSleep,
   computeRetryDelayMs,
-  parseRetryAfterMs,
+  tryParseRetryAfterMs,
   type RetryBackoffConfig
 } from "./retry-core.js";
 
@@ -68,7 +68,7 @@ export async function putDirectUploadWithRetry(
 
     if (response.ok) return;
 
-    const retryAfterMs = parseRetryAfterMs(response.headers?.get("retry-after"), now());
+    const retryAfterMs = tryParseRetryAfterMs(response.headers?.get("retry-after"), now());
     if (attempt < config.maxAttempts && isRetryableUploadStatus(response.status)) {
       const delay = directUploadRetryDelayMs(config, attempt, random, retryAfterMs);
       if (!withinDirectUploadRetryBudget(config, startedAt, delay, now)) {

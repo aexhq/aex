@@ -1,5 +1,6 @@
 import type { ProviderName } from "./submission.js";
 import { suggest } from "./suggest.js";
+import { rethrowContractParseError } from "./contract-parse-error.js";
 
 /**
  * Source of truth for the closed model set: each canonical model id maps to the
@@ -206,10 +207,14 @@ export function isModelName(input: unknown): input is ModelName {
 }
 
 export function parseModelName(input: unknown, field = "submission.model"): ModelName {
-  if (!isModelName(input)) {
-    throw new Error(`${field} must be one of: ${SUPPORTED_MODELS.join(", ")}`);
+  try {
+    if (!isModelName(input)) {
+      throw new Error(`${field} must be one of: ${SUPPORTED_MODELS.join(", ")}`);
+    }
+    return input;
+  } catch (error) {
+    rethrowContractParseError(error, "parseModelName");
   }
-  return input;
 }
 
 export function assertModelNameMatchesProvider(

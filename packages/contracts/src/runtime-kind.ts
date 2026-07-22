@@ -19,6 +19,8 @@
  */
 
 /** The accepted execution-runtime values (the wire/CLI tokens). */
+import { rethrowContractParseError } from "./contract-parse-error.js";
+
 export const RUNTIME_KINDS = ["container", "spot_container", "lambda"] as const;
 
 /** One of the closed {@link RUNTIME_KINDS} tokens. */
@@ -47,13 +49,17 @@ export const RuntimeKinds = {
  * consumers apply {@link DEFAULT_RUNTIME_KIND}.
  */
 export function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
-  if (input === undefined) {
-    return undefined;
+  try {
+    if (input === undefined) {
+      return undefined;
+    }
+    if (typeof input !== "string" || !(RUNTIME_KINDS as readonly string[]).includes(input)) {
+      throw new Error(
+        `runtimeKind must be one of: ${RUNTIME_KINDS.join(", ")} (got ${JSON.stringify(input)})`
+      );
+    }
+    return input as RuntimeKind;
+  } catch (error) {
+    rethrowContractParseError(error, "parseRuntimeKind");
   }
-  if (typeof input !== "string" || !(RUNTIME_KINDS as readonly string[]).includes(input)) {
-    throw new Error(
-      `runtimeKind must be one of: ${RUNTIME_KINDS.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as RuntimeKind;
 }

@@ -101,7 +101,7 @@ export function serializeBundleManifest(manifest: BundleManifest): Uint8Array {
  * whole sidecar returns `null`, so callers cannot silently materialize a partial
  * fidelity graph. The parse never throws.
  */
-export function parseBundleManifest(bytes: Uint8Array | null | undefined): BundleManifest | null {
+export function tryParseBundleManifest(bytes: Uint8Array | null | undefined): BundleManifest | null {
   if (!bytes || bytes.byteLength === 0) return null;
   if (bytes.byteLength > ASSET_ARCHIVE_LIMITS.maxMetadataBytes) return null;
   let parsed: unknown;
@@ -138,6 +138,11 @@ export function parseBundleManifest(bytes: Uint8Array | null | undefined): Bundl
     symlinks.push({ path, target });
   }
   return { v: 1, exec, symlinks };
+}
+
+/** @deprecated Use {@link tryParseBundleManifest}; this compatibility wrapper is identical. */
+export function parseBundleManifest(bytes: Uint8Array | null | undefined): BundleManifest | null {
+  return tryParseBundleManifest(bytes);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { parseDurationToMs } from "./runtime-sizes.js";
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
+import { withContractParseError } from "./contract-parse-error.js";
 
 /** Default post-agent-run hook timeout (5 minutes). */
 export const DEFAULT_POST_HOOK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -33,6 +34,7 @@ export interface PlatformPostHook {
  * configs without enabling the verifier accidentally.
  */
 export function parsePostHook(input: unknown, path = "postHook"): PlatformPostHook | undefined {
+  return withContractParseError("parsePostHook", () => {
   if (input === undefined || input === null) {
     return undefined;
   }
@@ -66,6 +68,7 @@ export function parsePostHook(input: unknown, path = "postHook"): PlatformPostHo
     maxTurns,
     maxChars
   };
+  });
 }
 
 function parsePostHookTimeout(input: unknown, path: string): number {

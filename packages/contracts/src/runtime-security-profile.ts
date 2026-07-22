@@ -1,3 +1,5 @@
+import { withContractParseError } from "./contract-parse-error.js";
+
 export const RUNTIME_SECURITY_PROFILES = ["strict", "standard", "developer"] as const;
 export type RuntimeSecurityProfileName = (typeof RUNTIME_SECURITY_PROFILES)[number];
 
@@ -51,15 +53,15 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
   });
 
 export function parseRuntimeSecurityProfile(input: unknown): RuntimeSecurityProfileName | undefined {
-  if (input === undefined || input === null) {
-    return undefined;
-  }
-  if (typeof input !== "string" || !(RUNTIME_SECURITY_PROFILES as readonly string[]).includes(input)) {
-    throw new Error(
-      `securityProfile must be one of: ${RUNTIME_SECURITY_PROFILES.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as RuntimeSecurityProfileName;
+  return withContractParseError("parseRuntimeSecurityProfile", () => {
+    if (input === undefined || input === null) return undefined;
+    if (typeof input !== "string" || !(RUNTIME_SECURITY_PROFILES as readonly string[]).includes(input)) {
+      throw new Error(
+        `securityProfile must be one of: ${RUNTIME_SECURITY_PROFILES.join(", ")} (got ${JSON.stringify(input)})`
+      );
+    }
+    return input as RuntimeSecurityProfileName;
+  });
 }
 
 export function resolveRuntimeSecurityProfile(

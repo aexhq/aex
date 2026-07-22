@@ -6,6 +6,8 @@
  * out of the wire contract while leaving the concrete host mapping private.
  */
 
+import { withContractParseError } from "./contract-parse-error.js";
+
 export interface RuntimeResources {
   readonly cpus: number;
   readonly memoryMb: number;
@@ -56,15 +58,15 @@ export function runtimeResources(size: RuntimeSize): RuntimeResources {
  * consumers apply {@link DEFAULT_RUNTIME_SIZE}.
  */
 export function parseRuntimeSize(input: unknown): RuntimeSize | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (typeof input !== "string" || !(RUNTIME_SIZES as readonly string[]).includes(input)) {
-    throw new Error(
-      `runtimeSize must be one of: ${RUNTIME_SIZES.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as RuntimeSize;
+  return withContractParseError("parseRuntimeSize", () => {
+    if (input === undefined) return undefined;
+    if (typeof input !== "string" || !(RUNTIME_SIZES as readonly string[]).includes(input)) {
+      throw new Error(
+        `runtimeSize must be one of: ${RUNTIME_SIZES.join(", ")} (got ${JSON.stringify(input)})`
+      );
+    }
+    return input as RuntimeSize;
+  });
 }
 
 // ===========================================================================
@@ -98,19 +100,21 @@ const DURATION_PATTERN = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/;
  * bare-ms integer) into milliseconds. Throws on malformed input.
  */
 export function parseDurationToMs(input: string): number {
-  const match = DURATION_PATTERN.exec(input.trim());
-  if (!match) {
-    throw new Error(
-      `invalid duration ${JSON.stringify(input)} (expected e.g. "1h", "90m", "30s", "500ms", or a bare ms integer)`
-    );
-  }
-  const value = Number(match[1]);
-  if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`invalid duration ${JSON.stringify(input)} (must be a non-negative number)`);
-  }
-  const unit = match[2] ?? "ms";
-  const factor = unit === "h" ? 3_600_000 : unit === "m" ? 60_000 : unit === "s" ? 1_000 : 1;
-  return Math.round(value * factor);
+  return withContractParseError("parseDurationToMs", () => {
+    const match = DURATION_PATTERN.exec(input.trim());
+    if (!match) {
+      throw new Error(
+        `invalid duration ${JSON.stringify(input)} (expected e.g. "1h", "90m", "30s", "500ms", or a bare ms integer)`
+      );
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`invalid duration ${JSON.stringify(input)} (must be a non-negative number)`);
+    }
+    const unit = match[2] ?? "ms";
+    const factor = unit === "h" ? 3_600_000 : unit === "m" ? 60_000 : unit === "s" ? 1_000 : 1;
+    return Math.round(value * factor);
+  });
 }
 
 /**
@@ -119,20 +123,20 @@ export function parseDurationToMs(input: string): number {
  * {@link DEFAULT_SESSION_TIMEOUT_MS}.
  */
 export function parseSessionTimeout(input: unknown): number | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (typeof input !== "string") {
-    throw new Error(`timeout must be a duration string (e.g. "1h", "30m"); got ${JSON.stringify(input)}`);
-  }
-  const ms = parseDurationToMs(input);
-  if (ms < MIN_SESSION_TIMEOUT_MS) {
-    throw new Error(`timeout must be at least ${MIN_SESSION_TIMEOUT_MS}ms (1m); got ${ms}ms`);
-  }
-  if (ms > MAX_SESSION_TIMEOUT_MS) {
-    throw new Error(`timeout must be at most ${MAX_SESSION_TIMEOUT_MS}ms (8h); got ${ms}ms`);
-  }
-  return ms;
+  return withContractParseError("parseSessionTimeout", () => {
+    if (input === undefined) return undefined;
+    if (typeof input !== "string") {
+      throw new Error(`timeout must be a duration string (e.g. "1h", "30m"); got ${JSON.stringify(input)}`);
+    }
+    const ms = parseDurationToMs(input);
+    if (ms < MIN_SESSION_TIMEOUT_MS) {
+      throw new Error(`timeout must be at least ${MIN_SESSION_TIMEOUT_MS}ms (1m); got ${ms}ms`);
+    }
+    if (ms > MAX_SESSION_TIMEOUT_MS) {
+      throw new Error(`timeout must be at most ${MAX_SESSION_TIMEOUT_MS}ms (8h); got ${ms}ms`);
+    }
+    return ms;
+  });
 }
 
 /** Apply the default when a parsed `timeoutMs` is absent. */

@@ -60,6 +60,20 @@ request is sent. Its stable machine-readable payload is exactly
 as `overrides.timeout`. Branch on `details.field`; the human `message` may change
 and never includes the rejected value.
 
+Strict public contract parsers throw their existing error classes and messages,
+with non-enumerable metadata that can be narrowed through
+`isContractParseError(err)`. The guard preserves the original error object and
+specialized class; `err.code === CONTRACT_PARSE_ERROR` and `err.parser` identify
+the nearest strict parser that rejected the input.
+
+Parser names describe behavior: `parse*` is strict and throws for malformed
+present input, while `tryParse*` is a non-throwing recognizer that returns
+`null` or `undefined`. The older `parseApiKey`, `parseBundleManifest`, and
+internal retry-header names, plus `validateSkillBundleEntry` and
+`validateSkillBundleManifest`, remain callable compatibility wrappers. New code
+should use `tryParseApiKey`, `tryParseBundleManifest`,
+`parseSkillBundleEntry`, and `parseSkillBundleManifest`.
+
 ## 401 — authentication
 
 | Code | Meaning |

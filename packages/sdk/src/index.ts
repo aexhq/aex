@@ -109,6 +109,8 @@ export {
   SKILL_RESERVED_NAMES,
   SkillBundleValidationError,
   normaliseSkillBundlePath,
+  parseSkillBundleEntry,
+  parseSkillBundleManifest,
   validateSkillBundleEntry,
   validateSkillBundleManifest
 } from "@aexhq/contracts";
@@ -268,8 +270,14 @@ export type { SessionTerminalOutcome } from "@aexhq/contracts";
 
 // Self-describing API-key codec + plane routing (WS11): the constructor parses
 // the key to derive the plane baseUrl and fail fast on a plane mismatch.
-export { PLANE_BASE_URLS, parseApiKey } from "@aexhq/contracts";
-export type { ApiKeyPlane, ParsedApiKey } from "@aexhq/contracts";
+export {
+  CONTRACT_PARSE_ERROR,
+  PLANE_BASE_URLS,
+  isContractParseError,
+  parseApiKey,
+  tryParseApiKey
+} from "@aexhq/contracts";
+export type { ApiKeyPlane, ContractParseError, ParsedApiKey } from "@aexhq/contracts";
 
 // Structured-output (schema-decode), HITL approval-gate, and the streaming
 // capability model (WS9/WS10).

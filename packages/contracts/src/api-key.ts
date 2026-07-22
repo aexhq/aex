@@ -60,7 +60,7 @@ export function normalizeWorkspaceId(workspaceId: string): string {
  * pure routing parse; authenticity is verified server-side. A tampered tag parses (routes) and is
  * rejected at auth.
  */
-export function parseApiKey(token: string): ParsedApiKey | null {
+export function tryParseApiKey(token: string): ParsedApiKey | null {
   if (typeof token !== "string" || !token.startsWith("aex_")) return null;
   const parts = token.split("_");
   if (parts.length !== 6) return null;
@@ -81,6 +81,11 @@ export function parseApiKey(token: string): ParsedApiKey | null {
   const region = CODE_TO_REGION[regionCode];
   if (region === undefined) return null;
   return { plane: plane as ApiKeyPlane, regionCode, region, workspaceId };
+}
+
+/** @deprecated Use {@link tryParseApiKey}; this compatibility wrapper is identical. */
+export function parseApiKey(token: string): ParsedApiKey | null {
+  return tryParseApiKey(token);
 }
 
 /**
