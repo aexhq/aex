@@ -180,7 +180,7 @@ const faultChecks = {
   overloadedIsThrottle: overloaded ? isThrottleFault(overloaded) : null,
   rlKind: rlFault && rlFault.kind,
   rlRetryAfterMs: rlFault && rlFault.retryAfterMs, // 3 seconds → 3000 ms
-  authFaultUndefined: authFault === undefined // an auth error is NOT a fault
+  authFaultKind: authFault && authFault.kind // legacy auth errors normalize to generic provider_error
 };
 
 // (6) replayLast() before any send is a typed SessionStateError (not a bare throw).
@@ -232,7 +232,7 @@ console.log(JSON.stringify({
       overloadedIsThrottle: true,
       rlKind: "rate_limit",
       rlRetryAfterMs: 3000,
-      authFaultUndefined: true
+      authFaultKind: "provider_error"
     });
     // (6) replayLast → typed SessionStateError.
     expect(result.replayCheck).toMatchObject({
