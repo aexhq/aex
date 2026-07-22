@@ -13,8 +13,15 @@ export {
 export {
   BUILTIN_TOOL_NAMES
 } from "./submission.js";
+export {
+  buildSubagentAssetsInputSchema,
+  buildSubagentBuiltinToolsInputSchema,
+  parseSubagentAssetsInput,
+  parseSubagentBuiltinToolsInput
+} from "./subagent-input.js";
 export type {
   BuiltinToolName,
   PlatformSubmission,
   ProviderName
 } from "./submission.js";
+export type { SubagentInputSchema } from "./subagent-input.js";

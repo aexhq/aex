@@ -43,6 +43,12 @@ const inlinedDir = resolve(sdkDistDir, "_contracts");
 
 const CONTRACTS_IMPORT_SPECIFIER = "@aexhq/contracts";
 const CONTRACTS_IMPORT_PREFIX = `${CONTRACTS_IMPORT_SPECIFIER}/`;
+const RUNNER_ONLY_CONTRACT_MODULES = new Set([
+  "subagent-input.d.ts",
+  "subagent-input.js",
+  "subagent-runtime.d.ts",
+  "subagent-runtime.js"
+]);
 
 async function fileExists(path) {
   try {
@@ -68,8 +74,9 @@ await mkdir(inlinedDir, { recursive: true });
 await cp(contractsDistDir, inlinedDir, {
   recursive: true,
   filter: (src) => {
-    const rel = relative(contractsDistDir, src);
+    const rel = relative(contractsDistDir, src).replaceAll("\\", "/");
     if (rel === "") return true;
+    if (RUNNER_ONLY_CONTRACT_MODULES.has(rel)) return false;
     if (src.endsWith(".js.map") || src.endsWith(".d.ts.map") || src.endsWith(".tsbuildinfo")) {
       return false;
     }
