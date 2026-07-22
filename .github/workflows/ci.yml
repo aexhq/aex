@@ -63,6 +63,14 @@ jobs:
         env:
           PLATFORM_DIR: ${{ github.workspace }}/_platform
 
+      - name: Semantic mirror inventory
+        run: >-
+          node "${{ github.workspace }}/_platform/scripts/cicd/semantic-mirror-inventory.mjs"
+          --check
+          --report redacted
+          --platform-root "${{ github.workspace }}/_platform"
+          --public-root "${{ github.workspace }}"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
