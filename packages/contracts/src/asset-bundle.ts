@@ -3,13 +3,13 @@ import {
   MAX_SYMLINK_TARGET_LENGTH,
   RESERVED_META_ENTRY,
   bundleManifestIsEmpty,
-  parseBundleManifest,
+  tryParseBundleManifest,
   serializeBundleManifest,
   type BundleSymlink
 } from "./bundle-manifest.js";
 import {
   SKILL_BUNDLE_LIMITS,
-  validateSkillBundleEntry,
+  parseSkillBundleEntry,
   type ToolInputSchema
 } from "./session-config.js";
 import {
@@ -23,7 +23,7 @@ import {
  * deterministically-zipped representation.
  *
  * Public authoring consumers run the cheap, safety-critical checks here
- * (`validateSkillBundleEntry`: no `..`, no absolute paths, no Windows
+ * (`parseSkillBundleEntry`: no `..`, no absolute paths, no Windows
  * backslashes, depth/length limits). The BFF re-canonicalises and
  * recomputes the canonical hash on receipt. Client-side hashing is advisory
  * and exists to make uploads retry-safe and content-addressable.
@@ -88,7 +88,7 @@ export function splitSkillBundleMetadata(
     validateBundleGraph(collected, undefined, source);
     return { files: Object.fromEntries(collected) };
   }
-  const manifest = parseBundleManifest(sidecar);
+  const manifest = tryParseBundleManifest(sidecar);
   if (manifest === null) throw new Error(`${source}: invalid ${RESERVED_META_ENTRY} fidelity metadata`);
   const meta = validateBundleGraph(
     collected,
@@ -141,7 +141,7 @@ function collectCanonicalArchiveFiles(
     if (!(bytes instanceof Uint8Array)) {
       throw new Error(`${source} file ${JSON.stringify(rawPath)} must be a Uint8Array`);
     }
-    const path = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength }).path;
+    const path = parseSkillBundleEntry({ path: rawPath, size: bytes.byteLength }).path;
     assertNotReservedMetaPath(path, source);
     if (collected.has(path)) throw new Error(`${source} contains duplicate path: ${path}`);
     collected.set(path, bytes);
@@ -223,7 +223,7 @@ function canonicalMetadataPath(value: unknown, source: string, kind: "executable
   }
   let path: string;
   try {
-    path = validateSkillBundleEntry({ path: value, size: 0 }).path;
+    path = parseSkillBundleEntry({ path: value, size: 0 }).path;
   } catch (error) {
     throw new Error(
       `${source} ${kind} path ${JSON.stringify(value)} is invalid: ` +
@@ -296,7 +296,7 @@ function bundleCanonicalFiles<State>(
     if (!(bytes instanceof Uint8Array)) {
       throw new Error(`${kind} file "${rawPath}" must be a string or Uint8Array`);
     }
-    const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
+    const entry = parseSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
     assertNotReservedMetaPath(entry.path, source);
     totalDecompressed += bytes.byteLength;
     if (totalDecompressed > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
@@ -367,7 +367,7 @@ export function bundleToolFiles(
   return bundleCanonicalFiles(files, meta, diagnostics, {
     kind: "Tool",
     prepare: () => ({
-      entryPath: validateSkillBundleEntry({ path: manifest.entry, size: 0 }).path,
+      entryPath: parseSkillBundleEntry({ path: manifest.entry, size: 0 }).path,
       hasEntry: false
     }),
     visitEntry: (state, path) => {

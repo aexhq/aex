@@ -125,3 +125,8 @@ export * from "./error-codes.js";
 export * from "./error-factory.js";
 export * from "./suggest.js";
 export * from "./api-key.js";
+export {
+  CONTRACT_PARSE_ERROR,
+  isContractParseError
+} from "./contract-parse-error.js";
+export type { ContractParseError } from "./contract-parse-error.js";

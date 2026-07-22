@@ -1,5 +1,8 @@
 /** Canonical, redaction-safe terminal fault reported by an upstream provider. */
 
+import { rethrowContractParseError } from "./contract-parse-error.js";
+import { isRecord } from "./value-guards.js";
+
 export const PROVIDER_FAULT_KINDS = [
   "rate_limit",
   "overloaded",
@@ -53,6 +56,14 @@ export function isKnownProviderFaultKind(kind: string): kind is KnownProviderFau
  * forward compatibility, but callers must not infer throttle semantics from it.
  */
 export function parseProviderFault(value: unknown): ProviderFault {
+  try {
+    return parseProviderFaultValue(value);
+  } catch (error) {
+    rethrowContractParseError(error, "parseProviderFault");
+  }
+}
+
+function parseProviderFaultValue(value: unknown): ProviderFault {
   if (!isRecord(value)) throw new TypeError("providerFault must be an object");
   for (const key of Object.keys(value)) {
     if (!PROVIDER_FAULT_KEYS.has(key)) {
@@ -94,8 +105,4 @@ export function parseProviderFault(value: unknown): ProviderFault {
     ...(Object.hasOwn(value, "retryAfterMs") ? { retryAfterMs: value.retryAfterMs as number } : {}),
     ...(Object.hasOwn(value, "message") ? { message: value.message as string } : {})
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

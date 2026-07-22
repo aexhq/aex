@@ -34,7 +34,7 @@ import {
   computeRetryDelayMs,
   isRateLimitHttpStatus,
   isRetryableHttpStatus,
-  parseRetryAfterMs as parseRetryAfterHeaderMs,
+  tryParseRetryAfterMs as parseRetryAfterHeaderMs,
   RATE_LIMIT_HTTP_STATUS,
   RETRYABLE_HTTP_STATUS
 } from "@aexhq/contracts/internal";

@@ -77,6 +77,7 @@
       "./bundle-manifest.js",
       "./canonical-sha256.js",
       "./connection-ticket.js",
+      "./contract-parse-error.js",
       "./error-codes.js",
       "./error-factory.js",
       "./event-envelope.js",
@@ -124,12 +125,14 @@
       "allowed-keys.js": 1024,
       "session-archive.js": 8192,
       "session-file-query.js": 12288,
+      "contract-parse-error.js": 2048,
       "value-guards.js": 2048
     },
     "contractsBarrelExportSpecifiers": [
       "./provider-support.js",
       "./provider-fault.js",
       "./models.js",
+      "./contract-parse-error.js",
       "./status.js",
       "./submission.js",
       "./runtime-sizes.js",

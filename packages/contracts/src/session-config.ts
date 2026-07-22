@@ -34,6 +34,7 @@ import {
   type JsonValue,
   type PlatformEnvironment
 } from "./submission.js";
+import { rethrowContractParseError, withContractParseError } from "./contract-parse-error.js";
 import { parseModelName, type ModelName } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
@@ -228,6 +229,7 @@ export function parseAssetRefFields(
   record: Record<string, unknown>,
   path: string
 ): AssetRef {
+  return withContractParseError("parseAssetRefFields", () => {
   const allowed = defineAllowedKeys<AssetRef>()("kind", "assetId", "name", "mountPath");
   assertAllowedKeys(record, allowed, (key) => new Error(`${path} contains unexpected field for asset ref: ${key}`));
   const assetId = record.assetId;
@@ -251,6 +253,7 @@ export function parseAssetRefFields(
     name,
     ...(mountPath !== undefined ? { mountPath } : {})
   };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -354,27 +357,40 @@ export function normaliseSkillBundlePath(input: string): string {
  * upstream by the caller (zip parser must skip symlinks, device files,
  * etc. before reaching this function).
  */
+export function parseSkillBundleEntry(input: {
+  readonly path: string;
+  readonly size: number;
+  readonly mode?: number;
+}): SkillBundleEntry {
+  try {
+    const path = normaliseSkillBundlePath(input.path);
+    if (!Number.isFinite(input.size) || !Number.isInteger(input.size) || input.size < 0) {
+      throw new SkillBundleValidationError(`bundle entry size must be a non-negative integer (${path})`);
+    }
+    if (input.size > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
+      throw new SkillBundleValidationError(
+        `bundle entry size exceeds maxDecompressedBytes (${SKILL_BUNDLE_LIMITS.maxDecompressedBytes}): ${path}`
+      );
+    }
+    // Sanitise the stored mode. Executable bit is implied by runtime
+    // convention; we never persist arbitrary chmod from the user's FS.
+    const mode = (input.mode ?? SKILL_BUNDLE_LIMITS.defaultFileMode) & 0o777;
+    if (mode !== SKILL_BUNDLE_LIMITS.defaultFileMode && mode !== SKILL_BUNDLE_LIMITS.defaultDirMode) {
+      return { path, size: input.size, mode: SKILL_BUNDLE_LIMITS.defaultFileMode };
+    }
+    return { path, size: input.size, mode };
+  } catch (error) {
+    rethrowContractParseError(error, "parseSkillBundleEntry");
+  }
+}
+
+/** @deprecated Use {@link parseSkillBundleEntry}; this compatibility wrapper is identical. */
 export function validateSkillBundleEntry(input: {
   readonly path: string;
   readonly size: number;
   readonly mode?: number;
 }): SkillBundleEntry {
-  const path = normaliseSkillBundlePath(input.path);
-  if (!Number.isFinite(input.size) || !Number.isInteger(input.size) || input.size < 0) {
-    throw new SkillBundleValidationError(`bundle entry size must be a non-negative integer (${path})`);
-  }
-  if (input.size > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
-    throw new SkillBundleValidationError(
-      `bundle entry size exceeds maxDecompressedBytes (${SKILL_BUNDLE_LIMITS.maxDecompressedBytes}): ${path}`
-    );
-  }
-  // Sanitise the stored mode. Executable bit is implied by runtime
-  // convention; we never persist arbitrary chmod from the user's FS.
-  const mode = (input.mode ?? SKILL_BUNDLE_LIMITS.defaultFileMode) & 0o777;
-  if (mode !== SKILL_BUNDLE_LIMITS.defaultFileMode && mode !== SKILL_BUNDLE_LIMITS.defaultDirMode) {
-    return { path, size: input.size, mode: SKILL_BUNDLE_LIMITS.defaultFileMode };
-  }
-  return { path, size: input.size, mode };
+  return parseSkillBundleEntry(input);
 }
 
 /**
@@ -393,46 +409,57 @@ export function validateSkillBundleEntry(input: {
  *
  * Returns a canonical manifest with totals computed.
  */
+export function parseSkillBundleManifest(
+  input: ReadonlyArray<{ readonly path: string; readonly size: number; readonly mode?: number }>
+): SkillBundleManifest {
+  try {
+    if (!Array.isArray(input) || input.length === 0) {
+      throw new SkillBundleValidationError("bundle manifest must be a non-empty array of entries");
+    }
+    if (input.length > SKILL_BUNDLE_LIMITS.maxFiles) {
+      throw new SkillBundleValidationError(
+        `bundle exceeds maxFiles (${SKILL_BUNDLE_LIMITS.maxFiles}): got ${input.length}`
+      );
+    }
+    const seen = new Set<string>();
+    const entries: SkillBundleEntry[] = [];
+    let totalSize = 0;
+    let hasSkillMd = false;
+    for (const raw of input) {
+      const entry = parseSkillBundleEntry(raw);
+      if (seen.has(entry.path)) {
+        throw new SkillBundleValidationError(`bundle manifest contains duplicate path: ${entry.path}`);
+      }
+      seen.add(entry.path);
+      if (entry.path === "SKILL.md") {
+        hasSkillMd = true;
+      }
+      totalSize += entry.size;
+      if (totalSize > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
+        throw new SkillBundleValidationError(
+          `bundle total size exceeds maxDecompressedBytes (${SKILL_BUNDLE_LIMITS.maxDecompressedBytes})`
+        );
+      }
+      entries.push(entry);
+    }
+    if (!hasSkillMd) {
+      throw new SkillBundleValidationError(
+        "skill bundle manifest must contain a 'SKILL.md' entry at the bundle root. " +
+          "If you want to upload an instructions file or generic agent context, use " +
+          "workspace instructions or File instead."
+      );
+    }
+    return { entries, totalSize, fileCount: entries.length };
+  } catch (error) {
+    rethrowContractParseError(error, "parseSkillBundleManifest");
+  }
+}
+
+/** @deprecated Use {@link parseSkillBundleManifest}; this compatibility wrapper is identical. */
 export function validateSkillBundleManifest(
   input: ReadonlyArray<{ readonly path: string; readonly size: number; readonly mode?: number }>
 ): SkillBundleManifest {
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new SkillBundleValidationError("bundle manifest must be a non-empty array of entries");
-  }
-  if (input.length > SKILL_BUNDLE_LIMITS.maxFiles) {
-    throw new SkillBundleValidationError(
-      `bundle exceeds maxFiles (${SKILL_BUNDLE_LIMITS.maxFiles}): got ${input.length}`
-    );
-  }
-  const seen = new Set<string>();
-  const entries: SkillBundleEntry[] = [];
-  let totalSize = 0;
-  let hasSkillMd = false;
-  for (const raw of input) {
-    const entry = validateSkillBundleEntry(raw);
-    if (seen.has(entry.path)) {
-      throw new SkillBundleValidationError(`bundle manifest contains duplicate path: ${entry.path}`);
-    }
-    seen.add(entry.path);
-    if (entry.path === "SKILL.md") {
-      hasSkillMd = true;
-    }
-    totalSize += entry.size;
-    if (totalSize > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
-      throw new SkillBundleValidationError(
-        `bundle total size exceeds maxDecompressedBytes (${SKILL_BUNDLE_LIMITS.maxDecompressedBytes})`
-      );
-    }
-    entries.push(entry);
-  }
-  if (!hasSkillMd) {
-    throw new SkillBundleValidationError(
-      "skill bundle manifest must contain a 'SKILL.md' entry at the bundle root. " +
-        "If you want to upload an instructions file or generic agent context, use " +
-        "workspace instructions or File instead."
-    );
-  }
-  return { entries, totalSize, fileCount: entries.length };
+  return parseSkillBundleManifest(input);
 }
 
 /**
@@ -510,6 +537,7 @@ export interface SessionConfigMcpServer extends McpServerRef {
 }
 
 export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
+  return withContractParseError("parseMcpServerRef", () => {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error(`${path} must be an object`);
   }
@@ -565,6 +593,7 @@ export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
   }
   const transport = parseRemoteMcpTransport(record.transport, `${path}.transport`);
   return transport ? { name, url, transport } : { name, url };
+  });
 }
 
 /**
@@ -788,6 +817,7 @@ export interface SessionRequestConfig {
  * later by the SDK normalisation step.
  */
 export function parseSessionRequestConfig(input: unknown): SessionRequestConfig {
+  return withContractParseError("parseSessionRequestConfig", () => {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("session request config must be an object");
   }
@@ -832,6 +862,7 @@ export function parseSessionRequestConfig(input: unknown): SessionRequestConfig 
       ? { metadata: record.metadata as NonNullable<SessionRequestConfig["metadata"]> }
       : {})
   };
+  });
 }
 
 function parseSessionRequestConfigPrompt(value: unknown): string | readonly string[] {

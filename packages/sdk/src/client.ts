@@ -10,7 +10,7 @@ import {
   customName,
   isReplayableEvent,
   assertStreamableOutputMode,
-  parseApiKey,
+  tryParseApiKey,
   resolveModelProvider,
   resolveBuiltinToolNames,
   streamCoordinatorEvents,
@@ -1649,7 +1649,7 @@ export class Aex {
  *     {@link CredentialValidationError} BEFORE any request.
  */
 function resolveBaseUrlForKey(apiKey: string, baseUrl: string | undefined): string | undefined {
-  const parsed = parseApiKey(apiKey);
+  const parsed = tryParseApiKey(apiKey);
   if (parsed === null) return baseUrl;
   const planeUrl = PLANE_BASE_URLS[parsed.plane];
   if (baseUrl === undefined) {

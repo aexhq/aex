@@ -32,6 +32,7 @@ import {
 } from "./workspace-resources.js";
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 import { UnknownFieldError } from "./unknown-field-error.js";
+import { withContractParseError } from "./contract-parse-error.js";
 import {
   isJsonValue,
   isRecord,
@@ -523,6 +524,7 @@ export function crossValidateSecretEnvAndValues(
 }
 
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
+  return withContractParseError("parseInlineSecrets", () => {
   // Absent/null secrets collapse to an empty bundle; the credential-policy gate
   // (enforceCredentialSecretPolicy) decides whether that is admissible for the
   // session's mode (a session inheriting keys server-side may legitimately omit them).
@@ -545,6 +547,7 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
     ...(mcpServers ? { mcpServers } : {}),
     ...(envSecrets ? { envSecrets } : {})
   };
+  });
 }
 
 /**
@@ -968,6 +971,7 @@ export type PlatformSessionSubmissionInput = Omit<
 export function parseSessionSubmissionRequest(
   input: unknown
 ): PlatformSessionSubmissionRequest {
+  return withContractParseError("parseSessionSubmissionRequest", () => {
   const value = requireRecord(input, "submission");
   const allowedTopLevelFields = defineAllowedKeys<PlatformSessionSubmissionInput>()(
     "workspaceId",
@@ -1053,6 +1057,7 @@ export function parseSessionSubmissionRequest(
     ...(machine !== undefined ? { machine } : {}),
     secrets
   };
+  });
 }
 
 /**
@@ -1064,6 +1069,7 @@ export function parseSessionSubmissionRequest(
  * is the submit-time shape gate.
  */
 export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefined {
+  return withContractParseError("parseSessionWebhook", () => {
   if (input === undefined) {
     return undefined;
   }
@@ -1086,6 +1092,7 @@ export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefi
     throw new Error("webhook.url must not contain userinfo (user:pass@host)");
   }
   return { url };
+  });
 }
 
 /**
@@ -1100,6 +1107,7 @@ export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefi
  * collapses to `undefined` so it carries no signal onto the request.
  */
 export function parseSessionLimits(input: unknown): SessionLimits | undefined {
+  return withContractParseError("parseSessionLimits", () => {
   if (input === undefined) {
     return undefined;
   }
@@ -1149,6 +1157,7 @@ export function parseSessionLimits(input: unknown): SessionLimits | undefined {
     ...(maxTurns !== undefined ? { maxTurns } : {}),
     ...(maxStepsPerTurn !== undefined ? { maxStepsPerTurn } : {})
   };
+  });
 }
 
 /**
@@ -1181,6 +1190,7 @@ export function sessionBudgetLimits(limits: SessionLimits | undefined): { budget
  * shape is validated here — capacity selection is a runtime concern.
  */
 export function parseSessionMachine(input: unknown): SessionMachine | undefined {
+  return withContractParseError("parseSessionMachine", () => {
   if (input === undefined) {
     return undefined;
   }
@@ -1196,9 +1206,11 @@ export function parseSessionMachine(input: unknown): SessionMachine | undefined 
     return undefined;
   }
   return { spot: value.spot };
+  });
 }
 
 export function parseProviderName(input: unknown): ProviderName {
+  return withContractParseError("parseProviderName", () => {
   if (input === undefined) {
     return DEFAULT_PROVIDER;
   }
@@ -1208,6 +1220,7 @@ export function parseProviderName(input: unknown): ProviderName {
     );
   }
   return input as ProviderName;
+  });
 }
 
 /**
@@ -1236,6 +1249,7 @@ export function enforceCredentialSecretPolicy(
 }
 
 export function parseSubmission(input: unknown): PlatformSubmission {
+  return withContractParseError("parseSubmission", () => {
   const value = requireRecord(input, "submission.submission");
   const allowed = defineAllowedKeys<PlatformSubmission>()(
     "model",
@@ -1290,6 +1304,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     ...(approvalGate !== undefined ? { approvalGate } : {}),
     ...(platform ? { platform } : {})
   };
+  });
 }
 
 function parseSubmissionAssets(input: unknown): SubmissionAssets {
@@ -1583,6 +1598,7 @@ export type ResponseFormat =
  * rejected (fail-fast). `json_schema` requires a JSON-object `schema`.
  */
 export function parseResponseFormat(input: unknown): ResponseFormat | undefined {
+  return withContractParseError("parseResponseFormat", () => {
   if (input === undefined || input === null) return undefined;
   const value = requireRecord(input, "submission.responseFormat");
   const kind = value.kind;
@@ -1623,6 +1639,7 @@ export function parseResponseFormat(input: unknown): ResponseFormat | undefined 
     ...(value.strict !== undefined ? { strict: value.strict } : {}),
     ...(name !== undefined ? { name } : {})
   };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1640,6 +1657,7 @@ export interface ApprovalGate {
  * sibling parsers.
  */
 export function parseApprovalGate(input: unknown): ApprovalGate | undefined {
+  return withContractParseError("parseApprovalGate", () => {
   if (input === undefined || input === null) return undefined;
   const value = requireRecord(input, "submission.approvalGate");
   const allowed = defineAllowedKeys<ApprovalGate>()("tools");
@@ -1664,6 +1682,7 @@ export function parseApprovalGate(input: unknown): ApprovalGate | undefined {
   });
   if (tools.length === 0) return undefined;
   return { tools };
+  });
 }
 
 /**

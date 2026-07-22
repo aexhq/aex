@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const consumers = ["submission.ts", "runner-event.ts", "operations.ts"] as const;
+const consumers = ["submission.ts", "runner-event.ts", "operations.ts", "provider-fault.ts"] as const;
 
 function source(name: string): string {
   return readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8");

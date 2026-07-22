@@ -11,6 +11,11 @@ import { ASSET_ARCHIVE_LIMITS } from "./session-config.js";
 // to the package `index`. Consumers reach it via the explicit
 // `@aexhq/contracts/internal` subpath.
 export * from "./connection-ticket.js";
+export {
+  CONTRACT_PARSE_ERROR,
+  isContractParseError
+} from "./contract-parse-error.js";
+export type { ContractParseError } from "./contract-parse-error.js";
 export * from "./archive-limits.js";
 export * from "./asset-authoring.js";
 export * from "./asset-bundle.js";

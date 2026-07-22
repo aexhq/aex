@@ -29,7 +29,7 @@ export function isRateLimitHttpStatus(status: number): boolean {
  * Parse an HTTP `Retry-After` header into milliseconds. RFC 7231 permits either
  * a non-negative integer number of seconds or an HTTP-date.
  */
-export function parseRetryAfterMs(headerValue: string | null | undefined, now: number = Date.now()): number | undefined {
+export function tryParseRetryAfterMs(headerValue: string | null | undefined, now: number = Date.now()): number | undefined {
   if (headerValue === null || headerValue === undefined) return undefined;
   const trimmed = headerValue.trim();
   if (trimmed.length === 0) return undefined;
@@ -41,6 +41,11 @@ export function parseRetryAfterMs(headerValue: string | null | undefined, now: n
     return Math.max(0, dateMs - now);
   }
   return undefined;
+}
+
+/** @deprecated Use {@link tryParseRetryAfterMs}; this compatibility wrapper is identical. */
+export function parseRetryAfterMs(headerValue: string | null | undefined, now: number = Date.now()): number | undefined {
+  return tryParseRetryAfterMs(headerValue, now);
 }
 
 /**

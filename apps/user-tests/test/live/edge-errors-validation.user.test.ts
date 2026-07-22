@@ -82,7 +82,7 @@ describe("live plane — SDK error/validation/auth edge cases", () => {
       const bogusSession = "sess_edge_missing_" + Math.random().toString(36).slice(2, 10);
       const script = String.raw`
 import {
-  Aex, AexApiError, AexError, SessionConfigValidationError, parseApiKey
+  Aex, AexApiError, AexError, SessionConfigValidationError, tryParseApiKey
 } from "@aexhq/sdk";
 
 const apiUrl = process.env.AEX_API_URL;
@@ -102,7 +102,7 @@ function crc32b36(input) {
   return ((crc ^ 0xffffffff) >>> 0).toString(36);
 }
 function craftWellFormedToken() {
-  const parsedApiKey = parseApiKey(apiKey);
+  const parsedApiKey = tryParseApiKey(apiKey);
   const activePlane = parsedApiKey && (parsedApiKey.plane === "dev" || parsedApiKey.plane === "prd")
     ? parsedApiKey.plane
     : apiUrl.replace(/\/+$/, "") === "https://api.aex.dev" ? "prd" : "dev";

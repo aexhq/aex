@@ -26,7 +26,7 @@ import {
   directUploadResponseError,
   isRetryableUploadError,
   isRetryableUploadStatus,
-  parseRetryAfterMs,
+  tryParseRetryAfterMs,
   resolveAssetUploadRetryConfig,
   withinDirectUploadRetryBudget,
   type AssetFetch,
@@ -337,7 +337,7 @@ async function putPartWithRetry(
       continue;
     }
     if (attempt < retryConfig.maxAttempts && isRetryableUploadStatus(response.status)) {
-      const retryAfterMs = parseRetryAfterMs(response.headers?.get("retry-after"), now());
+      const retryAfterMs = tryParseRetryAfterMs(response.headers?.get("retry-after"), now());
       const delay = directUploadRetryDelayMs(retryConfig, attempt, random, retryAfterMs);
       if (!withinDirectUploadRetryBudget(retryConfig, startedAt, delay, now)) {
         const detail = await response.text().catch(() => "");
