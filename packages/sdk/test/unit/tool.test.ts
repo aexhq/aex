@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "@aexhq/contracts";
 import { Tool } from "../../src/tool.js";
 
 function takeBundle(tool: Tool): { ref: any; contentHash: string; bytes: Uint8Array } {
@@ -28,7 +29,7 @@ describe("Tool.fromFiles", () => {
 
     expect(tool.isDraft).toBe(true);
     const bundle = takeBundle(tool);
-    expect(bundle.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test(bundle.contentHash)).toBe(true);
     expect(bundle.ref).toMatchObject({
       kind: "asset",
       name: "calendar_lookup",
