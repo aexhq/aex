@@ -132,15 +132,19 @@ describe("session-config — parseMcpServerRef", () => {
   });
 
   // SSRF deny-list parity with platform `denyReasonForHostIp`. The cases
-  // below are the ones the hardened deny-list adds over the prior public
-  // copy: IPv4-mapped IPv6 (both dotted and hex normalisation), CGNAT
-  // (100.64.0.0/10), and ULA (fc00::/7). A mapped form must not smuggle a
-  // private target past the literal checks.
+  // below cover IPv4-mapped IPv6 (both dotted and hex normalisation),
+  // unspecified/current-network ranges, CGNAT (100.64.0.0/10), benchmark and
+  // multicast/reserved ranges, and ULA (fc00::/7). A mapped form must not
+  // smuggle a private target past the literal checks.
   it.each([
     ["http://localhost/mcp", /loopback hostname/i],
     ["http://127.0.0.1/mcp", /loopback IPv4/i],
+    ["http://0.0.0.0/mcp", /unroutable IPv4/i],
     ["http://169.254.169.254/mcp", /link-local IPv4/i],
     ["http://100.64.0.1/mcp", /CGNAT IPv4/i],
+    ["http://198.18.0.1/mcp", /benchmark IPv4/i],
+    ["http://224.0.0.1/mcp", /multicast\/reserved IPv4/i],
+    ["http://[::]/mcp", /unspecified IPv6/i],
     ["http://[::ffff:127.0.0.1]/mcp", /loopback IPv4/i],
     ["http://[::ffff:169.254.169.254]/mcp", /link-local IPv4/i],
     ["http://[fc00::1]/mcp", /unique-local IPv6/i],

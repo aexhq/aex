@@ -620,6 +620,10 @@ function denyReasonForHostIp(host: string): string | null {
   }
   const v4 = denyReasonForV4(host);
   if (v4) return v4;
+  // Unspecified IPv6 cannot identify a routable remote endpoint.
+  if (host === "::") {
+    return "must not target unspecified IPv6 (::)";
+  }
   // Loopback IPv6 (::1 in any acceptable form)
   if (host === "::1" || host === "0:0:0:0:0:0:0:1") {
     return "must not target loopback IPv6 (::1)";
@@ -646,6 +650,8 @@ function denyReasonForV4(host: string): string | null {
   const octets = host.split(".").map((o) => Number.parseInt(o, 10));
   if (octets.some((o) => o > 255)) return null;
   const [a, b] = octets as [number, number, number, number];
+  // Unspecified / current-network IPv4 is not a routable remote target.
+  if (a === 0) return "must not target unroutable IPv4 (0.0.0.0/8)";
   // Loopback IPv4 (127.0.0.0/8)
   if (a === 127) return "must not target loopback IPv4 (127.0.0.0/8)";
   // Link-local / metadata IPv4 (169.254.0.0/16 — includes 169.254.169.254)
@@ -657,10 +663,16 @@ function denyReasonForV4(host: string): string | null {
   if (a === 100 && b >= 64 && b <= 127) {
     return "must not target CGNAT IPv4 (100.64.0.0/10)";
   }
+  // Benchmarking range (198.18.0.0/15) is reserved for inter-network tests.
+  if (a === 198 && (b === 18 || b === 19)) {
+    return "must not target benchmark IPv4 (198.18.0.0/15)";
+  }
   // RFC1918 private ranges (10/8, 172.16/12, 192.168/16) — defense in depth.
   if (a === 10) return "must not target RFC1918 IPv4 (10.0.0.0/8)";
   if (a === 172 && b >= 16 && b <= 31) return "must not target RFC1918 IPv4 (172.16.0.0/12)";
   if (a === 192 && b === 168) return "must not target RFC1918 IPv4 (192.168.0.0/16)";
+  // Multicast, reserved, and limited-broadcast space is never a public HTTP target.
+  if (a >= 224) return "must not target multicast/reserved IPv4 (224.0.0.0/3)";
   return null;
 }
 

@@ -22,19 +22,22 @@ const octet = fc.integer({ min: 0, max: 255 });
 
 /** IPv4 literals the MCP deny-list MUST refuse (mirrors denyReasonForV4). */
 const privateV4 = fc.oneof(
+  fc.tuple(fc.constant(0), octet, octet, octet),
   fc.tuple(fc.constant(10), octet, octet, octet),
   fc.tuple(fc.constant(127), octet, octet, octet),
   fc.tuple(fc.constant(169), fc.constant(254), octet, octet),
   fc.tuple(fc.constant(192), fc.constant(168), octet, octet),
   fc.tuple(fc.constant(172), fc.integer({ min: 16, max: 31 }), octet, octet),
-  fc.tuple(fc.constant(100), fc.integer({ min: 64, max: 127 }), octet, octet) // CGNAT
+  fc.tuple(fc.constant(100), fc.integer({ min: 64, max: 127 }), octet, octet), // CGNAT
+  fc.tuple(fc.constant(198), fc.integer({ min: 18, max: 19 }), octet, octet), // benchmarking
+  fc.tuple(fc.integer({ min: 224, max: 255 }), octet, octet, octet) // multicast/reserved
 ).map((parts) => parts.join("."));
 
 /** IPv6 / mapped literals + loopback names the deny-list MUST refuse. */
 const privateHost = fc.oneof(
   privateV4,
   fc.constantFrom("localhost", "foo.localhost", "127.0.0.1", "169.254.169.254"),
-  fc.constantFrom("[::1]", "[0:0:0:0:0:0:0:1]"),
+  fc.constantFrom("[::]", "[::1]", "[0:0:0:0:0:0:0:1]"),
   octet.map((h) => `[fe80::${h.toString(16)}]`), // link-local fe80::/10
   octet.map((h) => `[fc00::${h.toString(16)}]`), // ULA fc00::/7
   octet.map((h) => `[fd00::${h.toString(16)}]`),
