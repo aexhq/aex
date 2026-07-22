@@ -144,6 +144,28 @@ describe("release pipeline gates", () => {
     expect(parityCheck.env?.PLATFORM_DIR).toBe("${{ github.workspace }}/_platform");
   });
 
+  it("runs the private semantic mirror inventory with redacted explicit roots", () => {
+    const workflow = readWorkflow(".github/workflows/ci.yml");
+    const parity = workflowJob(workflow, "contract-parity");
+    const checkout = workflowStep(parity, "Checkout platform (for contract parity)");
+    const install = workflowStep(parity, "Install");
+    const parityCheck = workflowStep(parity, "Contract parity");
+    const inventory = workflowStep(parity, "Semantic mirror inventory");
+    const aggregate = workflowJob(workflow, "public");
+
+    expect(stepIndex(parity, checkout.name!)).toBeLessThan(stepIndex(parity, install.name!));
+    expect(stepIndex(parity, install.name!)).toBeLessThan(stepIndex(parity, inventory.name!));
+    expect(stepIndex(parity, parityCheck.name!)).toBeLessThan(stepIndex(parity, inventory.name!));
+    expect(inventory.run).toContain("_platform/scripts/cicd/semantic-mirror-inventory.mjs");
+    expect(inventory.run).toContain("--check");
+    expect(inventory.run).toContain("--report redacted");
+    expect(inventory.run).toContain('--platform-root "${{ github.workspace }}/_platform"');
+    expect(inventory.run).toContain('--public-root "${{ github.workspace }}"');
+    expect(inventory.run).not.toContain("--write");
+    expect(inventory.if).toBeUndefined();
+    expect(jobNeeds(aggregate)).toContain("contract-parity");
+  });
+
   it("promotes only an exact version proven by successful public and platform runs", () => {
     const workflow = readWorkflow(".github/workflows/promote.yml");
     const triggers = workflowTriggers(workflow);
