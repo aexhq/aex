@@ -91,12 +91,15 @@ export function buildSessionMetadataArchive(sessionId: string, session: Session)
 
 function zipEntries(entries: readonly SessionArchiveEntry[]): Uint8Array {
   assertSessionRecordArchivePublicSafeV1(entries);
-  const files: Record<string, Uint8Array> = {};
+  const files: Record<string, [Uint8Array, { readonly mtime: Date }]> = {};
   for (const entry of entries) {
-    files[entry.path] = entry.bytes;
+    files[entry.path] = [entry.bytes, { mtime: ZIP_EPOCH }];
   }
   return zipSync(files);
 }
+
+/** Fixed ZIP timestamp: session archives must not depend on the wall clock. */
+const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 
 function jsonEntry(path: string, value: unknown): SessionArchiveEntry {
   return {
