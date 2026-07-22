@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "../src/canonical-sha256.js";
 import { RESERVED_META_ENTRY, SKILL_BUNDLE_LIMITS } from "../src/index.js";
 import {
   bundleSkillFiles,
@@ -40,7 +41,7 @@ describe("canonical internal asset bundle owner", () => {
     });
 
     expect(first.zip).toEqual(second.zip);
-    expect(await hashSkillBundle(first.zip)).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test(await hashSkillBundle(first.zip))).toBe(true);
   });
 
   it("rejects reserved metadata paths and regular-file leaf-prefix conflicts", () => {

@@ -1,3 +1,5 @@
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "../../packages/contracts/src/canonical-sha256.ts";
+
 const RUNTIME_KINDS = ["container", "spot_container", "lambda"];
 const RUNTIME_SIZES = [
   "0.25cpu-1gb",
@@ -26,7 +28,7 @@ export function parseRuntimeCapabilities(value) {
   if (!isRecord(value)) fail("expected an object");
   if (value.schemaVersion !== 1) fail("schemaVersion must be 1");
   if (!isNonEmptyString(value.capabilityVersion)) fail("capabilityVersion must be a non-empty string");
-  if (typeof value.capabilityHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value.capabilityHash)) {
+  if (typeof value.capabilityHash !== "string" || !CANONICAL_SHA256_DIGEST_PATTERN.test(value.capabilityHash)) {
     fail("capabilityHash must be a lowercase sha256 digest");
   }
 

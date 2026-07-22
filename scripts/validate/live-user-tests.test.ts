@@ -231,6 +231,13 @@ describe("live user-test release gate", () => {
     const smokeRun = runStep(release, "test:user:smoke");
 
     const matrixStep = runStep(prepareMatrix, "shard-files.mjs --matrix");
+    const matrixSteps = prepareMatrix.steps ?? [];
+    const bunSetupIndex = matrixSteps.findIndex((step) => step.uses?.startsWith("oven-sh/setup-bun@"));
+    const matrixIndex = matrixSteps.indexOf(matrixStep);
+    expect(bunSetupIndex).toBeGreaterThanOrEqual(0);
+    expect(bunSetupIndex).toBeLessThan(matrixIndex);
+    expect(matrixStep.run).toContain("bun apps/user-tests/scripts/shard-files.mjs");
+    expect(matrixStep.run).not.toMatch(/\bnode\s+apps\/user-tests\/scripts\/shard-files\.mjs\b/);
     expect(matrixStep.run).toContain('--runtime-capabilities-json "$RUNTIME_CAPABILITIES"');
     expect(matrixStep.env?.RUNTIME_CAPABILITIES).toBe(
       "${{ needs.live-user-tests-preflight.outputs.runtime_capabilities }}"

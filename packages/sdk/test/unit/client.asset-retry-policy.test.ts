@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "@aexhq/contracts";
 import { Aex, File } from "../../src/index.js";
 
 function json(body: unknown, status = 200): Response {
@@ -46,7 +47,7 @@ describe("Aex asset retry policy", () => {
     await expect(client.workspace.files.publish(file)).resolves.toEqual({});
     expect(presignAttempts).toBe(2);
     expect(presignHashes).toHaveLength(2);
-    expect(presignHashes[0]).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test(presignHashes[0]!)).toBe(true);
     expect(presignHashes[1]).toBe(presignHashes[0]);
     expect(presignKeys).toEqual(presignHashes.map((hash) => `asset-presign:${hash.slice("sha256:".length)}`));
   });

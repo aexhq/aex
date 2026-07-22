@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unzipSync } from "fflate";
 import {
+  CANONICAL_SHA256_DIGEST_PATTERN,
   WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN,
   assertWorkspaceInstructionResourceName
 } from "@aexhq/contracts";
@@ -42,7 +43,7 @@ describe("Instructions persisted resource names", () => {
     const bundle = draft._takeDraftBundle();
     expect(bundle.name).toBe(name);
     expect(Object.keys(unzipSync(bundle.bytes))).toEqual(["AGENTS.md"]);
-    expect(bundle.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test(bundle.contentHash)).toBe(true);
   });
 
   it.each(rejectedNames)("rejects invalid name %j with SDK provenance", async (name) => {
