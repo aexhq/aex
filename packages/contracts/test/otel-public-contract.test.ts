@@ -40,6 +40,24 @@ function envelope(overrides: Partial<AexEvent> = {}): AexEvent {
   } as AexEvent;
 }
 
+function projectedAttributes(output: unknown, signal: OtlpSignal): ReadonlyArray<Record<string, unknown>> {
+  const body = output as {
+    readonly resourceSpans?: ReadonlyArray<{
+      readonly scopeSpans: ReadonlyArray<{
+        readonly spans: ReadonlyArray<{ readonly attributes: ReadonlyArray<Record<string, unknown>> }>;
+      }>;
+    }>;
+    readonly resourceLogs?: ReadonlyArray<{
+      readonly scopeLogs: ReadonlyArray<{
+        readonly logRecords: ReadonlyArray<{ readonly attributes: ReadonlyArray<Record<string, unknown>> }>;
+      }>;
+    }>;
+  };
+  return signal === "traces"
+    ? body.resourceSpans?.[0]?.scopeSpans[0]?.spans[0]?.attributes ?? []
+    : body.resourceLogs?.[0]?.scopeLogs[0]?.logRecords[0]?.attributes ?? [];
+}
+
 describe("public OTLP/HTTP JSON projection", () => {
   it("returns a standards-pure traces request body and preserves public trace identity", () => {
     const output = projector()([envelope()], { signal: "traces" });
@@ -79,6 +97,50 @@ describe("public OTLP/HTTP JSON projection", () => {
     expect(json).toContain("WARN");
     expect(json).toContain(TRACE_ID);
     expect(json).toContain(SPAN_ID);
+  });
+
+  it("projects an external log stream onto the standard log.iostream attribute", () => {
+    const output = projector()([
+      envelope({
+        channel: "log",
+        type: "LOG",
+        level: "info",
+        message: "tool stdout",
+        data: {
+          level: "info",
+          message: "tool stdout",
+          fields: { stream: "stdout" }
+        }
+      })
+    ], { signal: "logs" });
+    const attributes = projectedAttributes(output, "logs");
+
+    expect(attributes).toContainEqual({
+      key: "log.iostream",
+      value: { stringValue: "stdout" }
+    });
+    expect(attributes.map((attribute) => attribute.key)).not.toContain("stream");
+  });
+
+  it("projects a public tool exit code onto the AEX-owned namespaced attribute", () => {
+    const output = projector()([
+      envelope({
+        source: "agent",
+        type: "TOOL_CALL_RESULT",
+        data: {
+          id: "4:tool-1",
+          content: "ok",
+          exitCode: 23
+        }
+      })
+    ], { signal: "traces" });
+    const attributes = projectedAttributes(output, "traces");
+
+    expect(attributes).toContainEqual({
+      key: "aex.tool.exit_code",
+      value: { intValue: "23" }
+    });
+    expect(attributes.map((attribute) => attribute.key)).not.toContain("exitCode");
   });
 
   it("fails closed over public inputs instead of exposing internal or secret-shaped fields", () => {

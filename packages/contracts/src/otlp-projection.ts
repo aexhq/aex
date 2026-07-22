@@ -123,7 +123,7 @@ function projectTraces(events: readonly AexEvent[]): OtlpExportTraceServiceReque
       kind: 1 as const,
       startTimeUnixNano: start,
       endTimeUnixNano: (BigInt(start) + 1n).toString(),
-      attributes: publicAttributes(event),
+      attributes: publicAttributes(event, "traces"),
       status: { code: event.type === "RUN_ERROR" ? 2 as const : 1 as const }
     }];
   });
@@ -151,7 +151,7 @@ function projectLogs(events: readonly AexEvent[]): OtlpExportLogsServiceRequest 
         observedTimeUnixNano: time,
         ...severity,
         body: { stringValue: redactString(message) },
-        attributes: publicAttributes(event),
+        attributes: publicAttributes(event, "logs"),
         ...(validTraceId(event.traceId) ? { traceId: event.traceId } : {}),
         ...(validSpanId(event.spanId) ? { spanId: event.spanId } : {})
       };
@@ -173,7 +173,7 @@ function publicResource(): OtlpResource {
   };
 }
 
-function publicAttributes(event: AexEvent): readonly OtlpKeyValue[] {
+function publicAttributes(event: AexEvent, signal: OtlpSignal): readonly OtlpKeyValue[] {
   const attributes: OtlpKeyValue[] = [
     attribute("aex.visibility", "external"),
     attribute("aex.session.id", event.subject),
@@ -188,6 +188,16 @@ function publicAttributes(event: AexEvent): readonly OtlpKeyValue[] {
   if (callId !== undefined) attributes.push(attribute("aex.call.id", callId));
   const failureClass = publicString(event.data["failureClass"]);
   if (failureClass !== undefined) attributes.push(attribute("aex.failure.class_public", failureClass));
+  if (signal === "logs") {
+    const ioStream = publicIoStream(event.data["stream"])
+      ?? publicNestedIoStream(event.data["fields"], "stream")
+      ?? publicNestedIoStream(event.data["value"], "stream");
+    if (ioStream !== undefined) attributes.push(attribute("log.iostream", ioStream));
+  }
+  const exitCode = publicSafeInteger(event.data["exitCode"])
+    ?? publicNestedSafeInteger(event.data["fields"], "exitCode")
+    ?? publicNestedSafeInteger(event.data["value"], "exitCode");
+  if (exitCode !== undefined) attributes.push(attribute("aex.tool.exit_code", exitCode));
   return attributes;
 }
 
@@ -235,12 +245,28 @@ function publicNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function publicSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+}
+
+function publicIoStream(value: unknown): "stdout" | "stderr" | undefined {
+  return value === "stdout" || value === "stderr" ? value : undefined;
+}
+
 function publicNestedString(value: unknown, key: string): string | undefined {
   return isPlainRecord(value) ? publicString(value[key]) : undefined;
 }
 
 function publicNestedNumber(value: unknown, key: string): number | undefined {
   return isPlainRecord(value) ? publicNumber(value[key]) : undefined;
+}
+
+function publicNestedSafeInteger(value: unknown, key: string): number | undefined {
+  return isPlainRecord(value) ? publicSafeInteger(value[key]) : undefined;
+}
+
+function publicNestedIoStream(value: unknown, key: string): "stdout" | "stderr" | undefined {
+  return isPlainRecord(value) ? publicIoStream(value[key]) : undefined;
 }
 
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
