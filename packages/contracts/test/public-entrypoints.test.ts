@@ -25,6 +25,8 @@ import type { CleanupStatus } from "../src/index.js";
 import type { SessionUnit } from "../src/index.js";
 // @ts-expect-error Persisted workspace secret values are write-only through the public API.
 import type { SecretReveal } from "../src/index.js";
+// @ts-expect-error Subagent nested-input admission is private runner infrastructure.
+import { parseSubagentAssetsInput } from "../src/index.js";
 
 type InternalSurface =
   | PlatformSessionSubmissionRequest
@@ -38,6 +40,7 @@ type InternalSurface =
   | SessionUnit
   | SecretReveal;
 void (undefined as unknown as InternalSurface);
+void parseSubagentAssetsInput;
 
 const removedRuntimeExports = [
   "CLEANUP_STATUSES",
@@ -59,11 +62,11 @@ const removedRuntimeExports = [
 ] as const;
 
 describe("contracts entrypoint boundary", () => {
-  it("publishes only the customer root and explicit workspace-internal subpath", () => {
+  it("publishes only the customer root and explicit workspace-internal subpaths", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
-    expect(Object.keys(packageJson.exports ?? {})).toEqual([".", "./internal"]);
+    expect(Object.keys(packageJson.exports ?? {})).toEqual([".", "./internal", "./subagent-runtime"]);
   });
 
   it("keeps platform implementation values off the customer entrypoint", () => {
