@@ -71,6 +71,7 @@ import { SESSION_RUN_PHASES } from "./runtime-types.js";
 import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
 import { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES } from "./status.js";
+import { parseProviderFault } from "./provider-fault.js";
 import type { ToolInputSchema } from "./session-config.js";
 import type {
   WorkspaceFileRecord,
@@ -244,8 +245,10 @@ export async function listSessions(
     }
     const currentRun = normalizeOptionalSessionRun(value.currentRun, value.id as string, `sessions.list row ${index}.currentRun`);
     const lastRun = normalizeOptionalSessionRun(value.lastRun, value.id as string, `sessions.list row ${index}.lastRun`);
+    // `providerFault` is detail-only and must never leak onto SessionSummary.
+    const { providerFault: _providerFault, ...normalized } = normalizeSessionRuntime(value, `sessions.list row ${index}`);
     return {
-      ...normalizeSessionRuntime(value, `sessions.list row ${index}`),
+      ...normalized,
       ...(currentRun !== undefined ? { currentRun } : {}),
       ...(lastRun !== undefined ? { lastRun } : {})
     } as unknown as SessionListPage["sessions"][number];
@@ -2017,10 +2020,24 @@ function unwrapSession(result: { readonly session: Session }): Session {
   }
   const currentRun = normalizeOptionalSessionRun(value.currentRun, value.id, "session response currentRun");
   const lastRun = normalizeOptionalSessionRun(value.lastRun, value.id, "session response lastRun");
+  let providerFault;
+  if (Object.hasOwn(value, "providerFault")) {
+    try {
+      providerFault = parseProviderFault(value.providerFault);
+    } catch (error) {
+      throw new SessionStateError(
+        `session response has an invalid providerFault: ${error instanceof Error ? error.message : "invalid value"}`
+      );
+    }
+    if (lastRun?.outcome !== "failed") {
+      throw new SessionStateError("session response providerFault must belong to a failed lastRun");
+    }
+  }
   return {
     ...normalizeSessionRuntime(value, "session response"),
     ...(currentRun !== undefined ? { currentRun } : {}),
-    ...(lastRun !== undefined ? { lastRun } : {})
+    ...(lastRun !== undefined ? { lastRun } : {}),
+    ...(providerFault !== undefined ? { providerFault } : {})
   } as unknown as Session;
 }
 

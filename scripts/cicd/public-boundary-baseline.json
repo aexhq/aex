@@ -90,6 +90,7 @@
       "./models.js",
       "./operations.js",
       "./post-hook.js",
+      "./provider-fault.js",
       "./provider-support.js",
       "./session-artifacts.js",
       "./session-archive.js",
@@ -127,6 +128,7 @@
     },
     "contractsBarrelExportSpecifiers": [
       "./provider-support.js",
+      "./provider-fault.js",
       "./models.js",
       "./status.js",
       "./submission.js",

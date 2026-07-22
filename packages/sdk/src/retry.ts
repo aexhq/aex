@@ -23,6 +23,9 @@ import {
   AexNetworkError,
   AexRateLimitError as AexRateLimitErrorBase,
   isRateLimited,
+  parseProviderFault as parseCanonicalProviderFault,
+  type ProviderFault,
+  type KnownProviderFaultKind,
   type FetchLike
 } from "@aexhq/contracts";
 import {
@@ -40,6 +43,7 @@ import {
 // there), so the wire→exception factory (`apiErrorFromResponse`) and this
 // retry-layer error are recognised by the SAME `isRateLimited` — no split-brain.
 export { isRateLimited };
+export type { ProviderFault } from "@aexhq/contracts";
 
 /**
  * HTTP statuses that are transient and worth retrying for an eligible request.
@@ -144,28 +148,12 @@ function nextDelayMs(
   return computeRetryDelayMs(config, attemptNumber, random, retryAfterMs);
 }
 
-/**
- * A structured, redaction-safe description of an UPSTREAM provider fault the aex
- * runtime surfaces on a failed turn (a rate limit, an overloaded provider, a
- * quota exhaustion, or a generic provider error). It is a sibling of the
- * API-plane throttle: the container/runtime emits this shape on the terminal
- * error and the SDK re-exposes it on {@link AexRateLimitError.providerFault} so
- * callers get one place to read "the model provider throttled us".
- */
-export interface ProviderFault {
-  /** Upstream provider id, e.g. `"anthropic"`, when the runtime reports one. */
-  readonly provider?: string;
-  /** Coarse fault class. */
-  readonly kind: "rate_limit" | "overloaded" | "quota_exceeded" | "provider_error";
-  /** Upstream HTTP status when the provider surfaced one (e.g. `429`, `529`). */
-  readonly status?: number;
-  /** Milliseconds the upstream asked the caller to wait, when it supplied one. */
-  readonly retryAfterMs?: number;
-  /** Short, already-redacted upstream message. */
-  readonly message?: string;
-}
-
-const THROTTLE_KINDS: ReadonlySet<ProviderFault["kind"]> = new Set(["rate_limit", "overloaded", "quota_exceeded"]);
+const THROTTLE_KINDS: ReadonlySet<string> = new Set([
+  "rate_limit",
+  "overloaded",
+  "quota_exceeded",
+  "unavailable"
+]);
 
 /** True when a {@link ProviderFault} represents a "back off and retry" signal. */
 export function isThrottleFault(fault: ProviderFault): boolean {
@@ -226,9 +214,10 @@ function defaultThrottleMessage(args: {
 }
 
 /**
- * Best-effort parse of an unknown value into a {@link ProviderFault}. Tolerant
- * of two shapes so the SDK consumes the runtime fault the moment it starts
- * emitting one, without a contracts change:
+ * Best-effort compatibility parse of an unknown provider error. Canonical
+ * Session and RUN_ERROR fields are validated by `@aexhq/contracts`; this helper
+ * remains tolerant only for callers decoding documented historical raw-provider
+ * shapes:
  *
  *   1. The canonical `{ provider?, kind, status?, retryAfterMs?, message? }`
  *      (optionally nested under a `providerFault` key), OR
@@ -247,7 +236,13 @@ export function parseProviderFault(value: unknown): ProviderFault | undefined {
     if (fromNested) return fromNested;
   }
 
-  const kind = coerceFaultKind(record.kind ?? record.type ?? record.code);
+  try {
+    return parseCanonicalProviderFault(record);
+  } catch {
+    // Continue into the deliberately narrow historical raw-provider decoder.
+  }
+
+  const kind = legacyFaultKind(record.kind ?? record.type ?? record.code);
   if (kind === undefined) return undefined;
 
   const provider = typeof record.provider === "string" ? record.provider : undefined;
@@ -271,16 +266,27 @@ export function parseProviderFault(value: unknown): ProviderFault | undefined {
   };
 }
 
-function coerceFaultKind(raw: unknown): ProviderFault["kind"] | undefined {
+const LEGACY_FAULT_KINDS: Readonly<Record<string, KnownProviderFaultKind>> = {
+  rate_limit: "rate_limit",
+  rate_limit_error: "rate_limit",
+  overloaded: "overloaded",
+  overloaded_error: "overloaded",
+  quota_exceeded: "quota_exceeded",
+  quota_exceeded_error: "quota_exceeded",
+  insufficient_quota: "quota_exceeded",
+  unavailable: "unavailable",
+  api_error: "unavailable",
+  timeout_error: "unavailable",
+  provider_error: "provider_error",
+  authentication_error: "provider_error",
+  invalid_request_error: "provider_error",
+  "429": "rate_limit",
+  "529": "overloaded"
+};
+
+function legacyFaultKind(raw: unknown): KnownProviderFaultKind | undefined {
   if (typeof raw !== "string") return undefined;
-  const value = raw.toLowerCase();
-  if (value.includes("rate_limit") || value.includes("rate limit") || value === "429") return "rate_limit";
-  if (value.includes("overload") || value === "529") return "overloaded";
-  if (value.includes("quota") || value.includes("insufficient")) return "quota_exceeded";
-  if (value.includes("provider_error") || value.includes("provider error") || value.includes("api_error")) {
-    return "provider_error";
-  }
-  return undefined;
+  return LEGACY_FAULT_KINDS[raw.trim().toLowerCase()];
 }
 
 function coerceStatus(raw: unknown): number | undefined {

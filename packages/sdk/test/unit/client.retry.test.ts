@@ -130,7 +130,8 @@ interface Harness {
  */
 function harness(
   finalSession: Record<string, unknown> = { id: "session-1", status: "idle", acceptsMessages: true },
-  createStatuses: readonly number[] = [201]
+  createStatuses: readonly number[] = [201],
+  debug?: (line: string) => void
 ): Harness {
   const calls: RecordedCall[] = [];
   const sockets: FakeWebSocket[] = [];
@@ -193,6 +194,7 @@ function harness(
     apiKey: "tkn",
     baseUrl: "https://x",
     fetch: fetchImpl,
+    ...(debug ? { debug } : {}),
     // Instant backoff keeps the test fast; the retry LOGIC is exercised fully.
     retry: { initialDelayMs: 0, maxDelayMs: 0, maxAttempts: 4 }
   });
@@ -431,8 +433,14 @@ describe("Aex throttle error on a provider-throttled turn", () => {
     expect(rate.providerFault?.provider).toBe("anthropic");
   });
 
-  it("throwOnFailure raises AexRateLimitError from a rate-limit error MESSAGE", async () => {
-    const h = harness({ id: "session-1", status: "error", errorMessage: "provider rate limit (429) exceeded" });
+  it("uses the narrow field-absent legacy adapter and emits one redacted diagnostic", async () => {
+    const diagnostics: string[] = [];
+    const h = harness({
+      id: "session-1",
+      status: "error",
+      failureClass: "transient-provider",
+      errorMessage: "llm provider unavailable (HTTP 429) — throttled or overloaded; request was not replayed automatically: secret detail"
+    }, [201], (line) => diagnostics.push(line));
     const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
@@ -442,6 +450,46 @@ describe("Aex throttle error on a provider-throttled turn", () => {
     const err = await promise.catch((e: unknown) => e);
     expect(isRateLimited(err)).toBe(true);
     expect((err as AexRateLimitError).source).toBe("provider");
+    expect(diagnostics.filter((line) => line.includes("legacy_provider_fault_fallback"))).toEqual([
+      "[aex] legacy_provider_fault_fallback kind=rate_limit source=session"
+    ]);
+    expect(diagnostics.join("\n")).not.toContain("secret detail");
+  });
+
+  it.each([
+    "tool returned code 429 while parsing a local fixture",
+    "corporate limit policy rejected the request",
+    "proveedor temporalmente limitado"
+  ])("does not classify arbitrary failure prose as a provider throttle: %s", async (errorMessage) => {
+    const h = harness({ id: "session-1", status: "error", errorMessage });
+    const promise = h.client.start(
+      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
+    );
+    await waitForSocket(h.sockets, 1);
+    h.sockets[0]!.message(errorEvent());
+    const err = await promise.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionStateError);
+    expect(isRateLimited(err)).toBe(false);
+  });
+
+  it("does not override a present canonical non-throttle with legacy fields", async () => {
+    const h = harness({
+      id: "session-1",
+      status: "error",
+      providerFault: { kind: "provider_error", status: 429 },
+      failureClass: "transient-provider",
+      errorMessage: "llm provider unavailable (HTTP 429) — throttled or overloaded; request was not replayed automatically"
+    });
+    const promise = h.client.start(
+      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
+    );
+    await waitForSocket(h.sockets, 1);
+    h.sockets[0]!.message(errorEvent());
+    const err = await promise.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionStateError);
+    expect(isRateLimited(err)).toBe(false);
   });
 
   it("a non-throttle failure still raises the plain SessionStateError", async () => {
