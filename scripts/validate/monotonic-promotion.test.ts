@@ -159,7 +159,10 @@ describe("monotonic promotion guard", () => {
     })).toThrow(/does not match source attestation/);
   });
 
-  it("checks real Git ancestry rather than trusting a caller-provided version order", () => {
+  // This intentionally spawns several Git subprocesses. On shared/self-hosted
+  // runners the fixture can be CPU/IO delayed even though the ancestry check is
+  // deterministic; bound the test for that host load without retrying it.
+  it("checks real Git ancestry rather than trusting a caller-provided version order", { timeout: 20_000 }, () => {
     const { repository, first, second, newer, divergent } = createAncestryRepository();
     try {
       expect(() => assertPromotionInRepository({

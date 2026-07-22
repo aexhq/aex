@@ -17,8 +17,12 @@ const evt = (
   const terminalData = type === "RUN_FINISHED"
     ? { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } }
     : type === "RUN_ERROR"
-      ? { outcome: "failed", costUsd: 0, providerUsage: [] }
-      : {};
+      ? { outcome: "failed", failureClass: "internal", failureMessage: "run failed", costUsd: 0, providerUsage: [] }
+      : type === "TOOL_CALL_START"
+        ? { id: `call-${sequence}` }
+        : type === "TOOL_CALL_RESULT"
+          ? { id: `call-${sequence}`, content: null }
+          : {};
   return {
     specversion: "1.0",
     id: `session-x:${sequence}`,

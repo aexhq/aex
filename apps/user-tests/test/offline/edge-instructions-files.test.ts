@@ -8,7 +8,7 @@
  * behaviour is covered by the sibling `test/live/edge-instructions-files.user.test.ts`:
  *
  *   A. `Instructions.fromContent(...)` input validation + draft build: empty content,
- *      malformed `name` (uppercase / single-char / leading-or-trailing dash /
+ *      malformed `name` (leading punctuation / whitespace / path separators /
  *      too long), large (100 KB) + unicode/markdown content accepted, dedup hash
  *      is a pure function of (content) under a fixed name, and a draft cannot be
  *      submitted directly.
@@ -169,11 +169,13 @@ const { Instructions } = await import("@aexhq/sdk");
 const bad = [
   ["empty content", () => Instructions.fromContent("", { name: "rules" }), /non-empty string/],
   ["whitespace-only name miss", () => Instructions.fromContent("# x", { name: "  " }), /name must match/],
-  ["name uppercase", () => Instructions.fromContent("# x", { name: "Rules" }), /name must match/],
   ["name leading dash", () => Instructions.fromContent("# x", { name: "-rules" }), /name must match/],
-  ["name trailing dash", () => Instructions.fromContent("# x", { name: "rules-" }), /name must match/],
-  ["name too long", () => Instructions.fromContent("# x", { name: "a".repeat(65) }), /name must match/],
-  ["name underscore", () => Instructions.fromContent("# x", { name: "my_rules" }), /name must match/]
+  ["name leading dot", () => Instructions.fromContent("# x", { name: ".rules" }), /name must match/],
+  ["name leading underscore", () => Instructions.fromContent("# x", { name: "_rules" }), /name must match/],
+  ["name whitespace", () => Instructions.fromContent("# x", { name: "two words" }), /name must match/],
+  ["name path separator", () => Instructions.fromContent("# x", { name: "rules/name" }), /name must match/],
+  ["name too long", () => Instructions.fromContent("# x", { name: "a".repeat(129) }), /name must match/],
+  ["name reserved separator", () => Instructions.fromContent("# x", { name: "my__rules" }), /name must not contain/]
 ];
 const msgs = {};
 for (const [label, fn, pat] of bad) msgs[label] = await expectReject(label, fn, pat);
@@ -193,10 +195,10 @@ strictEqual(uni.name, "uni-rules");
 // A draft cannot be submitted directly; it must go through the workspace publisher.
 await expectReject("draft toJSON", async () => good.toJSON(), /cannot be submitted directly/);
 
-console.log(JSON.stringify({ ok: true, rejected: Object.keys(msgs).length, goodName: good.name, sample: msgs["name uppercase"] }));
+console.log(JSON.stringify({ ok: true, rejected: Object.keys(msgs).length, goodName: good.name, sample: msgs["name leading dash"] }));
 `;
     const result = await runChild(script, "edge-instructions-validate.mjs");
-    expect(result).toMatchObject({ ok: true, rejected: 7, goodName: "rules" });
+    expect(result).toMatchObject({ ok: true, rejected: 9, goodName: "rules" });
   });
 
   it("B: File.fromBytes defends path traversal, validates bytes/mountPath, builds + dedups", async () => {
