@@ -67,9 +67,10 @@ import type {
   CreateOrgInviteRequest,
   OrgInvite
 } from "./runtime-types.js";
+import { SESSION_RUN_PHASES } from "./runtime-types.js";
 import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
-import { SESSION_STATUSES } from "./status.js";
+import { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES } from "./status.js";
 import type { ToolInputSchema } from "./session-config.js";
 import type {
   WorkspaceFileRecord,
@@ -2042,8 +2043,8 @@ function normalizeSessionAccepted<T extends { readonly session: Session }>(value
   };
 }
 
-const SESSION_RUN_PHASES = new Set(["queued", "starting", "running", "finished", "error"]);
-const SESSION_RUN_OUTCOMES = new Set(["succeeded", "failed", "timed_out", "cancelled", "interrupted"]);
+const SESSION_RUN_PHASE_SET = new Set<string>(SESSION_RUN_PHASES);
+const SESSION_RUN_OUTCOME_SET = new Set<string>(SESSION_TERMINAL_OUTCOMES);
 
 function normalizeSessionMessageAccepted(value: unknown, requestedSessionId: string): SessionMessageAccepted {
   if (!isRecord(value)) {
@@ -2112,10 +2113,10 @@ function normalizeSessionRun(value: Record<string, unknown>, sessionId: string, 
   if (!Number.isSafeInteger(value.turnSeq) || (value.turnSeq as number) < 1) {
     throw new SessionStateError(`${context}.turnSeq must be a positive safe integer`);
   }
-  if (typeof value.phase !== "string" || !SESSION_RUN_PHASES.has(value.phase)) {
+  if (typeof value.phase !== "string" || !SESSION_RUN_PHASE_SET.has(value.phase)) {
     throw new SessionStateError(`${context}.phase is invalid`);
   }
-  if (value.outcome !== undefined && (typeof value.outcome !== "string" || !SESSION_RUN_OUTCOMES.has(value.outcome))) {
+  if (value.outcome !== undefined && (typeof value.outcome !== "string" || !SESSION_RUN_OUTCOME_SET.has(value.outcome))) {
     throw new SessionStateError(`${context}.outcome is invalid`);
   }
   for (const field of ["startedAt", "finishedAt"] as const) {

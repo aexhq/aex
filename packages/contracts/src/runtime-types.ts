@@ -10,12 +10,16 @@ import type {
   SessionWebhookSpec
 } from "./submission.js";
 
-export type SessionRunPhase =
-  | "queued"
-  | "starting"
-  | "running"
-  | "finished"
-  | "error";
+/** Public run phases. Internal finalization remains behind the consistency barrier. */
+export const SESSION_RUN_PHASES = [
+  "queued",
+  "starting",
+  "running",
+  "finished",
+  "error"
+] as const;
+
+export type SessionRunPhase = (typeof SESSION_RUN_PHASES)[number];
 
 export type SessionRunOutcome = SessionTerminalOutcome;
 
