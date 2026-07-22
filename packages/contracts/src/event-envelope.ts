@@ -137,6 +137,12 @@ export interface AexEventBase {
   readonly threadId: string;
   /** AG-UI run identity. A new id is allocated for every session turn. */
   readonly runId: string;
+  /** W3C-compatible 16-byte trace identity, encoded as 32 lowercase hex characters. */
+  readonly traceId?: string;
+  /** W3C-compatible 8-byte span identity, encoded as 16 lowercase hex characters. */
+  readonly spanId?: string;
+  /** Parent span identity when this event represents a non-root span. */
+  readonly parentSpanId?: string;
   /** ISO-8601 event time (session base + the RunnerEvent's relative `tMs`). */
   readonly time: string;
   /**

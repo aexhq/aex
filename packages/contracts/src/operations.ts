@@ -3,6 +3,12 @@ import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
 import { isRecord, isStringLiteral } from "./value-guards.js";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
+import type {
+  OtlpExportLogsServiceRequest,
+  OtlpExportRequest,
+  OtlpExportTraceServiceRequest,
+  OtlpSignal
+} from "./otlp-projection.js";
 import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
 import {
   type SessionRecordArtifactSummaryV1,
@@ -456,6 +462,116 @@ export async function* iterateSessionEvents(
     sessionId,
     pageBudget: LIST_EVENTS_PAGE_BUDGET
   });
+}
+
+export interface SessionOtlpPage<Body extends OtlpExportRequest = OtlpExportRequest> {
+  /** The unwrapped, standards-pure OTLP/HTTP JSON request body. */
+  readonly body: Body;
+  /** Opaque API cursor carried separately from the OTLP body. */
+  readonly nextCursor?: string;
+}
+
+export interface IterateSessionOtlpOptions {
+  readonly signal?: AbortSignal;
+}
+
+export async function getSessionOtlpPage(
+  http: HttpClient,
+  sessionId: string,
+  signal: "traces",
+  cursor?: string,
+  abortSignal?: AbortSignal
+): Promise<SessionOtlpPage<OtlpExportTraceServiceRequest>>;
+export async function getSessionOtlpPage(
+  http: HttpClient,
+  sessionId: string,
+  signal: "logs",
+  cursor?: string,
+  abortSignal?: AbortSignal
+): Promise<SessionOtlpPage<OtlpExportLogsServiceRequest>>;
+export async function getSessionOtlpPage(
+  http: HttpClient,
+  sessionId: string,
+  signal: OtlpSignal,
+  cursor?: string,
+  abortSignal?: AbortSignal
+): Promise<SessionOtlpPage> {
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/otel`;
+  const { response } = await http.download(
+    path,
+    abortSignal === undefined
+      ? { headers: { accept: "application/json" } }
+      : { headers: { accept: "application/json" }, signal: abortSignal },
+    { signal, ...(cursor === undefined ? {} : { cursor }) }
+  );
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (cause) {
+    throw new SessionStateError("session OTLP response is not valid JSON", { sessionId, signal }, { cause });
+  }
+  assertStandardsPureOtlpBody(body, sessionId, signal);
+  const responseCursor = response.headers.get("x-aex-next-cursor");
+  if (responseCursor !== null && responseCursor.trim().length === 0) {
+    throw new SessionStateError("session OTLP response contains an invalid x-aex-next-cursor", {
+      sessionId,
+      signal
+    });
+  }
+  return {
+    body,
+    ...(responseCursor === null ? {} : { nextCursor: responseCursor })
+  };
+}
+
+/**
+ * Lazily traverse standards-pure OTLP pages. Pagination metadata remains in
+ * `x-aex-next-cursor`; it is never mixed into an OTLP request body.
+ */
+export async function* iterateSessionOtlpPages(
+  http: HttpClient,
+  sessionId: string,
+  signal: OtlpSignal,
+  options: IterateSessionOtlpOptions = {}
+): AsyncIterable<OtlpExportRequest> {
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageIndex = 0; pageIndex < LIST_EVENTS_PAGE_BUDGET; pageIndex += 1) {
+    if (options.signal?.aborted) return;
+    const page = signal === "traces"
+      ? await getSessionOtlpPage(http, sessionId, "traces", cursor, options.signal)
+      : await getSessionOtlpPage(http, sessionId, "logs", cursor, options.signal);
+    if (page.nextCursor !== undefined && seenCursors.has(page.nextCursor)) {
+      throw new SessionStateError("session OTLP pagination repeated a cursor", {
+        sessionId,
+        signal,
+        cursor: page.nextCursor
+      });
+    }
+    yield page.body;
+    if (page.nextCursor === undefined) return;
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+  throw new SessionStateError("session OTLP pagination exceeded its page budget", {
+    sessionId,
+    signal,
+    pageBudget: LIST_EVENTS_PAGE_BUDGET
+  });
+}
+
+function assertStandardsPureOtlpBody(
+  body: unknown,
+  sessionId: string,
+  signal: OtlpSignal
+): asserts body is OtlpExportRequest {
+  const root = signal === "traces" ? "resourceSpans" : "resourceLogs";
+  if (!isRecord(body) || Object.keys(body).length !== 1 || !Array.isArray(body[root])) {
+    throw new SessionStateError(`session OTLP ${signal} response must contain only ${root}`, {
+      sessionId,
+      signal
+    });
+  }
 }
 
 export async function listSessionFiles(

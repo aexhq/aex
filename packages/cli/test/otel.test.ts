@@ -22,7 +22,7 @@ describe("aex otel", () => {
         const cursor = new URL(url).searchParams.get("cursor");
         return Response.json(
           { resourceSpans: [{ scopeSpans: [{ spans: [{ name: cursor === null ? "invoke_agent" : "execute_tool" }] }] }] },
-          { headers: cursor === null ? { "x-aex-next-cursor": "page-2" } : undefined }
+          cursor === null ? { headers: { "x-aex-next-cursor": "page-2" } } : undefined
         );
       }
     });

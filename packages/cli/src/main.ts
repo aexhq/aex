@@ -10,6 +10,7 @@
  *     - `aex deliveries <session-id>`
  *     - `aex wait <session-id> [--timeout <dur>] [--interval <dur>]`
  *     - `aex events <session-id> [--follow] [--timeout <dur>]`
+ *     - `aex otel <session-id> [--signal traces|logs] [--json]`
  *     - `aex tail <session-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
  *     - `aex inspect <session-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
  *     - `aex files <session-id>`
@@ -44,6 +45,7 @@ import {
   executeDeleteAssetCmd,
   executeDownloadCmd,
   executeEventsCmd,
+  executeOtelCmd,
   executeSessionFilesCmd,
   executeStartCmd,
   executeStatusCmd,
@@ -113,6 +115,8 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return executeWaitCmd(io, rest);
     case "events":
       return executeEventsCmd(io, rest);
+    case "otel":
+      return executeOtelCmd(io, rest);
     case "tail":
       // Live human-readable follow over the coordinator WS envelope stream.
       return executeTailCmd(io, rest);
@@ -196,6 +200,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex deliveries <session-id> --api-key T\n");
   io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-key T\n");
   io.stdout("  aex events <session-id> [--follow] [--timeout 8m] --api-key T\n");
+  io.stdout("  aex otel <session-id> [--signal traces|logs] [--json] --api-key T\n");
   io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key T\n");
   io.stdout("  aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key T\n");
   io.stdout("  aex files <session-id> --api-key T\n");

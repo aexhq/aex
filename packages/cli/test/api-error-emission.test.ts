@@ -138,6 +138,7 @@ const COMMAND_ERROR_MATRIX = [
   { source: "download.ts", path: "download API read", call: 'emitApiError(io, "download_failed", err, { sessionId })' },
   { source: "events.ts", path: "events initial list", call: 'emitApiError(io, "events_failed", err, { sessionId })' },
   { source: "events.ts", path: "events follow poll", call: 'emitApiError(io, "events_failed", err, { sessionId })' },
+  { source: "otel.ts", path: "OTLP export", call: 'emitApiError(io, "otel_failed", err, { sessionId, signal })' },
   { source: "files.ts", path: "files list", call: 'emitApiError(io, "files_failed", err, { sessionId })' },
   { source: "files.ts", path: "files read", call: 'emitApiError(io, "files_read_failed", err, { sessionId, path: selector })' },
   { source: "files.ts", path: "files download API read", call: 'emitApiError(io, "files_download_failed", err, { sessionId, path: selector })' },
@@ -168,8 +169,8 @@ const COMMAND_ERROR_MATRIX = [
 ] as const;
 
 describe("SDK/API error source ownership", () => {
-  it("covers all 40 current command failure paths through the common emitter", () => {
-    expect(COMMAND_ERROR_MATRIX).toHaveLength(40);
+  it("covers all 41 current command failure paths through the common emitter", () => {
+    expect(COMMAND_ERROR_MATRIX).toHaveLength(41);
     const expectedCalls = new Map<string, number>();
     for (const row of COMMAND_ERROR_MATRIX) {
       const key = `${row.source}\0${row.call}`;

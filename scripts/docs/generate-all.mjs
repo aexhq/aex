@@ -34,6 +34,7 @@ const guideSources = [
   ["mcp.md", "mcp"],
   ["files.md", "files"],
   ["events.md", "events"],
+  ["telemetry.md", "telemetry"],
   ["webhooks.md", "webhooks"],
   ["billing.md", "billing"],
   ["cleanup.md", "cleanup"]

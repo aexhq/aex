@@ -106,6 +106,12 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     flags: ["--follow", "--timeout"]
   },
   {
+    name: "otel",
+    summary: "Export a session's traces or logs as standards-pure OTLP/HTTP JSON.",
+    usage: ["aex otel <session-id> [--signal traces|logs] [--json]"],
+    flags: ["--signal"]
+  },
+  {
     name: "tail",
     summary: "Live human-readable follow over the coordinator event stream.",
     usage: ["aex tail <session-id> [--filter <type|source>] [--logs] [--from <seq>] [--timeout <dur>]"],

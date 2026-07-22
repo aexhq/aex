@@ -24,6 +24,7 @@ const SINGLE_VALUE_FLAGS = [
   "--runtime",
   "--session-timeout",
   "--timeout",
+  "--signal",
   "--config",
   "--model",
   "--system",

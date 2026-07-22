@@ -28,6 +28,8 @@ import {
   type DebugSink,
   type FetchLike,
   type McpServerRef,
+  type OtlpExportLogsServiceRequest,
+  type OtlpExportTraceServiceRequest,
   type SessionFile,
   type SessionFileType,
   type SessionFileLink,
@@ -310,6 +312,12 @@ export interface SessionEvents {
   download(options?: DownloadOptions): Promise<Uint8Array>;
 }
 
+/** Standards-pure OTLP/HTTP JSON pages derived from a session's journal. */
+export interface SessionOtel {
+  traces(): AsyncIterable<OtlpExportTraceServiceRequest>;
+  logs(): AsyncIterable<OtlpExportLogsServiceRequest>;
+}
+
 /**
  * Accessor over the session's captured files (`session.files`):
  * enumerate, read one as capped text, locate/resolve, and download.
@@ -341,6 +349,7 @@ export class SessionHandle {
   #session: Session;
   readonly messages: SessionMessages;
   readonly events: SessionEvents;
+  readonly otel: SessionOtel;
   readonly files: SessionFiles;
   readonly webhooks: SessionWebhooks;
   /** The last message sent on this handle, for `session.messages.replayLast()`. */
@@ -371,6 +380,7 @@ export class SessionHandle {
       }
     );
     this.events = sessionEvents(http, id);
+    this.otel = sessionOtel(http, id);
     this.files = sessionFiles(http, id, fetch);
     this.webhooks = {
       list: () => operations.getSessionWebhookDeliveries(http, id),
@@ -883,6 +893,13 @@ function sessionEvents(http: HttpClient, id: string): SessionEvents {
     archiveLink: (options?: SessionFileLinkOptions) => operations.eventArchiveLink(http, id, options),
     download: async (options?: DownloadOptions) =>
       writeOptionalFile(await operations.downloadEvents(http, id), options?.to)
+  };
+}
+
+function sessionOtel(http: HttpClient, id: string): SessionOtel {
+  return {
+    traces: () => operations.iterateSessionOtlpPages(http, id, "traces") as AsyncIterable<OtlpExportTraceServiceRequest>,
+    logs: () => operations.iterateSessionOtlpPages(http, id, "logs") as AsyncIterable<OtlpExportLogsServiceRequest>
   };
 }
 

@@ -75,6 +75,7 @@ export * from "./runtime-sizes.js";
 export * from "./runtime-kind.js";
 export * from "./runner-event.js";
 export * from "./event-envelope.js";
+export * from "./otlp-projection.js";
 export * from "./event-view.js";
 export {
   filterStream,

@@ -64,7 +64,7 @@ describe("CLI host-auth resolver ownership", () => {
     expect(synchronousCommonFlagFunctions).toEqual(["extractCommonHostFlags"]);
   });
 
-  it("routes the exhaustive 19-verb authenticated matrix through one typed preparation owner", () => {
+  it("routes the exhaustive 20-verb authenticated matrix through one typed preparation owner", () => {
     const main = read(resolve(srcRoot, "main.ts"));
     const hostIndex = read(resolve(srcRoot, "host", "index.ts"));
     const handlerModules = exportedHostHandlers(hostIndex);
@@ -75,6 +75,7 @@ describe("CLI host-auth resolver ownership", () => {
       ["deliveries", "data"],
       ["wait", "data"],
       ["events", "data"],
+      ["otel", "data"],
       ["tail", "data"],
       ["inspect", "data"],
       ["files", "data"],
@@ -94,7 +95,7 @@ describe("CLI host-auth resolver ownership", () => {
     const unauthenticated = new Set(["models", "providers", "tools", "runtime-sizes"]);
 
     expect([...dispatch.keys()].sort()).toEqual(CLI_VERBS.map((verb) => verb.name).sort());
-    expect([...authenticated.values()].filter((policy) => policy === "data")).toHaveLength(16);
+    expect([...authenticated.values()].filter((policy) => policy === "data")).toHaveLength(17);
     expect([...authenticated.values()].filter((policy) => policy === "control")).toHaveLength(3);
     expect([...authenticated.keys(), ...authOnly, ...unauthenticated].sort()).toEqual(
       CLI_VERBS.map((verb) => verb.name).sort()

@@ -38,9 +38,10 @@ describe("session.otel", () => {
       if (url === `${BASE_URL}/api/sessions/${SESSION_ID}`) return sessionResponse();
       requests.push(url);
       const cursor = new URL(url).searchParams.get("cursor");
-      return Response.json(cursor === null ? first : second, {
-        headers: cursor === null ? { "x-aex-next-cursor": "opaque page/2" } : undefined
-      });
+      return Response.json(
+        cursor === null ? first : second,
+        cursor === null ? { headers: { "x-aex-next-cursor": "opaque page/2" } } : undefined
+      );
     };
     const client = new Aex({ apiKey: "test-token", baseUrl: BASE_URL, fetch });
     const session = await client.sessions.open(SESSION_ID);
