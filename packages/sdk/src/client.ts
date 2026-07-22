@@ -91,12 +91,12 @@ import { File, type ZipStreamDriver } from "./file.js";
 import {
   AexRateLimitError,
   isThrottleFault,
-  parseProviderFault,
   resolveRetryConfig,
   withRetry,
   type ProviderFault,
   type RetryOptions
 } from "./retry.js";
+import { legacySessionProviderFault } from "./legacy-session-provider-fault.js";
 import { splitSecretEnv } from "./secret.js";
 import { Skill } from "./skill.js";
 import { Tool } from "./tool.js";
@@ -1175,6 +1175,7 @@ export class KeysClient {
  */
 export class Aex {
   readonly #http: HttpClient;
+  readonly #debug: DebugSink | undefined;
   /** The same fetch the HttpClient uses, threaded into direct asset uploads. */
   readonly #fetch: FetchLike | undefined;
   readonly #assetRetry: AssetUploadRetryOptions;
@@ -1219,6 +1220,11 @@ export class Aex {
     // `session.files.fetch()` intentionally returns the raw one-shot response.
     const baseFetch: FetchLike = resolved.fetch ?? ((input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]) => fetch(input, init));
     const retryingFetch = withRetry(baseFetch, resolved.retry);
+    this.#debug = resolved.debug
+      ? typeof resolved.debug === "function"
+        ? resolved.debug
+        : (line: string) => console.error(line)
+      : undefined;
     this.#assetRetry = resolved.retry === false
       ? { maxAttempts: 1 }
       : resolveRetryConfig(resolved.retry);
@@ -1229,9 +1235,7 @@ export class Aex {
       // Opt-in local diagnostics: emit a redacted per-request trace to
       // stderr. Uploads nothing. A caller wanting a custom sink can pass
       // a function instead of `true`.
-      ...(resolved.debug
-        ? { debug: typeof resolved.debug === "function" ? resolved.debug : (line: string) => console.error(line) }
-        : {})
+      ...(this.#debug ? { debug: this.#debug } : {})
     });
     this.#fetch = resolved.fetch;
     this.workspace = new WorkspaceClient(this.#http, {
@@ -1354,7 +1358,7 @@ export class Aex {
         // A turn that failed because the upstream provider throttled us surfaces
         // as a structured, non-leaky AexRateLimitError carrying the provider
         // fault, so callers can branch on `isRateLimited(err)` and replay.
-        const throttle = throttleFromSession(sessionState);
+        const throttle = throttleFromSession(sessionState, this.#debug);
         if (throttle) {
           throw new AexRateLimitError({
             status: throttle.status ?? 429,
@@ -1705,30 +1709,12 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 
 /**
  * Extract a throttle-class {@link ProviderFault} from a failed session record.
- * Reads a structured `providerFault` / `error` field first (the shape the
- * runtime is expected to emit on a throttled turn), then falls back to a
- * heuristic scan of `errorMessage`. Returns `undefined` when the failure is not
- * a throttle.
+ * Reads the contract-owned structured field. Only when that field is absent,
+ * the narrow historical adapter may recognize an exact legacy terminal.
  */
-function throttleFromSession(session: Session): ProviderFault | undefined {
-  const fault =
-    parseProviderFault((session as { readonly providerFault?: unknown }).providerFault) ??
-    parseProviderFault((session as { readonly error?: unknown }).error) ??
-    faultFromErrorMessage(typeof session.errorMessage === "string" ? session.errorMessage : undefined);
+function throttleFromSession(session: Session, debug?: DebugSink): ProviderFault | undefined {
+  const fault = session.providerFault ?? legacySessionProviderFault(session, debug);
   return fault && isThrottleFault(fault) ? fault : undefined;
-}
-
-/** Last-resort throttle detection from a free-text turn error message. */
-function faultFromErrorMessage(message: string | undefined): ProviderFault | undefined {
-  if (message === undefined || message.length === 0) return undefined;
-  const lower = message.toLowerCase();
-  if (/\b429\b|rate.?limit|too many requests/.test(lower)) {
-    return { kind: "rate_limit", message };
-  }
-  if (/\b529\b|overloaded/.test(lower)) {
-    return { kind: "overloaded", message };
-  }
-  return undefined;
 }
 
 type WorkspaceAssetPublisher = {

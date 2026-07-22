@@ -2,6 +2,7 @@ import type { SessionStatus, SessionTerminalOutcome } from "./status.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
 import type { RuntimeKind } from "./runtime-kind.js";
 import type { SessionCostProviderUsage } from "./session-cost.js";
+import type { ProviderFault } from "./provider-fault.js";
 import type {
   PlatformInlineSecrets,
   PlatformSubmission,
@@ -77,6 +78,8 @@ export interface Session {
    * on, complementing the human-readable `errorMessage`.
    */
   readonly failureClass?: string | null;
+  /** Structured, redaction-safe provider detail for the most recent failed run. */
+  readonly providerFault?: ProviderFault;
   /**
    * Content-retention lifecycle (WS4). `"active"` — the default when absent —
    * means the session's CONTENT (events, messages, files, manifest, archive) is

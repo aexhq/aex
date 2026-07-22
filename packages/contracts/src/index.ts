@@ -1,4 +1,5 @@
 export * from "./provider-support.js";
+export * from "./provider-fault.js";
 export * from "./models.js";
 export {
   SESSION_LIFECYCLE_STATUSES,

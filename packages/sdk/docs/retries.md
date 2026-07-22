@@ -74,3 +74,32 @@ After eligible transport attempts are exhausted, the SDK throws
 `AexRateLimitError`. Use `isRateLimited(error)` and inspect `status`,
 `attempts`, `retryAfterMs`, `source`, and `providerFault`. Error bodies and
 secrets are redacted.
+
+Provider failures are machine-readable on failed detail records as
+`session.providerFault` and on terminal events as
+`RUN_ERROR.data.providerFault`:
+
+```ts
+const fault = result.session.providerFault;
+if (fault?.kind === "rate_limit" || fault?.kind === "overloaded") {
+  // Apply an application-level replay policy if appropriate.
+}
+```
+
+The canonical object has exact fields `provider?`, `kind`, `status?`,
+`retryAfterMs?`, and `message?`. Known kinds are `rate_limit`, `overloaded`,
+`quota_exceeded`, `unavailable`, and `provider_error`. The SDK treats only the
+first four as throttle signals. A valid future kind is preserved but is not a
+throttle until a later SDK explicitly recognizes it; status codes and prose do
+not override the kind.
+
+For sessions created by older runtimes that do not have the field, the SDK has
+a temporary compatibility bridge for the exact historical
+`transient-provider` failure class and exact historical terminal templates.
+It does not scan arbitrary error prose. With `debug` enabled, each bridge use
+emits one redacted local line with code `legacy_provider_fault_fallback`; the
+line contains only the mapped kind and `source=session`.
+
+The bridge is eligible for removal only in a separate major release, after at
+least two minor releases and 90 days with zero observed fallback use. That
+earliest review is 2026-10-20; removal is not part of this contract change.

@@ -74,11 +74,13 @@ describe("known AexEvent payload contracts", () => {
     const failed = event("RUN_ERROR", {
       outcome: "failed",
       failureClass: "provider_permanent",
-      failureMessage: "provider refused the request"
+      failureMessage: "provider refused the request",
+      providerFault: { kind: "provider_error", status: 400 }
     });
     if (!isRunError(failed)) throw new Error("expected RUN_ERROR");
     const failureClass: string = failed.data.failureClass;
     const failureMessage: string = failed.data.failureMessage;
+    expect(failed.data.providerFault?.kind).toBe("provider_error");
     if (!isRunTerminal(failed)) throw new Error("expected a terminal");
     const terminalType: "RUN_FINISHED" | "RUN_ERROR" = failed.type;
 
@@ -144,6 +146,12 @@ describe("malformed known AexEvent handling", () => {
     ["RUN_STARTED", { turnSeq: -1 }, "data.turnSeq"],
     ["RUN_FINISHED", {}, "data.outcome"],
     ["RUN_ERROR", { outcome: "failed", failureClass: "provider_permanent" }, "data.failureMessage"],
+    ["RUN_ERROR", {
+      outcome: "failed",
+      failureClass: "transient-provider",
+      failureMessage: "provider unavailable",
+      providerFault: { kind: "rate_limit", statusCode: 429 }
+    }, "data.providerFault"],
     ["TEXT_MESSAGE_CONTENT", { text: 42 }, "data.text"],
     ["TOOL_CALL_START", { id: "call_1" }, "data.name"],
     ["TOOL_CALL_RESULT", { id: "call_1" }, "data.content"],

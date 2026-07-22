@@ -40,6 +40,7 @@
 import type { JsonValue } from "./submission.js";
 import { SESSION_TERMINAL_OUTCOMES, type SessionTerminalOutcome } from "./status.js";
 import type { RunnerEvent } from "./runner-event.js";
+import { parseProviderFault, type ProviderFault } from "./provider-fault.js";
 
 /** CloudEvents `specversion` the envelope conforms to. */
 export const AEX_EVENT_SPECVERSION = "1.0" as const;
@@ -230,6 +231,7 @@ export type AexRunErrorData = Readonly<Record<string, JsonValue>> & {
   readonly outcome: SessionTerminalOutcome;
   readonly failureClass: string;
   readonly failureMessage: string;
+  readonly providerFault?: ProviderFault;
 };
 
 /** Payload carried by a valid public assistant-text event. */
@@ -587,9 +589,17 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       if (typeof d.failureClass !== "string" || d.failureClass.length === 0) {
         return malformed("RUN_ERROR", "data.failureClass", "a non-empty string");
       }
-      return typeof d.failureMessage === "string" && d.failureMessage.length > 0
-        ? undefined
-        : malformed("RUN_ERROR", "data.failureMessage", "a non-empty string");
+      if (typeof d.failureMessage !== "string" || d.failureMessage.length === 0) {
+        return malformed("RUN_ERROR", "data.failureMessage", "a non-empty string");
+      }
+      if (Object.hasOwn(d, "providerFault")) {
+        try {
+          parseProviderFault(d.providerFault);
+        } catch {
+          return malformed("RUN_ERROR", "data.providerFault", "a canonical ProviderFault object when present");
+        }
+      }
+      return undefined;
     case "TEXT_MESSAGE_CONTENT":
       if (typeof d.text !== "string") {
         return malformed("TEXT_MESSAGE_CONTENT", "data.text", "a string");

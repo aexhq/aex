@@ -184,13 +184,17 @@ describe("retry: parseProviderFault", () => {
     expect(parseProviderFault(null)).toBeUndefined();
     expect(parseProviderFault("nope")).toBeUndefined();
     expect(parseProviderFault({ status: 200 })).toBeUndefined();
+    expect(parseProviderFault({ kind: "provider rate limit" })).toBeUndefined();
   });
 
   it("classifies throttle vs non-throttle kinds", () => {
     expect(isThrottleFault({ kind: "rate_limit" })).toBe(true);
     expect(isThrottleFault({ kind: "overloaded" })).toBe(true);
     expect(isThrottleFault({ kind: "quota_exceeded" })).toBe(true);
+    expect(isThrottleFault({ kind: "unavailable" })).toBe(true);
     expect(isThrottleFault({ kind: "provider_error" })).toBe(false);
+    expect(isThrottleFault(parseProviderFault({ kind: "rate_limit_later", status: 429, message: "rate limited" })!)).toBe(false);
+    expect(isThrottleFault(parseProviderFault({ kind: "rate-limit" })!)).toBe(false);
   });
 });
 

@@ -83,6 +83,14 @@ describe("operations.listSessions", () => {
     expect(capture.url).toBe(`${BASE}/api/sessions?limit=3&cursor=c1`);
   });
 
+  it("never exposes detail-only providerFault on SessionSummary", async () => {
+    const client = clientFor({
+      sessions: [{ ...WELL_FORMED, providerFault: { kind: "rate_limit", status: 429 } }]
+    });
+    const page = await operations.listSessions(client);
+    expect(page.sessions[0]).not.toHaveProperty("providerFault");
+  });
+
   it("rejects a legacy internal runtime token instead of exposing it publicly", async () => {
     const client = clientFor({ sessions: [{ ...WELL_FORMED, runtimeSize: "standard" }] });
     await expect(operations.listSessions(client)).rejects.toThrow(/invalid runtime/);
