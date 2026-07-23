@@ -28,12 +28,32 @@ describe("npm release publishing policy", () => {
     expect(publish.environment).toBe("npm-release");
     expect(Number(setupNode.with?.["node-version"])).toBeGreaterThanOrEqual(22);
     expect(upgradeNpm.run).toMatch(/npm@(?:1[2-9]|11\.(?:[5-9]|\d{2,}))/);
-    expect(JSON.stringify(publishStep.env ?? {})).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN/);
+    expectNoLegacyNpmAuth("workflow env", workflow.env);
+    expectNoLegacyNpmAuth("publish job env", publish.env);
+    for (const step of publish.steps ?? []) {
+      const label = step.name ?? step.uses ?? "unnamed publish step";
+      expectNoLegacyNpmAuth(`${label} env`, step.env);
+      expectNoLegacyNpmAuth(`${label} command`, step.run);
+    }
     expect(publishStep.run).toContain("npm publish");
     expect(publishStep.run).toContain("--provenance");
-    expect(publishStep.run).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|_authToken/);
   });
 });
+
+const LEGACY_NPM_AUTH_REFERENCE =
+  /(^|[^A-Za-z0-9_])(?:NPM_TOKEN|NODE_AUTH_TOKEN|_authToken)(?![A-Za-z0-9_])/;
+
+function expectNoLegacyNpmAuth(label: string, value: unknown): void {
+  const candidates = isRecord(value)
+    ? Object.entries(value).flatMap(([key, entry]) => [key, String(entry)])
+    : typeof value === "string"
+      ? [value]
+      : [];
+  expect(
+    candidates.filter((candidate) => LEGACY_NPM_AUTH_REFERENCE.test(candidate)),
+    `${label} must not reference legacy npm authentication`
+  ).toEqual([]);
+}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
