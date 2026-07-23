@@ -1,5 +1,5 @@
 /** A child reference is observable without pretending to be a resumable session. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient, type ChildSessionRef } from "../src/index.js";
 import { operations } from "../src/internal.js";
 

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { posix, relative, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { ASSET_ARCHIVE_LIMITS } from "../../packages/contracts/src/session-config.js";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");

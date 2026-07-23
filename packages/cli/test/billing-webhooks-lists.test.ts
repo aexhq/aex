@@ -6,7 +6,7 @@
  *
  * Same injected-IO style as host.test.ts: fake fetch, captured stdout/stderr.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 

@@ -3,7 +3,7 @@
  * outcome SSoT, so a new run outcome cannot be added without the session surface
  * gaining it. Runtime subset assert + a compile-time `satisfies` guard.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   SESSION_STATUSES,
   SESSION_LIFECYCLE_STATUSES,
@@ -111,7 +111,7 @@ describe("session lifecycle and run outcome vocabularies", () => {
     // @ts-expect-error - a completed run outcome cannot be used as a session lifecycle status.
     const outcomeAsLifecycle: SessionStatus = "succeeded";
 
-    expect(lifecycleAsOutcome).toBe("idle");
-    expect(outcomeAsLifecycle).toBe("succeeded");
+    expect<string>(lifecycleAsOutcome).toBe("idle");
+    expect<string>(outcomeAsLifecycle).toBe("succeeded");
   });
 });

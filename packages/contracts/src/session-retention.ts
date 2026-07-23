@@ -301,28 +301,6 @@ export class SessionRetentionRedactionError extends Error {
   }
 }
 
-export class FakeSessionDeletionManifestObjectStore implements SessionDeletionManifestObjectStore {
-  #objects = new Map<string, SessionDeletionManifestV1>();
-
-  async putSessionDeletionManifestObject(object: SessionDeletionManifestWriteObject): Promise<void> {
-    assertPublicSafeSessionRetentionPayload(object.manifest);
-    this.#objects.set(object.sessionId, cloneJson(object.manifest));
-  }
-
-  getBySessionId(sessionId: string): SessionDeletionManifestV1 | undefined {
-    return this.get(sessionId);
-  }
-
-  get(sessionId: string): SessionDeletionManifestV1 | undefined {
-    const object = this.#objects.get(sessionId);
-    return object ? cloneJson(object) : undefined;
-  }
-
-  listSessionIds(): readonly string[] {
-    return Object.freeze([...this.#objects.keys()].sort());
-  }
-}
-
 export function createSessionDeletionManifestWriter(
   store: SessionDeletionManifestObjectStore
 ): SessionDeletionManifestWriter {
@@ -761,8 +739,4 @@ function positiveInteger(value: number, field: string): number {
 
 function formatFindingPaths(findings: readonly SessionRetentionRedactionFinding[]): string {
   return findings.map((finding) => `${finding.path} (${finding.reason})`).join(", ");
-}
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

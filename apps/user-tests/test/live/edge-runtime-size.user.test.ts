@@ -20,7 +20,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -179,7 +179,12 @@ describe("edge: runtime honored, validated, and visible", () => {
             : null;
           const h = await client.sessions.open(session.id);
           await h.delete().catch(() => {});
-        } catch (e) { out.error = errShape(e); }
+        } catch (e) {
+          // Post-finish session reads must fail the child loudly; the shape
+          // still ships as evidence (the parent asserts result.error is null).
+          out.error = errShape(e);
+          process.exitCode = 1;
+        }
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "runtime-size-echo.mjs", body);

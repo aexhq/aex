@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { redactSecrets, SecretString } from "../../src/index.js";
 
 describe("secret redaction", () => {

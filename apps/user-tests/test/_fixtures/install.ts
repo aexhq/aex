@@ -12,14 +12,14 @@
  *   5. Returns paths for the install so scenarios can spawn child
  *      processes with cwd = installDir.
  *
- * Every Vitest file runs in its own isolated worker context and owns one
- * fresh install. Cleanup is the test file's responsibility (typically in
- * afterAll) and failures are surfaced as test failures. The outer
- * user-vitest runner also owns the common parent directory and fails if a
- * worker leaves residue behind.
+ * Every test file runs in its own isolated process (`bun test --isolate`)
+ * and owns one fresh install. Cleanup is the test file's responsibility
+ * (typically in afterAll) and failures are surfaced as test failures. The
+ * outer user-bun-test runner also owns the common parent directory and fails
+ * if a worker leaves residue behind.
  *
  * Bun keeps a process-external global package cache. Registry installs are
- * serialized across Vitest worker processes so parallel live smoke files do
+ * serialized across test worker processes so parallel live smoke files do
  * not race while moving the same package into that cache on Windows.
  */
 import { spawn, type SpawnOptions } from "node:child_process";
@@ -28,6 +28,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, 
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForCondition } from "@aexhq/contracts/testing";
 
 export interface InstallResult {
   /** Absolute path to the install tempdir (Bun install was run here). */
@@ -310,28 +311,49 @@ async function packCurrentSdk(): Promise<string> {
   });
 }
 
-async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
-  const startedAt = Date.now();
-  while (true) {
-    try {
-      mkdirSync(packLockDir);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - statSync(packLockDir).mtimeMs > 10 * 60_000) {
-          rmSync(packLockDir, { recursive: true, force: true });
-          continue;
+// Cross-process directory locks: mkdir is the atomic acquire, a holder that
+// died is reclaimed once the dir goes stale.
+const LOCK_STALE_MS = 10 * 60_000;
+const LOCK_DEADLINE_MS = 4 * 60_000;
+
+/**
+ * Acquire `lockDir`, polling under a hard deadline (B4: deadline-bounded
+ * condition wait via the shared test-kit helper, not a bare sleep-retry
+ * loop). Non-EEXIST mkdir failures propagate immediately.
+ */
+async function acquireLockDir(lockDir: string, timeoutMessage: string): Promise<void> {
+  try {
+    await waitForCondition(
+      () => {
+        try {
+          mkdirSync(lockDir);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         }
-      } catch {
-        // Race with lock release; retry below.
-      }
-      if (Date.now() - startedAt > 4 * 60_000) {
-        throw new Error(`user-tests: timed out waiting for local SDK pack lock at ${packLockDir}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+        try {
+          if (Date.now() - statSync(lockDir).mtimeMs > LOCK_STALE_MS) {
+            rmSync(lockDir, { recursive: true, force: true });
+          }
+        } catch {
+          // Race with the holder's release; retry on the next poll.
+        }
+        return false;
+      },
+      { deadline: LOCK_DEADLINE_MS, interval: 250, label: `lock directory ${lockDir}` }
+    );
+  } catch (error) {
+    // Keep the historical, caller-facing timeout message; predicate errors
+    // (non-EEXIST mkdir failures) pass through unchanged.
+    if (error instanceof Error && error.message.startsWith("waitForCondition timed out")) {
+      throw new Error(timeoutMessage, { cause: error });
     }
+    throw error;
   }
+}
+
+async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
+  await acquireLockDir(packLockDir, `user-tests: timed out waiting for local SDK pack lock at ${packLockDir}`);
   try {
     return await fn();
   } finally {
@@ -340,27 +362,7 @@ async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function withInstallLock<T>(fn: () => Promise<T>): Promise<T> {
-  const startedAt = Date.now();
-  while (true) {
-    try {
-      mkdirSync(installLockDir);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - statSync(installLockDir).mtimeMs > 10 * 60_000) {
-          rmSync(installLockDir, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        // Race with lock release; retry below.
-      }
-      if (Date.now() - startedAt > 4 * 60_000) {
-        throw new Error(`user-tests: timed out waiting for Bun install lock at ${installLockDir}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
+  await acquireLockDir(installLockDir, `user-tests: timed out waiting for Bun install lock at ${installLockDir}`);
   try {
     return await fn();
   } finally {

@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "bun:test";
 import {
   HttpClient,
   SESSION_RUN_PHASES,
@@ -42,11 +42,11 @@ describe("public session run taxonomy ownership", () => {
     expectTypeOf<(typeof SESSION_RUN_PHASES)[number]>().toEqualTypeOf<SessionRunPhase>();
   });
 
-  it.each(SESSION_RUN_PHASES)("normalizes the owner phase %s", async (phase) => {
+  it.each([...SESSION_RUN_PHASES])("normalizes the owner phase %s", async (phase) => {
     await expect(send(run({ phase }))).resolves.toMatchObject({ run: { phase } });
   });
 
-  it.each(SESSION_TERMINAL_OUTCOMES)("normalizes the owner outcome %s", async (outcome) => {
+  it.each([...SESSION_TERMINAL_OUTCOMES])("normalizes the owner outcome %s", async (outcome) => {
     await expect(send(run({ phase: "finished", outcome }))).resolves.toMatchObject({
       run: { phase: "finished", outcome }
     });

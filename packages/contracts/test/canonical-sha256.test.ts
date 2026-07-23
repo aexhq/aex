@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   CANONICAL_SHA256_DIGEST_PATTERN,
   INLINE_CONTENT_HASH_PATTERN,

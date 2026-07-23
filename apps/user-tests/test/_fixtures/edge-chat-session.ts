@@ -20,7 +20,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "./install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "./provider.js";
 import { formatChildFailure, redactKnownValues } from "./live-diagnostics.js";

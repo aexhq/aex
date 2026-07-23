@@ -5,7 +5,7 @@
  * CURRENT status (api contract), and the SDK surfaces it in the error message
  * so a send to a deleted session doesn't read as merely "busy".
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { AexApiError } from "../src/sdk-errors.js";
 

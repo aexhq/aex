@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "@aexhq/contracts";
 import { Aex, File } from "../../src/index.js";
 
@@ -15,7 +15,7 @@ describe("Aex asset retry policy", () => {
     const presignKeys: Array<string | null> = [];
     const presignHashes: string[] = [];
     let presignAttempts = 0;
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const fetch = mock(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.endsWith("/api/assets/presign")) {
         presignAttempts += 1;
@@ -44,7 +44,9 @@ describe("Aex asset retry policy", () => {
     });
     const file = await File.fromBytes({ name: "input.txt", bytes: inputBytes });
 
-    await expect(client.workspace.files.publish(file)).resolves.toEqual({});
+    // The stub finalizes with an empty resource record; only the retry
+    // behaviour is under test, so claim no more than "resolves to {}".
+    await expect<Promise<unknown>>(client.workspace.files.publish(file)).resolves.toEqual({});
     expect(presignAttempts).toBe(2);
     expect(presignHashes).toHaveLength(2);
     expect(CANONICAL_SHA256_DIGEST_PATTERN.test(presignHashes[0]!)).toBe(true);
@@ -54,7 +56,7 @@ describe("Aex asset retry policy", () => {
 
   it("does not retry content-addressed presign when retry is disabled", async () => {
     const presignKeys: Array<string | null> = [];
-    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       presignKeys.push(new Headers(init?.headers).get("idempotency-key"));
       throw new TypeError("fetch failed");
     });
@@ -77,7 +79,7 @@ describe("Aex asset retry policy", () => {
     [{ maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0 }, 2]
   ] as const)("applies retry=%j to direct object-storage transfers", async (retry, expectedAttempts) => {
     let putAttempts = 0;
-    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const fetch = mock(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.endsWith("/api/assets/presign")) {
         return json({

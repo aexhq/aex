@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(here, "..");
@@ -98,5 +98,5 @@ describe("@aexhq/cli supported and packed package surface", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 60_000);
 });

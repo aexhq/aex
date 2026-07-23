@@ -16,7 +16,7 @@
  *
  * It lives under test/live/providers/ — the on-demand provider suite that is
  * EXCLUDED from the default `test:user` sweep and runs only via
- * `test:user:providers` (see vitest.providers.config.ts and the manually
+ * `test:user:providers` (see scripts/user-bun-test.mjs and the manually
  * dispatched .github/workflows/live-on-demand-tests.yml, which runs every
  * optional suite in one trigger), so the per-provider matrix never piles spend
  * onto every push. It is also the live provider evidence for `doubao`
@@ -35,7 +35,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../../_fixtures/install.js";
 
 function requireEnv(name: string): string {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   DEFAULT_SESSION_TIMEOUT_MS,
   DEFAULT_RUNTIME_SIZE,
@@ -42,7 +42,7 @@ describe("runtime size presets", () => {
     ]);
   });
 
-  it.each(RUNTIME_SIZES)("%s is a valid product preset", (size) => {
+  it.each([...RUNTIME_SIZES])("%s is a valid product preset", (size) => {
     const { cpus, memoryMb } = RUNTIME_SIZE_PRESETS[size];
     expect(cpus).toBeGreaterThan(0);
     expect(memoryMb).toBeGreaterThan(0);

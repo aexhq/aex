@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, SessionStateError } from "../../src/index.js";
 
 const BASE_URL = "https://example.test";
@@ -33,7 +34,7 @@ describe("session.otel", () => {
     const requests: string[] = [];
     const first = { resourceSpans: [{ scopeSpans: [{ spans: [{ name: "invoke_agent" }] }] }] };
     const second = { resourceSpans: [{ scopeSpans: [{ spans: [{ name: "execute_tool" }] }] }] };
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       const url = String(input);
       if (url === `${BASE_URL}/api/sessions/${SESSION_ID}`) return sessionResponse();
       requests.push(url);
@@ -60,7 +61,7 @@ describe("session.otel", () => {
   it("uses the logs signal without wrapping the OTLP body", async () => {
     const requests: string[] = [];
     const body = { resourceLogs: [{ scopeLogs: [{ logRecords: [{ severityText: "INFO" }] }] }] };
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       const url = String(input);
       if (url === `${BASE_URL}/api/sessions/${SESSION_ID}`) return sessionResponse();
       requests.push(url);
@@ -77,7 +78,7 @@ describe("session.otel", () => {
   });
 
   it("rejects a repeated response-header cursor instead of looping forever", async () => {
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       const url = String(input);
       if (url === `${BASE_URL}/api/sessions/${SESSION_ID}`) return sessionResponse();
       return Response.json({ resourceSpans: [] }, { headers: { "x-aex-next-cursor": "same" } });

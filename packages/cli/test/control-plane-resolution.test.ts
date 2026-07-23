@@ -11,7 +11,7 @@
  *       the control-plane resolver picks `accountToken`, the data-plane resolver
  *       picks `apiKey`.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { resolveCommonHostFlags, resolveControlPlaneHostFlags } from "../src/host/common.js";
 import type { CliIO, StoredCliConfig } from "../src/internal.js";
 

@@ -11,7 +11,7 @@
  *   T4     usage is ALWAYS present, derived from the server's provider usage.
  *   parity finished() == start(): the same finished shape from both surfaces.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { SessionStartOptions } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 

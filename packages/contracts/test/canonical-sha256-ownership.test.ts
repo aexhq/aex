@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, relative } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import ts from "typescript";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "../src/canonical-sha256.js";
 

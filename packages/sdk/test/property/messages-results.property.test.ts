@@ -1,13 +1,15 @@
 import fc, { type Arbitrary } from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import type {
   AexEvent,
   JsonValue,
   TurnTrace,
   SessionMessage,
-  SessionMessageSender,
-  WebSocketLike
+  SessionMessageSender
 } from "@aexhq/contracts";
+import { asAexEventViews } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 import { Aex, type Message, type SessionResult, type SessionRunResult } from "../../src/index.js";
 
 interface CapturedRequest {
@@ -108,7 +110,7 @@ function captureMessagesClient(messages: readonly SessionMessage[]): {
   readonly calls: CapturedRequest[];
 } {
   const calls: CapturedRequest[] = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const call = recordCall(input, init);
     calls.push(call);
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1") {
@@ -133,7 +135,7 @@ function captureMissingMessagesClient(args: {
   readonly calls: CapturedRequest[];
 } {
   const calls: CapturedRequest[] = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const call = recordCall(input, init);
     calls.push(call);
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1") {
@@ -168,7 +170,7 @@ function captureSessionClient(firstSeq: number): {
 } {
   const calls: CapturedRequest[] = [];
   const sockets: FakeWebSocket[] = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const call = recordCall(input, init);
     calls.push(call);
     if (call.method === "POST" && call.pathname === "/api/sessions") {
@@ -209,31 +211,6 @@ function captureSessionClient(firstSeq: number): {
       return socket;
     }
   };
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.#emit("close", {});
-  }
-
-  message(event: FuzzEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 async function flush(): Promise<void> {
@@ -671,7 +648,11 @@ const resultStreamCase = fc.record({
   return { firstSeq, events: [...events, terminal] as readonly FuzzEvent[] };
 });
 
-describe("slim session messages/results properties", { timeout: 30_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces the
+// former vitest describe-level { timeout: 30_000 } (single suite spans the file).
+setDefaultTimeout(30_000);
+
+describe("slim session messages/results properties", () => {
   it("returns intuitive Message objects from the session messages endpoint", async () => {
     await fc.assert(
       fc.asyncProperty(fc.array(sessionMessage, { maxLength: 30 }), async (wireMessages) => {
@@ -704,8 +685,10 @@ describe("slim session messages/results properties", { timeout: 30_000 }, () => 
         expect(runResult.text).toBe(expectedText);
         expect(sessionSendResult.messages).toEqual(expectedMessages);
         expect(runResult.messages).toEqual(expectedMessages);
-        expect(sessionSendResult.events).toEqual(expectedEvents);
-        expect(runResult.events).toEqual(expectedEvents);
+        // The SDK yields prototype-carrying views over the same wire events;
+        // wrap the expectation identically so the types (and shapes) agree.
+        expect(sessionSendResult.events).toEqual(asAexEventViews(expectedEvents));
+        expect(runResult.events).toEqual(asAexEventViews(expectedEvents));
         expect(runResult.trace).toEqual(expectedTrace(expectedEvents));
       }),
       { numRuns: 120 }

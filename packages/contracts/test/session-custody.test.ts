@@ -1,13 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   CUSTODY_MANIFEST_SCHEMA_VERSION,
   CustodyManifestRedactionError,
-  FakeCustodyManifestObjectStore,
   buildCustodyManifest,
   createCustodyManifestWriter,
   custodyManifestObjectKey,
   scanCustodyPayloadForSensitiveValues
 } from "../src/internal.js";
+import { FakeCustodyManifestObjectStore } from "../src/testing.js";
 
 const baseSession = {
   sessionId: "session-11111111",

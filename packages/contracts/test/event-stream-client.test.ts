@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import {
   filterStream,
   isFromSource,
@@ -7,9 +7,9 @@ import {
   toAGUI,
   type AexEvent,
   type AexLiveEvent,
-  type AexStreamEvent,
-  type WebSocketLike
+  type AexStreamEvent
 } from "../src/index.js";
+import { createFakeTimers, FakeWebSocket } from "../src/testing.js";
 
 const evt = (sequence: number, type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT", source: AexEvent["source"] = "agent"): AexEvent => ({
   specversion: "1.0",
@@ -45,39 +45,6 @@ function durableSequence(event: AexStreamEvent): number {
     throw new Error("expected a durable event");
   }
   return event.sequence;
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-  readonly sent: string[] = [];
-  closed = false;
-  constructor(url: string) {
-    this.url = url;
-  }
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-  send(data: string): void {
-    this.sent.push(data);
-  }
-  close(): void {
-    this.closed = true;
-    this.#emit("close", {});
-  }
-  open(): void {
-    this.#emit("open", {});
-  }
-  message(event: AexStreamEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-  /** A keep-alive pong (or any non-event frame): proves liveness, carries no sequence. */
-  pong(data = "aex:pong"): void {
-    this.#emit("message", { data });
-  }
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 // Drain the macro/microtask queues so the generator advances to its next await.
@@ -242,46 +209,43 @@ describe("streamCoordinatorEvents — live fanout", () => {
 
 describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
   it("removes the reconnect-delay abort listener after the timer wins", async () => {
-    vi.useFakeTimers();
-    try {
-      const sockets: FakeWebSocket[] = [];
-      const controller = new AbortController();
-      const add = vi.spyOn(controller.signal, "addEventListener");
-      const remove = vi.spyOn(controller.signal, "removeEventListener");
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        reconnectDelayMs: 10,
-        signal: controller.signal,
-        fetchTicket: async () => "tkt",
-        webSocketFactory: (url) => {
-          const socket = new FakeWebSocket(url);
-          sockets.push(socket);
-          return socket;
-        }
-      });
-      const consume = (async () => {
-        for await (const event of gen) void event;
-      })();
+    const clock = createFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    const controller = new AbortController();
+    const add = spyOn(controller.signal, "addEventListener");
+    const remove = spyOn(controller.signal, "removeEventListener");
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      reconnectDelayMs: 10,
+      signal: controller.signal,
+      fetchTicket: async () => "tkt",
+      timers: clock,
+      webSocketFactory: (url) => {
+        const socket = new FakeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
+    });
+    const consume = (async () => {
+      for await (const event of gen) void event;
+    })();
 
-      await vi.advanceTimersByTimeAsync(0);
-      sockets[0]!.close();
-      await vi.advanceTimersByTimeAsync(20);
-      sockets[1]!.message(evt(0, "RUN_FINISHED"));
-      await vi.advanceTimersByTimeAsync(0);
-      await consume;
+    await clock.advanceAsync(0);
+    sockets[0]!.close();
+    await clock.advanceAsync(20);
+    sockets[1]!.message(evt(0, "RUN_FINISHED"));
+    await clock.advanceAsync(0);
+    await consume;
 
-      const abortAdds = add.mock.calls.filter(([type]) => type === "abort").length;
-      const abortRemoves = remove.mock.calls.filter(([type]) => type === "abort").length;
-      expect(abortRemoves).toBe(abortAdds);
-    } finally {
-      vi.useRealTimers();
-    }
+    const abortAdds = add.mock.calls.filter(([type]) => type === "abort").length;
+    const abortRemoves = remove.mock.calls.filter(([type]) => type === "abort").length;
+    expect(abortRemoves).toBe(abortAdds);
   });
 
   it("reconnects from lastSeq+1 with no gap and no duplicate", async () => {
     const sockets: FakeWebSocket[] = [];
-    const fetchTicket = vi.fn(async () => "tkt");
+    const fetchTicket = mock(async () => "tkt");
     const gen = streamCoordinatorEvents({
       wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
@@ -393,93 +357,89 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
 
 describe("streamCoordinatorEvents — half-open watchdog", () => {
   it("treats a silently stalled socket as dead and reconnects from the cursor", async () => {
-    vi.useFakeTimers();
-    try {
-      const sockets: FakeWebSocket[] = [];
-      const fetchTicket = vi.fn(async () => "tkt");
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        reconnectDelayMs: 10,
-        idleTimeoutMs: 1000,
-        pingIntervalMs: 0, // isolate the watchdog from the ping cadence
-        fetchTicket,
-        webSocketFactory: (url) => {
-          const w = new FakeWebSocket(url);
-          sockets.push(w);
-          return w;
-        }
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(durableSequence(e));
-      })();
+    const clock = createFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    const fetchTicket = mock(async () => "tkt");
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      reconnectDelayMs: 10,
+      idleTimeoutMs: 1000,
+      pingIntervalMs: 0, // isolate the watchdog from the ping cadence
+      fetchTicket,
+      timers: clock,
+      webSocketFactory: (url) => {
+        const w = new FakeWebSocket(url);
+        sockets.push(w);
+        return w;
+      }
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) received.push(durableSequence(e));
+    })();
 
-      await vi.advanceTimersByTimeAsync(0); // settle fetchTicket + connect
-      expect(sockets).toHaveLength(1);
-      sockets[0]!.message(evt(0));
-      await vi.advanceTimersByTimeAsync(0); // deliver seq 0 + re-arm the watchdog
+    await clock.advanceAsync(0); // settle fetchTicket + connect
+    expect(sockets).toHaveLength(1);
+    sockets[0]!.message(evt(0));
+    await clock.advanceAsync(0); // deliver seq 0 + re-arm the watchdog
 
-      // No frame at all for the whole window → presumed half-open → reconnect.
-      await vi.advanceTimersByTimeAsync(1000); // idle watchdog fires, schedules backoff
-      await vi.advanceTimersByTimeAsync(20); // backoff(10) + fresh ticket + reconnect
+    // No frame at all for the whole window → presumed half-open → reconnect.
+    await clock.advanceAsync(1000); // idle watchdog fires, schedules backoff
+    await clock.advanceAsync(20); // backoff(10) + fresh ticket + reconnect
 
-      expect(sockets).toHaveLength(2);
-      expect(sockets[0]!.closed).toBe(true);
-      // Resume strictly after the last delivered sequence, with a fresh ticket.
-      expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
-      expect(fetchTicket).toHaveBeenCalledTimes(2);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0]!.closed).toBe(true);
+    // Resume strictly after the last delivered sequence, with a fresh ticket.
+    expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
+    expect(fetchTicket).toHaveBeenCalledTimes(2);
 
-      sockets[1]!.message(evt(1, "RUN_FINISHED"));
-      await vi.advanceTimersByTimeAsync(0);
-      await consume;
-      expect(received).toEqual([0, 1]);
-    } finally {
-      vi.useRealTimers();
-    }
+    sockets[1]!.message(evt(1, "RUN_FINISHED"));
+    await clock.advanceAsync(0);
+    await consume;
+    expect(received).toEqual([0, 1]);
+    expect(clock.pendingTimerCount()).toBe(0); // a finished stream leaves no timers armed
   });
 
   it("pings on open and a pong keeps a quiet run from reconnecting", async () => {
-    vi.useFakeTimers();
-    try {
-      const sockets: FakeWebSocket[] = [];
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        reconnectDelayMs: 0,
-        idleTimeoutMs: 1000,
-        pingIntervalMs: 300,
-        fetchTicket: async () => "tkt",
-        webSocketFactory: (url) => {
-          const w = new FakeWebSocket(url);
-          sockets.push(w);
-          return w;
-        }
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(durableSequence(e));
-      })();
-
-      await vi.advanceTimersByTimeAsync(0);
-      sockets[0]!.open(); // begin the ping cadence
-
-      // 2.4s of zero events, but each ping is answered with a pong → no reconnect.
-      for (let i = 0; i < 8; i++) {
-        await vi.advanceTimersByTimeAsync(300);
-        sockets[0]!.pong();
+    const clock = createFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      reconnectDelayMs: 0,
+      idleTimeoutMs: 1000,
+      pingIntervalMs: 300,
+      fetchTicket: async () => "tkt",
+      timers: clock,
+      webSocketFactory: (url) => {
+        const w = new FakeWebSocket(url);
+        sockets.push(w);
+        return w;
       }
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) received.push(durableSequence(e));
+    })();
 
-      expect(sockets).toHaveLength(1); // never tripped the watchdog
-      expect(sockets[0]!.sent.filter((s) => s === "aex:ping").length).toBeGreaterThanOrEqual(7);
+    await clock.advanceAsync(0);
+    sockets[0]!.open(); // begin the ping cadence
 
-      sockets[0]!.message(evt(0, "RUN_FINISHED"));
-      await vi.advanceTimersByTimeAsync(0);
-      await consume;
-      expect(received).toEqual([0]);
-    } finally {
-      vi.useRealTimers();
+    // 2.4s of zero events, but each ping is answered with a pong → no reconnect.
+    for (let i = 0; i < 8; i++) {
+      await clock.advanceAsync(300);
+      sockets[0]!.pong();
     }
+
+    expect(sockets).toHaveLength(1); // never tripped the watchdog
+    expect(sockets[0]!.sent.filter((s) => s === "aex:ping").length).toBeGreaterThanOrEqual(7);
+
+    sockets[0]!.message(evt(0, "RUN_FINISHED"));
+    await clock.advanceAsync(0);
+    await consume;
+    expect(received).toEqual([0]);
+    expect(clock.pendingTimerCount()).toBe(0); // a finished stream leaves no timers armed
   });
 });
 
@@ -491,97 +451,91 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
     // delivering another event, and the client hangs forever one frame short of the
     // terminal. The quiet recheck reconnects on an event-frame gap; the replay-on-
     // connect path then reads the events table directly and recovers the terminal.
-    vi.useFakeTimers();
-    try {
-      const sockets: FakeWebSocket[] = [];
-      const fetchTicket = vi.fn(async () => "tkt");
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        reconnectDelayMs: 10,
-        idleTimeoutMs: 1000,
-        pingIntervalMs: 300,
-        eventQuietRecheckMs: 2000,
-        fetchTicket,
-        webSocketFactory: (url) => {
-          const w = new FakeWebSocket(url);
-          sockets.push(w);
-          return w;
-        }
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(durableSequence(e));
-      })();
-
-      await vi.advanceTimersByTimeAsync(0);
-      sockets[0]!.open();
-      sockets[0]!.message(evt(0));
-      await vi.advanceTimersByTimeAsync(0);
-
-      // Pongs keep the idle watchdog fed for the whole window — no event frames.
-      for (let i = 0; i < 7; i++) {
-        await vi.advanceTimersByTimeAsync(300);
-        sockets[0]!.pong();
+    const clock = createFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    const fetchTicket = mock(async () => "tkt");
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      reconnectDelayMs: 10,
+      idleTimeoutMs: 1000,
+      pingIntervalMs: 300,
+      eventQuietRecheckMs: 2000,
+      fetchTicket,
+      timers: clock,
+      webSocketFactory: (url) => {
+        const w = new FakeWebSocket(url);
+        sockets.push(w);
+        return w;
       }
-      // 2100ms of event silence has passed → the quiet recheck must have fired.
-      await vi.advanceTimersByTimeAsync(20); // backoff(10) + fresh ticket + reconnect
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) received.push(durableSequence(e));
+    })();
 
-      expect(sockets).toHaveLength(2);
-      expect(sockets[0]!.closed).toBe(true);
-      // Resume strictly after the last delivered sequence, with a fresh ticket.
-      expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
-      expect(fetchTicket).toHaveBeenCalledTimes(2);
+    await clock.advanceAsync(0);
+    sockets[0]!.open();
+    sockets[0]!.message(evt(0));
+    await clock.advanceAsync(0);
 
-      sockets[1]!.open();
-      sockets[1]!.message(evt(1, "RUN_FINISHED"));
-      await vi.advanceTimersByTimeAsync(0);
-      await consume;
-      expect(received).toEqual([0, 1]);
-    } finally {
-      vi.useRealTimers();
+    // Pongs keep the idle watchdog fed for the whole window — no event frames.
+    for (let i = 0; i < 7; i++) {
+      await clock.advanceAsync(300);
+      sockets[0]!.pong();
     }
+    // 2100ms of event silence has passed → the quiet recheck must have fired.
+    await clock.advanceAsync(20); // backoff(10) + fresh ticket + reconnect
+
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0]!.closed).toBe(true);
+    // Resume strictly after the last delivered sequence, with a fresh ticket.
+    expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
+    expect(fetchTicket).toHaveBeenCalledTimes(2);
+
+    sockets[1]!.open();
+    sockets[1]!.message(evt(1, "RUN_FINISHED"));
+    await clock.advanceAsync(0);
+    await consume;
+    expect(received).toEqual([0, 1]);
   });
 
   it("an event frame re-arms the quiet recheck — a steadily-streaming run never recycles", async () => {
-    vi.useFakeTimers();
-    try {
-      const sockets: FakeWebSocket[] = [];
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        reconnectDelayMs: 0,
-        idleTimeoutMs: 0,
-        pingIntervalMs: 0,
-        eventQuietRecheckMs: 1000,
-        fetchTicket: async () => "tkt",
-        webSocketFactory: (url) => {
-          const w = new FakeWebSocket(url);
-          sockets.push(w);
-          return w;
-        }
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(durableSequence(e));
-      })();
-
-      await vi.advanceTimersByTimeAsync(0);
-      sockets[0]!.open();
-      // Events every 600ms — each re-arms the 1000ms recheck; no reconnect.
-      for (let seq = 0; seq < 4; seq++) {
-        sockets[0]!.message(evt(seq));
-        await vi.advanceTimersByTimeAsync(600);
+    const clock = createFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      reconnectDelayMs: 0,
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0,
+      eventQuietRecheckMs: 1000,
+      fetchTicket: async () => "tkt",
+      timers: clock,
+      webSocketFactory: (url) => {
+        const w = new FakeWebSocket(url);
+        sockets.push(w);
+        return w;
       }
-      expect(sockets).toHaveLength(1);
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) received.push(durableSequence(e));
+    })();
 
-      sockets[0]!.message(evt(4, "RUN_FINISHED"));
-      await vi.advanceTimersByTimeAsync(0);
-      await consume;
-      expect(received).toEqual([0, 1, 2, 3, 4]);
-    } finally {
-      vi.useRealTimers();
+    await clock.advanceAsync(0);
+    sockets[0]!.open();
+    // Events every 600ms — each re-arms the 1000ms recheck; no reconnect.
+    for (let seq = 0; seq < 4; seq++) {
+      sockets[0]!.message(evt(seq));
+      await clock.advanceAsync(600);
     }
+    expect(sockets).toHaveLength(1);
+
+    sockets[0]!.message(evt(4, "RUN_FINISHED"));
+    await clock.advanceAsync(0);
+    await consume;
+    expect(received).toEqual([0, 1, 2, 3, 4]);
   });
 });
 

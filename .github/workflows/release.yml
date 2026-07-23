@@ -371,8 +371,9 @@ jobs:
     # publishes to a pre-release dist-tag, then this proves the PUBLISHED
     # @aexhq/sdk + CLI install from npm and run end-to-end: a DeepSeek SDK
     # round-trip on the managed runtime and the installed CLI
-    # (apps/user-tests/vitest.smoke.config.ts). The platform deploy gate then
-    # runs its complete release suite against this same published sdk_version
+    # (the `--smoke` suite of apps/user-tests/scripts/user-bun-test.mjs, file
+    # list in test/_fixtures/smoke-suite.ts). The platform deploy gate then runs
+    # its complete release suite against this same published sdk_version
     # across dev + prd: every discovered gating SDK file plus the isolated
     # admission, heavy-session, and tool-fuzz lanes. Promotion requires both
     # planes to pass; release.yml does not rerun those scenarios.
@@ -426,7 +427,7 @@ jobs:
           # exercise the SDK + CLI end-to-end. The full behavioral matrix runs
           # in the platform deploy-dev.yml and promote-prd.yml gates.
           set +e
-          bun run test:user:smoke -- --reporter=default --reporter=json --outputFile.json="$REPORT" > "$RAW_LOG" 2>&1
+          bun run test:user:smoke -- --reporter=junit --reporter-outfile="$REPORT" > "$RAW_LOG" 2>&1
           test_status=$?
           node scripts/cicd/assert-no-skips.mjs "$REPORT" >> "$RAW_LOG" 2>&1
           assertion_status=$?

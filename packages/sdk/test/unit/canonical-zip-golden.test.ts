@@ -10,7 +10,7 @@
  *   Canonical B — the pinned-chunk streaming deflate MUST be internally
  *   deterministic (same input → same bytes, independent of input chunking).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { zipSync, unzipSync } from "fflate";
 import { createHash } from "node:crypto";
 import {

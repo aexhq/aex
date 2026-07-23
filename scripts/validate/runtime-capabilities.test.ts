@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "../../packages/contracts/src/canonical-sha256.js";
 // @ts-expect-error The JavaScript CI boundary is intentionally exercised directly.
 import { parseRuntimeCapabilities } from "../cicd/runtime-capabilities.mjs";

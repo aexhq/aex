@@ -1,5 +1,5 @@
 import { resolve as resolvePath } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { PROVIDERS } from "@aexhq/contracts";
 import { executeCli } from "../src/main.js";
 import { makeIo } from "./support.js";
@@ -79,7 +79,7 @@ const cases: readonly ValidationCase[] = [
 ];
 
 describe("aex start validation provenance", () => {
-  it.each(cases)("maps $label failures to the exact command flag, envelope, and exit", async (row) => {
+  it.each([...cases])("maps $label failures to the exact command flag, envelope, and exit", async (row) => {
     const cap = makeIo({
       argv: ["start", ...row.argv, ...(row.appendCommon === false ? [] : COMMON)],
       ...(row.files ? { files: { ...row.files } } : {})

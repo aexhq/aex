@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   buildEdgeListSearchChildScript,
   EDGE_SESSION_DEBUG_BODY
@@ -19,7 +19,12 @@ describe("edge list/search child script generation", () => {
     const path = join(dir, "edge-finish-consistency.mjs");
     try {
       writeFileSync(path, script);
-      const checked = spawnSync(process.execPath, ["--check", path], { encoding: "utf8" });
+      // `node --check` is a resolution-free syntax + redeclaration check; bun's
+      // `--check` also resolves imports, which can only succeed inside a real
+      // install tree. Pin node explicitly (already a repo-wide requirement:
+      // the CI no-skips gates run through `node`).
+      const checked = spawnSync("node", ["--check", path], { encoding: "utf8" });
+      expect(checked.error).toBeUndefined();
       expect(checked.stderr).toBe("");
       expect(checked.status).toBe(0);
     } finally {

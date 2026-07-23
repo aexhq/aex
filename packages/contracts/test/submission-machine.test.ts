@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // `parseSessionMachine` / `SessionMachine` ride the `export * from "./submission.js"`
 // re-export (like parseSessionLimits); pin them via the internal subpath.
 import { parseSessionMachine, parseSessionSubmissionRequest, type SessionMachine } from "../src/internal.js";

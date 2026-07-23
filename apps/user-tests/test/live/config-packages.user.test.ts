@@ -11,7 +11,7 @@
  * (the managed-runtime half ALSO requires the runner image to be rebuilt, since package
  * pre-install now happens in the managed runtime before the user turn starts).
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { observedSessionText, requireUserEnv, runDiagnostics, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 

@@ -9,7 +9,7 @@
  * capture is capability-gated (some Windows hosts forbid symlink creation). These
  * are CONDITIONAL assertions, never silent skips.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, mkdir, writeFile, chmod, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

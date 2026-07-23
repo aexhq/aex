@@ -4,7 +4,7 @@
  * sessions fully offline; exercises the real two-pass hash → presign → parts →
  * finalize flow in `uploadAssetMultipart`.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { ASSET_ARCHIVE_LIMITS } from "@aexhq/contracts";
 import { uploadAssetMultipart, type AssetsHttpClient, type AssetFetch, type ZipStreamDriver } from "../../src/asset-upload.js";

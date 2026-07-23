@@ -12,7 +12,7 @@
  * The URL is intentionally hardcoded: it IS the public contract under test.
  * If AEX_DEFAULT_BASE_URL ever changes, update this test in the same commit.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const DEFAULT_BASE_URL = "https://api.aex.dev";
 

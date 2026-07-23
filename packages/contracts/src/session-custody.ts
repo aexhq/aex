@@ -283,28 +283,6 @@ export class CustodyManifestRedactionError extends Error {
   }
 }
 
-export class FakeCustodyManifestObjectStore implements CustodyManifestObjectStore {
-  #objects = new Map<string, CustodyManifestV1>();
-
-  async putCustodyManifestObject(object: CustodyManifestWriteObject): Promise<void> {
-    assertPublicSafeCustodyPayload(object.manifest);
-    this.#objects.set(object.key, cloneJson(object.manifest));
-  }
-
-  getBySessionId(sessionId: string): CustodyManifestV1 | undefined {
-    return this.get(custodyManifestObjectKey(sessionId));
-  }
-
-  get(key: string): CustodyManifestV1 | undefined {
-    const object = this.#objects.get(key);
-    return object ? cloneJson(object) : undefined;
-  }
-
-  listKeys(): readonly string[] {
-    return Object.freeze([...this.#objects.keys()].sort());
-  }
-}
-
 export function custodyManifestObjectKey(sessionId: string): string {
   assertSafeIdentifier(sessionId, "sessionId");
   return `sessions/${sessionId}/${CUSTODY_MANIFEST_SESSION_REL_PATH}`;
@@ -606,8 +584,4 @@ function nonNegativeInteger(value: number, field: string): number {
 
 function formatFindingPaths(findings: readonly CustodyRedactionFinding[]): string {
   return findings.map((finding) => `${finding.path} (${finding.reason})`).join(", ");
-}
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

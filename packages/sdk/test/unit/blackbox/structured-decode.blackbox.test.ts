@@ -7,7 +7,7 @@
  * hallucinated object silently passed through. Both branches asserted through the
  * public `aex.start<T>()` surface.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { FakePlatform } from "./fake-platform.js";
 
 interface Sentiment {

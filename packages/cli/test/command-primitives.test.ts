@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createFakeTimers } from "@aexhq/contracts/testing";
 import type { CliIO } from "../src/internal.js";
 import {
   parsePositiveLimit,
   pollingDelay,
-  portableBasename
+  portableBasename,
+  type PollingDelayTimer
 } from "../src/host/command-primitives.js";
 
 const hostSource = (name: string): string =>
@@ -89,32 +91,38 @@ describe("parsePositiveLimit", () => {
 });
 
 describe("pollingDelay", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
+  /** Fake timer host that also records every scheduled delay, replacing the old global setTimeout spy. */
+  function recordingTimers() {
+    const clock = createFakeTimers();
+    const scheduled: number[] = [];
+    const timers: PollingDelayTimer = {
+      setTimeout: (callback, delayMs) => {
+        scheduled.push(delayMs);
+        return clock.setTimeout(callback, delayMs);
+      }
+    };
+    return { clock, scheduled, timers };
+  }
 
   it("resolves only after the exact requested delay", async () => {
-    vi.useFakeTimers();
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const { clock, scheduled, timers } = recordingTimers();
     let resolved = false;
-    const pending = pollingDelay(25).then(() => { resolved = true; });
+    const pending = pollingDelay(25, timers).then(() => { resolved = true; });
 
-    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 25);
-    await vi.advanceTimersByTimeAsync(24);
+    expect(scheduled).toEqual([25]);
+    await clock.advanceAsync(24);
     expect(resolved).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
+    await clock.advanceAsync(1);
     await pending;
     expect(resolved).toBe(true);
   });
 
   it("passes negative delay values through to the host timer", async () => {
-    vi.useFakeTimers();
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
-    const pending = pollingDelay(-25);
+    const { clock, scheduled, timers } = recordingTimers();
+    const pending = pollingDelay(-25, timers);
 
-    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), -25);
-    await vi.runAllTimersAsync();
+    expect(scheduled).toEqual([-25]);
+    clock.runAll();
     await pending;
   });
 });

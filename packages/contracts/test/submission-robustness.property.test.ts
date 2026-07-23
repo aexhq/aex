@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { parseSessionSubmissionRequest, type PlatformSessionSubmissionRequest } from "../src/internal.js";
 
 /**
@@ -27,7 +27,12 @@ function makeValid(): PlatformSessionSubmissionRequest {
   };
 }
 
-describe("parseSessionSubmissionRequest robustness (property)", { timeout: 0 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces
+// the former vitest describe-level { timeout: 0 } (no limit for the
+// property suites below).
+setDefaultTimeout(0);
+
+describe("parseSessionSubmissionRequest robustness (property)", () => {
   it("is TOTAL: arbitrary input either parses to a valid request or throws an Error", () => {
     fc.assert(
       fc.property(fc.anything(), (input) => {

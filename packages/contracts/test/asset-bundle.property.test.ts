@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { unzipSync } from "fflate";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   bundleSkillFiles,
   bundleToolFiles,
@@ -49,8 +49,10 @@ describe("canonical asset bundle property", () => {
         const skillArchive = unzipSync(skill.zip);
         const toolArchive = unzipSync(tool.zip);
         for (const [path, content] of common) {
-          expect(skillArchive[path]).toEqual(bytes(content));
-          expect(toolArchive[path]).toEqual(bytes(content));
+          // expect<...>: fflate types entries as Uint8Array<ArrayBuffer>; bytes()
+          // returns the default ArrayBufferLike flavour. Same runtime shape.
+          expect<Uint8Array | undefined>(skillArchive[path]).toEqual(bytes(content));
+          expect<Uint8Array | undefined>(toolArchive[path]).toEqual(bytes(content));
         }
       }
     ), { numRuns: 100 });

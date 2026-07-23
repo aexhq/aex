@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "bun:test";
 
 /**
  * LIVE adversarial-input fuzz of the deployed dev API (the public HTTP contract
@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it } from "vitest";
  *
  * Fails fast unless AEX_API_URL + AEX_API_KEY are set. Run on demand via
  *   bun run --filter @aexhq/user-tests test:user:fuzz
- * (excluded from the default `test:user` sweep — see vitest.config.ts).
+ * (excluded from the default `test:user` sweep — see scripts/user-bun-test.mjs).
  *
  * COST SAFETY: the only POST /api/sessions bodies sent are ones that are GUARANTEED
  * to be rejected BEFORE any run is dispatched (invalid JSON, non-object JSON,

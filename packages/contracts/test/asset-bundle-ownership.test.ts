@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import ts from "typescript";
 
 const sourceText = readFileSync(new URL("../src/asset-bundle.ts", import.meta.url), "utf8");

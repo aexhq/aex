@@ -5,7 +5,7 @@
  * is flag > stored > default; and with neither flag nor stored token the verb
  * fails with the actionable "run `aex login`" message.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import { AEX_INDEX_PATH, type CliIO, type StoredCliConfig } from "../src/internal.js";
 import { canonicalWhoami } from "./canonical-whoami.js";

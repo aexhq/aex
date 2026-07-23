@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, SessionConfigValidationError, type SessionResult } from "../../src/index.js";
-import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
+import type { AexEvent } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
+import {
+  unvalidatedCreateOptions,
+  unvalidatedSendOptions,
+  unvalidatedStartControls,
+  unvalidatedStartOptions
+} from "../helpers/unvalidated.js";
 
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -63,33 +71,6 @@ function event(sequence: number, patch: Partial<AexEvent> = {}): AexEvent {
   };
 }
 
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-  closed = false;
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.closed = true;
-    this.#emit("close", {});
-  }
-
-  message(evt: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(evt) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
-}
-
 const flush = async (n = 4): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
 };
@@ -112,7 +93,7 @@ function makeClient(options: {
 } {
   const calls: CapturedRequest[] = [];
   const sockets: FakeWebSocket[] = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const headers: Record<string, string> = {};
     if (init?.headers instanceof Headers) {
@@ -436,22 +417,22 @@ describe("Aex sessions", () => {
 
   it("rejects the old idleSuspendAfter override", async () => {
     const { client } = makeClient();
-    const error = await captureRejected(() => client.sessions.create({
+    const error = await captureRejected(() => client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
-        overrides: { idleSuspendAfter: "10m" } as never,
+        overrides: { idleSuspendAfter: "10m" },
         apiKeys: { anthropic: "sk-ant" }
-      }));
+      })));
     expectConfigError(error, "overrides.idleSuspendAfter");
   });
 
   it("rejects legacy one-shot prompt input before any HTTP request", async () => {
     const { client, calls } = makeClient();
 
-    const error = await captureRejected(() => client.start({
+    const error = await captureRejected(() => client.start(unvalidatedStartOptions({
         model: "claude-haiku-4-5",
         prompt: "legacy one-shot input",
         apiKeys: { anthropic: "sk-ant" }
-      } as never));
+      })));
     expectConfigError(error, "prompt");
     expect(calls).toHaveLength(0);
   });
@@ -459,12 +440,12 @@ describe("Aex sessions", () => {
   it("rejects unknown one-shot options before any HTTP request", async () => {
     const { client, calls } = makeClient();
 
-    const error = await captureRejected(() => client.start({
+    const error = await captureRejected(() => client.start(unvalidatedStartOptions({
         model: "claude-haiku-4-5",
         message: "hello",
         apiKeys: { anthropic: "sk-ant" },
         totallyUnknownOption: { nope: true }
-      } as never));
+      })));
     expectExactConfigError(
       error,
       "totallyUnknownOption",
@@ -483,7 +464,7 @@ describe("Aex sessions", () => {
 
     const controlError = await captureRejected(() => client.start(
       input,
-      { futureControl: true } as never
+      unvalidatedStartControls({ futureControl: true })
     ));
     expectExactConfigError(
       controlError,
@@ -493,10 +474,10 @@ describe("Aex sessions", () => {
     expect(calls).toHaveLength(0);
     expect(sockets).toHaveLength(0);
 
-    const streamError = await captureRejected(() => client.start({
+    const streamError = await captureRejected(() => client.start(unvalidatedStartOptions({
       ...input,
-      stream: { idempotencyKey: "wire-only-here" } as never
-    }));
+      stream: { idempotencyKey: "wire-only-here" }
+    })));
     expectExactConfigError(
       streamError,
       "stream.idempotencyKey",
@@ -510,20 +491,20 @@ describe("Aex sessions", () => {
     const { client, calls } = makeClient();
 
     const invalidMessages = [
-      () => client.start({
+      () => client.start(unvalidatedStartOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-ant" }
-      } as never),
+      })),
       () => client.start({ model: "claude-haiku-4-5", message: "", apiKeys: { anthropic: "sk-ant" } }),
       () => client.start({ model: "claude-haiku-4-5", message: "  \n\t ", apiKeys: { anthropic: "sk-ant" } }),
       () => client.start({
         model: "claude-haiku-4-5",
-        message: ["ok", ""] as never,
+        message: ["ok", ""],
         apiKeys: { anthropic: "sk-ant" }
       }),
       () => client.start({
         model: "claude-haiku-4-5",
-        message: ["  ", "\n"] as never,
+        message: ["  ", "\n"],
         apiKeys: { anthropic: "sk-ant" }
       })
     ];
@@ -542,7 +523,7 @@ describe("Aex sessions", () => {
     calls.length = 0;
 
     for (const input of ["", "  \n\t ", [], ["ok", ""], ["  ", "\n"]] as const) {
-      expectConfigError(captureThrown(() => session.messages.send(input as never)), "input");
+      expectConfigError(captureThrown(() => session.messages.send(input)), "input");
     }
     expect(() => session.messages.send(["keep formatting", "  \n"])).not.toThrow();
     expect(calls).toHaveLength(0);
@@ -556,13 +537,13 @@ describe("Aex sessions", () => {
       apiKeys: { anthropic: "sk-ant" }
     });
 
-    expectConfigError(captureThrown(() => session.messages.send("continue", { signal } as never)), "signal");
-    const error = await captureRejected(() => client.start({
+    expectConfigError(captureThrown(() => session.messages.send("continue", unvalidatedSendOptions({ signal }))), "signal");
+    const error = await captureRejected(() => client.start(unvalidatedStartOptions({
         model: "claude-haiku-4-5",
         message: "continue",
         apiKeys: { anthropic: "sk-ant" },
-        stream: { signal } as never
-      }));
+        stream: { signal }
+      })));
     expectConfigError(error, "stream.signal");
   });
 
@@ -574,7 +555,7 @@ describe("Aex sessions", () => {
     });
     calls.length = 0;
 
-    expectConfigError(captureThrown(() => session.messages.send("continue", { from: 0 } as never)), "from");
+    expectConfigError(captureThrown(() => session.messages.send("continue", unvalidatedSendOptions({ from: 0 }))), "from");
     expect(calls).toHaveLength(0);
   });
 
@@ -586,7 +567,7 @@ describe("Aex sessions", () => {
     });
     calls.length = 0;
 
-    const error = captureThrown(() => session.messages.send("continue", { futureSend: true } as never));
+    const error = captureThrown(() => session.messages.send("continue", unvalidatedSendOptions({ futureSend: true })));
     expectExactConfigError(
       error,
       "futureSend",

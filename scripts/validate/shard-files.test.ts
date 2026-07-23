@@ -1,8 +1,11 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+// @ts-expect-error JavaScript CI gate helper is consumed directly.
+import { listJunitTestcases } from "../cicd/junit-report.mjs";
 import { EDGE_CHAT_SESSION_SHARDS } from "../../apps/user-tests/test/_fixtures/edge-chat-session-manifest.js";
 import {
   buildFileMatrix,
@@ -77,7 +80,7 @@ describe("shard-files duration-balanced bin packing", () => {
     for (const file of files) {
       const entries = matrix.filter((entry) => entry.file === file);
       if (RUNTIME_PAIRED_FILES.has(file)) {
-        expect(entries.map((entry) => entry.runtimeKind)).toEqual(runtimeKinds);
+        expect(entries.map((entry) => entry.runtimeKind)).toEqual([...runtimeKinds]);
         for (const entry of entries) {
           expect(entry.parityCells).toHaveLength(3);
           expect(entry.parityCells.every((cell) => cell.runtime === entry.runtimeKind)).toBe(true);
@@ -133,32 +136,65 @@ describe("shard-files duration-balanced bin packing", () => {
     }
   });
 
-  it("collects exactly one registered scenario from every chat-session shard", () => {
+  it("collects at least one registered test from every chat-session shard and nothing else", () => {
+    // Dry collection under the REAL runner: `bun test -t <never-matching>`
+    // loads every shard file, registers its describe/it tree, runs NO test and
+    // NO hooks (no install, no live spend), exits nonzero with "matched 0
+    // tests", and still writes a junit report listing every collected test as
+    // <skipped/> under its source file. A shard file that stops registering
+    // tests simply vanishes from the report and fails the set equality below —
+    // the same dead-shard signal `bun x vitest list` used to give.
     const shards = Object.values(EDGE_CHAT_SESSION_SHARDS);
-    const output = execFileSync(
-      "bun",
-      ["x", "vitest", "list", "--config", "vitest.config.ts", ...shards.map(({ file }) => file), "--json"],
-      {
-        cwd: userTestsRoot,
-        encoding: "utf8",
-        // This starts a nested Vitest CLI. Bound a hung process without applying
-        // the outer runner's unit-test timeout to cold CLI startup.
-        timeout: SHARD_COLLECTION_PROCESS_TIMEOUT_MS,
-        env: {
-          ...process.env,
-          AEX_API_URL: "https://example.invalid",
-          AEX_API_KEY: "test-api-key",
-          DEEPSEEK_API_KEY: "test-provider-key",
-          AEX_USER_TEST_RUNTIME_KIND: "container"
+    const neverMatching = "AEX_SHARD_DRY_COLLECTION_NEVER_MATCHES_98f2c1";
+    const reportDir = mkdtempSync(join(tmpdir(), "aex-shard-collection-"));
+    const reportPath = join(reportDir, "collection-junit.xml");
+    try {
+      const result = spawnSync(
+        "bun" in process.versions ? process.execPath : "bun",
+        [
+          "test",
+          ...shards.map(({ file }) => file),
+          "-t",
+          neverMatching,
+          "--reporter=junit",
+          `--reporter-outfile=${reportPath}`
+        ],
+        {
+          cwd: userTestsRoot,
+          encoding: "utf8",
+          // This starts a nested bun test CLI. Bound a hung process without
+          // applying the outer runner's unit-test timeout to cold CLI startup.
+          timeout: SHARD_COLLECTION_PROCESS_TIMEOUT_MS,
+          env: {
+            ...process.env,
+            AEX_API_URL: "https://example.invalid",
+            AEX_API_KEY: "test-api-key",
+            DEEPSEEK_API_KEY: "test-provider-key",
+            AEX_USER_TEST_RUNTIME_KIND: "container"
+          }
         }
-      }
-    );
-    const collected = JSON.parse(output) as Array<{ readonly file: string; readonly name: string }>;
-    const collectedFiles = collected
-      .map(({ file }) => relative(userTestsRoot, file).replaceAll("\\", "/"))
-      .sort();
+      );
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
 
-    expect(collectedFiles).toEqual(shards.map(({ file }) => file).sort());
+      // The only acceptable nonzero outcome is the dry-collection one; a load
+      // error in a shard file must fail here, not masquerade as collection.
+      expect(output).toMatch(/matched 0 tests/);
+      expect(existsSync(reportPath), output).toBe(true);
+
+      const testcases = listJunitTestcases(readFileSync(reportPath, "utf8")) as Array<{
+        readonly file: string;
+        readonly fullName: string;
+        readonly status: string;
+      }>;
+      expect(testcases.length).toBeGreaterThanOrEqual(shards.length);
+      for (const testcase of testcases) {
+        expect(testcase.status, testcase.fullName).toBe("skipped");
+      }
+      const collectedFiles = [...new Set(testcases.map(({ file }) => file.replaceAll("\\", "/")))].sort();
+      expect(collectedFiles).toEqual(shards.map(({ file }) => file).sort());
+    } finally {
+      rmSync(reportDir, { recursive: true, force: true });
+    }
   }, SHARD_COLLECTION_PROCESS_TIMEOUT_MS + 5_000);
 
   it("partitions the real collected suite completely and deterministically", () => {

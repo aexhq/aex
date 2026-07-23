@@ -5,7 +5,7 @@
  * the transport already wrapped the failure in an `AexNetworkError` —
  * annotates the existing message instead of double-wrapping.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { AexNetworkError } from "@aexhq/contracts";
 import { withRetry } from "../../src/retry.js";
 

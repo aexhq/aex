@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   AEX_EVENT_SPECVERSION,
   MalformedAexEventError,
@@ -136,7 +136,7 @@ describe("known AexEvent payload contracts", () => {
     const classified = classifyAexEvent(raw);
     expect(classified.kind).toBe("known");
     if (classified.kind !== "known") throw new Error("expected known");
-    expect(classified.event).toBe(raw);
+    expect<AexEvent>(classified.event).toBe(raw);
     expect(knownPayloadFact(raw)).toBe("hello");
   });
 });

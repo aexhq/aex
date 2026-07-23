@@ -19,7 +19,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -236,7 +236,14 @@ describe("live hosted - session webhooks edge cases", () => {
         }
 
         let events = [];
-        try { events = await session.events.list(); } catch (e) { events = []; }
+        try {
+          events = await session.events.list();
+        } catch (e) {
+          // Without the event log the secret-leak scan below is vacuous —
+          // fail the child loudly instead of silently passing the leak check.
+          events = [];
+          process.exitCode = 1;
+        }
         const serialized = JSON.stringify({ deliveries, events });
         const leakedWhsec = serialized.includes("whsec_");
         const leakedProviderKey = providerKey.length > 0 && serialized.includes(providerKey);
@@ -255,7 +262,7 @@ describe("live hosted - session webhooks edge cases", () => {
           leakedWhsec,
           leakedProviderKey
         }));
-        process.exit(0);
+        process.exit(process.exitCode ?? 0);
       `;
       const out = await runScript<{
         sessionId: string;
@@ -314,15 +321,15 @@ describe("live hosted - session webhooks edge cases", () => {
           `webhook delivery does not fire for the SDK one-shot session flow on the dev plane`
       ).toBe(true);
 
-      // Reached only after the sawRow assertion passes (vitest aborts on the first
+      // Reached only after the sawRow assertion passes (the runner aborts on the first
       // failure), i.e. only when a delivery row exists. Asserted unconditionally so
       // no expect is gated by an `if`. Validates the row shape and that
       // redeliver(real) either succeeds or fails cleanly (4xx).
       expect(out.firstDelivery, "delivery row present but firstDelivery null").not.toBeNull();
       expect(typeof out.firstDelivery!.id).toBe("string");
       expect(out.firstDelivery!.eventType).toBe("run.finished");
-      expect(out.firstDelivery!.runId).toBe(out.runId);
-      expect(out.firstDelivery!.turnSeq).toBe(out.turnSeq);
+      expect(out.firstDelivery!.runId).toBe(out.runId!);
+      expect(out.firstDelivery!.turnSeq).toBe(out.turnSeq!);
       expect(out.redeliverReal, "redeliverReal missing despite a delivery row").not.toBeNull();
       const rr = out.redeliverReal!;
       expect(
@@ -345,15 +352,31 @@ describe("live hosted - session webhooks edge cases", () => {
         const out = [];
         for (const t of targets) {
           const rec = { name: t.name, url: t.url };
-          try {
-            const sessionResult = await client.start({
-              provider: PROVIDER,
-              model,
-              message: "SessionFile verbatim: ssrf-probe",
-              apiKeys: { [PROVIDER]: providerKey },
-              webhook: { url: t.url },
-              idempotencyKey: "user-test-wh-ssrf-" + t.name + "-" + Date.now()
-            }, { timeoutMs: 5 * 60 * 1000 });
+          // Negative probe: submit-time rejection is an EXPECTED outcome and its
+          // shape is asserted by the parent. Only the submit itself may reject
+          // into the record; the post-submit ledger reads below sit OUTSIDE any
+          // catch so a read failure crashes the child loudly instead of being
+          // misfiled as a submit rejection.
+          const submitted = await client.start({
+            provider: PROVIDER,
+            model,
+            message: "SessionFile verbatim: ssrf-probe",
+            apiKeys: { [PROVIDER]: providerKey },
+            webhook: { url: t.url },
+            idempotencyKey: "user-test-wh-ssrf-" + t.name + "-" + Date.now()
+          }, { timeoutMs: 5 * 60 * 1000 }).then(
+            (sessionResult) => ({ sessionResult, error: null }),
+            (e) => ({ sessionResult: null, error: e })
+          );
+          if (submitted.error) {
+            const e = submitted.error;
+            rec.submitRejected = true;
+            rec.code = (e && typeof e.code === "string") ? e.code : undefined;
+            rec.errorName = (e && typeof e.name === "string") ? e.name : undefined;
+            rec.status = (e && typeof e.status === "number") ? e.status : undefined;
+            rec.message = String((e && e.message) || e).slice(0, 400);
+          } else {
+            const sessionResult = submitted.sessionResult;
             rec.submitRejected = false;
             rec.runOk = sessionResult.ok;
             const session = await client.sessions.open(sessionResult.sessionId);
@@ -367,12 +390,6 @@ describe("live hosted - session webhooks edge cases", () => {
             }
             rec.deliveryCount = Array.isArray(deliveries) ? deliveries.length : 0;
             rec.firstDelivery = (Array.isArray(deliveries) && deliveries[0]) ? deliveries[0] : null;
-          } catch (e) {
-            rec.submitRejected = true;
-            rec.code = (e && typeof e.code === "string") ? e.code : undefined;
-            rec.errorName = (e && typeof e.name === "string") ? e.name : undefined;
-            rec.status = (e && typeof e.status === "number") ? e.status : undefined;
-            rec.message = String((e && e.message) || e).slice(0, 400);
           }
           out.push(rec);
         }

@@ -5,7 +5,7 @@
  * silent bad name.
  */
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { SKILL_NAME_PATTERN, SKILL_RESERVED_NAMES, Skill } from "../../src/index.js";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,7 +41,11 @@ const messyName = fc.oneof(
   fc.string({ unit: "binary", maxLength: 12 })
 );
 
-describe("Skill name derivation — never a silent bad name", { timeout: 30_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces the
+// former vitest describe-level { timeout: 30_000 } (single suite spans the file).
+setDefaultTimeout(30_000);
+
+describe("Skill name derivation — never a silent bad name", () => {
   it("explicit { name } either yields a good name or throws (fromContent)", async () => {
     await fc.assert(
       fc.asyncProperty(messyName, async (name) => {

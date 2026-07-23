@@ -5,7 +5,8 @@
  * auto-derives `dev-api.aex.dev`. A non-self-describing account PAT (`aexu_…`)
  * is NOT plane-routable, so with no baseUrl it defaults to the prd host.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { AEX_DEFAULT_BASE_URL, formatApiKey, PLANE_BASE_URLS } from "@aexhq/contracts";
 import { Aex, CredentialValidationError } from "../../src/index.js";
 
@@ -34,16 +35,16 @@ const whoami = {
 
 describe("constructor plane guard (WS11)", () => {
   it("throws on a dev key pointed at the prd host, making ZERO fetch calls", () => {
-    const fetch = vi.fn(async () => new Response("{}"));
-    expect(() => new Aex(devKey, { baseUrl: PLANE_BASE_URLS.prd, fetch: fetch as unknown as typeof globalThis.fetch })).toThrow(
+    const fetch = mock(async () => new Response("{}"));
+    expect(() => new Aex(devKey, { baseUrl: PLANE_BASE_URLS.prd, fetch })).toThrow(
       CredentialValidationError
     );
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it("throws on a prd key pointed at the dev host, making ZERO fetch calls", () => {
-    const fetch = vi.fn(async () => new Response("{}"));
-    expect(() => new Aex(prdKey, { baseUrl: PLANE_BASE_URLS.dev, fetch: fetch as unknown as typeof globalThis.fetch })).toThrow(
+    const fetch = mock(async () => new Response("{}"));
+    expect(() => new Aex(prdKey, { baseUrl: PLANE_BASE_URLS.dev, fetch })).toThrow(
       CredentialValidationError
     );
     expect(fetch).not.toHaveBeenCalled();
@@ -51,7 +52,7 @@ describe("constructor plane guard (WS11)", () => {
 
   it("a prd key with no baseUrl auto-routes to api.aex.dev", async () => {
     const seen: string[] = [];
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
       return new Response(JSON.stringify(whoami), { status: 200, headers: { "content-type": "application/json" } });
     };
@@ -62,7 +63,7 @@ describe("constructor plane guard (WS11)", () => {
 
   it("a dev key with no baseUrl auto-routes to dev-api.aex.dev", async () => {
     const seen: string[] = [];
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
       return new Response(JSON.stringify(whoami), { status: 200, headers: { "content-type": "application/json" } });
     };
@@ -84,7 +85,7 @@ describe("constructor plane guard (WS11)", () => {
     // the HttpClient default (prd) applies. Pins the SDK-layer behavior that,
     // until now, was only exercised through the CLI's control-plane resolver.
     const seen: string[] = [];
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
       return new Response(JSON.stringify(whoami), { status: 200, headers: { "content-type": "application/json" } });
     };

@@ -23,7 +23,9 @@
  * {@link mapStream} with {@link toAGUI}, on top of this stream.
  *
  * The WebSocket is injectable so the SDK/CLI use the global `WebSocket`
- * (Bun and Node 22+ ship it; no dependency) and tests drive a fake.
+ * (Bun and Node 22+ ship it; no dependency) and tests drive a fake. The timers
+ * are injectable the same way ({@link TimerPort}) so the watchdog/backoff
+ * clocks are deterministic under test.
  */
 
 import {
@@ -43,6 +45,20 @@ export interface WebSocketLike {
   send?(data: string): void;
 }
 export type WebSocketFactory = (url: string) => WebSocketLike;
+
+/**
+ * The four host timer functions the stream client schedules on. Injectable so
+ * tests drive the watchdog/ping/backoff timers deterministically without
+ * swapping globals; defaults to the host's own timers. Handles are opaque:
+ * whatever `setTimeout`/`setInterval` return is what the matching clear
+ * receives.
+ */
+export interface TimerPort {
+  setTimeout(callback: () => void, delayMs: number): unknown;
+  clearTimeout(handle: unknown): void;
+  setInterval(callback: () => void, delayMs: number): unknown;
+  clearInterval(handle: unknown): void;
+}
 
 export interface CoordinatorStreamOptions {
   /** Base subscribe URL, e.g. `wss://coordinator/sessions/<id>/subscribe`. */
@@ -89,6 +105,11 @@ export interface CoordinatorStreamOptions {
    * 90s. Set 0 to disable.
    */
   readonly eventQuietRecheckMs?: number;
+  /**
+   * Injected timer functions for the idle watchdog, event-quiet recheck,
+   * keep-alive ping, and reconnect backoff. Default: the host's own timers.
+   */
+  readonly timers?: TimerPort;
 }
 
 /** An open event narrowed only to a run-terminal discriminant, not a validated payload. */
@@ -124,6 +145,13 @@ const DEFAULT_PING_INTERVAL_MS = 15_000;
 const DEFAULT_EVENT_QUIET_RECHECK_MS = 90_000;
 /** Recent best-effort frames retained across reconnects for duplicate suppression. */
 const MAX_SEEN_LIVE_IDS = 4096;
+/** Host timers, resolved at call time so environment-level fakes still apply. */
+const HOST_TIMERS: TimerPort = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  setInterval: (callback, delayMs) => setInterval(callback, delayMs),
+  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>)
+};
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
@@ -136,6 +164,7 @@ export async function* streamCoordinatorEvents(
   const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
   const eventQuietRecheckMs = opts.eventQuietRecheckMs ?? DEFAULT_EVENT_QUIET_RECHECK_MS;
+  const timerPort = opts.timers ?? HOST_TIMERS;
   let cursor = (opts.from ?? 0) - 1;
   let attempts = 0;
   let done = false;
@@ -176,17 +205,17 @@ export async function* streamCoordinatorEvents(
     };
     const waitForWake = (timeoutMs?: number): Promise<void> =>
       new Promise<void>((resolve) => {
-        let timer: ReturnType<typeof setTimeout> | null = null;
+        let timer: unknown = null;
         const finish = (): void => {
           if (timer !== null) {
-            clearTimeout(timer);
+            timerPort.clearTimeout(timer);
             timer = null;
           }
           if (resolveNext === finish) resolveNext = null;
           resolve();
         };
         resolveNext = finish;
-        if (typeof timeoutMs === "number") timer = setTimeout(finish, timeoutMs);
+        if (typeof timeoutMs === "number") timer = timerPort.setTimeout(finish, timeoutMs);
       });
     const takeNextPending = (): AexStreamEvent => {
       const first = pending[0]!;
@@ -212,20 +241,20 @@ export async function* streamCoordinatorEvents(
       return pending.shift()!;
     };
 
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let pingTimer: ReturnType<typeof setInterval> | null = null;
-    let quietTimer: ReturnType<typeof setTimeout> | null = null;
+    let idleTimer: unknown = null;
+    let pingTimer: unknown = null;
+    let quietTimer: unknown = null;
     const stopTimers = (): void => {
       if (idleTimer !== null) {
-        clearTimeout(idleTimer);
+        timerPort.clearTimeout(idleTimer);
         idleTimer = null;
       }
       if (pingTimer !== null) {
-        clearInterval(pingTimer);
+        timerPort.clearInterval(pingTimer);
         pingTimer = null;
       }
       if (quietTimer !== null) {
-        clearTimeout(quietTimer);
+        timerPort.clearTimeout(quietTimer);
         quietTimer = null;
       }
     };
@@ -233,8 +262,8 @@ export async function* streamCoordinatorEvents(
     // → close it and let the loop fall through to reconnect (resume from cursor).
     const armIdle = (): void => {
       if (idleTimeoutMs <= 0) return;
-      if (idleTimer !== null) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
+      if (idleTimer !== null) timerPort.clearTimeout(idleTimer);
+      idleTimer = timerPort.setTimeout(() => {
         idleTimer = null;
         if (closed) return;
         closed = true;
@@ -247,8 +276,8 @@ export async function* streamCoordinatorEvents(
     // cursor) — self-heals a dead server-side subscription a pong can't expose.
     const armQuiet = (): void => {
       if (eventQuietRecheckMs <= 0) return;
-      if (quietTimer !== null) clearTimeout(quietTimer);
-      quietTimer = setTimeout(() => {
+      if (quietTimer !== null) timerPort.clearTimeout(quietTimer);
+      quietTimer = timerPort.setTimeout(() => {
         quietTimer = null;
         if (closed) return;
         closed = true;
@@ -269,7 +298,7 @@ export async function* streamCoordinatorEvents(
         }
       }
       if (pingIntervalMs > 0 && typeof ws.send === "function") {
-        pingTimer = setInterval(() => {
+        pingTimer = timerPort.setInterval(() => {
           try {
             ws.send!(COORDINATOR_PING);
           } catch {
@@ -379,7 +408,7 @@ export async function* streamCoordinatorEvents(
         `[aex] event stream disconnected (${disconnectReason || "unknown"}); reconnecting attempt ${attempts} from seq ${cursor + 1}`
       );
     }
-    await sleep(reconnectDelayMs, opts.signal);
+    await sleep(reconnectDelayMs, timerPort, opts.signal);
   }
 }
 
@@ -430,13 +459,13 @@ function closeQuietly(ws: WebSocketLike): void {
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+function sleep(ms: number, timerPort: TimerPort, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
     const onAbort = (): void => {
-      clearTimeout(timer);
+      timerPort.clearTimeout(timer);
       resolve();
     };
-    const timer = setTimeout(() => {
+    const timer = timerPort.setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
       resolve();
     }, ms);

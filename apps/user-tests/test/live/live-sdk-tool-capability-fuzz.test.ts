@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import fc from "fast-check";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   getBunCommand,
   installAex,
@@ -413,7 +413,7 @@ afterAll(() => {
 });
 
 describe("live installed SDK tool capability fuzz", () => {
-  it.each(FILE_CASES)(
+  it.each([...FILE_CASES])(
     "seeded file/navigation case $id covers read/write/edit/grep/glob/head/tail",
     async (testCase) => {
       const sourceLines = [...testCase.lines];
@@ -489,7 +489,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
     16 * 60_000
   );
 
-  it.each(PROCESS_CASES)(
+  it.each([...PROCESS_CASES])(
     "seeded process/state case $id covers bash/code_execution/todo_write/wait/git",
     async (testCase) => {
       const bashMarker = `bash_${testCase.commitWord}`;
@@ -559,7 +559,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
     16 * 60_000
   );
 
-  it.each(BACKGROUND_CASES)(
+  it.each([...BACKGROUND_CASES])(
     "seeded background case $id covers bash background/output/kill",
     async (testCase) => {
       const prompt = [
@@ -600,7 +600,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
     16 * 60_000
   );
 
-  it.each(WEB_CASES)(
+  it.each([...WEB_CASES])(
     "seeded web case $id covers web_fetch extraction and web_search result bounds",
     async (testCase) => {
       const prompt = [
@@ -641,7 +641,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
     16 * 60_000
   );
 
-  it.each(SUBAGENT_CASES)(
+  it.each([...SUBAGENT_CASES])(
     "seeded subagent case $id covers async spawn and subagent_result collection",
     async (testCase) => {
       const childFile = `${testCase.marker}.txt`;
@@ -688,7 +688,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
     20 * 60_000
   );
 
-  it.each(CUSTOM_CASES)(
+  it.each([...CUSTOM_CASES])(
     "seeded custom-tool case $id covers schemas, context, result forms, errors, and redaction",
     async (testCase) => {
       const customSecret = `custom-secret-${testCase.id}-${testCase.text}-${testCase.count}`;

@@ -8,6 +8,7 @@
  * (mechanical test in Phase 9 enforces this against the built bundle).
  */
 import type {
+  FetchLike,
   WebSocketLike
 } from "@aexhq/contracts";
 
@@ -30,7 +31,7 @@ export interface CliIO {
   /** Read exact bytes for opaque file attachments. Required by `start --file`. */
   readonly readFileBytes?: (path: string) => Promise<Uint8Array>;
   readonly writeFile: (path: string, data: Uint8Array) => Promise<void>;
-  readonly fetchImpl: typeof fetch;
+  readonly fetchImpl: FetchLike;
   readonly stdout: (chunk: string) => void;
   readonly stderr: (chunk: string) => void;
   readonly exit: (code: number) => void;

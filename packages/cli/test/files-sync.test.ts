@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeFilesSyncCmd } from "../src/files-sync.js";
 import type { CliIO, SessionFilesSyncFileEntry } from "../src/internal.js";
 
@@ -22,7 +22,7 @@ function makeIo(opts: {
     writeFile: async () => {
       throw new Error("not used");
     },
-    fetchImpl: (async () => new Response("{}")) as typeof fetch,
+    fetchImpl: async () => new Response("{}"),
     cwd: () => "/tmp",
     stdout: (chunk) => {
       state.stdout += chunk;

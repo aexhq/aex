@@ -21,7 +21,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -225,7 +225,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const finalFromFollow = [...runLines]
           .reverse()
           .find((l) => l["id"] === sessionId && typeof l["status"] === "string");
-        expect(SESSION_READY, runDiag).toContain(finalFromFollow?.["status"]);
+        expect(SESSION_READY, runDiag).toContain(String(finalFromFollow?.["status"]));
 
         const id = sessionId as string;
 
@@ -234,7 +234,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         expect(status.exitCode, diag("aex status", status)).toBe(0);
         const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
         expect(statusDoc["id"], diag("aex status", status)).toBe(id);
-        expect(SESSION_READY, diag("aex status", status)).toContain(statusDoc["status"]);
+        expect(SESSION_READY, diag("aex status", status)).toContain(String(statusDoc["status"]));
         const observedRuntime = statusDoc["runtime"];
         expect(observedRuntime, diag("aex status", status)).toBeTypeOf("object");
         expect((observedRuntime as Record<string, unknown>)["kind"], diag("aex status", status)).toBe(runtimeKind);

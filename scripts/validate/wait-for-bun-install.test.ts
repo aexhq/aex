@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // @ts-expect-error JavaScript CI policy helper is validated directly.
 import { classifyRetryableInstallFailure } from "../cicd/wait-for-bun-install.mjs";
 

@@ -1,5 +1,6 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import {
   BUILTIN_TOOL_NAMES,
   SUPPORTED_MODELS,
@@ -343,7 +344,7 @@ const missingProviderKey = providerChoice.chain((choice) => {
 
 function captureClient(): CaptureHarness {
   const calls: CapturedRequest[] = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const url = requestUrl(input);
     const method = (init?.method ?? "GET").toString();
     const body = parseBody(init?.body);
@@ -367,7 +368,7 @@ function captureClient(): CaptureHarness {
   };
 }
 
-function requestUrl(input: Parameters<typeof fetch>[0]): string {
+function requestUrl(input: Parameters<FetchLike>[0]): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
@@ -542,7 +543,11 @@ function minimalValidOptions(): SessionCreateOptions {
   };
 }
 
-describe("session create inputs (property)", { timeout: 30_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces the
+// former vitest describe-level { timeout: 30_000 } (single suite spans the file).
+setDefaultTimeout(30_000);
+
+describe("session create inputs (property)", () => {
   it("posts rich valid sessions.create options as parseable session submissions", async () => {
     await fc.assert(
       fc.asyncProperty(richValidCase, async (testCase) => {

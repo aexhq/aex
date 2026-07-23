@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { AexApiError, AexNetworkError, type FetchLike } from "@aexhq/contracts";
 import {
   AexRateLimitError,

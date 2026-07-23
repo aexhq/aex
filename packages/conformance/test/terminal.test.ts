@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { expectTerminalEvent } from "../src/terminal.js";
 
 const finished = {
-  type: "RUN_FINISHED",
+  // Literal type keeps the fixture assignable to TerminalEvent: bun:test's
+  // toBe(expected) is typed against the received TerminalEvent, unlike vitest's.
+  type: "RUN_FINISHED" as const,
   data: {
     outcome: "succeeded",
     checkpoint: { checkpointId: "cp_1" },

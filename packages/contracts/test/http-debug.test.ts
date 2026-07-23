@@ -8,7 +8,7 @@
  *   - without a sink, nothing is emitted;
  *   - the sink fires on error responses too (so a failing call is traceable).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { AexApiError } from "../src/sdk-errors.js";
 

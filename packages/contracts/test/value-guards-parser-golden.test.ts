@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { whoami } from "../src/operations.js";
 import { validateRunnerEventBatch, RUNNER_EVENT_VERSION } from "../src/runner-event.js";

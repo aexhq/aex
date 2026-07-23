@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { PassThrough } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   containsSecretLikeValue,
   createRedactingStream,
@@ -230,7 +230,9 @@ describe("createRedactingStream — stream-before-disk", () => {
   });
 });
 
-describe("property: generated high-entropy tokens always redact", { timeout: 0 }, () => {
+describe("property: generated high-entropy tokens always redact", () => {
+  // Trailing timeout 0 = no limit, replacing the former vitest describe-level
+  // { timeout: 0 } (bun's describe takes no options object).
   it("never leaks a >=24-char high-entropy base64url token", () => {
     fc.assert(
       fc.property(
@@ -246,5 +248,5 @@ describe("property: generated high-entropy tokens always redact", { timeout: 0 }
       ),
       { numRuns: 500 }
     );
-  });
+  }, 0);
 });

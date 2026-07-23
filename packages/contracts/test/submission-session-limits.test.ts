@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // Reachability check: parseSessionLimits + SessionLimits are NOT on the public
 // index export list by name; they ride the `export * from "./submission.js"`
 // re-export and are pulled by the platform-only `@aexhq/contracts/internal`

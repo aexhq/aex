@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const generatedRoots = [
@@ -55,7 +55,7 @@ function jsDocComment(statement: ts.Statement, tagName: string): string | undefi
 }
 
 describe("generated AssetRef public API", () => {
-  it.each(generatedRoots)("keeps one implementation and its compatibility declaration in %s", (root) => {
+  it.each([...generatedRoots])("keeps one implementation and its compatibility declaration in %s", (root) => {
     const declarationPath = resolve(root, "session-config.d.ts");
     const declarationSource = sourceFile(declarationPath);
 
@@ -113,6 +113,11 @@ describe("generated AssetRef public API", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(repoRoot, "packages/contracts/package.json"), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
-    expect(Object.keys(packageJson.exports ?? {})).toEqual([".", "./internal", "./subagent-runtime"]);
+    expect(Object.keys(packageJson.exports ?? {})).toEqual([
+      ".",
+      "./internal",
+      "./subagent-runtime",
+      "./testing"
+    ]);
   });
 });

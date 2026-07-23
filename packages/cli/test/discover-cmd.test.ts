@@ -3,7 +3,7 @@
  * contracts SSoT. No token, no network; human table by default, raw array under
  * `--json`.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   ASSET_ARCHIVE_LIMITS,
   MCP_SERVER_NAME_PATTERN,

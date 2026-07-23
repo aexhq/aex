@@ -1,4 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "test", "vitest.config.ts"]
+  "compilerOptions": {
+    // Explicit per-package pin of the shared test-runner types (matches
+    // tsconfig.base.json; dedup is a later cleanup).
+    "types": ["node", "bun"]
+  },
+  "include": ["src", "test"]
 }

@@ -4,7 +4,7 @@
  * right subclass with apiCode + requestId + cause, and keeps unrelated 409s
  * generic through an exhaustive switch over AexApiErrorCode.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   apiErrorFromResponse,
   apiErrorKindForCode,

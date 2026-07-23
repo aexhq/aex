@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   SessionConfigValidationError
 } from "../../src/index.js";
@@ -39,8 +39,10 @@ import type {
   StartSessionOptions as ClientStartSessionOptions
 } from "../../src/client.js";
 
+// Type-only: a value import of a missing export is a hard runtime SyntaxError
+// under bun; the runtime absence is proven below via dynamic import.
 // @ts-expect-error The validation adapter is a package-private implementation detail.
-import { validatedSessionConfig } from "../../src/index.js";
+import type { validatedSessionConfig } from "../../src/index.js";
 // @ts-expect-error Diagnostic policy is not part of the supported SDK type surface.
 import type { SessionConfigDiagnosticPolicy } from "../../src/index.js";
 // @ts-expect-error Exact option-key proofs are private validation machinery.
@@ -48,7 +50,7 @@ import type { ExactKeySet } from "../../src/index.js";
 // @ts-expect-error The aggregate equality proof is private validation machinery.
 import type { SessionOptionKeyAssertions } from "../../src/index.js";
 // @ts-expect-error The start-options validator is not a supported SDK export.
-import { assertStartSessionOptions } from "../../src/index.js";
+import type { assertStartSessionOptions } from "../../src/index.js";
 
 // @ts-expect-error Raw platform submission envelopes are not SDK input types.
 import type { PlatformSessionSubmissionRequest } from "../../src/index.js";
@@ -87,11 +89,9 @@ type RemovedSurface =
 
 void (undefined as unknown as ReturnSurface);
 void (undefined as unknown as RemovedSurface);
-void validatedSessionConfig;
 void (undefined as unknown as SessionConfigDiagnosticPolicy);
 void (undefined as unknown as ExactKeySet<object, readonly []>);
 void (undefined as unknown as SessionOptionKeyAssertions);
-void assertStartSessionOptions;
 
 const legacyValidationError = new SessionConfigValidationError("invalid", { field: "runtime.size" });
 const diagnosticValidationError = new SessionConfigValidationError(

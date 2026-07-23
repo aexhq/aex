@@ -184,8 +184,13 @@ function bodyContainsThrow(node) {
 // Rule: no-disabled-tests
 //
 // Blocks `it.skip`, `test.skip`, `describe.skip`, `*.skipIf`, `*.runIf`,
-// `xit`, and `xdescribe`. Selected tests must run; runtime conditionals belong
-// in non-gating on-demand suites, not in the test body or declaration.
+// `xit`, and `xdescribe`, plus the bun-only aliases `*.if` (bun's spelling
+// of `runIf`) and `*.todoIf` (conditional `todo`). Selected tests must run;
+// runtime conditionals belong in non-gating on-demand suites, not in the
+// test body or declaration.
+//
+// Deliberately ALLOWED: `*.failing` — it runs the body and asserts it
+// fails (erroring if it passes), so it is an assertion, not a skip.
 // ---------------------------------------------------------------------------
 const noDisabledTests = {
   meta: {
@@ -211,7 +216,11 @@ const noDisabledTests = {
           (callee.property.name === "skip" ||
             callee.property.name === "skipIf" ||
             callee.property.name === "runIf" ||
-            callee.property.name === "todo")
+            callee.property.name === "todo" ||
+            // bun-only aliases: `.if` == `.runIf`, `.todoIf` == conditional
+            // `.todo`. (`.failing` stays allowed — it asserts failure.)
+            callee.property.name === "if" ||
+            callee.property.name === "todoIf")
         ) {
           context.report({ node, messageId: "disabled", data: { name: `${callee.object.name}.${callee.property.name}` } });
         }

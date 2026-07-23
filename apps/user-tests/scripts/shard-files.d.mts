@@ -17,6 +17,13 @@ export interface FileMatrixEntry {
   sessionSlots: number;
 }
 
+export const LIVE_TEST_SHARD_CONFIG: {
+  readonly excludedFiles: readonly string[];
+  readonly excludedDirectories: readonly string[];
+  readonly sessionSlotOverrides: Readonly<Record<string, number>>;
+  readonly runtimePairedFiles: readonly string[];
+};
+
 export const RUNTIME_PAIRED_FILES: ReadonlySet<string>;
 
 export function collectTestFiles(root?: string): string[];

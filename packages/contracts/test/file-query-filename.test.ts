@@ -2,7 +2,7 @@
  * Session file selectors accept `string | RegExp`, and the shared matcher never
  * passes a RegExp into a string-only path.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { SessionFileQuery } from "../src/index.js";
 import { operations } from "../src/internal.js";
 

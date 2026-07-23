@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 function listedFile(id: string, contents: string, filename = "result.txt") {
@@ -88,7 +89,7 @@ function clientFor(
   files: readonly ReturnType<typeof listedFile>[]
 ): { readonly client: Aex; readonly calls: string[] } {
   const calls: string[] = [];
-  const fetch: typeof globalThis.fetch = async (input) => {
+  const fetch: FetchLike = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     calls.push(url);
     if (url.endsWith("/api/sessions/session-1")) {

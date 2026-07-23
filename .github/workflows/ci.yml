@@ -36,7 +36,7 @@ jobs:
       - name: Require platform token
         if: ${{ env.HAS_PLATFORM_TOKEN != 'true' }}
         run: |
-          echo "::error::PLATFORM_REPO_TOKEN is missing or empty, so the contract parity gate cannot run. Restore the PAT; this gate must not be silently disarmed."
+          echo "::error::PLATFORM_REPO_TOKEN is missing or empty (HAS_PLATFORM_TOKEN=$HAS_PLATFORM_TOKEN), so the contract parity gate cannot run. Restore the PAT; this gate must not be silently disarmed."
           exit 1
 
       - name: Checkout platform (for contract parity)

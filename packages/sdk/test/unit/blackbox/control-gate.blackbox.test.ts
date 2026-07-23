@@ -7,7 +7,7 @@
  * reached the server (the route was POSTed) AND that the returned session moved to
  * the expected state.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { SessionHandle } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 

@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, McpServer, SessionConfigValidationError, type WorkspaceToolRef } from "../../src/index.js";
+import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
 
 interface Call {
   readonly url: string;
@@ -10,7 +12,7 @@ interface Call {
 
 function harness() {
   const calls: Call[] = [];
-  const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+  const fetch: FetchLike = mock(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
     calls.push({ url, method: init?.method ?? "GET", headers: new Headers(init?.headers), body });
@@ -164,11 +166,11 @@ describe("aex.sessions.create", () => {
   for (const field of ["tools", "skills", "files", "agentsMd"] as const) {
     it(`rejects the legacy ${field} field rather than ignoring it`, async () => {
       const { client, calls } = harness();
-      await expect(client.sessions.create({
+      await expect(client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-test" },
         [field]: []
-      } as never)).rejects.toThrow(new RegExp(`${field} is not a supported option`));
+      }))).rejects.toThrow(new RegExp(`${field} is not a supported option`));
       expect(calls).toHaveLength(0);
     });
   }

@@ -24,7 +24,8 @@
  *   POST /api/sessions/:id/{suspend,cancel,resume,approve,deny,request-approval}
  *   GET  /api/sessions/:id/children              subagent lineage
  */
-import type { AexEvent, AexLiveEvent, AexStreamEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
+import type { AexEvent, AexLiveEvent, FetchLike, JsonValue } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 import { Aex } from "../../../src/index.js";
 import { SessionHandle } from "../../../src/client.js";
 import type { SessionResult, SessionInput, SessionStartOptions } from "../../../src/index.js";
@@ -99,41 +100,6 @@ function evt(sessionId: string, sequence: number, type: AexEvent["type"], data: 
     sequence,
     data
   };
-}
-
-/** A minimal in-memory WebSocket matching the SDK's `WebSocketLike` contract. */
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly sessionId: string;
-  driven = false;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-
-  constructor(url: string) {
-    this.url = url;
-    // The coordinator URL carries `?ticket=&from=` query params — strip them so
-    // the last path segment is the bare session id.
-    this.sessionId = (url.split("?")[0] ?? url).split("/").pop() ?? "";
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  removeEventListener(): void {
-    /* no-op for the fake */
-  }
-
-  close(): void {
-    this.#emit("close", {});
-  }
-
-  message(event: AexStreamEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 export interface FakePlatformOptions {
@@ -311,7 +277,7 @@ export class FakePlatform {
     this.#scriptedErrors.push(error);
   }
 
-  readonly #fetch: typeof globalThis.fetch = async (input, init) => {
+  readonly #fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toString().toUpperCase();
     const path = url.replace(/^https?:\/\/[^/]+/, "");

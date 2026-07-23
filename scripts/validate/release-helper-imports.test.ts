@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 describe("release helper module imports", () => {
-  it("loads the canary version helper through Vitest", async () => {
+  it("loads the canary version helper through the test runner", async () => {
     // @ts-expect-error JavaScript release helper is validated directly.
     const helper = await import("../cicd/canary-version.mjs");
 
@@ -9,7 +9,7 @@ describe("release helper module imports", () => {
     expect(helper.applySdkVersion).toBeTypeOf("function");
   });
 
-  it("loads the monotonic promotion helper through Vitest", async () => {
+  it("loads the monotonic promotion helper through the test runner", async () => {
     // @ts-expect-error JavaScript release helper is validated directly.
     const helper = await import("../cicd/assert-monotonic-promotion.mjs");
 

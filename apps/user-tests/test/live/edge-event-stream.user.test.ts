@@ -23,7 +23,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -151,7 +151,9 @@ async function emit(obj) {
   // Give any pending unhandled rejection a tick to surface before we report.
   await new Promise((r) => setTimeout(r, 250));
   process.stdout.write(JSON.stringify({ ...obj, unhandled: __unhandled }));
-  process.exit(0);
+  // A case body that latched a failure (process.exitCode = 1) must exit
+  // nonzero even though the evidence JSON was emitted.
+  process.exit(process.exitCode ?? 0);
 }
 
 async function emitChildFailure(stage, error) {
@@ -702,7 +704,10 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         }
         clearTimeout(g);
       } catch (e) {
+        // A failed post-run replay read must fail the child loudly — with an
+        // empty replaySeqs the no-loss comparison below passes vacuously.
         replayError = errorText(e);
+        process.exitCode = 1;
       }
 
       // The chaos stream comes from send(), which starts at the TURN cursor, while
@@ -724,6 +729,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         replayError,
         chaosMin,
         replayCount: replaySeqs.length,
+        replayError,
         missingCount: missing.length,
         missingSample: missing.slice(0, 10)
       });

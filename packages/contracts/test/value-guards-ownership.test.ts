@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const consumers = ["submission.ts", "runner-event.ts", "operations.ts", "provider-fault.ts"] as const;
 

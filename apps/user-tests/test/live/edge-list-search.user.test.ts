@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   buildEdgeListSearchChildScript,
   EDGE_SESSION_DEBUG_BODY
@@ -201,12 +201,10 @@ describe("edge: finished consistency and session listing", () => {
         const future = await client.sessions.list({ since: new Date(Date.now() + 60_000).toISOString(), limit: 10 });
         const invalid = [];
         for (const query of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, { status: "succeeded" }, { since: "yesterday" }]) {
-          try {
-            await client.sessions.list(query);
-            invalid.push("resolved");
-          } catch (error) {
-            invalid.push(error?.name ?? "Error");
-          }
+          // Negative probe: rejection is the EXPECTED outcome and the parent
+          // asserts the exact error-name list (a silent resolve surfaces as
+          // "resolved" and fails the assertion) — nothing is suppressed here.
+          invalid.push(await client.sessions.list(query).then(() => "resolved", (error) => error?.name ?? "Error"));
         }
 
         printSafe({

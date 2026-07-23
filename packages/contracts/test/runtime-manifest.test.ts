@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { buildRuntimeManifest, runtimePaths } from "../src/index.js";
 
 describe("buildRuntimeManifest", () => {

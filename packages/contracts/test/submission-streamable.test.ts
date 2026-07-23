@@ -3,7 +3,7 @@
  * fails CLOSED at parse (hard reject, no silent downgrade) via the shared
  * STREAMABLE_SHAPES model.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   STREAMABLE_SHAPES,
   isStreamableProvider,

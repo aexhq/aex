@@ -3,7 +3,7 @@
  * that the streaming framer never diverges from `zipSync`, and that streaming the
  * bytes through a running hash equals hashing the whole buffer.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import fc from "fast-check";
 import { zipSync } from "fflate";
 import { createHash } from "node:crypto";
@@ -65,51 +65,64 @@ async function collect(sources: readonly ZipEntrySource[]): Promise<Uint8Array> 
 }
 
 describe("canonical-zip property", () => {
-  it("frameCanonicalZipSync(m) === zipSync(m) for arbitrary bundles", { timeout: 0 }, () => {
-    fc.assert(
-      fc.property(bundleArb, (entries) => {
-        expect(sha(frameCanonicalZipSync(entries))).toBe(sha(zipSyncOrdered(entries)));
-      }),
-      { numRuns: 300 }
-    );
-  });
+  // Trailing timeout 0 = no limit (bun, like vitest, disables the timer at 0).
+  it(
+    "frameCanonicalZipSync(m) === zipSync(m) for arbitrary bundles",
+    () => {
+      fc.assert(
+        fc.property(bundleArb, (entries) => {
+          expect(sha(frameCanonicalZipSync(entries))).toBe(sha(zipSyncOrdered(entries)));
+        }),
+        { numRuns: 300 }
+      );
+    },
+    0
+  );
 
-  it("streamed framer === in-memory framer for arbitrary bundles", { timeout: 30_000 }, async () => {
-    await fc.assert(
-      fc.asyncProperty(bundleArb, async (entries) => {
-        const sources: ZipEntrySource[] = entries.map(([name, bytes]) => ({
-          name,
-          size: bytes.length,
-          read: () => bytes
-        }));
-        const streamed = await collect(sources);
-        expect(sha(streamed)).toBe(sha(frameCanonicalZipSync(entries)));
-      }),
-      { numRuns: 150 }
-    );
-  });
+  it(
+    "streamed framer === in-memory framer for arbitrary bundles",
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(bundleArb, async (entries) => {
+          const sources: ZipEntrySource[] = entries.map(([name, bytes]) => ({
+            name,
+            size: bytes.length,
+            read: () => bytes
+          }));
+          const streamed = await collect(sources);
+          expect(sha(streamed)).toBe(sha(frameCanonicalZipSync(entries)));
+        }),
+        { numRuns: 150 }
+      );
+    },
+    30_000
+  );
 
-  it("streamed running-hash === one-shot hash of the whole zip, over random chunkings", { timeout: 30_000 }, async () => {
-    await fc.assert(
-      fc.asyncProperty(bundleArb, fc.integer({ min: 1, max: 997 }), async (entries, chunkStep) => {
-        const sources: ZipEntrySource[] = entries.map(([name, bytes]) => ({
-          name,
-          size: bytes.length,
-          read: () => bytes
-        }));
-        // One-shot: hash the whole assembled buffer.
-        const whole = await collect(sources);
-        const oneShot = sha(whole);
-        // Streamed: feed a running hash re-chunked at an arbitrary boundary.
-        const h = createHash("sha256");
-        await streamBundleZip(sources, (c) => {
-          for (let off = 0; off < c.length; off += chunkStep) {
-            h.update(c.subarray(off, Math.min(off + chunkStep, c.length)));
-          }
-        });
-        expect(h.digest("hex")).toBe(oneShot);
-      }),
-      { numRuns: 100 }
-    );
-  });
+  it(
+    "streamed running-hash === one-shot hash of the whole zip, over random chunkings",
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(bundleArb, fc.integer({ min: 1, max: 997 }), async (entries, chunkStep) => {
+          const sources: ZipEntrySource[] = entries.map(([name, bytes]) => ({
+            name,
+            size: bytes.length,
+            read: () => bytes
+          }));
+          // One-shot: hash the whole assembled buffer.
+          const whole = await collect(sources);
+          const oneShot = sha(whole);
+          // Streamed: feed a running hash re-chunked at an arbitrary boundary.
+          const h = createHash("sha256");
+          await streamBundleZip(sources, (c) => {
+            for (let off = 0; off < c.length; off += chunkStep) {
+              h.update(c.subarray(off, Math.min(off + chunkStep, c.length)));
+            }
+          });
+          expect(h.digest("hex")).toBe(oneShot);
+        }),
+        { numRuns: 100 }
+      );
+    },
+    30_000
+  );
 });

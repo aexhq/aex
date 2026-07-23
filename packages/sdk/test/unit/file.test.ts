@@ -9,7 +9,7 @@
  *   - the storage slug (`ref.name`) is decoupled from the on-disk filename;
  *   - an ordinary filename (with `.`/`_`) is accepted by `fromBytes`.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile, mkdir, truncate } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

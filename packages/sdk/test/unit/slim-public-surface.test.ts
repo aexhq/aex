@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 
 const removedRootExports = [
   "AgentExecutor",
@@ -77,9 +78,9 @@ describe("slim launch root SDK surface", () => {
   it("constructs Aex with an API key string and optional client options", async () => {
     const { Aex } = await import("../../src/index.js");
     const AexCtor = Aex as unknown as {
-      new (apiKey: string, options?: { readonly baseUrl?: string; readonly fetch?: typeof fetch }): unknown;
+      new (apiKey: string, options?: { readonly baseUrl?: string; readonly fetch?: FetchLike }): unknown;
     };
-    const fetchFake: typeof fetch = async () =>
+    const fetchFake: FetchLike = async () =>
       new Response("{}", {
         headers: { "content-type": "application/json" }
       });

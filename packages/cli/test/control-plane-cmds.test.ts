@@ -4,7 +4,7 @@
  * an explicit `--api-key` OR a stored `accountToken` (device-flow login), never
  * a key derived from a self-describing workspace token.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import type { CliIO, StoredCliConfig } from "../src/internal.js";
 

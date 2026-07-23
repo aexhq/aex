@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // @ts-expect-error JS helper is validated directly.
 import { buildPublicReleaseManifest, validatePlatformValidationManifest, validatePublicReleaseManifest } from "../cicd/release-manifest.mjs";
 

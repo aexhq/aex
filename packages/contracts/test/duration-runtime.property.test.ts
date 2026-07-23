@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import {
   MAX_SESSION_TIMEOUT_MS,
   MIN_SESSION_TIMEOUT_MS,
@@ -27,7 +27,12 @@ const num = fc.oneof(
 const unit = fc.constantFrom("ms", "s", "m", "h", "");
 const validDuration = fc.tuple(num, unit).map(([n, u]) => `${n}${u}`);
 
-describe("parseDurationToMs (property)", { timeout: 0 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces
+// the former vitest describe-level { timeout: 0 } (no limit for the
+// property suites below).
+setDefaultTimeout(0);
+
+describe("parseDurationToMs (property)", () => {
   it("a well-formed duration is always a finite, non-negative number", () => {
     fc.assert(
       fc.property(validDuration, (d) => {
@@ -68,7 +73,7 @@ describe("parseDurationToMs (property)", { timeout: 0 }, () => {
   });
 });
 
-describe("parseSessionTimeout (property)", { timeout: 0 }, () => {
+describe("parseSessionTimeout (property)", () => {
   it("undefined passes through; in-range durations are accepted exactly", () => {
     expect(parseSessionTimeout(undefined)).toBeUndefined();
     fc.assert(
@@ -110,7 +115,7 @@ describe("parseSessionTimeout (property)", { timeout: 0 }, () => {
   });
 });
 
-describe("parseRuntimeSize (property)", { timeout: 0 }, () => {
+describe("parseRuntimeSize (property)", () => {
   it("accepts exactly the known presets and rejects everything else", () => {
     for (const size of RUNTIME_SIZES) {
       expect(parseRuntimeSize(size)).toBe(size);

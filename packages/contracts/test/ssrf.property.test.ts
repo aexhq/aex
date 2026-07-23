@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { parseMcpServerRef, parseSessionWebhook } from "../src/index.js";
 
 /**
@@ -64,7 +64,12 @@ function mcpThrows(url: string): Error | null {
   }
 }
 
-describe("SSRF host deny-list (property)", { timeout: 0 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces
+// the former vitest describe-level { timeout: 0 } (no limit for the
+// property suites below).
+setDefaultTimeout(0);
+
+describe("SSRF host deny-list (property)", () => {
   it("rejects every private/loopback/link-local/ULA literal MCP host", () => {
     fc.assert(
       fc.property(privateHost, (host) => {

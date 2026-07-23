@@ -8,7 +8,8 @@
  *   T15   a tool authored with a non-JS entry is rejected at AUTHORING time — the
  *         validation happens where the developer is, not mid-session in the container.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, Tool } from "../../../src/index.js";
 import { formatApiKey } from "@aexhq/contracts";
 
@@ -39,7 +40,7 @@ describe("blackbox: plane routing guard (constructor, zero-network)", () => {
   it("routes a dev key with no baseUrl to dev-api.aex.dev", async () => {
     const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: WORKSPACE_ID, secret: SECRET });
     const seen: string[] = [];
-    const spyFetch: typeof globalThis.fetch = async (...args) => {
+    const spyFetch: FetchLike = async (...args) => {
       const [input] = args;
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
       return new Response(JSON.stringify(whoami), {

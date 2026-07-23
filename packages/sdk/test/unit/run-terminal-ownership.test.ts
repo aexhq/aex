@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   AEX_EVENT_SPECVERSION,
   type AexEvent,
@@ -16,12 +16,12 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const sourceRoot = resolve(here, "..", "..", "src");
 
-function event(
+function event<T extends string>(
   sequence: number,
-  type: string,
+  type: T,
   data: Readonly<Record<string, JsonValue>>,
   runId = "run_target"
-): AexEvent {
+): AexEvent & { readonly type: T } {
   return {
     specversion: AEX_EVENT_SPECVERSION,
     id: `evt_${sequence}`,
@@ -75,7 +75,7 @@ describe("SDK run-terminal ownership", () => {
     const otherRun = event(4, "RUN_FINISHED", { outcome: "succeeded" }, "run_other");
     const malformed = event(5, "RUN_ERROR", { outcome: "failed" });
     const events = [older, nonTerminal, newest, otherRun] as const;
-    const before = [...events];
+    const before = [...events] as const;
 
     expect(latestRunTerminalEvent(events, "run_target")).toBe(newest);
     expect(latestRunTerminalEvent([...events, malformed], "run_target")).toBe(malformed);

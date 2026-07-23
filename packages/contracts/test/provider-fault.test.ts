@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   isKnownProviderFaultKind,
   parseProviderFault,
@@ -29,7 +29,9 @@ describe("canonical ProviderFault", () => {
 
   it("preserves a valid future kind without treating arbitrary producer strings as known", () => {
     const fault = parseProviderFault({ kind: "capacity_window_v2", status: 503 });
-    expect(fault).toEqual({ kind: "capacity_window_v2", status: 503 });
+    // expect<unknown>: the point is that an unknown future kind survives, so
+    // the golden is deliberately outside ProviderFaultKind.
+    expect<unknown>(fault).toEqual({ kind: "capacity_window_v2", status: 503 });
     expect(isKnownProviderFaultKind(fault.kind)).toBe(false);
   });
 

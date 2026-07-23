@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient, SessionStateError, type SessionFile } from "../src/index.js";
 import { operations } from "../src/internal.js";
 

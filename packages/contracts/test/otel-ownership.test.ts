@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const sourceUrl = new URL("../src/otlp-projection.ts", import.meta.url);
 const envelopeUrl = new URL("../src/event-envelope.ts", import.meta.url);

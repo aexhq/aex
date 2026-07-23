@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const sourceRepoRoot = resolve(import.meta.dirname, "../..");
 const fixtureRepoRoot = join(tmpdir(), `aex-generated-dist-fixture-${process.pid}`);
@@ -88,7 +88,10 @@ describe("generated dist lock", () => {
 
     await done;
 
-    await expect(access(lockDir)).resolves.toBeUndefined();
+    // The replacement owner's lock directory must survive cleanup. Assert on
+    // resolution only: node resolves `access()` with undefined while bun
+    // resolves it with null, and the invariant is "still accessible".
+    await expect(access(lockDir).then(() => true)).resolves.toBe(true);
   }, 20_000);
 });
 

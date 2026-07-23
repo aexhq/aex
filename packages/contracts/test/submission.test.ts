@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   BUILTIN_TOOL_NAMES,
   BuiltinTools,
@@ -258,7 +258,7 @@ describe("providerForModel / providersForModel", () => {
   it("SUPPORTED_MODELS_BY_PROVIDER and MODEL_PROVIDER_IDS agree", () => {
     for (const [provider, models] of Object.entries(SUPPORTED_MODELS_BY_PROVIDER)) {
       for (const model of models) {
-        expect(providersForModel(model), model).toContain(provider);
+        expect<readonly string[]>(providersForModel(model), model).toContain(provider);
       }
     }
   });
@@ -266,7 +266,7 @@ describe("providerForModel / providersForModel", () => {
   it("providerForModel returns the first declared (default) provider", () => {
     for (const model of SUPPORTED_MODELS) {
       const declared = Object.keys(MODEL_PROVIDER_IDS[model]);
-      expect(providerForModel(model), model).toBe(declared[0]);
+      expect<string | undefined>(providerForModel(model), model).toBe(declared[0]);
     }
   });
 

@@ -5,7 +5,7 @@
  * wire shape) — same installed SDK and managed runtime path as the DeepSeek
  * gate suite, swapped provider, via the BYOK provider-proxy. It lives under
  * test/live/providers/ — the on-demand provider suite EXCLUDED from the
- * default release-gating `test:user` sweep (see vitest.providers.config.ts);
+ * default release-gating `test:user` sweep (see scripts/user-bun-test.mjs);
  * it runs only via `test:user:providers` (live-on-demand-tests.yml), so the
  * release gate never depends on the Anthropic account billing state.
  *
@@ -32,7 +32,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../../_fixtures/install.js";
 
 function requireEnv(name: string): string {

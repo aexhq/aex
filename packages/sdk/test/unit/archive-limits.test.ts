@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { ASSET_ARCHIVE_LIMITS } from "@aexhq/contracts";
 import {
   assertArchiveCompressedSize,

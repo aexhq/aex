@@ -11,7 +11,7 @@
  * redaction) behaves as expected under a maximal submission.
  *
  * Sessions as an explicit gate AFTER the rest of the live user-tests pass
- * (own Bun script `test:user:heavy` + own vitest config), so it is
+ * (own Bun script `test:user:heavy`, its own dedicated lane), so it is
  * never swept into the default `test:user` run. Wired into
  * live-user-tests.yml as the manual canary.
  *
@@ -72,7 +72,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { finishedRunReadinessSource } from "../_fixtures/finished-run-readiness.js";

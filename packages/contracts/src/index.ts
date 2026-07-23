@@ -84,6 +84,7 @@ export {
 } from "./event-stream-client.js";
 export type {
   CoordinatorStreamOptions,
+  TimerPort,
   WebSocketFactory,
   WebSocketLike
 } from "./event-stream-client.js";

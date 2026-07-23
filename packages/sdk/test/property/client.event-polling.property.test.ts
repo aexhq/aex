@@ -1,5 +1,6 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
 
@@ -77,7 +78,7 @@ async function actualTrace(mode: StreamMode, testCase: PollCase): Promise<{
   let lists = 0;
   const parentId = "session-property";
   const childId = "child-property";
-  const fetchStub: typeof fetch = async (input) => {
+  const fetchStub: FetchLike = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const pathname = new URL(url).pathname;
     if (pathname === `/api/sessions/${parentId}`) {
@@ -151,7 +152,11 @@ const pollCase = fc.record({
   snapshots: [...prefix, [...finalBefore, finalTerminal, ...finalAfter]]
 }));
 
-describe("parent/child event polling state machine", { timeout: 20_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces the
+// former vitest describe-level { timeout: 20_000 } (single suite spans the file).
+setDefaultTimeout(20_000);
+
+describe("parent/child event polling state machine", () => {
   it("matches the bounded reference trace for generated snapshots", async () => {
     await fc.assert(
       fc.asyncProperty(fc.constantFrom<StreamMode>("parent", "child"), pollCase, async (mode, testCase) => {

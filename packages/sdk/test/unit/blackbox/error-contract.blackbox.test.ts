@@ -10,7 +10,7 @@
  *        run); a real key is forwarded as the `Idempotency-Key` header.
  *   T13  a client-side config error is a typed `SessionConfigValidationError`.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   SessionConfigValidationError,
   type SessionStartOptions,

@@ -15,7 +15,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
 
 interface LiveCliEnv {
@@ -145,19 +145,19 @@ describe("live hosted API via installed CLI", () => {
       const sessionId = initial["id"];
       expect(typeof sessionId, runDiag).toBe("string");
       const finalFromFollow = [...runLines].reverse().find((line) => line["id"] === sessionId && typeof line["status"] === "string");
-      expect(SESSION_READY, runDiag).toContain(finalFromFollow?.["status"]);
+      expect(SESSION_READY, runDiag).toContain(String(finalFromFollow?.["status"]));
 
       const status = await executeCli(["status", sessionId as string, ...commonArgs()]);
       expect(status.exitCode, commandDiagnostic("aex status", status)).toBe(0);
       const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
       expect(statusDoc["id"], commandDiagnostic("aex status", status)).toBe(sessionId);
-      expect(SESSION_READY, commandDiagnostic("aex status", status)).toContain(statusDoc["status"]);
+      expect(SESSION_READY, commandDiagnostic("aex status", status)).toContain(String(statusDoc["status"]));
 
       const wait = await executeCli(["wait", sessionId as string, "--timeout", "1m", "--interval", "1s", ...commonArgs()], 90_000);
       expect(wait.exitCode, commandDiagnostic("aex wait", wait)).toBe(0);
       const waitDoc = JSON.parse(wait.stdout.trim()) as Record<string, unknown>;
       expect(waitDoc["id"], commandDiagnostic("aex wait", wait)).toBe(sessionId);
-      expect(SESSION_READY, commandDiagnostic("aex wait", wait)).toContain(waitDoc["status"]);
+      expect(SESSION_READY, commandDiagnostic("aex wait", wait)).toContain(String(waitDoc["status"]));
 
       const events = await executeCli(["events", sessionId as string, ...commonArgs()]);
       expect(events.exitCode, commandDiagnostic("aex events", events)).toBe(0);

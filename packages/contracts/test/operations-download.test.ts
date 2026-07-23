@@ -3,7 +3,7 @@
  * endpoints. The public archive contains metadata, typed events, and files.
  * Internal diagnostics are not downloaded through this surface.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { unzipSync } from "fflate";
 import { createHash } from "node:crypto";
 import { HttpClient } from "../src/http.js";

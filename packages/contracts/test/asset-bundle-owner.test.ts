@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "../src/canonical-sha256.js";
 import { RESERVED_META_ENTRY, SKILL_BUNDLE_LIMITS } from "../src/index.js";
 import {

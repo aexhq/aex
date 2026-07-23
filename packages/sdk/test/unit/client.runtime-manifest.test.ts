@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 const manifest = {
@@ -11,11 +12,12 @@ const manifest = {
   readme: "/mnt/session/uploads/aex/SKILLS.md",
   runtimeJson: "/mnt/session/uploads/aex/RUNTIME.json",
   runtimeEnv: "/mnt/session/uploads/aex/RUNTIME.env",
-  envVars: { BROLL_STORE: "/mnt/session/broll/store" }
+  envVars: { BROLL_STORE: "/mnt/session/broll/store" },
+  mountedFiles: []
 };
 
 function clientFor(session: Record<string, unknown>): Aex {
-  const fetch: typeof globalThis.fetch = async () => new Response(JSON.stringify({ session }), {
+  const fetch: FetchLike = async () => new Response(JSON.stringify({ session }), {
     status: 200,
     headers: { "content-type": "application/json" }
   });

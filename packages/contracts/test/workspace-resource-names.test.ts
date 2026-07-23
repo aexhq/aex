@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   WORKSPACE_FILE_RESOURCE_NAME_PATTERN,
   WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN,

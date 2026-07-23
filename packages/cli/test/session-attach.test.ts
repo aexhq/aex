@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { resolve as resolvePath } from "node:path";
 import { unzipSync } from "fflate";
 import { executeCli } from "../src/main.js";

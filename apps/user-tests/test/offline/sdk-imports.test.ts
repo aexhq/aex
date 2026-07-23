@@ -15,7 +15,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("sdk imports", () => {
@@ -124,7 +124,7 @@ describe("sdk imports", () => {
     // Bun reports this as MODULE_NOT_FOUND, while Node ESM loaders may report
     // export-map or ESM-only codes. The contract is that the CJS surface does
     // not resolve.
-    expect(["MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_REQUIRE_ESM"]).toContain(result.code);
+    expect(["MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_REQUIRE_ESM"]).toContain(String(result.code));
   });
 
   it("subpath imports do not resolve", async () => {
@@ -147,7 +147,7 @@ describe("sdk imports", () => {
     for (const spec of ["@aexhq/sdk/platform", "@aexhq/sdk/proxy", "@aexhq/sdk/cli"]) {
       expect(result[spec]).toBeDefined();
       expect(result[spec]!.ok).toBe(false);
-      expect(["ERR_MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED"]).toContain(result[spec]!.code);
+      expect(["ERR_MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED"]).toContain(String(result[spec]!.code));
     }
   });
 });

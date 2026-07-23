@@ -3,10 +3,11 @@
  * Fully offline — a fake `webSocketFactory` drives frames and a fake `fetchImpl`
  * answers the ticket broker + getSession.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import { type CliIO } from "../src/internal.js";
 import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 const evt = (
   sequence: number,
@@ -37,32 +38,6 @@ const evt = (
     ...extra
   };
 };
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-  readonly sent: string[] = [];
-  closed = false;
-  constructor(url: string) {
-    this.url = url;
-  }
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-  send(data: string): void {
-    this.sent.push(data);
-  }
-  close(): void {
-    this.closed = true;
-    this.#emit("close", {});
-  }
-  message(event: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
-}
 
 const flush = async (n = 6): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise<void>((r) => setTimeout(r, 0));

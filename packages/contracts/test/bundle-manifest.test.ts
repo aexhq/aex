@@ -2,7 +2,7 @@
  * Bundle fidelity sidecar SSoT — canonical serialization round-trip, forward-
  * compatible parse, and the SECURITY-critical symlink escape guard (fuzzed).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import fc from "fast-check";
 import {
   RESERVED_META_ENTRY,
@@ -131,7 +131,8 @@ describe("symlinkTargetEscapes — SECURITY boundary", () => {
     expect(symlinkTargetEscapes("lib", "../shared/lib")).toBe(true);
   });
 
-  it("fuzz: any target lexically resolving above root is rejected; in-root is allowed", { timeout: 0 }, () => {
+  // Trailing timeout 0 = no limit (bun, like vitest, disables the timer at 0).
+  it("fuzz: any target lexically resolving above root is rejected; in-root is allowed", () => {
     const seg = fc.constantFrom("a", "b", "c", "sub", "x");
     const targetArb = fc
       .array(fc.oneof(seg, fc.constant("."), fc.constant("..")), { minLength: 1, maxLength: 6 })
@@ -156,5 +157,5 @@ describe("symlinkTargetEscapes — SECURITY boundary", () => {
       }),
       { numRuns: 500 }
     );
-  });
+  }, 0);
 });

@@ -14,7 +14,7 @@
  * Only passes once the worker is deployed AND the runner image is rebuilt
  * (the firewall lives in the image) — see the api/test/live networking probe.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 

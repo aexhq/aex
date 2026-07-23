@@ -22,7 +22,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { expectStructuredError } from "@aexhq/conformance";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
@@ -706,7 +706,7 @@ afterAll(() => {
 });
 
 describe("live files — agent writes a known file, bytes round-trip", () => {
-  it.each(CELLS)(
+  it.each([...CELLS])(
     "$id: agent writes report.txt with marker, listFiles + download recovers it",
     async (cell) => {
       const result = await startFileCell(cell, install.installDir);

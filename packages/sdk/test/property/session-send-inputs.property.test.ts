@@ -1,7 +1,9 @@
 import fc, { type Arbitrary } from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, type Message, type SessionResult, type SessionInput, type SessionStartOptions } from "../../src/index.js";
-import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
+import type { AexEvent, JsonValue } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 const BASE_URL = "https://api.example.test";
 const SESSION_ID = "sess_property";
@@ -29,31 +31,6 @@ interface Harness {
   readonly calls: CapturedRequest[];
   readonly sockets: FakeWebSocket[];
   readonly webSocketFactory: (url: string) => FakeWebSocket;
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.#emit("close", {});
-  }
-
-  message(event: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 function headersToObject(headers: HeadersInit | undefined): Record<string, string> {
@@ -91,7 +68,7 @@ function makeHarness(): Harness {
   const calls: CapturedRequest[] = [];
   const sockets: FakeWebSocket[] = [];
 
-  const fetchImpl: typeof globalThis.fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const url = requestUrl(input);
     const method = String(init?.method ?? "GET").toUpperCase();
     calls.push({
@@ -339,8 +316,14 @@ function assertTurnEventProjection(result: SessionResult, specs: readonly TextEv
 }
 
 function isValidSessionInput(value: unknown): value is SessionInput {
-  if (typeof value === "string") return value.length > 0;
-  return Array.isArray(value) && value.length > 0 && value.every((segment) => typeof segment === "string" && segment.length > 0);
+  // Mirrors normaliseSessionInput: non-empty, and at least one non-whitespace char.
+  if (typeof value === "string") return value.trim().length > 0;
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((segment) => typeof segment === "string" && segment.length > 0) &&
+    value.some((segment) => segment.trim().length > 0)
+  );
 }
 
 interface IdempotencyCase {
@@ -356,10 +339,9 @@ const idChar = fc.constantFrom(
   "8", "9", "-", "_"
 );
 const nonEmptyString = fc.string({ minLength: 1, maxLength: 80 });
-const validSessionInput: Arbitrary<SessionInput> = fc.oneof(
-  nonEmptyString,
-  fc.array(nonEmptyString, { minLength: 1, maxLength: 6 })
-);
+const validSessionInput: Arbitrary<SessionInput> = fc
+  .oneof(nonEmptyString, fc.array(nonEmptyString, { minLength: 1, maxLength: 6 }))
+  .filter(isValidSessionInput);
 const keyString = fc.array(idChar, { minLength: 1, maxLength: 24 }).map((chars) => `idem_${chars.join("")}`);
 const idempotencyCase: Arbitrary<IdempotencyCase> = fc.oneof(
   fc.constant({}),
@@ -400,7 +382,11 @@ const textEventSpec = fc.tuple(
 ));
 const textEventSequence = fc.array(textEventSpec, { minLength: 0, maxLength: 8 });
 
-describe("SDK run/send SessionInput properties", { timeout: 30_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces the
+// former vitest describe-level { timeout: 30_000 } (single suite spans the file).
+setDefaultTimeout(30_000);
+
+describe("SDK run/send SessionInput properties", () => {
   it("Aex.start serializes valid message inputs and uses predictable idempotency keys", async () => {
     await fc.assert(
       fc.asyncProperty(validSessionInput, idempotencyCase, async (input, keys) => {
