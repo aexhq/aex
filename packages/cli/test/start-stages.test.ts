@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import type { CliIO } from "../src/internal.js";
 import { parseStartArguments } from "../src/host/start-arguments.js";
 import { resolveStartConfig } from "../src/host/start-config.js";
@@ -33,20 +34,60 @@ function makeIo(read: (path: string, bytes: boolean) => string | Uint8Array | Pr
   };
 }
 
+function descendants(node: ts.Node): readonly ts.Node[] {
+  const out: ts.Node[] = [];
+  const visit = (current: ts.Node): void => {
+    out.push(current);
+    current.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+}
+
+function namedImports(source: ts.SourceFile, moduleName: string): readonly string[] {
+  return source.statements
+    .filter(ts.isImportDeclaration)
+    .filter((statement) => ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === moduleName)
+    .flatMap((statement) => {
+      const bindings = statement.importClause?.namedBindings;
+      return bindings && ts.isNamedImports(bindings) ? bindings.elements.map((element) => element.name.text) : [];
+    });
+}
+
+function directCallNames(node: ts.Node): readonly string[] {
+  return descendants(node)
+    .filter(ts.isCallExpression)
+    .map((call) => ts.isIdentifier(call.expression) ? call.expression.text : undefined)
+    .filter((name): name is string => name !== undefined);
+}
+
 describe("start stage ownership", () => {
   it("keeps executeStartCmd a bounded orchestrator over the four start owners", () => {
-    const source = readFileSync(new URL("../src/host/start-cmd.ts", import.meta.url), "utf8");
-    expect(source).toContain('from "./start-arguments.js"');
-    expect(source).toContain('from "./start-config.js"');
-    expect(source).toContain('from "./start-attachments.js"');
-    expect(source).toContain('from "./start-submission.js"');
-    expect(source).not.toMatch(/\b(?:takeOptionFlag|takeBooleanFlag|collectRepeated(?:Kv|KvList)?)\(/);
-
-    const start = source.indexOf("export async function executeStartCmd");
-    const end = source.indexOf("\nasync function followAcceptedStart", start);
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(source.slice(start, end).split("\n").length).toBeLessThanOrEqual(75);
+    const source = ts.createSourceFile(
+      "start-cmd.ts",
+      readFileSync(new URL("../src/host/start-cmd.ts", import.meta.url), "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    const execute = source.statements.find((statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === "executeStartCmd"
+    );
+    expect(execute && ts.isFunctionDeclaration(execute) ? execute.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) : false).toBe(true);
+    expect(execute && ts.isFunctionDeclaration(execute) ? execute.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) : false).toBe(true);
+    for (const [moduleName, owner] of [
+      ["./start-arguments.js", "parseStartArguments"],
+      ["./start-config.js", "resolveStartConfig"],
+      ["./start-attachments.js", "buildStartAttachments"],
+      ["./start-submission.js", "buildStartSubmission"],
+      ["./start-submit.js", "submitCliRun"]
+    ] as const) {
+      expect(namedImports(source, moduleName), `${owner} must remain a stage dependency`).toContain(owner);
+      expect(execute && ts.isFunctionDeclaration(execute) ? directCallNames(execute) : [], `${owner} must be orchestrated directly`).toContain(owner);
+    }
+    expect(execute && ts.isFunctionDeclaration(execute) ? directCallNames(execute) : []).not.toEqual(
+      expect.arrayContaining(["takeOptionFlag", "takeBooleanFlag", "collectRepeatedKv", "collectRepeatedKvList"])
+    );
   });
 });
 
