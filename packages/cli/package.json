@@ -30,6 +30,7 @@
     "build:unlocked": "bun run --cwd ../.. --filter @aexhq/contracts build && tsc -p tsconfig.build.json && bun ./scripts/finalize-bundle.mjs",
     "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
     "lint:unlocked": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "pretest": "bun run build",
     "test": "bun run test:unit",
     "test:unit": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:unit:unlocked",

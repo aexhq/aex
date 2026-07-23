@@ -59,8 +59,9 @@ script; because these are named `test:user*`, that gate never runs them
 by default. That matters: they fail loudly when the artifact-under-test
 env is unset (by design), so pulling them into the default gate would
 break it for everyone. They run only via explicit invocation here and
-from `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and
-`.github/workflows/live-user-tests.yml`.
+from the hosted user-test workflows.
+The main-push public CI is limited to lint, type, and unit checks; the
+platform deploy pipeline runs the published-artifact suite.
 
 Explicit artifact inputs are strict: setting both variables, an invalid version,
 or a missing tarball path is a **hard error**, never a silent skip. The
@@ -76,13 +77,9 @@ published SDK candidate when present and npm `latest` otherwise.
 
 ## CI prerequisites
 
-CI runs the offline scenarios after the unit gate. The release workflow runs the
-offline scenarios before publish, then runs the two-file SDK/CLI smoke against
-the exact published version after npm visibility. The downstream platform
-deploy installs that same version in dev and prd for every discovered gating
-SDK file plus the isolated admission, heavy-session, and tool-fuzz lanes. That
-complete two-plane suite, not just the public smoke, is required before npm
-promotion. The offline path needs no provider key.
+The offline path needs no provider key. The downstream platform deploy installs
+the exact published canary in dev and prd and runs the same SDK-as-a-real-user
+suite against both Lambda and container runtimes.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
 the configured hosted API. The workflow creates one job per discovered gating

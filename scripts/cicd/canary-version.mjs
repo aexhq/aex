@@ -3,23 +3,18 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SEMVER_CORE_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const CANARY_VERSION_RE = /^\d+\.\d+\.\d+-canary\.\d+\.g[0-9a-f]{12}$/;
+const CANARY_VERSION_RE = /^\d+\.\d+\.\d+-canary$/;
 
-export function buildCanaryVersion({ baseVersion, runNumber, sha }) {
+export function buildCanaryVersion({ baseVersion, sha }) {
   const match = SEMVER_CORE_RE.exec(String(baseVersion ?? ""));
   if (!match) throw new Error(`invalid base version: ${baseVersion ?? "(missing)"}`);
 
-  const normalizedRun = String(runNumber ?? "");
-  if (!/^[1-9]\d*$/.test(normalizedRun)) {
-    throw new Error(`invalid run number: ${runNumber ?? "(missing)"}`);
-  }
-
   const normalizedSha = String(sha ?? "").toLowerCase();
-  if (!/^[0-9a-f]{12,64}$/.test(normalizedSha)) {
+  if (!/^[0-9a-f]{40}$/.test(normalizedSha)) {
     throw new Error(`invalid source SHA: ${sha ?? "(missing)"}`);
   }
 
-  return `${match[1]}.${match[2]}.${match[3]}-canary.${normalizedRun}.g${normalizedSha.slice(0, 12)}`;
+  return `${match[1]}.${match[2]}.${match[3]}-canary`;
 }
 
 export function applySdkVersion(repoRoot, version) {
@@ -68,7 +63,6 @@ export function main(argv = process.argv.slice(2)) {
   if (args.command === "resolve") {
     const version = buildCanaryVersion({
       baseVersion: required(args, "baseVersion"),
-      runNumber: required(args, "runNumber"),
       sha: required(args, "sha")
     });
     process.stdout.write(`${version}\n`);

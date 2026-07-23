@@ -4,7 +4,7 @@ import { classifyRetryableInstallFailure } from "../cicd/wait-for-bun-install.mj
 
 const candidate = {
   packageName: "@aexhq/sdk",
-  version: "0.42.0-canary.123.g0123456789ab",
+  version: "0.42.0-canary",
 };
 
 describe("published artifact install retry policy", () => {

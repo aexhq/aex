@@ -45,8 +45,7 @@ pack checks.
 3. Before pushing, run the relevant public-safe gates locally from
    `package.json`.
 4. Open a pull request against `main`. [CI](../.github/workflows/ci.yml) runs
-   static, type, unit, offline user-test, docs, and package gates on its
-   configured triggers.
+   lint, type, and unit checks on its configured triggers.
 5. Do not force-push `main`. Force-pushing a topic branch is acceptable only
    when it does not disrupt another contributor.
 
@@ -61,21 +60,21 @@ pack checks.
 
 | Workflow | Scope |
 | --- | --- |
-| [`CI`](../.github/workflows/ci.yml) | Static/type/unit/offline user-test/docs/package gates. |
-| [`Release`](../.github/workflows/release.yml) | Controller-dispatched immutable canary publication from an exact release tag, plus published-artifact smoke. |
+| [`CI`](../.github/workflows/ci.yml) | Lint, type, and unit checks; main pushes publish the canary. |
 | [`Live User Tests`](../.github/workflows/live-user-tests.yml) | Protected hosted API user tests and optional heavy canary. |
 
-The public repository is the sole npm publisher. An exact canary is validated
-against the hosted service and becomes eligible for explicit promotion only
-after its downstream evidence gate passes. The public repository must not
-encode private deployment internals.
+The public repository is the sole npm publisher. A green push to `main` tags
+the tested source as `canary/<version>-canary`, binds the package to the exact
+40-character source SHA in `aexRelease.sourceSha`, and publishes
+`@aexhq/sdk@<version>-canary` to the `canary` dist-tag. The private platform
+pipeline consumes that version and exact SHA for dev/prd validation.
 
-Both public publish and promotion workflows run in the `npm-release` GitHub
-Environment. `release.yml` publishes through npm trusted-publisher OIDC and
-must not receive a write token. `promote.yml` still needs the Environment's
-narrowly scoped `NPM_TOKEN` because npm OIDC does not authorize `npm dist-tag`
-operations. Workflow configuration is the exact source of truth and secret
-values must never enter docs.
+The publish job runs only after lint, type, and unit checks pass. It uses npm
+trusted-publisher OIDC, verifies registry visibility and source provenance, and
+does not use a long-lived npm token. If the `<version>-canary` package version
+already exists, the push fails; fix forward by bumping the base package version.
+Workflow configuration is the exact source of truth and secret values must
+never enter docs.
 
 ## Review criteria
 

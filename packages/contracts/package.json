@@ -40,6 +40,7 @@
     "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
     "build:unlocked": "bun ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && bun ../../scripts/cicd/check-generated-dist-closure.mjs dist",
     "lint": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun run test:unit",
     "test:unit": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-unit.xml && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-unit.xml",
     "test:property": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-property.xml property && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-property.xml",

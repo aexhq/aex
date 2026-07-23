@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the RELEASE-GATING live-test provider.
  *
- * Gating suites (release.yml smoke plus the discovered live-test matrix) test
+ * Gating suites (the platform deploy matrix) test
  * PLATFORM behavior, not any particular model vendor — so they all run on one
  * cheap, funded provider and must never depend on another provider account's
  * billing state (2026-07-03: the shared BYOK ANTHROPIC_API_KEY ran out of

@@ -5,7 +5,7 @@ import { isRetryableRegistryStatus, validateRegistryMetadata, waitForNpmEvidence
 
 const expected = {
   packageName: "@aexhq/sdk",
-  version: "0.42.0-canary.123.g0123456789ab",
+  version: "0.42.0-canary",
   sourceSha: "0123456789abcdef0123456789abcdef01234567"
 };
 

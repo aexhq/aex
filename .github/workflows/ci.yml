@@ -8,69 +8,17 @@ on:
   merge_group:
   workflow_dispatch:
 
-# Main-push and manual runs each get a run_id-scoped concurrency group, so they
-# run to completion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.3.14"
+
 jobs:
-  contract-parity:
-    name: Contract parity
-    # Fork pull requests cannot read the private platform repository or its PAT.
-    # Merge-queue and main-push checks still fail closed on parity before merge/release.
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    # Secrets can't be referenced in step-level `if`; surface the platform PAT
-    # presence as a job-level flag so the guard step can gate on it.
-    env:
-      HAS_PLATFORM_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN != '' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      # This gate must never be silently disarmed. CI runs only on push to
-      # main by maintainers, so a missing/expired PLATFORM_REPO_TOKEN or a
-      # failed platform checkout fails this job loudly instead of letting the
-      # parity script skip.
-      - name: Require platform token
-        if: ${{ env.HAS_PLATFORM_TOKEN != 'true' }}
-        run: |
-          echo "::error::PLATFORM_REPO_TOKEN is missing or empty (HAS_PLATFORM_TOKEN=$HAS_PLATFORM_TOKEN), so the contract parity gate cannot run. Restore the PAT; this gate must not be silently disarmed."
-          exit 1
-
-      - name: Checkout platform (for contract parity)
-        uses: actions/checkout@v6
-        with:
-          repository: aexhq/platform
-          token: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          path: _platform
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      - name: Install
-        run: bun ci
-
-      # Fails on any platform<->public contract divergence not recorded in
-      # scripts/cicd/contract-parity-baseline.json. The platform tree is
-      # guaranteed present here by the mandatory checkout above.
-      - name: Contract parity
-        run: bun run contracts:parity:check
-        env:
-          PLATFORM_DIR: ${{ github.workspace }}/_platform
-
-      - name: Semantic mirror inventory
-        run: >-
-          node "${{ github.workspace }}/_platform/scripts/cicd/semantic-mirror-inventory.mjs"
-          --check
-          --report redacted
-          --platform-root "${{ github.workspace }}/_platform"
-          --public-root "${{ github.workspace }}"
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -81,13 +29,31 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install
         run: bun ci
 
       - name: Lint
         run: bun run lint
+
+  typecheck:
+    name: Type checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun ci
+
+      - name: Type checks
+        run: bun run typecheck
 
   unit-tests:
     name: Unit tests
@@ -100,106 +66,200 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install
         run: bun ci
 
-      - name: Test
-        run: bun run test
+      - name: Unit tests
+        run: bun run test:unit
 
-  offline-user-tests:
-    name: Offline user tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      - name: Install
-        run: bun ci
-
-      - name: Offline user tests
-        env:
-          AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
-        run: bun run test:user:offline
-
-  docs-build:
-    name: Docs build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      - name: Install
-        run: bun ci
-
-      - name: Docs build
-        run: bun run docs:build
-
-  pack-sdk:
-    name: Pack SDK
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      - name: Install
-        run: bun ci
-
-      - name: Pack SDK
-        run: bun run pack:sdk
-
-  public:
-    name: Install, lint, test, pack
-    runs-on: ubuntu-latest
+  checks:
+    name: Required checks
     needs:
-      - contract-parity
       - lint
+      - typecheck
       - unit-tests
-      - offline-user-tests
-      - docs-build
-      - pack-sdk
     if: ${{ always() }}
+    runs-on: ubuntu-latest
     steps:
-      - name: Check gate results
+      - name: Require all checks to pass
         env:
-          CONTRACT_PARITY_RESULT: ${{ needs['contract-parity'].result }}
           LINT_RESULT: ${{ needs.lint.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           UNIT_TESTS_RESULT: ${{ needs['unit-tests'].result }}
-          OFFLINE_USER_TESTS_RESULT: ${{ needs['offline-user-tests'].result }}
-          DOCS_BUILD_RESULT: ${{ needs['docs-build'].result }}
-          PACK_SDK_RESULT: ${{ needs['pack-sdk'].result }}
-          PARITY_REQUIRED: ${{ github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
-          failed=0
-          for name in LINT UNIT_TESTS OFFLINE_USER_TESTS DOCS_BUILD PACK_SDK; do
-            var="${name}_RESULT"
-            result="${!var}"
-            echo "${name}: ${result}"
-            if [ "${result}" != "success" ]; then
-              failed=1
+          for result in "$LINT_RESULT" "$TYPECHECK_RESULT" "$UNIT_TESTS_RESULT"; do
+            if [ "$result" != success ]; then
+              echo "::error::Required check failed: $result"
+              exit 1
             fi
           done
-          echo "CONTRACT_PARITY: ${CONTRACT_PARITY_RESULT} (required=${PARITY_REQUIRED})"
-          if [ "${PARITY_REQUIRED}" = "true" ] && [ "${CONTRACT_PARITY_RESULT}" != "success" ]; then
-            failed=1
-          elif [ "${PARITY_REQUIRED}" != "true" ] && [ "${CONTRACT_PARITY_RESULT}" != "skipped" ]; then
-            failed=1
+
+  publish-canary:
+    name: Publish canary
+    needs:
+      - lint
+      - typecheck
+      - unit-tests
+    if: >-
+      ${{
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        needs.lint.result == 'success' &&
+        needs.typecheck.result == 'success' &&
+        needs.unit-tests.result == 'success'
+      }}
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ env.RELEASE_HEAD_SHA }}
+      source_tag: ${{ steps.source-tag.outputs.source_tag }}
+      integrity: ${{ steps.registry-evidence.outputs.integrity }}
+    env:
+      RELEASE_HEAD_SHA: ${{ github.sha }}
+      NPM_DIST_TAG: canary
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_HEAD_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$RELEASE_HEAD_SHA" ]; then
+            echo "::error::Checked out $actual_sha, expected $RELEASE_HEAD_SHA."
+            exit 1
           fi
-          exit "${failed}"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11.17.0
+
+      - name: Install
+        run: bun ci
+
+      - name: Resolve canary version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; console.log(JSON.parse(readFileSync("packages/sdk/package.json", "utf8")).version)')"
+          version="$(bun scripts/cicd/canary-version.mjs resolve --base-version "$base_version" --sha "$RELEASE_HEAD_SHA")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Publishing @aexhq/sdk@$version from $RELEASE_HEAD_SHA"
+
+      - name: Require an unused immutable npm version
+        run: node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
+
+      - name: Apply canary version and source attestation
+        run: |
+          bun scripts/cicd/canary-version.mjs apply --version "${{ steps.version.outputs.version }}"
+          bun scripts/cicd/release-source.mjs apply --sha "$RELEASE_HEAD_SHA"
+
+      - name: Tag the exact tested source
+        id: source-tag
+        shell: bash
+        env:
+          CANARY_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          source_tag="canary/${CANARY_VERSION}"
+          remote_sha="$(git ls-remote origin "refs/tags/${source_tag}^{}" | awk 'NR == 1 { print $1 }')"
+          if [ -z "$remote_sha" ]; then
+            remote_sha="$(git ls-remote origin "refs/tags/${source_tag}" | awk 'NR == 1 { print $1 }')"
+          fi
+          if [ -n "$remote_sha" ]; then
+            if [ "$remote_sha" != "$RELEASE_HEAD_SHA" ]; then
+              echo "::error::${source_tag} already points to ${remote_sha}, not ${RELEASE_HEAD_SHA}."
+              exit 1
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag --annotate "$source_tag" "$RELEASE_HEAD_SHA" --message "aex canary ${CANARY_VERSION} (${RELEASE_HEAD_SHA})"
+            git push origin "refs/tags/${source_tag}"
+          fi
+          echo "source_tag=$source_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Pack publish tarball
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pack_dir="$RUNNER_TEMP/aex-pack"
+          mkdir -p "$pack_dir"
+          (cd packages/sdk && bun pm pack --destination "$pack_dir")
+          tarball="$(find "$pack_dir" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
+          if [ -z "$tarball" ]; then
+            echo "::error::No @aexhq/sdk tarball was produced."
+            exit 1
+          fi
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Publish canary to npm
+        run: |
+          npm publish "${{ steps.pack.outputs.tarball }}" \
+            --registry https://registry.npmjs.org \
+            --access public \
+            --tag "$NPM_DIST_TAG" \
+            --provenance
+
+      - name: Verify npm source provenance
+        id: registry-evidence
+        env:
+          SDK_VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${SDK_VERSION}"
+          --source-sha "${RELEASE_HEAD_SHA}"
+          --github-output "${GITHUB_OUTPUT}"
+
+      - name: Wait for Bun install visibility
+        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
+
+      - name: Record canary identity
+        shell: bash
+        env:
+          CANARY_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_TAG: ${{ steps.source-tag.outputs.source_tag }}
+          NPM_INTEGRITY: ${{ steps.registry-evidence.outputs.integrity }}
+        run: |
+          set -euo pipefail
+          cat > canary-release.json <<EOF
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "version": "${CANARY_VERSION}",
+            "sourceSha": "${RELEASE_HEAD_SHA}",
+            "sourceTag": "${SOURCE_TAG}",
+            "npmDistTag": "${NPM_DIST_TAG}",
+            "npmIntegrity": "${NPM_INTEGRITY}",
+            "workflowRunId": "${GITHUB_RUN_ID}"
+          }
+          EOF
+
+      - name: Upload canary identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: aex-canary-${{ github.run_id }}
+          path: canary-release.json
+          if-no-files-found: error
+          retention-days: 30

@@ -15,7 +15,8 @@
     "test:user:fuzz": "mkdir -p .tmp && rm -f .tmp/junit-test-user-fuzz.xml && bun test --isolate --timeout=300000 --reporter=junit --reporter-outfile=.tmp/junit-test-user-fuzz.xml test/live/live-api-fuzz.test.ts && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-user-fuzz.xml",
     "test:user:e2e": "bun run --filter @aexhq/contracts --filter @aexhq/cli build && mkdir -p .tmp && rm -f .tmp/junit-test-user-e2e.xml && bun test --isolate --timeout=120000 --reporter=junit --reporter-outfile=.tmp/junit-test-user-e2e.xml test/e2e && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-user-e2e.xml",
     "test:user:tool-fuzz": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-tool-fuzz.xml --isolate --timeout=1200000 test/live/live-sdk-tool-capability-fuzz.test.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@aexhq/conformance": "workspace:*",

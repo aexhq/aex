@@ -26,6 +26,7 @@
     "build:parity-deps": "bun run --cwd ../.. --filter @aexhq/sdk build && bun run --cwd ../.. --filter @aexhq/cli build",
     "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
     "lint:unlocked": "bun run build:parity-deps && tsc --noEmit -p tsconfig.json",
+    "typecheck": "bun run build:parity-deps && tsc --noEmit -p tsconfig.json",
     "pretest": "bun run build",
     "test:unit": "bun run build:parity-deps && mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-unit.xml && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-unit.xml"
   },
