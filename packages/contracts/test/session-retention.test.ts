@@ -3,7 +3,6 @@ import {
   SESSION_RETENTION_SCHEMA_VERSION,
   SessionRetentionRedactionError,
   SessionRetentionValidationError,
-  FakeSessionDeletionManifestObjectStore,
   assertSessionDeletionOrder,
   buildSessionDeletionJob,
   buildSessionDeletionManifest,
@@ -12,6 +11,7 @@ import {
   evaluateSessionDeletionCandidate,
   scanSessionRetentionPayloadForSensitiveValues
 } from "../src/internal.js";
+import { FakeSessionDeletionManifestObjectStore } from "../src/testing.js";
 
 const terminalSession = {
   sessionId: "session-11111111",

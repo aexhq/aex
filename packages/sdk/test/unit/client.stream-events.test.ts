@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { Aex } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -52,31 +53,6 @@ function childEvt(sequence: number, type: AexEvent["type"], data: Record<string,
     threadId: "child-abc",
     runId: sequence < 10 ? "child-old" : "child-current"
   };
-}
-
-class FakeWebSocket {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.#emit("close", {});
-  }
-
-  message(event: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 const flush = async (n = 4): Promise<void> => {

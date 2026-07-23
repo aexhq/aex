@@ -113,6 +113,11 @@ describe("generated AssetRef public API", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(repoRoot, "packages/contracts/package.json"), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
-    expect(Object.keys(packageJson.exports ?? {})).toEqual([".", "./internal", "./subagent-runtime"]);
+    expect(Object.keys(packageJson.exports ?? {})).toEqual([
+      ".",
+      "./internal",
+      "./subagent-runtime",
+      "./testing"
+    ]);
   });
 });

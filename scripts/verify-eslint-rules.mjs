@@ -16,7 +16,9 @@ const fixture = path.join(root, "tools", "eslint-plugin-aex", "__verify_rules.te
 const EXPECTED = [
   { ruleId: "aex/no-undefined-skip-expect", count: 1 },
   { ruleId: "aex/no-conditional-expect", count: 2 },
-  { ruleId: "aex/no-disabled-tests", count: 2 },
+  // skip + skipIf + bun-only `.if` + bun-only `.todoIf` (`.failing` is
+  // deliberately allowed — it asserts failure, it does not skip).
+  { ruleId: "aex/no-disabled-tests", count: 4 },
   { ruleId: "aex/no-focused-tests", count: 1 }
 ];
 

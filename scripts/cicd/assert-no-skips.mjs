@@ -1,32 +1,52 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
+import { collectJunitTests, isJunitReportText } from "./junit-report.mjs";
 
 const reportPath = process.argv[2];
 if (!reportPath) {
-  console.error("usage: assert-no-skips.mjs <json-report>");
+  console.error("usage: assert-no-skips.mjs <json-or-junit-report>");
   process.exit(1);
 }
 if (!existsSync(reportPath)) {
+  // bun's junit reporter writes NO outfile at all when zero tests are
+  // collected, so a vanished report IS the zero-coverage case — hard failure.
   console.error(`[assert-no-skips] report not found: ${reportPath}`);
-  process.exit(1);
-}
-
-let report;
-try {
-  report = JSON.parse(readFileSync(reportPath, "utf8"));
-} catch (error) {
-  console.error(`[assert-no-skips] failed to parse ${reportPath}: ${error.message}`);
   process.exit(1);
 }
 
 const findings = [];
 let totalTests = 0;
 
-collectVitest(report);
-collectPlaywright(report);
+// Shape is detected from CONTENT, never the filename: JUnit XML (bun test
+// --reporter=junit / node --test --test-reporter=junit) vs JSON (Vitest
+// jest-style or Playwright).
+const rawReport = readFileSync(reportPath, "utf8");
+if (isJunitReportText(rawReport)) {
+  try {
+    const collected = collectJunitTests(rawReport);
+    totalTests += collected.total;
+    for (const entry of collected.skipped) {
+      findings.push(`${entry.name} (${entry.status})`);
+    }
+  } catch (error) {
+    console.error(`[assert-no-skips] failed to parse ${reportPath}: ${error.message}`);
+    process.exit(1);
+  }
+} else {
+  let report;
+  try {
+    report = JSON.parse(rawReport);
+  } catch (error) {
+    console.error(`[assert-no-skips] failed to parse ${reportPath}: ${error.message}`);
+    process.exit(1);
+  }
 
-if (typeof report.numTotalTests === "number") {
-  totalTests = Math.max(totalTests, report.numTotalTests);
+  collectVitest(report);
+  collectPlaywright(report);
+
+  if (typeof report.numTotalTests === "number") {
+    totalTests = Math.max(totalTests, report.numTotalTests);
+  }
 }
 
 if (totalTests === 0) {

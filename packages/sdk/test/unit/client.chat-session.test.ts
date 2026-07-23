@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Aex, SessionConfigValidationError, type SessionResult } from "../../src/index.js";
-import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
+import type { AexEvent } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -61,33 +62,6 @@ function event(sequence: number, patch: Partial<AexEvent> = {}): AexEvent {
     data: { text: "hello" },
     ...patch
   };
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-  closed = false;
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.closed = true;
-    this.#emit("close", {});
-  }
-
-  message(evt: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(evt) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 const flush = async (n = 4): Promise<void> => {

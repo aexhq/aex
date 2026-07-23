@@ -7,9 +7,9 @@ import {
   toAGUI,
   type AexEvent,
   type AexLiveEvent,
-  type AexStreamEvent,
-  type WebSocketLike
+  type AexStreamEvent
 } from "../src/index.js";
+import { FakeWebSocket } from "../src/testing.js";
 
 const evt = (sequence: number, type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT", source: AexEvent["source"] = "agent"): AexEvent => ({
   specversion: "1.0",
@@ -45,39 +45,6 @@ function durableSequence(event: AexStreamEvent): number {
     throw new Error("expected a durable event");
   }
   return event.sequence;
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-  readonly sent: string[] = [];
-  closed = false;
-  constructor(url: string) {
-    this.url = url;
-  }
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-  send(data: string): void {
-    this.sent.push(data);
-  }
-  close(): void {
-    this.closed = true;
-    this.#emit("close", {});
-  }
-  open(): void {
-    this.#emit("open", {});
-  }
-  message(event: AexStreamEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-  /** A keep-alive pong (or any non-event frame): proves liveness, carries no sequence. */
-  pong(data = "aex:pong"): void {
-    this.#emit("message", { data });
-  }
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 // Drain the macro/microtask queues so the generator advances to its next await.

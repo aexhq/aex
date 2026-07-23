@@ -5,9 +5,9 @@ import type {
   JsonValue,
   TurnTrace,
   SessionMessage,
-  SessionMessageSender,
-  WebSocketLike
+  SessionMessageSender
 } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 import { Aex, type Message, type SessionResult, type SessionRunResult } from "../../src/index.js";
 
 interface CapturedRequest {
@@ -209,31 +209,6 @@ function captureSessionClient(firstSeq: number): {
       return socket;
     }
   };
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.#emit("close", {});
-  }
-
-  message(event: FuzzEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 async function flush(): Promise<void> {

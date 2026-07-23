@@ -1,7 +1,8 @@
 import fc, { type Arbitrary } from "fast-check";
 import { describe, expect, it } from "vitest";
 import { Aex, type Message, type SessionResult, type SessionInput, type SessionStartOptions } from "../../src/index.js";
-import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
+import type { AexEvent, JsonValue } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 const BASE_URL = "https://api.example.test";
 const SESSION_ID = "sess_property";
@@ -29,31 +30,6 @@ interface Harness {
   readonly calls: CapturedRequest[];
   readonly sockets: FakeWebSocket[];
   readonly webSocketFactory: (url: string) => FakeWebSocket;
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-
-  close(): void {
-    this.#emit("close", {});
-  }
-
-  message(event: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 function headersToObject(headers: HeadersInit | undefined): Record<string, string> {

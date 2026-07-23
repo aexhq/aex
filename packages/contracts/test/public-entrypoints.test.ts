@@ -66,7 +66,7 @@ describe("contracts entrypoint boundary", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
-    expect(Object.keys(packageJson.exports ?? {})).toEqual([".", "./internal", "./subagent-runtime"]);
+    expect(Object.keys(packageJson.exports ?? {})).toEqual([".", "./internal", "./subagent-runtime", "./testing"]);
   });
 
   it("keeps platform implementation values off the customer entrypoint", () => {

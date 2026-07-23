@@ -10,7 +10,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { Aex, isRateLimited, AexRateLimitError, SessionStateError } from "../../src/index.js";
-import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
+import type { AexEvent, JsonValue } from "@aexhq/contracts";
+import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 interface RecordedCall {
   readonly method: string;
@@ -85,26 +86,6 @@ function runErrorEvent(seq = 1024): AexEvent {
       providerUsage: []
     } as Record<string, JsonValue>
   };
-}
-
-class FakeWebSocket implements WebSocketLike {
-  readonly url: string;
-  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
-  constructor(url: string) {
-    this.url = url;
-  }
-  addEventListener(type: string, cb: (ev: { data?: unknown }) => void): void {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-  close(): void {
-    this.#emit("close", {});
-  }
-  message(event: AexEvent): void {
-    this.#emit("message", { data: JSON.stringify(event) });
-  }
-  #emit(type: string, ev: { data?: unknown }): void {
-    for (const cb of this.#listeners[type] ?? []) cb(ev);
-  }
 }
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));

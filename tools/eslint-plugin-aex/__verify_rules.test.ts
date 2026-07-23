@@ -1,6 +1,6 @@
 // Self-test fixture for the aex ESLint rules. Lives next to the plugin
 // so it ships with the rules. NOT a Vitest test — sessions as a fixture-style
-// lint smoke (`bun run lint:tests` will fail with EXACTLY the five
+// lint smoke (`bun run lint:tests` will fail with EXACTLY the
 // expected aex/* violations on this file). The verification script
 // at the bottom of this comment block sessions it programmatically; manual
 // re-introduction here serves the same purpose for ad-hoc verification.
@@ -44,4 +44,24 @@ it.skipIf(true)("VERIFY-PATTERN-4", () => {
 // PATTERN 5 — no-focused-tests
 it.only("VERIFY-PATTERN-5", () => {
   expect(1).toBe(1);
+});
+
+// PATTERN 6 — no-disabled-tests: bun-only `.if` alias (run-only-if, bun's
+// spelling of vitest's `.runIf`).
+it.if(true)("VERIFY-PATTERN-6", () => {
+  expect(1).toBe(1);
+});
+
+// PATTERN 7 — no-disabled-tests: bun-only `.todoIf` alias (conditional
+// `.todo`).
+it.todoIf(true)("VERIFY-PATTERN-7", () => {
+  expect(1).toBe(1);
+});
+
+// ALLOWED — bun's `.failing` ASSERTS the test fails (it runs the body and
+// errors if it passes), so it is an assertion, not a skip. It must NOT trip
+// any rule; the verify script's unexpected-rule check catches a regression
+// that starts flagging it.
+it.failing("VERIFY-ALLOWED-FAILING", () => {
+  expect(1).toBe(2);
 });
