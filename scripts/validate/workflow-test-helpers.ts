@@ -68,6 +68,53 @@ export function workflowStep(job: WorkflowJob, name: string): WorkflowStep {
   return step;
 }
 
+export type WorkflowStepPredicate = (step: WorkflowStep) => boolean;
+
+export function workflowSteps(job: WorkflowJob): readonly WorkflowStep[] {
+  return job.steps ?? [];
+}
+
+/** Select a step by executable/action semantics, not its presentation label. */
+export function findWorkflowStep(
+  job: WorkflowJob,
+  predicate: WorkflowStepPredicate,
+  description: string
+): WorkflowStep {
+  const matches = workflowSteps(job).filter(predicate);
+  if (matches.length !== 1) {
+    throw new Error(`expected exactly one workflow step for ${description}, found ${matches.length}`);
+  }
+  return matches[0]!;
+}
+
+export function workflowStepById(job: WorkflowJob, id: string): WorkflowStep {
+  return findWorkflowStep(job, (step) => step.id === id, `id ${id}`);
+}
+
+export function workflowStepUsing(job: WorkflowJob, action: string): WorkflowStep {
+  return findWorkflowStep(job, (step) => step.uses?.startsWith(action) === true, `action ${action}`);
+}
+
+export function workflowStepRunning(job: WorkflowJob, matcher: RegExp): WorkflowStep {
+  return findWorkflowStep(
+    job,
+    (step) => typeof step.run === "string" && matcher.test(step.run),
+    `run ${matcher}`
+  );
+}
+
+export function workflowStepWithEnv(job: WorkflowJob, key: string): WorkflowStep {
+  return findWorkflowStep(job, (step) => Object.prototype.hasOwnProperty.call(step.env ?? {}, key), `env ${key}`);
+}
+
+export function workflowStepBefore(job: WorkflowJob, earlier: WorkflowStep, later: WorkflowStep): void {
+  const earlierIndex = workflowSteps(job).indexOf(earlier);
+  const laterIndex = workflowSteps(job).indexOf(later);
+  if (earlierIndex < 0 || laterIndex < 0 || earlierIndex >= laterIndex) {
+    throw new Error("workflow step order is invalid");
+  }
+}
+
 export function jobNeeds(job: WorkflowJob): readonly string[] {
   if (job.needs === undefined) return [];
   return typeof job.needs === "string" ? [job.needs] : job.needs;

@@ -28,33 +28,36 @@ import { parityCellsForFile } from "./runtime-parity-verdicts.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
 
-// MUST mirror the `exclude` list in vitest.config.ts (the default `test:user`
-// sweep). Heavy/fuzz/provider suites are separate explicit gates.
-const EXCLUDED = new Set([
-  // Cap-saturating by design. It runs in a dedicated workflow lane with an
-  // isolated low-cap workspace so it cannot starve unrelated live assertions.
-  "test/live/edge-admission-gates.user.test.ts",
-  "test/live/live-sdk-heavy-session.test.ts",
-  "test/live/live-api-fuzz.test.ts",
-  "test/live/live-sdk-tool-capability-fuzz.test.ts"
-]);
-const EXCLUDED_DIRS = new Set(["node_modules", "providers"]);
+// Implementation-owned live-test policy. The collector, matrix builder, and
+// validators all consume this manifest so exclusions and resource declarations
+// do not drift into separate test inventories.
+export const LIVE_TEST_SHARD_CONFIG = Object.freeze({
+  // Cap-saturating suites run in dedicated workflow lanes with isolated
+  // workspaces so they cannot starve unrelated live assertions.
+  excludedFiles: Object.freeze([
+    "test/live/edge-admission-gates.user.test.ts",
+    "test/live/live-sdk-heavy-session.test.ts",
+    "test/live/live-api-fuzz.test.ts",
+    "test/live/live-sdk-tool-capability-fuzz.test.ts"
+  ]),
+  excludedDirectories: Object.freeze(["node_modules", "providers"]),
+  // Most live files run at most one active session at a time. Values here are
+  // the declared peak for files that start sessions concurrently in a test.
+  sessionSlotOverrides: Object.freeze({
+    "test/live/edge-concurrency-scale.user.test.ts": 10
+  }),
+  // Only these files explicitly submit the selected runtime and assert the
+  // returned session identity. Other files must remain container-only.
+  runtimePairedFiles: Object.freeze([
+    "test/live/edge-cli.user.test.ts",
+    "test/live/live-sdk-event-stream.test.ts"
+  ])
+});
 
-// Most live files run at most one active session at a time. This scenario
-// deliberately starts ten sessions concurrently inside one test, so a
-// one-file-per-job matrix consumes more workspace slots than its job count.
-const SESSION_SLOT_OVERRIDES = new Map([
-  ["test/live/edge-concurrency-scale.user.test.ts", 10]
-]);
-
-// These files explicitly submit the selected runtime and assert the returned
-// session identity. Only such files may be multiplied by runtime discovery;
-// duplicating a test that relies on the default would create false Lambda/spot
-// evidence while actually exercising container.
-export const RUNTIME_PAIRED_FILES = new Set([
-  "test/live/edge-cli.user.test.ts",
-  "test/live/live-sdk-event-stream.test.ts"
-]);
+const EXCLUDED = new Set(LIVE_TEST_SHARD_CONFIG.excludedFiles);
+const EXCLUDED_DIRS = new Set(LIVE_TEST_SHARD_CONFIG.excludedDirectories);
+const SESSION_SLOT_OVERRIDES = new Map(Object.entries(LIVE_TEST_SHARD_CONFIG.sessionSlotOverrides));
+export const RUNTIME_PAIRED_FILES = new Set(LIVE_TEST_SHARD_CONFIG.runtimePairedFiles);
 
 export function collectTestFiles(root = appRoot) {
   const out = [];

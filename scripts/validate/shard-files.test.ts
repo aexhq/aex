@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { relative, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EDGE_CHAT_SESSION_SHARDS } from "../../apps/user-tests/test/_fixtures/edge-chat-session-manifest.js";
@@ -10,6 +11,7 @@ import {
   excludeFiles,
   loadDurations,
   lptPartition,
+  LIVE_TEST_SHARD_CONFIG,
   RUNTIME_PAIRED_FILES,
   sessionSlotsForFile
 } from "../../apps/user-tests/scripts/shard-files.mjs";
@@ -18,6 +20,23 @@ import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const userTestsRoot = resolve(repoRoot, "apps/user-tests");
 const SHARD_COLLECTION_PROCESS_TIMEOUT_MS = 30_000;
+
+function allLiveTestFiles(): readonly string[] {
+  const files: string[] = [];
+  const excludedDirectories = new Set(LIVE_TEST_SHARD_CONFIG.excludedDirectories);
+  const visit = (relativeDirectory: string): void => {
+    for (const entry of readdirSync(join(userTestsRoot, relativeDirectory), { withFileTypes: true })) {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!excludedDirectories.has(entry.name)) visit(relativePath);
+      } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
+        files.push(relativePath);
+      }
+    }
+  };
+  visit("test/live");
+  return files.sort();
+}
 
 function durationsOf(entries: Record<string, number>): Map<string, number> {
   return new Map(Object.entries(entries));
@@ -40,9 +59,11 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(matrix.map((entry) => entry.shard)).toEqual(files.map((_, index) => index + 1));
     expect(matrix.every((entry) => entry.count === files.length)).toBe(true);
     expect(matrix.every((entry) => entry.sessionSlots === sessionSlotsForFile(entry.file))).toBe(true);
-    expect(matrix.filter((entry) => entry.runtimeKind !== null).map((entry) => entry.runtimeKind)).toEqual(
-      [...RUNTIME_PAIRED_FILES].sort().map(() => "container")
+    expect(matrix.filter((entry) => entry.runtimeKind !== null).map((entry) => entry.file).sort()).toEqual(
+      [...RUNTIME_PAIRED_FILES].sort()
     );
+    expect(matrix.filter((entry) => entry.runtimeKind !== null).every((entry) => entry.runtimeKind === "container"))
+      .toBe(true);
   });
 
   it("fans out only runtime-aware files across the authenticated available runtime set", () => {
@@ -87,15 +108,13 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(files.every((file) => file.endsWith(".test.ts"))).toBe(true);
     expect(files.some((file) => file.startsWith("test/offline/"))).toBe(false);
     expect(files.some((file) => file.startsWith("test/_fixtures/"))).toBe(false);
-    // Excluded explicit gates never leak into the default sweep.
-    expect(files).not.toContain("test/live/edge-admission-gates.user.test.ts");
-    expect(files).not.toContain("test/live/live-sdk-heavy-session.test.ts");
-    expect(files).not.toContain("test/live/live-api-fuzz.test.ts");
-    expect(files).not.toContain("test/live/live-sdk-tool-capability-fuzz.test.ts");
-    expect(files.some((f) => f.startsWith("test/live/providers/"))).toBe(false);
-    // Provider-specific suites (Anthropic BYOK, doubao, ...) are non-gating.
-    expect(files).not.toContain("test/live/live-sdk-anthropic-managed.test.ts");
-    expect(files).not.toContain("test/live/providers/live-sdk-anthropic-managed.test.ts");
+    const configuredExclusions = new Set(LIVE_TEST_SHARD_CONFIG.excludedFiles);
+    expect(files).toEqual(allLiveTestFiles().filter((file) => !configuredExclusions.has(file)));
+    for (const file of configuredExclusions) {
+      expect(existsSync(resolve(userTestsRoot, file)), file).toBe(true);
+      expect(files).not.toContain(file);
+    }
+    expect(files.some((file) => file.includes("/providers/"))).toBe(false);
   });
 
   it("keeps independent chat-session scenarios in independent matrix jobs", () => {
@@ -105,7 +124,6 @@ describe("shard-files duration-balanced bin packing", () => {
     const shardFiles = shards.map(({ file }) => file).sort();
     const shardScenarios = shards.map(({ scenario }) => scenario);
 
-    expect(files).not.toContain("test/live/edge-chat-session.user.test.ts");
     expect(new Set(shardFiles).size).toBe(shards.length);
     expect(new Set(shardScenarios).size).toBe(shards.length);
     expect(files.filter((file) => file.startsWith("test/live/edge-chat-")).sort()).toEqual(shardFiles);
@@ -161,12 +179,16 @@ describe("shard-files duration-balanced bin packing", () => {
   });
 
   it("declares peak session-slot demand for internally concurrent live tests", () => {
-    const edgeConcurrency = "test/live/edge-concurrency-scale.user.test.ts";
-    const ordinary = "test/live/config-envvars.user.test.ts";
+    const overrideEntries = Object.entries(LIVE_TEST_SHARD_CONFIG.sessionSlotOverrides);
+    expect(overrideEntries.length).toBeGreaterThan(0);
+    const [overriddenFile, overriddenSlots] = overrideEntries[0]!;
+    const ordinary = collectTestFiles(userTestsRoot).find((file) => !LIVE_TEST_SHARD_CONFIG.sessionSlotOverrides[file]);
+    if (!ordinary) throw new Error("expected an ordinary live test file");
 
     expect(sessionSlotsForFile(ordinary)).toBe(1);
-    expect(sessionSlotsForFile(edgeConcurrency)).toBe(10);
-    expect(declaredPeakSessionSlots([ordinary, edgeConcurrency])).toBe(11);
+    expect(overriddenSlots).toBeGreaterThan(1);
+    expect(sessionSlotsForFile(overriddenFile)).toBe(overriddenSlots);
+    expect(declaredPeakSessionSlots([ordinary, overriddenFile])).toBe(1 + overriddenSlots);
 
     const files = collectTestFiles(userTestsRoot);
     const matrix = buildFileMatrix(files);
@@ -204,18 +226,19 @@ describe("shard-files duration-balanced bin packing", () => {
 
   it("applies environment-specific file exclusions before partitioning", () => {
     const files = collectTestFiles(userTestsRoot);
-    const filtered = excludeFiles(files, ["test/live/live-default-base-url.test.ts"]);
+    const excludedFile = files[0];
+    if (!excludedFile) throw new Error("expected a collected live test file");
+    const filtered = excludeFiles(files, [excludedFile]);
     const durations = loadDurations();
 
-    expect(files).toContain("test/live/live-default-base-url.test.ts");
-    expect(filtered).not.toContain("test/live/live-default-base-url.test.ts");
+    expect(filtered).not.toContain(excludedFile);
     expect(filtered.length).toBe(files.length - 1);
 
     const shardCount = Math.max(1, Math.ceil(filtered.length / 2));
     const bins = lptPartition(filtered, durations, shardCount);
     expect(bins).toHaveLength(shardCount);
     for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
-    expect(bins.flatMap((bin) => bin.files)).not.toContain("test/live/live-default-base-url.test.ts");
+    expect(bins.flatMap((bin) => bin.files)).not.toContain(excludedFile);
   });
 
   it("fails loudly when asked to exclude a non-collected file", () => {
