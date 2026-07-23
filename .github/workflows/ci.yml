@@ -217,6 +217,8 @@ jobs:
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Publish canary to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish "${{ steps.pack.outputs.tarball }}" \
             --registry https://registry.npmjs.org \
