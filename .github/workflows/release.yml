@@ -26,7 +26,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   RELEASE_HEAD_SHA: ${{ github.sha }}
@@ -289,6 +288,9 @@ jobs:
     # npm trusted publishing supports GitHub-hosted runners only. Keep this job
     # off AEX_CI_RUNNER so OIDC exchange and provenance remain deterministic.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     environment: npm-release
     outputs:
       version: ${{ needs.version.outputs.version }}
