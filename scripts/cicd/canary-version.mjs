@@ -17,6 +17,13 @@ export function buildCanaryVersion({ baseVersion, sha }) {
   return `${match[1]}.${match[2]}.${match[3]}-canary`;
 }
 
+export function nextCanaryVersion(version) {
+  const match = CANARY_VERSION_RE.exec(String(version ?? ""));
+  if (!match) throw new Error(`invalid canary version: ${version ?? "(missing)"}`);
+  const [, major, minor, patch] = /^(\d+)\.(\d+)\.(\d+)-canary$/.exec(version);
+  return `${major}.${minor}.${Number(patch) + 1}-canary`;
+}
+
 export function applySdkVersion(repoRoot, version) {
   if (!CANARY_VERSION_RE.test(version)) {
     throw new Error(`refusing to apply invalid canary version: ${version}`);
@@ -65,6 +72,11 @@ export function main(argv = process.argv.slice(2)) {
       baseVersion: required(args, "baseVersion"),
       sha: required(args, "sha")
     });
+    process.stdout.write(`${version}\n`);
+    return version;
+  }
+  if (args.command === "next") {
+    const version = nextCanaryVersion(required(args, "version"));
     process.stdout.write(`${version}\n`);
     return version;
   }
