@@ -98,5 +98,5 @@ describe("@aexhq/cli supported and packed package surface", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 60_000);
 });

@@ -151,7 +151,9 @@ async function emit(obj) {
   // Give any pending unhandled rejection a tick to surface before we report.
   await new Promise((r) => setTimeout(r, 250));
   process.stdout.write(JSON.stringify({ ...obj, unhandled: __unhandled }));
-  process.exit(0);
+  // A case body that latched a failure (process.exitCode = 1) must exit
+  // nonzero even though the evidence JSON was emitted.
+  process.exit(process.exitCode ?? 0);
 }
 
 async function emitChildFailure(stage, error) {
@@ -690,6 +692,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // Clean replay of the SAME finished run: every seq a clean replay delivers
       // MUST also be in the chaotic stream (proves the reconnects lost nothing).
       let replaySeqs = [];
+      let replayError = null;
       try {
         const session = await client.sessions.open(result.sessionId);
         const ac = new AbortController();
@@ -699,7 +702,12 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
           if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
         }
         clearTimeout(g);
-      } catch (e) {}
+      } catch (e) {
+        // A failed post-run replay read must fail the child loudly — with an
+        // empty replaySeqs the no-loss comparison below passes vacuously.
+        replayError = errorText(e);
+        process.exitCode = 1;
+      }
 
       // The chaos stream comes from send(), which starts at the TURN cursor, while
       // the clean replay starts at 0 (it includes pre-turn events like
@@ -719,6 +727,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         stats,
         chaosMin,
         replayCount: replaySeqs.length,
+        replayError,
         missingCount: missing.length,
         missingSample: missing.slice(0, 10)
       });

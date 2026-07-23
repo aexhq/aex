@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -62,7 +62,7 @@ describe("bun version policy", () => {
     expect(usesParallelBunTest("bun run --workspaces --if-present --parallel lint")).toBe(false);
     expect(usesParallelBunTest("bun run --filter @aexhq/user-tests --parallel test:user")).toBe(false);
     expect(usesParallelBunTest("bun test-conformance/run.mjs --parallel")).toBe(false);
-    expect(usesParallelBunTest("bunx vitest run --parallel")).toBe(false);
+    expect(usesParallelBunTest("bunx some-other-runner run --parallel")).toBe(false);
   });
 
   it("admits `bun test --parallel` scripts only under the crashed-worker-safe bun floor", () => {

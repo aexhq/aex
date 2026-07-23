@@ -298,15 +298,14 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
           apiKeys: gateKeys,
           deleteAfter: true
         }, { timeoutMs: WAIT });
-        let openOutcome, recordStatus=null, err=null;
-        try {
-          const s = await client.sessions.open(r.sessionId);
-          openOutcome = "resolved";
-          recordStatus = s && s.record ? s.record.status : null;
-        } catch(e) {
-          openOutcome = "threw";
-          err = errInfo(e);
-        }
+        // Negative probe: a 404 rejection IS the expected outcome here; both
+        // outcomes feed the strict deleted-assertion below, so nothing is
+        // suppressed.
+        const opened = await client.sessions.open(r.sessionId).then(
+          (s) => ({ openOutcome: "resolved", recordStatus: s && s.record ? s.record.status : null, err: null }),
+          (e) => ({ openOutcome: "threw", recordStatus: null, err: errInfo(e) })
+        );
+        const { openOutcome, recordStatus, err } = opened;
         const deleted = (openOutcome === "threw" && err && err.status === 404)
           || (openOutcome === "resolved" && (recordStatus === "deleted" || recordStatus === "expired"));
         print({ sessionId:r.sessionId, ranOk:r.ok, openOutcome, recordStatus, err, deleted });

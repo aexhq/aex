@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { readWorkflow, workflowJob, workflowStep } from "./workflow-test-helpers.js";
 
 describe("npm release publishing policy", () => {

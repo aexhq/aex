@@ -385,13 +385,17 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           try {
             snapshot.record = await client.sessions.get(session.id);
           } catch (e) {
+            // Post-finish session reads must fail the child loudly (never a
+            // diagnostics-only swallow); the shape still ships as evidence.
             snapshot.recordError = errShape(e);
+            process.exitCode = 1;
           }
           try {
             const events = await session.events.list();
             snapshot.events = events.map(compactEvent).slice(-25);
           } catch (e) {
             snapshot.eventsError = errShape(e);
+            process.exitCode = 1;
           }
           return snapshot;
         }
@@ -434,7 +438,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         const results = await Promise.all(tasks);
         const snapshot = await sessionSnapshot();
         process.stdout.write(JSON.stringify({ M, sessionId: session.id, results, snapshot }));
-        process.exit(0);
+        process.exit(process.exitCode ?? 0);
       `;
       const r = await runChild(install, "edge-conc-D.mjs", body, 10 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 6000)}`;
@@ -495,7 +499,10 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
               if (typeof ev.type === "string") types.push(ev.type);
             }
           } catch (e) {
+            // A failed post-run stream read must fail the child loudly; the
+            // scrubbed shape still ships as evidence for the parent assertions.
             err = scrub(e && e.message ? String(e.message) : String(e));
+            process.exitCode = 1;
           } finally {
             clearTimeout(timer);
           }
@@ -517,7 +524,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         const M = 3;
         const consumers = await Promise.all([collect("c0"), collect("c1"), collect("c2")]);
         process.stdout.write(JSON.stringify({ sessionId, runOk, M, consumers }));
-        process.exit(0);
+        process.exit(process.exitCode ?? 0);
       `;
       const r = await runChild(install, "edge-conc-E.mjs", body, 12 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 8000)}`;

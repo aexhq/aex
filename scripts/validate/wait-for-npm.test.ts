@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 // @ts-expect-error JavaScript CI policy helper is validated directly.
 import { isRetryableRegistryStatus, validateRegistryMetadata, waitForNpmEvidence } from "../cicd/wait-for-npm.mjs";
 
@@ -31,8 +31,7 @@ describe("immutable npm evidence", () => {
   });
 
   it("carries one successful metadata observation through tarball visibility", async () => {
-    const fetch = vi
-      .fn()
+    const fetch = mock()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => metadata })
       .mockResolvedValueOnce({ ok: true, status: 200 });
 

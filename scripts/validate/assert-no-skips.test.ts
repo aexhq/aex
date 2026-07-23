@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const scriptPath = resolve(repoRoot, "scripts/cicd/assert-no-skips.mjs");

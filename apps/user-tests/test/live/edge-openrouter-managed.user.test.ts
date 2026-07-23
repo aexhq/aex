@@ -142,7 +142,10 @@ describe("edge: openrouter managed session fails honestly", () => {
           out.errorMessage = (result.error ?? rec.errorMessage ?? "").slice(0, 300);
           out.elapsedMs = Date.now() - t0;
         } catch (e) {
+          // Post-finish session reads must fail the child loudly; the shape
+          // still ships as evidence (the parent asserts out.error is null).
           out.error = String(e).slice(0, 500);
+          process.exitCode = 1;
         } finally {
           if (sid) { try { await client.sessions.delete(sid); } catch {} }
         }

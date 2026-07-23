@@ -1,9 +1,9 @@
 // CI file discovery and duration-balanced sharding for the live user-test suite.
 //
-// Vitest's built-in `--shard=i/N` splits by FILE COUNT, but per-file wall
+// A count-based `--shard=i/N` split is a poor fit here: per-file wall
 // times here span ~1s to ~6.5min (live tests wait on remote sessions), so
 // count-based shards were observed at 1m42s..12m7s. This script instead
-// LPT bin-packs the files vitest would collect using recorded durations
+// LPT bin-packs the collected live files using recorded durations
 // (shard-durations.json; unknown files get the median) and prints the file
 // list for shard i of N. The hosted workflow uses `--matrix` for full
 // one-file-per-job fanout; the duration-balanced modes remain useful when a

@@ -1,8 +1,9 @@
 /**
  * `@aexhq/contracts/testing` — runner-agnostic test kit + canonical fakes.
  *
- * Nothing here imports a test runner: helpers work under vitest today and
- * bun:test after migration; callers wire their own lifecycle hooks (e.g.
+ * Nothing here imports a test runner: helpers stay runner-agnostic (they
+ * ran under vitest before the bun:test migration unchanged); callers wire
+ * their own lifecycle hooks (e.g.
  * `afterEach(restoreEnv)`).
  */
 export { stubEnv, restoreEnv } from "./testing/stub-env.js";

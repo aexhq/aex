@@ -1,5 +1,5 @@
 import { readdirSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { readWorkflow } from "./workflow-test-helpers.js";
 
 const workflowDirectory = new URL("../../.github/workflows/", import.meta.url);

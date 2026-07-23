@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const preflightUrl = pathToFileURL(resolve(repoRoot, "scripts/cicd/preflight-live-user-tests.mjs")).href;

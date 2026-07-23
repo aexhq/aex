@@ -230,7 +230,7 @@ jobs:
             exit 1
           fi
           set +e
-          bun run test:user:files -- "$TEST_FILE" --reporter=default --reporter=json --outputFile.json="$REPORT" > "$RAW_LOG" 2>&1
+          bun run test:user:files -- "$TEST_FILE" --reporter=junit --reporter-outfile="$REPORT" > "$RAW_LOG" 2>&1
           test_status=$?
           node scripts/cicd/assert-no-skips.mjs "$REPORT" >> "$RAW_LOG" 2>&1
           assertion_status=$?

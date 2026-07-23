@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // @ts-expect-error JS release helper is validated directly.
 import { applySdkVersion, buildCanaryVersion } from "../cicd/canary-version.mjs";
 

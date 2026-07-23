@@ -35,7 +35,7 @@
     "test:security": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:security:unlocked",
     "test:security:unlocked": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-security.xml test/security && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-security.xml",
     "test:property": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-property.xml property && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-property.xml",
-    "test:coverage": "bun test --coverage test/unit",
+    "test:coverage": "bun test --isolate --coverage test/unit",
     "prepack": "bun run build",
     "pack:dry-run": "bun ../../scripts/with-generated-dist-lock.mjs bun pm pack --dry-run --ignore-scripts"
   },

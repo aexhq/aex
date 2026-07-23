@@ -1,5 +1,5 @@
 {
-  "$comment": "Per-test-file wall-clock seconds for duration-balanced CI sharding (scripts/shard-files.mjs). Measured from aexhq/platform run 28666442107 and aexhq/aex start 28657317192 (2026-07-03, max of both); the split edge-chat entries conservatively apportion the former aggregate until fresh per-file timings exist. Files absent from this map get the median of recorded values. Refresh occasionally from recent CI vitest per-file times; exactness does not matter, only relative weight.",
+  "$comment": "Per-test-file wall-clock seconds for duration-balanced CI sharding (scripts/shard-files.mjs). Measured from aexhq/platform run 28666442107 and aexhq/aex start 28657317192 (2026-07-03, max of both); the split edge-chat entries conservatively apportion the former aggregate until fresh per-file timings exist. Files absent from this map get the median of recorded values. Refresh occasionally from recent CI per-file times; exactness does not matter, only relative weight.",
   "test/live/config-instructions.user.test.ts": 27,
   "test/live/config-envvars.user.test.ts": 25,
   "test/live/config-networking.user.test.ts": 32,

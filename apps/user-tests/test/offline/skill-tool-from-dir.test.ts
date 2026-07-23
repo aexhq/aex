@@ -15,7 +15,7 @@
  * artifact, and a fake fetch captures the exact wire request (POST
  * /api/sessions plus the presign -> PUT -> finalize asset flow and skill
  * registry upsert) without a live run. Each child logs one small JSON summary
- * that the vitest assertion checks.
+ * that the test assertion checks.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

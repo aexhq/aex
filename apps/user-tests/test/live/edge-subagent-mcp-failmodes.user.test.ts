@@ -246,7 +246,10 @@ describe("live DEV — subagent + MCP failure modes", () => {
             }));
           }
         } catch (e) {
+          // Session create/read failures must fail the child loudly; the shape
+          // still ships as evidence (the parent asserts createThrown is null).
           out.createThrown = errShape(e);
+          process.exitCode = 1;
         } finally {
           if (session && session.id) {
             await session.delete().catch(() => {});

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   GATE_KEY_ENV,
   GATE_PROVIDER,
@@ -84,7 +84,8 @@ describe("live user-test release gate", () => {
       RAW_LOG: "${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log",
       REPORT: "${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json"
     });
-    expect(live.run).toMatch(/outputFile\.json=.*REPORT/);
+    expect(live.run).toMatch(/--reporter=junit\s+--reporter-outfile="\$REPORT"/);
+    expect(live.run).not.toMatch(/--reporter=json|outputFile\.json/);
     expect(live.run).toMatch(/assert-no-skips\.mjs.*REPORT/);
     expect(live.run).toMatch(/>\s*"\$RAW_LOG"\s+2>&1/);
     expect(live.run).not.toMatch(/\btee\b/);
@@ -260,6 +261,9 @@ describe("live user-test release gate", () => {
     expect(liveRun.run).not.toMatch(/--shard(?:\s|$)/);
     expect(jobNeeds(release)).toContain("publish");
     expect(smokeRun.env?.AEX_USER_TEST_MAX_WORKERS).toBe(2);
+    expect(smokeRun.run).toMatch(/--reporter=junit\s+--reporter-outfile="\$REPORT"/);
+    expect(smokeRun.run).not.toMatch(/--reporter=json|outputFile\.json/);
+    expect(smokeRun.run).toMatch(/assert-no-skips\.mjs.*REPORT/);
     expect(smokeRun.run).not.toMatch(/shard-files\.mjs/);
     expect(usesStep(release, "actions/upload-artifact@").with?.name).toMatch(/redacted-log/);
   });

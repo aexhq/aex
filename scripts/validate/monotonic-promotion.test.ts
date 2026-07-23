@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // @ts-expect-error JS release helper is validated directly.
 import { assertMonotonicPromotion, assertPromotionInRepository } from "../cicd/assert-monotonic-promotion.mjs";
 
@@ -162,7 +162,7 @@ describe("monotonic promotion guard", () => {
   // This intentionally spawns several Git subprocesses. On shared/self-hosted
   // runners the fixture can be CPU/IO delayed even though the ancestry check is
   // deterministic; bound the test for that host load without retrying it.
-  it("checks real Git ancestry rather than trusting a caller-provided version order", { timeout: 20_000 }, () => {
+  it("checks real Git ancestry rather than trusting a caller-provided version order", () => {
     const { repository, first, second, newer, divergent } = createAncestryRepository();
     try {
       expect(() => assertPromotionInRepository({
@@ -189,5 +189,5 @@ describe("monotonic promotion guard", () => {
     } finally {
       rmSync(repository, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

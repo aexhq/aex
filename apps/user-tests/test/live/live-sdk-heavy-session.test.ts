@@ -11,7 +11,7 @@
  * redaction) behaves as expected under a maximal submission.
  *
  * Sessions as an explicit gate AFTER the rest of the live user-tests pass
- * (own Bun script `test:user:heavy` + own vitest config), so it is
+ * (own Bun script `test:user:heavy`, its own dedicated lane), so it is
  * never swept into the default `test:user` run. Wired into
  * live-user-tests.yml as the manual canary.
  *

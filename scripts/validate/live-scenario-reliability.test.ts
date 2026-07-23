@@ -1,9 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   jobNeeds,
   readRepoFile,
@@ -97,36 +96,40 @@ function suppressedSessionReads(path: string): readonly string[] {
   return suppressedSessionReadsInSource(readRepoFile(path), path);
 }
 
-describe("live scenario reliability", () => {
-  it("resolves every live user-test entrypoint with whole-scenario retries disabled", () => {
-    const packageJson = JSON.parse(readRepoFile("apps/user-tests/package.json")) as {
-      scripts?: Record<string, string>;
-    };
-    const configs = new Set(
-      Object.entries(packageJson.scripts ?? {})
-        .filter(([name]) => name.startsWith("test:user") && name !== "test:user:offline")
-        .map(([, command]) => /--config\s+(vitest(?:\.[\w-]+)?\.config\.ts)/.exec(command)?.[1])
-        .filter((name): name is string => name !== undefined)
-    );
+// `bun test --retry=N` (or `--retry N`) re-runs a failing test whole-scenario —
+// the exact behavior the retired vitest lane configs locked to `retry: 0`. With
+// the lane configs gone, the retry surface is the lane SCRIPT argv plus the
+// lane runner's own bun-test argv assembly, so the lock moves there.
+const RETRY_FLAG = /(?:^|\s)--retry(?:[=\s]|$)/;
 
-    expect(configs.size).toBeGreaterThan(0);
-    const names = [...configs];
-    const configUrls = names.map((name) => pathToFileURL(resolve(repoRoot, "apps/user-tests", name)).href);
-    const output = execFileSync(
-      "bun",
-      [
-        "-e",
-        "const urls=JSON.parse(process.env.AEX_LIVE_CONFIG_URLS);const values=[];for(const url of urls){const m=await import(url);values.push(m.default.test?.retry??0)};console.log(JSON.stringify(values))"
-      ],
-      {
-        encoding: "utf8",
-        env: { ...process.env, AEX_LIVE_CONFIG_URLS: JSON.stringify(configUrls) }
-      }
-    );
-    const retries = JSON.parse(output) as number[];
-    for (const [index, retry] of retries.entries()) {
-      expect(retry, names[index]).toBe(0);
+describe("live scenario reliability", () => {
+  it("keeps whole-scenario retries disabled in every user-test lane", () => {
+    const laneScripts = Object.entries(
+      (JSON.parse(readRepoFile("apps/user-tests/package.json")) as {
+        scripts?: Record<string, string>;
+      }).scripts ?? {}
+    ).filter(([name]) => name.startsWith("test:user"));
+
+    expect(laneScripts.length).toBeGreaterThan(0);
+    for (const [name, command] of laneScripts) {
+      expect(command, name).not.toMatch(RETRY_FLAG);
     }
+
+    // The lane runner forwards its argv to `bun test` verbatim and assembles
+    // the rest itself; it must never introduce a retry flag on its own.
+    expect(readRepoFile("apps/user-tests/scripts/user-bun-test.mjs")).not.toMatch(RETRY_FLAG);
+    // The two direct `bun test` lanes (fuzz/e2e) are covered by the script scan
+    // above; the shared bunfig must not smuggle retries in either.
+    expect(readRepoFile("apps/user-tests/bunfig.toml")).not.toMatch(RETRY_FLAG);
+  });
+
+  it("detects both --retry spellings the lane scripts could smuggle in", () => {
+    expect("bun test --isolate --retry=2 test/offline").toMatch(RETRY_FLAG);
+    expect("bun test --isolate --retry 2 test/offline").toMatch(RETRY_FLAG);
+    expect("bun test --isolate --retry").toMatch(RETRY_FLAG);
+    // No false positives on flags that merely contain the word.
+    expect("bun test --isolate --retry-free test/offline").not.toMatch(RETRY_FLAG);
+    expect("bun scripts/user-bun-test.mjs --isolate --timeout=180000 --sweep").not.toMatch(RETRY_FLAG);
   });
 
   it("does not neutralize live-test predicates with an always-true fallback", () => {

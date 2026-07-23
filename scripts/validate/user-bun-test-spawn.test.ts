@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 interface SpawnInvocation {
   readonly command: string;
@@ -86,7 +86,7 @@ describe("user-bun-test argv spawning", () => {
         `${JSON.stringify({ ComSpec: "C:\\Windows\\System32\\cmd.exe" })})`
     );
 
-    const expected =
+    const expected: SpawnInvocation =
       process.platform === "win32"
         ? {
             command: "C:\\Windows\\System32\\cmd.exe",
