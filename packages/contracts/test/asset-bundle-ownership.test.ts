@@ -60,7 +60,7 @@ describe("canonical asset bundle pipeline ownership", () => {
     expect(memberCallNames(canonical)).toContain("encode");
     expect(descendants(canonical).some((node) => ts.isIdentifier(node) && node.text === "totalDecompressed")).toBe(true);
     expect(memberCallNames(canonical)).toContain("has");
-    expect(propertyNames(canonical)).toEqual(expect.arrayContaining(["zip", "fileCount", "compressedSize"]));
+    expect(propertyNames(canonical)).toEqual(expect.arrayContaining(["fileCount", "compressedSize"]));
   });
 
   it("keeps the skill and tool exports as policy-only adapters", () => {

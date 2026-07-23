@@ -34,14 +34,23 @@ function descendants(node: ts.Node): readonly ts.Node[] {
 }
 
 function importedCanonicalSymbol(file: ts.SourceFile): boolean {
-  return file.statements
-    .filter(ts.isImportDeclaration)
-    .filter((statement) => ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "./canonical-sha256.js")
-    .some((statement) => {
+  return file.statements.some((statement) => {
+    if (ts.isImportDeclaration(statement)) {
+      if (!ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "./canonical-sha256.js") return false;
       const bindings = statement.importClause?.namedBindings;
-      if (!bindings || !ts.isNamedImports(bindings)) return false;
-      return bindings.elements.some((element) => (element.propertyName?.text ?? element.name.text) === "CANONICAL_SHA256_DIGEST_PATTERN");
-    });
+      return bindings !== undefined && ts.isNamedImports(bindings) && bindings.elements.some((element) =>
+        (element.propertyName?.text ?? element.name.text) === "CANONICAL_SHA256_DIGEST_PATTERN"
+      );
+    }
+    if (ts.isExportDeclaration(statement)) {
+      if (!statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "./canonical-sha256.js") return false;
+      const clause = statement.exportClause;
+      return clause !== undefined && ts.isNamedExports(clause) && clause.elements.some((element) =>
+        (element.propertyName?.text ?? element.name.text) === "CANONICAL_SHA256_DIGEST_PATTERN"
+      );
+    }
+    return false;
+  });
 }
 
 function declaredCanonicalSymbol(file: ts.SourceFile): ts.VariableDeclaration | undefined {

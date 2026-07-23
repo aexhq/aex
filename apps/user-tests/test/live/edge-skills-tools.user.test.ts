@@ -1,5 +1,6 @@
 /**
  * Live edge-case sweep for the SKILLS & TOOLS composition surface, from a real
+ * @aex-reliability-audit: post-finish-read
  * customer's seat, against the DEV plane via the installed `@aexhq/sdk` on the
  * managed runtime (gate provider DeepSeek, BYOK `apiKeys`, model
  * `deepseek-v4-flash`, tiny prompts). Each case drives one live run and reduces

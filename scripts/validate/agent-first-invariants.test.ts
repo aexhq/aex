@@ -56,6 +56,9 @@ describe("agent-first invariants (workspace-wide)", () => {
     }
   });
 
+  // Windows antivirus and Git's working-tree enumeration make this
+  // workspace-wide source scan legitimately slower than Vitest's 5s default.
+  // Keep the test strict while giving the bounded scan an explicit budget.
   it("forbids subpath imports of the aex package", () => {
     const offenders: string[] = [];
     const importPattern = /from\s+["']aex\/[^"']+["']/g;
@@ -68,7 +71,7 @@ describe("agent-first invariants (workspace-wide)", () => {
       for (const match of source.matchAll(requirePattern)) offenders.push(`${rel}: ${match[0]}`);
     }
     expect(offenders).toEqual([]);
-  });
+  }, 30_000);
 
   it("does not read process.env.AEX_* from any user-facing parser surface", () => {
     const userFacingRoots = ["packages/sdk/src", "packages/contracts/src"];

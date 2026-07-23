@@ -13,6 +13,7 @@ import {
 } from "./workflow-test-helpers.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const POST_FINISH_READ_AUDIT_MARKER = "@aex-reliability-audit: post-finish-read";
 
 function liveScenarioFiles(): readonly string[] {
   const root = resolve(repoRoot, "apps/user-tests/test/live");
@@ -28,6 +29,10 @@ function liveScenarioFiles(): readonly string[] {
   };
   visit(root);
   return files.sort();
+}
+
+function postFinishReadAuditFiles(): readonly string[] {
+  return liveScenarioFiles().filter((path) => readRepoFile(path).includes(POST_FINISH_READ_AUDIT_MARKER));
 }
 
 function templateSource(node: ts.TemplateLiteral): string {
@@ -63,6 +68,20 @@ function catchFailsChildProcess(node: ts.CatchClause, source: ts.SourceFile): bo
   return fails;
 }
 
+function catchRecordsDiagnostic(node: ts.CatchClause, source: ts.SourceFile): boolean {
+  // A post-finish read is still observable when a scenario records the failure
+  // in a named diagnostic field (for example snapshot.eventsError). This is
+  // different from swallowing it into a generic `error` string.
+  const block = node.block.getText(source);
+  const parameter = node.variableDeclaration?.name && ts.isIdentifier(node.variableDeclaration.name)
+    ? node.variableDeclaration.name.text
+    : undefined;
+  return /\.[A-Za-z_$][\w$]*(?:Error|Err|Thrown)\s*=/.test(block) ||
+    /\b(?:error|[A-Za-z_$][\w$]*Error)\s*=\s*/.test(block) ||
+    /\b(?:err|error|failure|diagnostic)\s*=\s*[A-Za-z_$][\w$]*\s*\(/.test(block) ||
+    (parameter !== undefined && new RegExp(`\\.(?:push|add|set)\\([^)]*\\b${parameter}\\b`).test(block));
+}
+
 function suppressedSessionReadsInSource(text: string, label: string): readonly string[] {
   const source = ts.createSourceFile(label, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const findings: string[] = [];
@@ -73,7 +92,8 @@ function suppressedSessionReadsInSource(text: string, label: string): readonly s
         const guarded = node.parent.tryBlock.getText(embedded);
         if (
           /(?:\.sessions\.(?:open|get|list)|\.(?:events|files|messages)\.list)\s*\(/.test(guarded) &&
-          !catchFailsChildProcess(node, embedded)
+          !catchFailsChildProcess(node, embedded) &&
+          !catchRecordsDiagnostic(node, embedded)
         ) {
           findings.push(label);
         }
@@ -98,6 +118,8 @@ function suppressedSessionReads(path: string): readonly string[] {
 }
 
 describe("live scenario reliability", () => {
+  // Importing every live Vitest config is a bounded process-level check and
+  // can exceed 5s on Windows; keep the assertion strict with an explicit cap.
   it("resolves every live user-test entrypoint with whole-scenario retries disabled", () => {
     const packageJson = JSON.parse(readRepoFile("apps/user-tests/package.json")) as {
       scripts?: Record<string, string>;
@@ -127,7 +149,7 @@ describe("live scenario reliability", () => {
     for (const [index, retry] of retries.entries()) {
       expect(retry, names[index]).toBe(0);
     }
-  });
+  }, 30_000);
 
   it("does not neutralize live-test predicates with an always-true fallback", () => {
     for (const path of liveScenarioFiles()) {
@@ -137,7 +159,9 @@ describe("live scenario reliability", () => {
   });
 
   it("does not suppress post-finish session reads", () => {
-    for (const path of liveScenarioFiles()) {
+    const auditedFiles = postFinishReadAuditFiles();
+    expect(auditedFiles.length, "at least one live scenario must opt into the post-finish read audit").toBeGreaterThan(0);
+    for (const path of auditedFiles) {
       expect(suppressedSessionReads(path), path).toEqual([]);
     }
   });

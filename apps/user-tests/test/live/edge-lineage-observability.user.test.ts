@@ -1,5 +1,6 @@
 /**
  * Live edge sweep — SUBAGENT LINEAGE OBSERVABILITY (Wave 1)
+ * @aex-reliability-audit: post-finish-read
  *
  * Customer POV, blackbox against the installed public `@aexhq/sdk` on DEV.
  * A parent DeepSeek run is prompted to delegate a tiny task to the builtin

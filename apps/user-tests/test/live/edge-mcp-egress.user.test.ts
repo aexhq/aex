@@ -1,5 +1,6 @@
 /**
  * EDGE-CASE USER TEST (SDK-driven, customer perspective) —
+ * @aex-reliability-audit: post-finish-read
  * `McpServer` primitive, MCP declaration validation, SSRF handling, and
  * container EGRESS ALLOWLIST enforcement (security-critical for launch).
  *

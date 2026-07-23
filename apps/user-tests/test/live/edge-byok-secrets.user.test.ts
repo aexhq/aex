@@ -1,5 +1,6 @@
 /**
  * EDGE-CASE SWEEP — BYOK / SECRETS / MULTI-PROVIDER surface (SECURITY-SENSITIVE).
+ * @aex-reliability-audit: post-finish-read
  *
  * Real-customer stress test of the public `@aexhq/sdk` against the DEV plane,
  * focused on the session-submission BYOK surface:

@@ -138,7 +138,11 @@ describe("release pipeline gates", () => {
   it("fails the contract-parity job loudly when the platform gate is disarmed", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
     const parity = workflowJob(workflow, "contract-parity");
-    const requireToken = workflowStepRunning(parity, /HAS_PLATFORM_TOKEN/);
+    const requireToken = findWorkflowStep(
+      parity,
+      (step) => step.if?.includes("HAS_PLATFORM_TOKEN") === true,
+      "platform token guard"
+    );
     const checkout = findWorkflowStep(
       parity,
       (step) => step.uses?.startsWith("actions/checkout@") === true && step.with?.repository === "aexhq/platform",

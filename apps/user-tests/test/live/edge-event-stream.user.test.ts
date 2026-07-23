@@ -663,6 +663,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       readonly typeCounts: Record<string, number>;
       readonly customNames: readonly string[];
       readonly stats: { readonly connects: number; readonly drops: number };
+      readonly replayError: string | null;
       readonly replayCount: number;
       readonly missingCount: number;
       readonly missingSample: readonly number[];
@@ -690,6 +691,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // Clean replay of the SAME finished run: every seq a clean replay delivers
       // MUST also be in the chaotic stream (proves the reconnects lost nothing).
       let replaySeqs = [];
+      let replayError = null;
       try {
         const session = await client.sessions.open(result.sessionId);
         const ac = new AbortController();
@@ -699,7 +701,9 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
           if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
         }
         clearTimeout(g);
-      } catch (e) {}
+      } catch (e) {
+        replayError = errorText(e);
+      }
 
       // The chaos stream comes from send(), which starts at the TURN cursor, while
       // the clean replay starts at 0 (it includes pre-turn events like
@@ -717,6 +721,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         typeCounts: typeCounts(events),
         customNames: customNamesOf(events),
         stats,
+        replayError,
         chaosMin,
         replayCount: replaySeqs.length,
         missingCount: missing.length,
@@ -732,6 +737,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // Reconnect actually fired (>1 connect; at least one forced drop taken).
     expect(r.stats.connects).toBeGreaterThan(1);
     expect(r.stats.drops).toBeGreaterThanOrEqual(1);
+    expect(r.replayError).toBeNull();
     // Exactly-once across reconnects: no duplicate sequences, strictly ordered.
     expect(r.analyze.dupCount).toBe(0);
     expect(r.analyze.monotonic).toBe(true);
