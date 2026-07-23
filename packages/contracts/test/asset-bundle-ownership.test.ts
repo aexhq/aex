@@ -1,35 +1,75 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 
-const source = readFileSync(new URL("../src/asset-bundle.ts", import.meta.url), "utf8");
+const sourceText = readFileSync(new URL("../src/asset-bundle.ts", import.meta.url), "utf8");
+const source = ts.createSourceFile("asset-bundle.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
-function functionBody(name: string, nextName: string): string {
-  return source.slice(source.indexOf(`export function ${name}(`), source.indexOf(nextName));
+function descendants(node: ts.Node): readonly ts.Node[] {
+  const out: ts.Node[] = [];
+  const visit = (current: ts.Node): void => {
+    out.push(current);
+    current.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+}
+
+function functionDeclaration(name: string): ts.FunctionDeclaration {
+  const declaration = source.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === name
+  );
+  if (!declaration || !ts.isFunctionDeclaration(declaration)) throw new Error(`missing ${name}`);
+  return declaration;
+}
+
+function callNames(node: ts.Node): readonly string[] {
+  return descendants(node)
+    .filter(ts.isCallExpression)
+    .map((call) => ts.isIdentifier(call.expression) ? call.expression.text : undefined)
+    .filter((name): name is string => name !== undefined);
+}
+
+function memberCallNames(node: ts.Node): readonly string[] {
+  return descendants(node)
+    .filter(ts.isCallExpression)
+    .map((call) => ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : undefined)
+    .filter((name): name is string => name !== undefined);
+}
+
+function propertyNames(node: ts.Node): readonly string[] {
+  return descendants(node)
+    .filter(ts.isPropertyAssignment)
+    .map((property) => ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : undefined)
+    .filter((name): name is string => name !== undefined);
+}
+
+function hasExportModifier(node: ts.FunctionDeclaration): boolean {
+  return !!node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
 }
 
 describe("canonical asset bundle pipeline ownership", () => {
   it("keeps entry collection and archive finalization in one shared pipeline", () => {
-    const pipeline = source.slice(
-      source.indexOf("function bundleCanonicalFiles<"),
-      source.indexOf("export function bundleSkillFiles(")
-    );
-
-    expect(source.match(/typeof contents === "string" \? TEXT\.encode\(contents\) : contents/g)).toHaveLength(1);
-    expect(source.match(/totalDecompressed \+= bytes\.byteLength/g)).toHaveLength(1);
-    expect(source.match(/zipSync\(zippable, \{ level: 6 \}\)/g)).toHaveLength(1);
-    expect(source.match(/fileCount: collected\.size/g)).toHaveLength(1);
-    expect(pipeline.match(/contains duplicate path:/g)).toHaveLength(1);
+    const canonical = functionDeclaration("bundleCanonicalFiles");
+    expect(hasExportModifier(canonical)).toBe(false);
+    const calls = callNames(canonical);
+    for (const owner of ["parseSkillBundleEntry", "validateBundleGraph", "buildCanonicalZippable", "zipSync"]) {
+      expect(calls, `${owner} must stay in the canonical pipeline`).toContain(owner);
+    }
+    expect(descendants(canonical).some((node) => ts.isForOfStatement(node) && ts.isIdentifier(node.expression) && node.expression.text === "entries")).toBe(true);
+    expect(memberCallNames(canonical)).toContain("encode");
+    expect(descendants(canonical).some((node) => ts.isIdentifier(node) && node.text === "totalDecompressed")).toBe(true);
+    expect(memberCallNames(canonical)).toContain("has");
+    expect(propertyNames(canonical)).toEqual(expect.arrayContaining(["zip", "fileCount", "compressedSize"]));
   });
 
   it("keeps the skill and tool exports as policy-only adapters", () => {
-    const skill = functionBody("bundleSkillFiles", "export interface BundledTool");
-    const tool = functionBody("bundleToolFiles", "const ZIP_EPOCH");
-
-    expect(skill).toContain("bundleCanonicalFiles(");
-    expect(tool).toContain("bundleCanonicalFiles(");
-    expect(skill).not.toContain("for (const [rawPath, contents]");
-    expect(tool).not.toContain("for (const [rawPath, contents]");
-    expect(skill).not.toContain("zipSync(");
-    expect(tool).not.toContain("zipSync(");
+    for (const name of ["bundleSkillFiles", "bundleToolFiles"]) {
+      const adapter = functionDeclaration(name);
+      expect(hasExportModifier(adapter)).toBe(true);
+      expect(callNames(adapter)).toContain("bundleCanonicalFiles");
+      expect(descendants(adapter).some(ts.isForOfStatement)).toBe(false);
+      expect(callNames(adapter)).not.toContain("zipSync");
+    }
   });
 });

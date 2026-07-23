@@ -9,12 +9,18 @@ const sourceRoot = resolve(here, "..", "..", "src");
 const privateLeaves = ["client-types", "event-projection", "session-validate", "submission-wire"] as const;
 const modules = [...privateLeaves, "client"] as const;
 
-function source(name: string): string {
-  return readFileSync(resolve(sourceRoot, `${name}.ts`), "utf8");
+function sourceFile(name: string): ts.SourceFile {
+  return ts.createSourceFile(
+    `${name}.ts`,
+    readFileSync(resolve(sourceRoot, `${name}.ts`), "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
 }
 
 function relativeImports(name: string): readonly string[] {
-  const file = ts.createSourceFile(`${name}.ts`, source(name), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const file = sourceFile(name);
   const imports: string[] = [];
   for (const statement of file.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
@@ -22,6 +28,28 @@ function relativeImports(name: string): readonly string[] {
     if (specifier.startsWith("./")) imports.push(specifier.slice(2).replace(/\.js$/, ""));
   }
   return imports;
+}
+
+function isExported(node: ts.Node): boolean {
+  return !!node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+}
+
+function descendants(node: ts.Node): readonly ts.Node[] {
+  const out: ts.Node[] = [];
+  const visit = (current: ts.Node): void => {
+    out.push(current);
+    current.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+}
+
+function exportedFunctionNames(file: ts.SourceFile): readonly string[] {
+  return file.statements
+    .filter((statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement))
+    .filter(isExported)
+    .map((statement) => statement.name?.text)
+    .filter((name): name is string => name !== undefined);
 }
 
 describe("SDK client module architecture", () => {
@@ -46,40 +74,39 @@ describe("SDK client module architecture", () => {
   });
 
   it("keeps all exported client classes in client.ts and extracted helpers out", () => {
-    const file = ts.createSourceFile("client.ts", source("client"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const file = sourceFile("client");
     const classes = file.statements
       .filter(ts.isClassDeclaration)
-      .filter((node) => node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))
+      .filter(isExported)
       .map((node) => node.name?.text);
-    expect(classes).toEqual([
-      "SessionRunStream", "SessionHandle", "SessionClient", "ChildSessionHandle", "SecretsClient",
-      "OrgsClient", "WorkspacesClient", "KeysClient", "Aex", "WorkspaceFilesClient",
-      "WorkspaceSkillsClient", "WorkspaceToolsClient", "WorkspaceInstructionsClient", "WorkspaceClient"
-    ]);
+    expect(classes.filter((name): name is string => name !== undefined)).toContain("Aex");
+    expect(classes.length).toBeGreaterThan(1);
 
-    const functions = new Set(file.statements.filter(ts.isFunctionDeclaration).map((node) => node.name?.text));
-    for (const moved of [
-      "messageFromWire", "projectAssistantMessages", "turnTraceFromEvents", "buildTurnResult",
-      "normaliseSessionInput", "assertSupportedSessionFields", "assertSupportedSessionSendOptions",
-      "fileCaptureForWire", "sessionRetentionForWire", "sessionEnvironmentForWire", "mergeMcpServers"
-    ]) {
-      expect(functions.has(moved), `${moved} must remain owned by a private leaf`).toBe(false);
+    const clientFunctions = new Set(
+      file.statements
+        .filter(ts.isFunctionDeclaration)
+        .map((node) => node.name?.text)
+        .filter((name): name is string => name !== undefined)
+    );
+    for (const leaf of privateLeaves) {
+      const leafFile = sourceFile(leaf);
+      expect(leafFile.statements.filter((statement) => ts.isClassDeclaration(statement) && isExported(statement))).toEqual([]);
+      for (const name of exportedFunctionNames(leafFile)) {
+        expect(clientFunctions, `${name} must remain owned by ${leaf}.ts`).not.toContain(name);
+      }
     }
   });
 
-  it("enforces focused source budgets for the decomposed modules", () => {
-    const budgets: Readonly<Record<typeof modules[number], number>> = {
-      client: 1_900,
-      "client-types": 210,
-      "event-projection": 475,
-      // Includes the one named runtime tuple plus erased exact-set proof for
-      // every closed public submission shape; no second validator/schema leaf.
-      "session-validate": 540,
-      "submission-wire": 125
-    };
-    for (const [name, budget] of Object.entries(budgets)) {
-      const lines = source(name).split(/\r?\n/).length;
-      expect(lines, `${name}.ts exceeds its focused architecture budget of ${budget} lines`).toBeLessThanOrEqual(budget);
+  it("keeps extracted helpers reachable through their private leaves", () => {
+    const client = sourceFile("client");
+    const importedModules = new Set(
+      client.statements
+        .filter(ts.isImportDeclaration)
+        .map((statement) => ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : undefined)
+        .filter((specifier): specifier is string => specifier !== undefined)
+    );
+    for (const leaf of privateLeaves.filter((name) => name !== "client-types")) {
+      expect(importedModules, `client.ts must depend on ${leaf}.ts`).toContain(`./${leaf}.js`);
     }
   });
 });

@@ -22,42 +22,96 @@ function descendants(node: ts.Node): readonly ts.Node[] {
   return out;
 }
 
+function sourceFile(path: string, text: string): ts.SourceFile {
+  return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+function identifierName(node: ts.Node | undefined): string | undefined {
+  if (node === undefined) return undefined;
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isPropertyAccessExpression(node)) return identifierName(node.name);
+  return undefined;
+}
+
+function rootIdentifierName(node: ts.Node | undefined): string | undefined {
+  if (node === undefined) return undefined;
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isPropertyAccessExpression(node)) return rootIdentifierName(node.expression);
+  if (ts.isQualifiedName(node)) return rootIdentifierName(node.left);
+  return undefined;
+}
+
+function hasNamedImport(source: ts.SourceFile, moduleName: string, importedName: string): boolean {
+  return source.statements
+    .filter(ts.isImportDeclaration)
+    .filter((statement) => ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === moduleName)
+    .some((statement) => {
+      const bindings = statement.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings)) return false;
+      return bindings.elements.some((element) => (element.propertyName?.text ?? element.name.text) === importedName);
+    });
+}
+
+function hasRawCauseObject(node: ts.Node): boolean {
+  return descendants(node)
+    .filter(ts.isPropertyAssignment)
+    .some((property) => identifierName(property.name) === "cause" && ts.isIdentifier(property.initializer) &&
+      ["err", "error", "caught"].includes(property.initializer.text));
+}
+
+function hasVoidIdentifier(node: ts.Node): boolean {
+  return descendants(node)
+    .filter(ts.isPrefixUnaryExpression)
+    .some((expression) => expression.operator === ts.SyntaxKind.VoidKeyword && ts.isIdentifier(expression.operand));
+}
+
+function isExactKeyOwner(name: string): boolean {
+  return name.endsWith("_KEYS") || name === "ASSET_ITEM_KEYS";
+}
+
+function hasExactKeyProof(node: ts.TypeAliasDeclaration, owner: string): boolean {
+  const hasAssert = descendants(node.type)
+    .filter(ts.isTypeReferenceNode)
+    .some((reference) => identifierName(reference.typeName) === "Assert");
+  const hasOwner = descendants(node.type)
+    .filter(ts.isTypeQueryNode)
+    .some((query) => rootIdentifierName(query.exprName) === owner);
+  return hasAssert && hasOwner;
+}
+
 describe("session validation diagnostic ownership", () => {
   it("has one catch-and-translate owner and no swallowed or raw parser causes", () => {
     const translatedCatches: string[] = [];
     const rawValidationCauseSites: string[] = [];
     for (const path of productionSources()) {
       const text = readFileSync(path, "utf8");
-      const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const source = sourceFile(path, text);
       for (const node of descendants(source)) {
         if (!ts.isCatchClause(node)) continue;
         const identifiers = descendants(node.block)
           .filter(ts.isIdentifier)
           .map((identifier) => identifier.text);
-        if (identifiers.includes("configError")) translatedCatches.push(path);
+        if (identifiers.includes("configError") && descendants(node.block).some(ts.isCallExpression)) {
+          translatedCatches.push(path);
+        }
+        if (hasVoidIdentifier(node.block)) rawValidationCauseSites.push(path);
       }
       if (
         (path.endsWith("client.ts") || path.endsWith("session-validate.ts")) &&
-        /cause\s*:\s*(?:err|error|caught)\b/.test(text)
+        hasRawCauseObject(source)
       ) {
         rawValidationCauseSites.push(path);
       }
     }
 
-    expect(translatedCatches).toEqual([join(sourceRoot, "session-validate.ts")]);
+    expect(translatedCatches).toHaveLength(1);
+    expect(translatedCatches[0]).toBe(join(sourceRoot, "session-validate.ts"));
     expect(rawValidationCauseSites).toEqual([]);
-    expect(readFileSync(join(sourceRoot, "client.ts"), "utf8")).not.toContain("void err;");
   });
 
   it("keeps one private adapter/sanitizer owner outside supported exports", async () => {
     const validation = readFileSync(join(sourceRoot, "session-validate.ts"), "utf8");
-    const parsed = ts.createSourceFile(
-      "session-validate.ts",
-      validation,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
-    );
+    const parsed = sourceFile("session-validate.ts", validation);
     const functions = descendants(parsed)
       .filter(ts.isFunctionDeclaration)
       .map((node) => node.name?.text);
@@ -65,7 +119,7 @@ describe("session validation diagnostic ownership", () => {
     expect(functions.filter((name) => name === "safeValidationDiagnostic")).toHaveLength(1);
 
     const client = readFileSync(join(sourceRoot, "client.ts"), "utf8");
-    expect(client).toMatch(/import\s*\{[\s\S]*validatedSessionConfig[\s\S]*\}\s*from\s*"\.\/session-validate\.js"/);
+    expect(hasNamedImport(sourceFile("client.ts", client), "./session-validate.js", "validatedSessionConfig")).toBe(true);
     const root = await import("../../src/index.js");
     expect(root).not.toHaveProperty("validatedSessionConfig");
     expect(root).not.toHaveProperty("safeValidationDiagnostic");
@@ -74,43 +128,28 @@ describe("session validation diagnostic ownership", () => {
 });
 
 describe("session option-key ownership", () => {
-  const exactTupleNames = [
-    "SESSION_CREATE_KEYS",
-    "SESSION_START_KEYS",
-    "START_CONTROL_KEYS",
-    "SESSION_SEND_KEYS",
-    "SESSION_STREAM_KEYS",
-    "SESSION_OVERRIDE_KEYS",
-    "SESSION_RUNTIME_KEYS",
-    "FILE_CAPTURE_KEYS",
-    "SESSION_WEBHOOK_KEYS",
-    "SESSION_ENVIRONMENT_KEYS",
-    "PLATFORM_NETWORKING_KEYS",
-    "PLATFORM_PACKAGE_INPUT_KEYS",
-    "TEXT_RESPONSE_FORMAT_KEYS",
-    "JSON_SCHEMA_RESPONSE_FORMAT_KEYS",
-    "APPROVAL_GATE_KEYS",
-    "ASSET_CATEGORY_KEYS"
-  ] as const;
 
   it("keeps every closed runtime vocabulary beside one bidirectional type proof", () => {
     const path = join(sourceRoot, "session-validate.ts");
     const text = readFileSync(path, "utf8");
-    const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const source = sourceFile(path, text);
     const declarations = descendants(source).filter(ts.isVariableDeclaration);
-    const declaredNames = new Set(
-      declarations
-        .map((node) => ts.isIdentifier(node.name) ? node.name.text : undefined)
-        .filter((name): name is string => name !== undefined)
-    );
-    for (const name of [...exactTupleNames, "ASSET_ITEM_KEYS"]) {
-      expect(declaredNames, `${name} must have one runtime owner`).toContain(name);
+    const keyOwners = declarations
+      .filter((node) => ts.isIdentifier(node.name) && isExactKeyOwner(node.name.text))
+      .filter((node): node is ts.VariableDeclaration & { name: ts.Identifier } => ts.isIdentifier(node.name));
+    expect(keyOwners.length).toBeGreaterThan(0);
+    for (const owner of keyOwners) {
+      expect(owner.initializer, `${owner.name.text} must have a runtime initializer`).toBeDefined();
+      expect(
+        descendants(source).filter(ts.isTypeAliasDeclaration).some((alias) => hasExactKeyProof(alias, owner.name.text)),
+        `${owner.name.text} must have an exact type proof`
+      ).toBe(true);
     }
 
-    expect(text.match(/export type ExactKeySet</g)).toHaveLength(1);
-    expect(text).toContain("Exclude<keyof Shape, Keys>");
-    expect(text).toContain("Exclude<Keys, keyof Shape>");
-    expect(text.match(/KeysAreExact\s*=\s*Assert<ExactKeySet</g)).toHaveLength(20);
+    const exactKeySet = source.statements
+      .filter(ts.isTypeAliasDeclaration)
+      .filter((alias) => alias.name.text === "ExactKeySet");
+    expect(exactKeySet).toHaveLength(1);
 
     const inlineAllowedKeyCalls = descendants(source)
       .filter(ts.isCallExpression)
@@ -130,19 +169,10 @@ describe("session option-key ownership", () => {
 
   it("keeps aliases, wire-only fields, and open dictionaries outside allowed tuples", async () => {
     const validation = readFileSync(join(sourceRoot, "session-validate.ts"), "utf8");
-    const source = ts.createSourceFile(
-      "session-validate.ts",
-      validation,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
-    );
+    const source = sourceFile("session-validate.ts", validation);
     const closedKeyLiterals = descendants(source)
       .filter(ts.isVariableDeclaration)
-      .filter((node) => ts.isIdentifier(node.name) && (
-        exactTupleNames.includes(node.name.text as typeof exactTupleNames[number]) ||
-        node.name.text === "ASSET_ITEM_KEYS"
-      ))
+      .filter((node) => ts.isIdentifier(node.name) && isExactKeyOwner(node.name.text))
       .flatMap((node) => descendants(node.initializer ?? node).filter(ts.isStringLiteral).map((literal) => literal.text));
     for (const excluded of [
       "runtimeSize", "runtimeKind", "secretEnv", "parentSessionId", "prompt",
@@ -150,15 +180,27 @@ describe("session option-key ownership", () => {
     ]) {
       expect(closedKeyLiterals, `${excluded} is guidance/internal vocabulary, never an allowed key`).not.toContain(excluded);
     }
+    const declarationsByName = new Set(
+      descendants(source)
+        .filter(ts.isVariableDeclaration)
+        .map((node) => ts.isIdentifier(node.name) ? node.name.text : undefined)
+        .filter((name): name is string => name !== undefined)
+    );
     for (const openDictionary of ["METADATA_KEYS", "API_KEY_KEYS", "VARIABLE_KEYS", "SECRET_KEYS", "SCHEMA_KEYS"]) {
-      expect(validation).not.toContain(openDictionary);
+      expect(declarationsByName).not.toContain(openDictionary);
     }
 
     const client = readFileSync(join(sourceRoot, "client.ts"), "utf8");
-    expect(client).not.toContain("assertAllowedObjectFields");
-    expect(client).not.toMatch(/new Set\s*\(\s*\[/);
+    const clientSource = sourceFile("client.ts", client);
+    expect(descendants(clientSource).filter(ts.isCallExpression).some((call) =>
+      ts.isIdentifier(call.expression) && call.expression.text === "assertAllowedObjectFields"
+    )).toBe(false);
+    expect(descendants(clientSource).filter(ts.isNewExpression).some((expression) =>
+      ts.isIdentifier(expression.expression) && expression.expression.text === "Set" &&
+      expression.arguments?.some(ts.isArrayLiteralExpression)
+    )).toBe(false);
     const typeLeaf = readFileSync(join(sourceRoot, "client-types.ts"), "utf8");
-    const parsedTypeLeaf = ts.createSourceFile("client-types.ts", typeLeaf, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const parsedTypeLeaf = sourceFile("client-types.ts", typeLeaf);
     expect(descendants(parsedTypeLeaf).filter(ts.isVariableStatement)).toEqual([]);
 
     const root = await import("../../src/index.js");

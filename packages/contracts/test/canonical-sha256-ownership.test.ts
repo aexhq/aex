@@ -2,6 +2,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "../src/canonical-sha256.js";
 
 const sourceDir = fileURLToPath(new URL("../src/", import.meta.url));
 
@@ -17,35 +19,89 @@ function source(path: string): string {
   return readFileSync(join(sourceDir, path), "utf8");
 }
 
+function sourceFile(path: string): ts.SourceFile {
+  return ts.createSourceFile(path, source(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+function descendants(node: ts.Node): readonly ts.Node[] {
+  const out: ts.Node[] = [];
+  const visit = (current: ts.Node): void => {
+    out.push(current);
+    current.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+}
+
+function importedCanonicalSymbol(file: ts.SourceFile): boolean {
+  return file.statements
+    .filter(ts.isImportDeclaration)
+    .filter((statement) => ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "./canonical-sha256.js")
+    .some((statement) => {
+      const bindings = statement.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings)) return false;
+      return bindings.elements.some((element) => (element.propertyName?.text ?? element.name.text) === "CANONICAL_SHA256_DIGEST_PATTERN");
+    });
+}
+
+function declaredCanonicalSymbol(file: ts.SourceFile): ts.VariableDeclaration | undefined {
+  return descendants(file)
+    .filter(ts.isVariableDeclaration)
+    .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "CANONICAL_SHA256_DIGEST_PATTERN");
+}
+
+function namedVariable(file: ts.SourceFile, name: string): ts.VariableDeclaration | undefined {
+  return descendants(file)
+    .filter(ts.isVariableDeclaration)
+    .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name);
+}
+
+function functionByName(file: ts.SourceFile, name: string): ts.FunctionDeclaration | undefined {
+  return file.statements
+    .filter(ts.isFunctionDeclaration)
+    .find((declaration) => declaration.name?.text === name);
+}
+
 describe("canonical SHA-256 digest ownership", () => {
   it("has exactly one public-contracts source owner for the prefixed grammar", () => {
-    const exactLiteral = "/^sha256:[0-9a-f]{64}$/";
-    const occurrences = sourceFiles(sourceDir).flatMap((file) => {
-      const count = readFileSync(file, "utf8").split(exactLiteral).length - 1;
-      const path = relative(sourceDir, file).replaceAll("\\", "/");
-      return Array.from({ length: count }, () => path);
-    });
-
-    expect(occurrences).toEqual(["canonical-sha256.ts"]);
-    expect(source("canonical-sha256.ts")).not.toMatch(/^import\s/m);
+    const ownerFiles = sourceFiles(sourceDir)
+      .filter((file) => declaredCanonicalSymbol(sourceFile(relative(sourceDir, file).replaceAll("\\", "/"))) !== undefined);
+    expect(ownerFiles).toHaveLength(1);
+    expect(relative(sourceDir, ownerFiles[0]!).replaceAll("\\", "/")).toBe("canonical-sha256.ts");
+    const ownerSource = sourceFile("canonical-sha256.ts");
+    const owner = declaredCanonicalSymbol(ownerSource);
+    expect(ownerSource.statements.filter(ts.isImportDeclaration)).toEqual([]);
+    expect(ownerSource.statements.some((statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
+      statement.declarationList.declarations.includes(owner!)
+    )).toBe(true);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test("sha256:" + "a".repeat(64))).toBe(true);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test("sha256:" + "A".repeat(64))).toBe(false);
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test("sha256:" + "a".repeat(63))).toBe(false);
   });
 
-  it("routes only the three verified consumers through the neutral owner", () => {
-    expect(source("session-config.ts")).toContain(
-      "CANONICAL_SHA256_DIGEST_PATTERN as INLINE_CONTENT_HASH_PATTERN"
-    );
-    expect(source("workspace-resources.ts")).toContain(
-      "CANONICAL_SHA256_DIGEST_PATTERN.test(value.contentHash)"
-    );
-    expect(source("operations.ts")).toContain(
-      "CANONICAL_SHA256_DIGEST_PATTERN.test(value.capabilityHash)"
-    );
-    expect(source("operations.ts")).not.toContain("CAPABILITY_SHA256_PATTERN");
+  it("routes canonical digest consumers through the neutral owner", () => {
+    const consumers = sourceFiles(sourceDir)
+      .map((file) => ({ file, relativePath: relative(sourceDir, file).replaceAll("\\", "/") }))
+      .filter(({ relativePath }) => relativePath !== "canonical-sha256.ts")
+      .filter(({ file }) => importedCanonicalSymbol(sourceFile(relative(sourceDir, file).replaceAll("\\", "/"))))
+      .map(({ relativePath }) => relativePath);
+    expect(consumers).toEqual(expect.arrayContaining(["operations.ts", "session-config.ts", "workspace-resources.ts"]));
+    expect(consumers).not.toContain("canonical-sha256.ts");
   });
 
   it("leaves the distinct bare session-file checksum grammar local", () => {
-    expect(source("operations.ts")).toContain(
-      "const SESSION_FILE_SHA256_PATTERN = /^[0-9a-f]{64}$/;"
+    const operations = sourceFile("operations.ts");
+    const localPattern = namedVariable(operations, "SESSION_FILE_SHA256_PATTERN");
+    expect(localPattern).toBeDefined();
+    const localStatement = operations.statements.find((statement) =>
+      ts.isVariableStatement(statement) && statement.declarationList.declarations.includes(localPattern!)
     );
+    expect(localStatement && ts.isVariableStatement(localStatement) ? localStatement.modifiers ?? [] : []).toEqual([]);
+    expect(localPattern?.initializer && ts.isRegularExpressionLiteral(localPattern.initializer)).toBe(true);
+    const sessionFileListing = functionByName(operations, "listSessionFiles");
+    expect(sessionFileListing).toBeDefined();
+    expect(descendants(sessionFileListing!).some((node) => ts.isIdentifier(node) && node.text === "SESSION_FILE_SHA256_PATTERN")).toBe(true);
   });
 });
