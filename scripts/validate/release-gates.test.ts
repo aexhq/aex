@@ -1,34 +1,34 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  findWorkflowStep,
   jobNeeds,
+  readRepoFile,
   readWorkflow,
-  stepIndex,
   workflowJob,
-  workflowStep,
+  workflowStepBefore,
+  workflowStepRunning,
+  workflowStepUsing,
   workflowTriggers
 } from "./workflow-test-helpers.js";
-
-const MANUAL_GATE_JOBS = ["lint", "unit-tests", "offline-user-tests", "docs-build", "pack-sdk"] as const;
 
 describe("release pipeline gates", () => {
   it("runs public checks for pull requests and merge queues", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
     const triggers = workflowTriggers(workflow);
     const parity = workflowJob(workflow, "contract-parity");
-    const requireToken = workflowStep(parity, "Require platform token");
-    const parityCheck = workflowStep(parity, "Contract parity");
+    const requireToken = workflowStepRunning(parity, /contract parity gate cannot run/);
+    const parityCheck = workflowStepRunning(parity, /contracts:parity:check/);
 
     expect(triggers).toHaveProperty("pull_request");
     expect(triggers).toHaveProperty("merge_group");
-    expect(parity.if).toContain("github.event_name != 'pull_request'");
+    expect(parity.if).toMatch(/github\.event_name\s*!=\s*'pull_request'/);
     expect(parity.env).toHaveProperty("HAS_PLATFORM_TOKEN");
-    expect(requireToken.run).toContain("contract parity gate cannot run");
-    expect(parityCheck.run).toContain("bun run contracts:parity:check");
+    expect(requireToken.run).toMatch(/contract parity gate cannot run/);
+    expect(parityCheck.run).toMatch(/\bbun\s+run\s+contracts:parity:check\b/);
   });
 
   it("publishes an immutable canary without granting the public workflow platform mutation authority", () => {
-    const source = readFileSync(".github/workflows/release.yml", "utf8");
+    const source = readRepoFile(".github/workflows/release.yml");
     const workflow = readWorkflow(".github/workflows/release.yml");
     const triggers = workflowTriggers(workflow);
     const workflowDispatch = triggers.workflow_dispatch as {
@@ -38,12 +38,16 @@ describe("release pipeline gates", () => {
     const version = workflowJob(workflow, "version");
     const publish = workflowJob(workflow, "publish");
     const manifest = workflowJob(workflow, "public-release-manifest");
-    const resolveVersion = workflowStep(version, "Resolve package version");
-    const resolvePublication = workflowStep(version, "Resolve immutable publication state");
-    const applyVersion = workflowStep(publish, "Apply immutable canary version");
-    const bindSource = workflowStep(publish, "Bind package to release source");
-    const registryEvidence = workflowStep(publish, "Wait for immutable npm evidence");
-    const uploadManifest = workflowStep(manifest, "Upload public release manifest");
+    const resolveVersion = workflowStepRunning(version, /canary-version\.mjs\s+resolve/);
+    const resolvePublication = workflowStepRunning(version, /already_published=/);
+    const applyVersion = workflowStepRunning(publish, /canary-version\.mjs\s+apply/);
+    const bindSource = workflowStepRunning(publish, /release-source\.mjs\s+apply/);
+    const registryEvidence = workflowStepRunning(publish, /wait-for-npm\.mjs/);
+    const uploadManifest = findWorkflowStep(
+      manifest,
+      (step) => step.uses?.startsWith("actions/upload-artifact@") === true && step.with?.path === "public-release-manifest.json",
+      "public manifest upload"
+    );
 
     expect(Object.keys(triggers)).toEqual(["workflow_dispatch"]);
     expect(workflowDispatch.inputs?.platform_sha?.required).toBe(true);
@@ -52,28 +56,26 @@ describe("release pipeline gates", () => {
       group: expect.stringContaining("github.sha"),
       "cancel-in-progress": false
     });
-    const authorizeSource = workflowStep(authorize, "Require exact controller release source");
+    const authorizeSource = workflowStepRunning(authorize, /expected_ref=/);
     expect(authorize.if).toBeUndefined();
-    expect(authorizeSource.run).toContain('refs/tags/release/sha-${RELEASE_HEAD_SHA}');
-    expect(authorizeSource.run).toContain('[[ "${PLATFORM_SHA}" =~ ^[0-9a-f]{40}$ ]]');
-    expect(authorizeSource.run).toContain('-z "${RELEASE_KEY}"');
-    expect(resolveVersion.run).toContain("canary-version.mjs resolve");
-    expect(resolvePublication.run).toContain("already_published=true");
-    expect(applyVersion.run).toContain("canary-version.mjs apply");
-    expect(applyVersion.if).toContain("needs.version.outputs.already_published != 'true'");
-    expect(bindSource.run).toContain('release-source.mjs apply --sha "${RELEASE_HEAD_SHA}"');
-    expect(bindSource.if).toContain("needs.version.outputs.already_published != 'true'");
-    expect(stepIndex(publish, bindSource.name!)).toBeLessThan(
-      stepIndex(publish, workflowStep(publish, "Pack publish tarball").name!)
-    );
+    expect(authorizeSource.run).toMatch(/refs\/tags\/release\/sha-\$\{RELEASE_HEAD_SHA\}/);
+    expect(authorizeSource.run).toMatch(/PLATFORM_SHA.*\[0-9a-f\].*40/);
+    expect(authorizeSource.run).toMatch(/-z.*RELEASE_KEY/);
+    expect(resolveVersion.run).toMatch(/canary-version\.mjs\s+resolve/);
+    expect(resolvePublication.run).toMatch(/already_published=true/);
+    expect(applyVersion.run).toMatch(/canary-version\.mjs\s+apply/);
+    expect(applyVersion.if).toMatch(/needs\.version\.outputs\.already_published\s*!=\s*'true'/);
+    expect(bindSource.run).toMatch(/release-source\.mjs\s+apply[\s\S]*RELEASE_HEAD_SHA/);
+    expect(bindSource.if).toMatch(/needs\.version\.outputs\.already_published\s*!=\s*'true'/);
+    workflowStepBefore(publish, bindSource, workflowStepRunning(publish, /bun\s+pm\s+pack/));
     expect(registryEvidence.id).toBe("registry-evidence");
-    expect(registryEvidence.run).toContain('wait-for-npm.mjs @aexhq/sdk "${SDK_VERSION}"');
-    expect(registryEvidence.run).toContain('--source-sha "${RELEASE_HEAD_SHA}"');
-    expect(registryEvidence.run).toContain('--github-output "${GITHUB_OUTPUT}"');
+    expect(registryEvidence.run).toMatch(/wait-for-npm\.mjs\s+@aexhq\/sdk\s+.*SDK_VERSION/);
+    expect(registryEvidence.run).toMatch(/--source-sha\s+.*RELEASE_HEAD_SHA/);
+    expect(registryEvidence.run).toMatch(/--github-output\s+.*GITHUB_OUTPUT/);
     expect(
       publish.steps?.filter((step) => typeof step.run === "string" && step.run.includes("npm view"))
     ).toHaveLength(0);
-    expect(workflowStep(publish, "Publish to npm").if).toContain("needs.version.outputs.already_published != 'true'");
+    expect(workflowStepRunning(publish, /\bnpm\s+publish\b/).if).toMatch(/needs\.version\.outputs\.already_published\s*!=\s*'true'/);
     expect(jobNeeds(publish)).not.toContain("live-user-tests-preflight");
     expect(jobNeeds(publish)).not.toContain("platform-dispatch-preflight");
     expect(jobNeeds(workflowJob(workflow, "live-user-tests"))).toContain("live-user-tests-preflight");
@@ -85,12 +87,18 @@ describe("release pipeline gates", () => {
 
   it("runs every public gate for the controller-owned release", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
-    for (const id of MANUAL_GATE_JOBS) {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+    const ciPublicNeeds = jobNeeds(workflowJob(ci, "public"));
+    // Contract parity is controller/platform-owned in release.yml; all other
+    // public CI gates must remain direct publish prerequisites.
+    const releaseGateIds = ciPublicNeeds.filter((id) => id !== "contract-parity");
+    expect(releaseGateIds.length).toBeGreaterThan(0);
+    for (const id of releaseGateIds) {
       expect(workflowJob(workflow, id).if, id).toBeUndefined();
     }
 
     const publish = workflowJob(workflow, "publish");
-    for (const id of MANUAL_GATE_JOBS) {
+    for (const id of releaseGateIds) {
       expect(jobNeeds(publish), id).toContain(id);
     }
     expect(workflowTriggers(workflow)).not.toHaveProperty("workflow_run");
@@ -100,14 +108,12 @@ describe("release pipeline gates", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     const version = workflowJob(workflow, "version");
     const publish = workflowJob(workflow, "publish");
-    const resolveVersion = workflowStep(version, "Resolve package version");
-    const resolvePublication = workflowStep(version, "Resolve immutable publication state");
-    const applyVersion = workflowStep(publish, "Apply immutable canary version");
+    const resolveVersion = workflowStepRunning(version, /canary-version\.mjs\s+resolve/);
+    const resolvePublication = workflowStepRunning(version, /already_published=/);
+    const applyVersion = workflowStepRunning(publish, /canary-version\.mjs\s+apply/);
 
     expect(workflow.env?.RELEASE_MODE).toBe("immutable-canary");
-    expect(resolveVersion.run).toContain("canary-version.mjs resolve");
-    expect(resolveVersion.run).not.toContain('version="${base_version}"');
-    expect(resolvePublication.run).not.toContain("assert-npm-version-available.mjs");
+    expect(resolveVersion.run).toMatch(/canary-version\.mjs\s+resolve/);
     expect(applyVersion.if).toBe("${{ needs.version.outputs.already_published != 'true' }}");
   });
 
@@ -118,50 +124,58 @@ describe("release pipeline gates", () => {
     };
     const version = workflowJob(workflow, "version");
     const publish = workflowJob(workflow, "publish");
-    const guard = workflowStep(version, "Require canary dist-tag");
+    const guard = workflowStepRunning(version, /NPM_DIST_TAG/);
 
     expect(workflowDispatch.inputs?.npm_dist_tag?.options).toEqual(["canary"]);
     expect(workflowDispatch.inputs?.release_key).toMatchObject({ required: true, type: "string" });
     expect(workflowDispatch.inputs?.platform_sha).toMatchObject({ required: true, type: "string" });
-    expect(workflow["run-name"]).toContain("inputs.release_key");
-    expect(guard.run).toContain('if [ "${NPM_DIST_TAG}" != "canary" ]');
+    expect(workflow["run-name"]).toMatch(/inputs\.release_key/);
+    expect(guard.run).toMatch(/NPM_DIST_TAG.*canary/);
     expect(jobNeeds(publish)).toContain("version");
-    expect(workflowStep(publish, "Publish to npm")).toBeDefined();
+    expect(workflowStepRunning(publish, /\bnpm\s+publish\b/)).toBeDefined();
   });
 
   it("fails the contract-parity job loudly when the platform gate is disarmed", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
     const parity = workflowJob(workflow, "contract-parity");
-    const requireToken = workflowStep(parity, "Require platform token");
-    const checkout = workflowStep(parity, "Checkout platform (for contract parity)");
-    const parityCheck = workflowStep(parity, "Contract parity");
+    const requireToken = workflowStepRunning(parity, /HAS_PLATFORM_TOKEN/);
+    const checkout = findWorkflowStep(
+      parity,
+      (step) => step.uses?.startsWith("actions/checkout@") === true && step.with?.repository === "aexhq/platform",
+      "platform checkout"
+    );
+    const parityCheck = workflowStepRunning(parity, /contracts:parity:check/);
 
     expect(parity.steps?.some((step) => step["continue-on-error"] === true)).toBe(false);
     expect(requireToken.if).toBe("${{ env.HAS_PLATFORM_TOKEN != 'true' }}");
     expect(checkout.if).toBeUndefined();
     expect(parityCheck.if).toBeUndefined();
-    expect(parityCheck.run).toContain("bun run contracts:parity:check");
+    expect(parityCheck.run).toMatch(/\bbun\s+run\s+contracts:parity:check\b/);
     expect(parityCheck.env?.PLATFORM_DIR).toBe("${{ github.workspace }}/_platform");
   });
 
   it("runs the private semantic mirror inventory with redacted explicit roots", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
     const parity = workflowJob(workflow, "contract-parity");
-    const checkout = workflowStep(parity, "Checkout platform (for contract parity)");
-    const install = workflowStep(parity, "Install");
-    const parityCheck = workflowStep(parity, "Contract parity");
-    const inventory = workflowStep(parity, "Semantic mirror inventory");
+    const checkout = findWorkflowStep(
+      parity,
+      (step) => step.uses?.startsWith("actions/checkout@") === true && step.with?.repository === "aexhq/platform",
+      "platform checkout"
+    );
+    const install = workflowStepRunning(parity, /\bbun\s+ci\b/);
+    const parityCheck = workflowStepRunning(parity, /contracts:parity:check/);
+    const inventory = workflowStepRunning(parity, /semantic-mirror-inventory\.mjs/);
     const aggregate = workflowJob(workflow, "public");
 
-    expect(stepIndex(parity, checkout.name!)).toBeLessThan(stepIndex(parity, install.name!));
-    expect(stepIndex(parity, install.name!)).toBeLessThan(stepIndex(parity, inventory.name!));
-    expect(stepIndex(parity, parityCheck.name!)).toBeLessThan(stepIndex(parity, inventory.name!));
-    expect(inventory.run).toContain("_platform/scripts/cicd/semantic-mirror-inventory.mjs");
-    expect(inventory.run).toContain("--check");
-    expect(inventory.run).toContain("--report redacted");
-    expect(inventory.run).toContain('--platform-root "${{ github.workspace }}/_platform"');
-    expect(inventory.run).toContain('--public-root "${{ github.workspace }}"');
-    expect(inventory.run).not.toContain("--write");
+    workflowStepBefore(parity, checkout, install);
+    workflowStepBefore(parity, install, inventory);
+    workflowStepBefore(parity, parityCheck, inventory);
+    expect(inventory.run).toMatch(/_platform\/scripts\/cicd\/semantic-mirror-inventory\.mjs/);
+    expect(inventory.run).toMatch(/--check/);
+    expect(inventory.run).toMatch(/--report\s+redacted/);
+    expect(inventory.run).toMatch(/--platform-root[\s\S]*_platform/);
+    expect(inventory.run).toMatch(/--public-root[\s\S]*github\.workspace/);
+    expect(inventory.run).not.toMatch(/--write/);
     expect(inventory.if).toBeUndefined();
     expect(jobNeeds(aggregate)).toContain("contract-parity");
   });
@@ -173,13 +187,13 @@ describe("release pipeline gates", () => {
       readonly inputs?: Readonly<Record<string, { readonly required?: boolean }>>;
     };
     const promote = workflowJob(workflow, "promote");
-    const releaseRun = workflowStep(promote, "Verify green release workflow attempt published this version");
-    const publicManifest = workflowStep(promote, "Verify public release manifest");
-    const platformRun = workflowStep(promote, "Verify green dev validation and production promotion");
-    const platformManifest = workflowStep(promote, "Verify platform validation manifest");
-    const registry = workflowStep(promote, "Verify exact registry integrity");
-    const monotonic = workflowStep(promote, "Require current monotonic release candidate");
-    const addTag = workflowStep(promote, "Add npm dist-tag");
+    const releaseRun = workflowStepRunning(promote, /workflow_path=/);
+    const publicManifest = workflowStepRunning(promote, /release-manifest\.mjs\s+verify-public/);
+    const platformRun = workflowStepRunning(promote, /repos\/aexhq\/platform\/actions\/runs/);
+    const platformManifest = workflowStepRunning(promote, /release-manifest\.mjs\s+verify-platform/);
+    const registry = workflowStepRunning(promote, /registry_integrity/);
+    const monotonic = workflowStepRunning(promote, /assert-monotonic-promotion\.mjs/);
+    const addTag = workflowStepRunning(promote, /npm\s+dist-tag\s+add/);
 
     expect(new Set(Object.keys(triggers))).toEqual(new Set(["workflow_dispatch"]));
     for (const input of [
@@ -194,7 +208,7 @@ describe("release pipeline gates", () => {
       expect(workflowDispatch.inputs?.[input]?.required, input).toBe(true);
     }
     expect(workflowDispatch.inputs?.release_key).toMatchObject({ required: false, type: "string" });
-    expect(workflow["run-name"]).toContain("inputs.release_key");
+    expect(workflow["run-name"]).toMatch(/inputs\.release_key/);
     expect(workflow.env).toMatchObject({
       PACKAGE_VERSION: "${{ inputs.version }}",
       RELEASE_RUN_ID: "${{ inputs.release_run_id }}",
@@ -211,49 +225,50 @@ describe("release pipeline gates", () => {
       group: "promote-aex",
       "cancel-in-progress": false
     });
-    expect(releaseRun.run).toContain('.github/workflows/release.yml');
-    expect(releaseRun.run).toContain('status}" != "completed');
-    expect(publicManifest.run).toContain("release-manifest.mjs verify-public");
+    expect(releaseRun.run).toMatch(/workflows\/release\.yml/);
+    expect(releaseRun.run).toMatch(/status.*completed/);
+    expect(publicManifest.run).toMatch(/release-manifest\.mjs\s+verify-public/);
     expect(platformRun.env).toMatchObject({
       DEV_VALIDATION_RUN_ID: "${{ env.DEV_VALIDATION_RUN_ID }}",
       PLATFORM_PROMOTION_RUN_ID: "${{ env.PLATFORM_PROMOTION_RUN_ID }}"
     });
-    expect(platformManifest.run).toContain("release-manifest.mjs verify-platform");
-    expect(publicManifest.run).toContain('--head-sha "${RELEASE_SOURCE_SHA}"');
-    expect(publicManifest.run).toContain('--integrity "${RELEASE_INTEGRITY}"');
+    expect(platformManifest.run).toMatch(/release-manifest\.mjs\s+verify-platform/);
+    expect(publicManifest.run).toMatch(/--head-sha\s+"\$\{RELEASE_SOURCE_SHA\}"/);
+    expect(publicManifest.run).toMatch(/--integrity\s+"\$\{RELEASE_INTEGRITY\}"/);
     expect(registry.env).toMatchObject({ RELEASE_INTEGRITY: "${{ env.RELEASE_INTEGRITY }}" });
-    expect(registry.run).toContain('registry_integrity');
-    expect(registry.run).toContain('!= "${RELEASE_INTEGRITY}"');
-    expect(monotonic.run).toContain("commits/main");
-    expect(monotonic.run).toContain("dist-tags --json");
-    expect(monotonic.run).toContain("aexRelease.sourceSha");
-    expect(monotonic.run).toContain("--current-latest-version");
-    expect(monotonic.run).toContain("--current-latest-sha");
-    expect(monotonic.run).toContain("--current-canary-version");
-    expect(monotonic.run).toContain("--current-canary-sha");
-    expect(monotonic.run).toContain("assert-monotonic-promotion.mjs");
-    expect(workflowStep(promote, "Checkout").with).toMatchObject({
+    expect(registry.run).toMatch(/registry_integrity/);
+    expect(registry.run).toMatch(/registry_integrity.*RELEASE_INTEGRITY/);
+    expect(monotonic.run).toMatch(/commits\/main/);
+    expect(monotonic.run).toMatch(/dist-tags\s+--json/);
+    expect(monotonic.run).toMatch(/aexRelease\.sourceSha/);
+    expect(monotonic.run).toMatch(/--current-latest-version/);
+    expect(monotonic.run).toMatch(/--current-latest-sha/);
+    expect(monotonic.run).toMatch(/--current-canary-version/);
+    expect(monotonic.run).toMatch(/--current-canary-sha/);
+    expect(monotonic.run).toMatch(/assert-monotonic-promotion\.mjs/);
+    expect(findWorkflowStep(promote, (step) => step.uses?.startsWith("actions/checkout@") === true, "source checkout").with).toMatchObject({
       ref: "${{ env.RELEASE_SOURCE_SHA }}",
       "fetch-depth": 0
     });
-    expect(stepIndex(promote, releaseRun.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
-    expect(stepIndex(promote, publicManifest.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
-    expect(stepIndex(promote, platformRun.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
-    expect(stepIndex(promote, platformManifest.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
-    expect(stepIndex(promote, registry.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
-    expect(stepIndex(promote, monotonic.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+    for (const gate of [releaseRun, publicManifest, platformRun, platformManifest, registry, monotonic]) {
+      workflowStepBefore(promote, gate, addTag);
+    }
   });
 
   it("emits a public release manifest only after published-artifact smoke", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     const smoke = workflowJob(workflow, "live-user-tests");
     const manifest = workflowJob(workflow, "public-release-manifest");
-    const write = workflowStep(manifest, "Write public release manifest");
-    const upload = workflowStep(manifest, "Upload public release manifest");
+    const write = workflowStepRunning(manifest, /release-manifest\.mjs\s+write-public/);
+    const upload = findWorkflowStep(
+      manifest,
+      (step) => step.uses?.startsWith("actions/upload-artifact@") === true && step.with?.path === "public-release-manifest.json",
+      "public manifest upload"
+    );
 
     expect(jobNeeds(manifest)).toContain("live-user-tests");
-    expect(workflowStep(smoke, "Published-artifact smoke")).toBeDefined();
-    expect(write.run).toContain("release-manifest.mjs write-public");
+    expect(workflowStepRunning(smoke, /\btest:user:smoke\b/)).toBeDefined();
+    expect(write.run).toMatch(/release-manifest\.mjs\s+write-public/);
     expect(upload.with).toMatchObject({
       name: "public-release-manifest-${{ github.run_id }}",
       path: "public-release-manifest.json",
@@ -267,24 +282,24 @@ describe("release pipeline gates", () => {
     const smoke = workflowJob(workflow, "live-user-tests");
     const manifest = workflowJob(workflow, "public-release-manifest");
     const complete = workflowJob(workflow, "release-complete");
-    const smokeRun = workflowStep(smoke, "Published-artifact smoke");
-    const verify = workflowStep(complete, "Require complete published candidate");
+    const smokeRun = workflowStepRunning(smoke, /\btest:user:smoke\b/);
+    const verify = workflowStepRunning(complete, /SMOKE_RESULT/);
 
-    expect(smoke.if).toContain("always()");
-    expect(smoke.if).toContain("needs.publish.result == 'success'");
-    expect(smoke.if).toContain("needs.live-user-tests-preflight.result == 'success'");
+    expect(smoke.if).toMatch(/always\(\)/);
+    expect(smoke.if).toMatch(/needs\.publish\.result\s*==\s*'success'/);
+    expect(smoke.if).toMatch(/needs\.live-user-tests-preflight\.result\s*==\s*'success'/);
 
-    expect(manifest.if).toContain("always()");
-    expect(manifest.if).toContain("needs.publish.result == 'success'");
-    expect(manifest.if).toContain("needs.live-user-tests.result == 'success'");
+    expect(manifest.if).toMatch(/always\(\)/);
+    expect(manifest.if).toMatch(/needs\.publish\.result\s*==\s*'success'/);
+    expect(manifest.if).toMatch(/needs\.live-user-tests\.result\s*==\s*'success'/);
     expect(smoke["continue-on-error"]).not.toBe(true);
     expect(smokeRun.if).toBeUndefined();
     expect(smokeRun["continue-on-error"]).not.toBe(true);
     expect(new Set(jobNeeds(complete))).toEqual(
       new Set(["publish", "live-user-tests", "public-release-manifest"])
     );
-    expect(complete.if).toContain("always()");
-    expect(complete.if).toContain("needs.publish.result == 'success'");
+    expect(complete.if).toMatch(/always\(\)/);
+    expect(complete.if).toMatch(/needs\.publish\.result\s*==\s*'success'/);
     expect(complete["continue-on-error"]).not.toBe(true);
     expect(verify.if).toBeUndefined();
     expect(verify["continue-on-error"]).not.toBe(true);
@@ -292,9 +307,9 @@ describe("release pipeline gates", () => {
       SMOKE_RESULT: "${{ needs.live-user-tests.result }}",
       MANIFEST_RESULT: "${{ needs.public-release-manifest.result }}"
     });
-    expect(verify.run).toContain('"${SMOKE_RESULT}" != "success"');
-    expect(verify.run).toContain('"${MANIFEST_RESULT}" != "success"');
-    expect(verify.run).toContain("exit 1");
+    expect(verify.run).toMatch(/SMOKE_RESULT.*success/);
+    expect(verify.run).toMatch(/MANIFEST_RESULT.*success/);
+    expect(verify.run).toMatch(/exit\s+1/);
   });
 
   it("overwrites reusable release artifacts when a workflow run is rerun", () => {

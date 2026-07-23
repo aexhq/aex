@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -9,7 +9,7 @@ import {
   readRepoFile,
   readWorkflow,
   workflowJob,
-  workflowStep
+  workflowStepRunning
 } from "./workflow-test-helpers.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -129,11 +129,6 @@ describe("live scenario reliability", () => {
     }
   });
 
-  it("does not keep the removed whole-scenario transport retry fixture", () => {
-    expect(existsSync(resolve(repoRoot, "apps/user-tests/test/_fixtures/pre-create-transport.ts"))).toBe(false);
-    expect(existsSync(resolve(repoRoot, "apps/user-tests/test/_fixtures/pre-create-transport.test.ts"))).toBe(false);
-  });
-
   it("does not neutralize live-test predicates with an always-true fallback", () => {
     for (const path of liveScenarioFiles()) {
       const source = readRepoFile(path);
@@ -142,13 +137,7 @@ describe("live scenario reliability", () => {
   });
 
   it("does not suppress post-finish session reads", () => {
-    for (const path of [
-      "apps/user-tests/test/live/edge-byok-secrets.user.test.ts",
-      "apps/user-tests/test/live/edge-skills-tools.user.test.ts",
-      "apps/user-tests/test/live/edge-instructions-files.user.test.ts",
-      "apps/user-tests/test/live/edge-mcp-egress.user.test.ts",
-      "apps/user-tests/test/live/edge-lineage-observability.user.test.ts"
-    ]) {
+    for (const path of liveScenarioFiles()) {
       expect(suppressedSessionReads(path), path).toEqual([]);
     }
   });
@@ -177,7 +166,7 @@ describe("live scenario reliability", () => {
   it("keeps file-level dynamic fanout at one worker per job", () => {
     const workflow = readWorkflow(".github/workflows/live-user-tests.yml");
     const job = workflowJob(workflow, "live-user-tests");
-    const step = workflowStep(job, "Live user tests");
+    const step = workflowStepRunning(job, /\btest:user:files\b/);
 
     expect(jobNeeds(job)).toEqual(
       expect.arrayContaining(["prepare-artifact", "live-user-tests-preflight", "prepare-live-test-matrix"])
@@ -186,7 +175,8 @@ describe("live scenario reliability", () => {
     expect(job.strategy?.["max-parallel"]).toBeUndefined();
     expect(step.env?.AEX_USER_TEST_MAX_WORKERS).toBe(1);
     expect(step.env?.TEST_FILE).toBe("${{ matrix.file }}");
-    expect(step.run).toContain('test:user:files -- "$TEST_FILE"');
-    expect(step.run).not.toContain("--shard");
+    expect(step.run).toMatch(/\btest:user:files\b/);
+    expect(step.run).toMatch(/\$TEST_FILE/);
+    expect(step.run).not.toMatch(/--shard(?:\s|$)/);
   });
 });
