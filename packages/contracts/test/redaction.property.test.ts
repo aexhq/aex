@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { containsSecretLikeValue, redactString } from "../src/index.js";
 
 /**
@@ -88,7 +88,12 @@ const benignKebab = fc
   )
   .map(([words, ts]) => (ts === undefined ? words.join("-") : `${words.join("-")}-${ts}`));
 
-describe("secret redaction (property)", { timeout: 0 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces
+// the former vitest describe-level { timeout: 0 } (no limit for the
+// property suites below).
+setDefaultTimeout(0);
+
+describe("secret redaction (property)", () => {
   it("masks every secret-shaped run (no under-redaction)", () => {
     fc.assert(
       fc.property(secretShaped, (secret) => {

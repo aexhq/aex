@@ -11,7 +11,8 @@
  * these turns red BEFORE it can break against the gated routes in production.
  */
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, type SessionHandle } from "../../src/index.js";
 
 const TOKEN = "apt_read_auth_token";
@@ -59,7 +60,7 @@ function recordingClient(
   listedFiles: readonly Record<string, unknown>[] = []
 ) {
   const calls: RecordedCall[] = [];
-  const stub: typeof fetch = async (input, init) => {
+  const stub: FetchLike = async (input, init) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toString();
@@ -142,7 +143,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
 
   it("sessionFileLink resolves queries with Authorization: Bearer and sends the TTL body", async () => {
     const calls: RecordedCall[] = [];
-    const stub: typeof fetch = async (input, init) => {
+    const stub: FetchLike = async (input, init) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       const method = (init?.method ?? "GET").toString();
@@ -191,7 +192,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
   it("fetchSessionFile fetches the temporary direct URL without the SDK Authorization header", async () => {
     const calls: RecordedCall[] = [];
     const directUrl = "https://objects.example/result.txt?X-Amz-Signature=abc";
-    const stub: typeof fetch = async (input, init) => {
+    const stub: FetchLike = async (input, init) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       const method = (init?.method ?? "GET").toString();
@@ -256,7 +257,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
 
   it("downloadSessionFile by path sends Authorization: Bearer on list and download", async () => {
     const calls: RecordedCall[] = [];
-    const stub: typeof fetch = async (input, init) => {
+    const stub: FetchLike = async (input, init) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       const method = (init?.method ?? "GET").toString();

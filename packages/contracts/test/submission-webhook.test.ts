@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { parseSessionWebhook } from "../src/index.js";
 import { parseSessionSubmissionRequest } from "../src/internal.js";
 

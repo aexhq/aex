@@ -20,6 +20,11 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+// Deliberately still the "vitest" specifier: scripts/validate/shard-files.test.ts
+// collects the edge-chat shards through `bun x vitest list`, which cannot
+// resolve "bun:test". Under `bun test` this import is remapped to bun:test at
+// runtime, so both runners work. Flip to "bun:test" together with that
+// validate test's collection replacement.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "./install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "./provider.js";

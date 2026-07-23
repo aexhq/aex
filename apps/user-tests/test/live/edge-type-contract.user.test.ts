@@ -22,7 +22,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -219,7 +219,7 @@ describe("edge: public type-contract gaps", () => {
       `;
       const result = await runChild(install, "type-contract-prompt-cap.mjs", body);
       const dump = JSON.stringify(result).slice(0, 1200);
-      expect([400, 413], `oversized prompt was not rejected; diagnostics: ${dump}`).toContain(result.status);
+      expect([400, 413], `oversized prompt was not rejected; diagnostics: ${dump}`).toContain(Number(result.status));
     },
     5 * 60_000
   );

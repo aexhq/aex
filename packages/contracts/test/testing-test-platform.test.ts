@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, spyOn } from "bun:test";
 import { caps, testPlatformCapabilities } from "../src/testing.js";
 
 const CAPABILITY_NAMES = [
@@ -12,7 +12,7 @@ const CAPABILITY_NAMES = [
 
 describe("test-platform capabilities", () => {
   it("resolves every capability to a boolean exactly once, logging the resolution", () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const log = spyOn(console, "error").mockImplementation(() => undefined);
     try {
       const first = testPlatformCapabilities();
       const second = testPlatformCapabilities();

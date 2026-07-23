@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import * as contracts from "../src/index.js";
 import type { AexEvent } from "../src/index.js";
 

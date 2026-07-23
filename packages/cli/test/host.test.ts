@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { strToU8, unzipSync } from "fflate";
 import { createHash } from "node:crypto";
 import { resolve as resolvePath } from "node:path";

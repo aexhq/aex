@@ -49,6 +49,8 @@
       "version": "0.1.0",
       "devDependencies": {
         "@aexhq/conformance": "workspace:*",
+        "@aexhq/contracts": "workspace:*",
+        "@types/bun": "1.3.14",
         "dotenv": "16.5.0",
         "typescript": "5.8.3",
         "vitest": "3.1.2",
@@ -56,7 +58,7 @@
     },
     "packages/cli": {
       "name": "@aexhq/cli",
-      "version": "0.31.0",
+      "version": "0.33.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },
@@ -65,6 +67,7 @@
         "fflate": "^0.8.2",
       },
       "devDependencies": {
+        "@types/bun": "1.3.14",
         "esbuild": "^0.28.0",
       },
     },
@@ -72,21 +75,24 @@
       "name": "@aexhq/conformance",
       "version": "0.29.0",
       "devDependencies": {
+        "@types/bun": "1.3.14",
         "@types/node": "22.15.3",
         "typescript": "5.8.3",
-        "vitest": "3.1.2",
       },
     },
     "packages/contracts": {
       "name": "@aexhq/contracts",
-      "version": "0.31.0",
+      "version": "0.33.0",
       "dependencies": {
         "fflate": "0.8.2",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.14",
       },
     },
     "packages/sdk": {
       "name": "@aexhq/sdk",
-      "version": "0.42.0",
+      "version": "0.45.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },
@@ -96,6 +102,7 @@
       },
       "devDependencies": {
         "@aexhq/contracts": "workspace:*",
+        "@types/bun": "1.3.14",
       },
     },
   },
@@ -490,6 +497,8 @@
 
     "@tailwindcss/postcss": ["@tailwindcss/postcss@4.3.0", "", { "dependencies": { "@alloc/quick-lru": "^5.2.0", "@tailwindcss/node": "4.3.0", "@tailwindcss/oxide": "4.3.0", "postcss": "^8.5.10", "tailwindcss": "4.3.0" } }, "sha512-Jm05Tjx+9yCLGv5qw1c+84Psds8MnyrEQYCB+FFk2lgGiUjlRqdxke4mVTuYrj2xnVZqKim2Apr5ySuQRYAw/w=="],
 
+    "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
+
     "@types/debug": ["@types/debug@4.1.13", "", { "dependencies": { "@types/ms": "*" } }, "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw=="],
 
     "@types/estree": ["@types/estree@1.0.9", "", {}, "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg=="],
@@ -579,6 +588,8 @@
     "brace-expansion": ["brace-expansion@1.1.15", "", { "dependencies": { "balanced-match": "^1.0.0", "concat-map": "0.0.1" } }, "sha512-EwOCDEex4quD37XhqM3omwtMoJjr//isUZz1JopUNWms+4Z2ViyM/k1YIRePpoVNnQhENnxtFjLaxNHrT7xIUg=="],
 
     "braces": ["braces@3.0.3", "", { "dependencies": { "fill-range": "^7.1.1" } }, "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=="],
+
+    "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
     "cac": ["cac@6.7.14", "", {}, "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ=="],
 

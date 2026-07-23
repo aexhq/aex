@@ -5,7 +5,8 @@
  * gate. The one-time minted key (createWorkspace / keys.create) is wrapped in a
  * redacted `SecretString` — it never stringifies to its value.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, SecretString } from "../../src/index.js";
 
 interface CapturedRequest {
@@ -14,9 +15,9 @@ interface CapturedRequest {
   readonly body: unknown;
 }
 
-function makeStubFetch(routes: (req: CapturedRequest) => Response): { fetch: typeof fetch; calls: CapturedRequest[] } {
+function makeStubFetch(routes: (req: CapturedRequest) => Response): { fetch: FetchLike; calls: CapturedRequest[] } {
   const calls: CapturedRequest[] = [];
-  const stub: typeof fetch = vi.fn(async (input, init) => {
+  const stub: FetchLike = mock(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toString();
     let body: unknown = init?.body;

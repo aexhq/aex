@@ -2,7 +2,7 @@
  * WS10: `responseFormat` discriminated union + parseResponseFormat mirror
  * OUTPUT_MODES/parseOutputMode; the schema field survives the full parser.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { parseResponseFormat, parseSessionSubmissionRequest, RESPONSE_FORMAT_KINDS } from "../src/internal.js";
 
 describe("parseResponseFormat (WS10)", () => {

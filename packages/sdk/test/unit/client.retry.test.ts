@@ -8,7 +8,8 @@
  * fake coordinator WebSocket, so a whole `run` / `send` turn is driven
  * deterministically without a live backend.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, isRateLimited, AexRateLimitError, SessionStateError } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
 import { FakeWebSocket } from "@aexhq/contracts/testing";
@@ -118,7 +119,7 @@ function harness(
   const sockets: FakeWebSocket[] = [];
   let createCount = 0;
 
-  const fetchImpl: typeof globalThis.fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = String(init?.method ?? "GET").toUpperCase();
     calls.push({ method, url, headers: headersToObject(init?.headers) });

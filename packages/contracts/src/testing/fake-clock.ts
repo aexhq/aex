@@ -1,15 +1,25 @@
 /**
- * Runner-agnostic synchronous fake clock.
+ * Runner-agnostic fake timers.
  *
- * `withFakeClock(fn)` swaps `globalThis` `setTimeout`/`clearTimeout`/
- * `setInterval`/`clearInterval` AND the `Date` constructor (unlike bun's fake
- * timers, which leave `Date` real) for the duration of the synchronous
- * callback, restoring them in a `finally`. Time only moves when the test calls
- * `clock.advance(ms)`; due timers fire synchronously in due-time order
- * (ties break by registration order).
+ * Two faces over one scheduling engine:
  *
- * Sync-only by design: an async callback would escape the swapped window, so
- * a thenable return is rejected loudly.
+ * - `withFakeClock(fn)` swaps `globalThis` `setTimeout`/`clearTimeout`/
+ *   `setInterval`/`clearInterval` AND the `Date` constructor (unlike bun's fake
+ *   timers, which leave `Date` real) for the duration of the synchronous
+ *   callback, restoring them in a `finally`. Sync-only by design: an async
+ *   callback would escape the swapped window, so a thenable return is rejected
+ *   loudly.
+ * - `createFakeTimers()` returns an injectable timer host (a `FakeTimers`)
+ *   that touches no globals — the deterministic double for subjects that take
+ *   a timer port (e.g. the event-stream client's `timers` option). Because
+ *   globals stay real, its async `advanceAsync(ms)` can interleave real
+ *   event-loop turns between fired timers, reproducing the semantics of
+ *   vitest's `vi.advanceTimersByTimeAsync`: continuations of promises settled
+ *   by one fired timer run before the next timer fires, and follow-up timers
+ *   they schedule inside the window still fire within the same advance.
+ *
+ * Time only moves when the test calls `advance(ms)`/`advanceAsync(ms)`; due
+ * timers fire in due-time order (ties break by registration order).
  */
 
 export interface FakeClock {
@@ -26,6 +36,26 @@ export interface FakeClock {
   runAll(maxFires?: number): void;
   /** Number of currently scheduled timers. */
   pendingTimerCount(): number;
+}
+
+/**
+ * Injectable fake timer host: the four host timer functions driven by a
+ * {@link FakeClock}, plus the async advance. Structurally satisfies any
+ * `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval` port (handles are
+ * opaque), so tests pass it straight into a subject's timer seam.
+ */
+export interface FakeTimers extends FakeClock {
+  setTimeout(callback: () => void, delayMs?: number): unknown;
+  clearTimeout(handle: unknown): void;
+  setInterval(callback: () => void, delayMs?: number): unknown;
+  clearInterval(handle: unknown): void;
+  /**
+   * Advance fake time by `ms` with `vi.advanceTimersByTimeAsync` semantics:
+   * before each due timer fires (and once after the window), yield a real
+   * event-loop turn so every settled promise chain runs to exhaustion —
+   * timers those continuations schedule inside the window fire too.
+   */
+  advanceAsync(ms: number): Promise<void>;
 }
 
 interface ScheduledTimer {
@@ -53,20 +83,32 @@ class FakeTimerHandle {
   }
 }
 
-let installed = false;
+interface TimerEngine {
+  readonly clock: FakeClock;
+  schedule(
+    callback: (...args: unknown[]) => void,
+    delayMs: unknown,
+    args: readonly unknown[],
+    intervalMs: number | undefined
+  ): FakeTimerHandle;
+  unschedule(handle: unknown): void;
+  nextDue(): ScheduledTimer | undefined;
+  /** Advance the clock to the timer's due time and fire it. */
+  fireNext(timer: ScheduledTimer): void;
+  setNow(epochMs: number): void;
+}
 
-export function withFakeClock<T>(fn: (clock: FakeClock) => T): T {
-  if (installed) {
-    throw new Error("withFakeClock: a fake clock is already installed (no nesting)");
-  }
+/** The real host scheduler, captured at module load so global swaps cannot reach it. */
+const hostSetTimeout = globalThis.setTimeout;
 
-  const RealDate = globalThis.Date;
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
-  const realSetInterval = globalThis.setInterval;
-  const realClearInterval = globalThis.clearInterval;
+/** One real event-loop turn: every already-settled promise chain runs to exhaustion first. */
+const drainEventLoop = (): Promise<void> =>
+  new Promise<void>((resolve) => {
+    hostSetTimeout(resolve, 0);
+  });
 
-  let now = RealDate.now();
+function createTimerEngine(initialNowMs: number): TimerEngine {
+  let now = initialNowMs;
   let nextId = 1;
   const timers = new Map<number, ScheduledTimer>();
 
@@ -100,7 +142,8 @@ export function withFakeClock<T>(fn: (clock: FakeClock) => T): T {
     return best;
   };
 
-  const fire = (timer: ScheduledTimer): void => {
+  const fireNext = (timer: ScheduledTimer): void => {
+    now = Math.max(now, timer.due);
     if (timer.intervalMs === undefined) {
       timers.delete(timer.id);
     } else {
@@ -125,8 +168,7 @@ export function withFakeClock<T>(fn: (clock: FakeClock) => T): T {
       for (;;) {
         const timer = nextDue();
         if (timer === undefined || timer.due > target) break;
-        now = Math.max(now, timer.due);
-        fire(timer);
+        fireNext(timer);
       }
       now = target;
     },
@@ -139,38 +181,90 @@ export function withFakeClock<T>(fn: (clock: FakeClock) => T): T {
             `runAll exceeded ${maxFires} timer fires with ${timers.size} still pending (interval graph?)`
           );
         }
-        now = Math.max(now, timer.due);
-        fire(timer);
+        fireNext(timer);
       }
     },
     pendingTimerCount: () => timers.size
   };
 
+  return {
+    clock,
+    schedule,
+    unschedule,
+    nextDue,
+    fireNext,
+    setNow: (epochMs: number) => {
+      now = epochMs;
+    }
+  };
+}
+
+/** Injectable fake timer host over a fresh engine; touches no globals. */
+export function createFakeTimers(initialNowMs: number = Date.now()): FakeTimers {
+  const engine = createTimerEngine(initialNowMs);
+  return {
+    ...engine.clock,
+    setTimeout: (callback, delayMs) => engine.schedule(callback, delayMs, [], undefined),
+    clearTimeout: (handle) => engine.unschedule(handle),
+    setInterval: (callback, delayMs) => engine.schedule(callback, delayMs, [], Math.max(1, Number(delayMs) || 0)),
+    clearInterval: (handle) => engine.unschedule(handle),
+    advanceAsync: async (ms: number): Promise<void> => {
+      if (!Number.isFinite(ms) || ms < 0) {
+        throw new TypeError("advanceAsync requires a non-negative finite ms value");
+      }
+      const target = engine.clock.now() + ms;
+      for (;;) {
+        await drainEventLoop();
+        const timer = engine.nextDue();
+        if (timer === undefined || timer.due > target) break;
+        engine.fireNext(timer);
+      }
+      engine.setNow(target);
+      await drainEventLoop();
+    }
+  };
+}
+
+let installed = false;
+
+export function withFakeClock<T>(fn: (clock: FakeClock) => T): T {
+  if (installed) {
+    throw new Error("withFakeClock: a fake clock is already installed (no nesting)");
+  }
+
+  const RealDate = globalThis.Date;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+
+  const engine = createTimerEngine(RealDate.now());
+
   class FakeDate extends RealDate {
     constructor(...args: readonly unknown[]) {
       if (args.length === 0) {
-        super(now);
+        super(engine.clock.now());
       } else {
         super(...(args as ConstructorParameters<DateConstructor>));
       }
     }
 
     static override now(): number {
-      return now;
+      return engine.clock.now();
     }
   }
 
   installed = true;
   globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delayMs?: unknown, ...args: unknown[]) =>
-    schedule(callback, delayMs, args, undefined)) as never;
-  globalThis.clearTimeout = unschedule as never;
+    engine.schedule(callback, delayMs, args, undefined)) as never;
+  globalThis.clearTimeout = engine.unschedule as never;
   globalThis.setInterval = ((callback: (...args: unknown[]) => void, delayMs?: unknown, ...args: unknown[]) =>
-    schedule(callback, delayMs, args, Math.max(1, Number(delayMs) || 0))) as never;
-  globalThis.clearInterval = unschedule as never;
+    engine.schedule(callback, delayMs, args, Math.max(1, Number(delayMs) || 0))) as never;
+  globalThis.clearInterval = engine.unschedule as never;
   globalThis.Date = FakeDate as DateConstructor;
 
   try {
-    const result = fn(clock);
+    const result = fn(engine.clock);
     if (result !== null && typeof result === "object" && "then" in (result as object)) {
       throw new TypeError(
         "withFakeClock is sync-only: the callback returned a thenable, which would outlive the fake clock"

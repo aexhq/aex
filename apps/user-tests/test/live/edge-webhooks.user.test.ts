@@ -19,7 +19,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -321,8 +321,8 @@ describe("live hosted - session webhooks edge cases", () => {
       expect(out.firstDelivery, "delivery row present but firstDelivery null").not.toBeNull();
       expect(typeof out.firstDelivery!.id).toBe("string");
       expect(out.firstDelivery!.eventType).toBe("run.finished");
-      expect(out.firstDelivery!.runId).toBe(out.runId);
-      expect(out.firstDelivery!.turnSeq).toBe(out.turnSeq);
+      expect(out.firstDelivery!.runId).toBe(out.runId!);
+      expect(out.firstDelivery!.turnSeq).toBe(out.turnSeq!);
       expect(out.redeliverReal, "redeliverReal missing despite a delivery row").not.toBeNull();
       const rr = out.redeliverReal!;
       expect(

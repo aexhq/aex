@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, CredentialValidationError, SessionConfigValidationError } from "../../src/index.js";
+import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
 
-function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
+function recordingFetch(): { fetch: FetchLike; calls: string[] } {
   const calls: string[] = [];
-  const f: typeof fetch = async (input) => {
+  const f: FetchLike = async (input) => {
     calls.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
     return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
       status: 201,
@@ -58,11 +60,11 @@ describe("aex.sessions.create — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         runtimeSize: "shared-1x-4gb",
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" }
-      } as never)
+      }))
     ).rejects.toThrow(/runtimeSize is not a supported option; use runtime/);
 
     expect(rec.calls).toHaveLength(0);
@@ -73,11 +75,11 @@ describe("aex.sessions.create — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         secretEnv: { SERPER_API_KEY: { ref: "serper" } }
-      } as never)
+      }))
     ).rejects.toThrow(/secretEnv is not a supported option; use environment\.secrets/);
 
     expect(rec.calls).toHaveLength(0);
@@ -88,10 +90,10 @@ describe("aex.sessions.create — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         secrets: { apiKeys: { anthropic: "sk-x" } }
-      } as never)
+      }))
     ).rejects.toThrow(/secrets is not a supported option/);
 
     expect(rec.calls).toHaveLength(0);
@@ -102,11 +104,11 @@ describe("aex.sessions.create — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         parentSessionId: "ses_parent"
-      } as never)
+      }))
     ).rejects.toThrow(/parentSessionId is not a supported option; subagent lineage is assigned by the platform/);
 
     expect(rec.calls).toHaveLength(0);
@@ -117,11 +119,11 @@ describe("aex.sessions.create — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         message: "hello there"
-      } as never)
+      }))
     ).rejects.toThrow(/message is not a supported option; sessions are created without a first message/);
 
     expect(rec.calls).toHaveLength(0);
@@ -133,12 +135,12 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectExactConfigError(
-      () => client.sessions.create({
+      () => client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         futureFirst: true,
         futureSecond: true
-      } as never),
+      })),
       "futureFirst",
       "aex.sessions.create: futureFirst is not a supported option",
       rec.calls
@@ -149,11 +151,11 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         runtime: { size: "lite" }
-      } as never)
+      }))
     ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
@@ -162,11 +164,11 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         runtime: { kind: "fargate" }
-      } as never)
+      }))
     ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
@@ -175,11 +177,11 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
-      client.sessions.create({
+      client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         runtime: { tier: "big" }
-      } as never)
+      }))
     ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
@@ -234,11 +236,11 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectConfigError(
-      () => client.sessions.create({
+      () => client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         ...extra
-      } as never),
+      })),
       field,
       rec.calls
     );
@@ -287,11 +289,11 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectConfigError(
-      () => client.sessions.create({
+      () => client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         ...extra
-      } as never),
+      })),
       field,
       rec.calls
     );
@@ -307,11 +309,11 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectExactConfigError(
-      () => client.sessions.create({
+      () => client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         ...extra
-      } as never),
+      })),
       field,
       `aex.sessions.create: ${field} is not a supported option`,
       rec.calls
@@ -331,9 +333,9 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
       sizeBytes: 42,
       contentType: "application/zip"
     } as const;
-    await client.sessions.create({
+    await client.sessions.create(unvalidatedCreateOptions({
       model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-x", future_provider: "future-key" } as never,
+      apiKeys: { anthropic: "sk-x", future_provider: "future-key" },
       metadata: { callerDefined: { nested: true } },
       assets: {
         files: [{ ...common, kind: "file", name: "input.txt", mountPath: "/workspace/input.txt" }],
@@ -353,16 +355,16 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
         kind: "json_schema",
         schema: { type: "object", properties: { callerDefined: { type: "string" } } }
       }
-    } as never);
+    }));
     expect(rec.calls).toHaveLength(1);
   });
 });
 
 describe("new Aex(...) — credential validation (F2)", () => {
   it("throws a typed CredentialValidationError (an AexError), not a bare Error, on a missing credential", () => {
-    expect(() => new Aex({} as never)).toThrow(CredentialValidationError);
+    expect(() => new Aex({})).toThrow(CredentialValidationError);
     try {
-      new Aex({} as never);
+      new Aex({});
     } catch (err) {
       // A caller catching the SDK error base must catch this too.
       expect(err).toBeInstanceOf(CredentialValidationError);

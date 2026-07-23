@@ -13,7 +13,8 @@
  *   4. a normal (active) session still parses with `dataState` absent — and an
  *      explicit `dataState:"active"` passes through unchanged.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, AexApiError, ContentDeletedError, isContentDeleted, type SessionHandle } from "../../src/index.js";
 
 const TOKEN = "aex_content_deleted_token";
@@ -47,7 +48,7 @@ function json(body: unknown, status = 200): Response {
  * CONTENT endpoint returns the 410 content_deleted tombstone.
  */
 function purgedClient(record: Record<string, unknown> = ACTIVE_RECORD): Aex {
-  const stub: typeof fetch = async (input, init) => {
+  const stub: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toUpperCase();
     const pathname = new URL(url).pathname;
@@ -61,7 +62,7 @@ function purgedClient(record: Record<string, unknown> = ACTIVE_RECORD): Aex {
 
 /** A client whose GET session record returns exactly `record`. */
 function recordClient(record: Record<string, unknown>): Aex {
-  const stub: typeof fetch = async () => json({ session: record });
+  const stub: FetchLike = async () => json({ session: record });
   return new Aex({ apiKey: TOKEN, baseUrl: BASE, fetch: stub });
 }
 
@@ -143,7 +144,7 @@ describe("WS4 metadata-only retention (SDK)", () => {
     async (failurePoint) => {
       const sentinel = new AexApiError(418, `sentinel ${failurePoint}`, { failurePoint });
       let sessionReads = 0;
-      const stub: typeof fetch = async (input) => {
+      const stub: FetchLike = async (input) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
         const pathname = new URL(url).pathname;
         if (pathname === `/api/sessions/${SID}`) {

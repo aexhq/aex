@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
 const owner = readFileSync(`${sourceRoot}sdk-secrets.ts`, "utf8");

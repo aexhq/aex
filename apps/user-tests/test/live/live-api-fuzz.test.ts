@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "bun:test";
 
 /**
  * LIVE adversarial-input fuzz of the deployed dev API (the public HTTP contract

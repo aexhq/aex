@@ -10,7 +10,7 @@
  *   - a named, redacted error for an invalid `baseUrl` (previously a bare
  *     `TypeError: Invalid URL`).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { AexError, AexNetworkError } from "../src/sdk-errors.js";
 

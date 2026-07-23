@@ -11,7 +11,6 @@ import {
   HttpClient,
   extractErrorCode,
   redactSecrets,
-  type FetchLike,
   type SessionStatus
 } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
@@ -515,7 +514,7 @@ export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
     baseUrl: flags.aexUrl,
     apiKey: flags.apiKey,
     retryTransientGets: true,
-    fetch: io.fetchImpl as FetchLike,
+    fetch: io.fetchImpl,
     // `--debug`: route the transport's redacted per-request traces to stderr.
     ...(flags.debug ? { debug: (line: string) => io.stderr(`${line}\n`) } : {})
   });

@@ -44,8 +44,8 @@ bun run test:user:providers
 bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 ```
 
-Offline runs use `vitest.offline.config.ts` and default to 4 parallel test files.
-Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
+Offline runs default to 4 parallel test files (`bun test --parallel=4`, tests
+serial within each file). Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
 uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
 SDK artifact, discovers the gating files under `test/live`, and runs one test
 file per matrix job. The preflight sums each file's declared peak session-slot
@@ -147,7 +147,8 @@ Scope: one DeepSeek-managed cell using the configured
 `AEX_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-v4-flash`.
 
 It is **excluded** from the default `test:user` sweep (see
-`vitest.config.ts`) and runs only via its own entrypoint + config:
+`collectDefaultSweepFiles()` in `scripts/user-bun-test.mjs`) and runs only via
+its own entrypoint:
 
 ```bash
 bun run --filter @aexhq/user-tests test:user:heavy   # or: bun run test:user:heavy
@@ -183,11 +184,15 @@ Required env is `AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
 `AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`; model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
-Because this gate is a single file, its parallelism lever is running the seeded
-cells concurrently within the file (each cell is an independent live session with a
-uniquely-named runner script and idempotency key). `AEX_USER_TEST_TOOL_FUZZ_CONCURRENCY`
-bounds how many cells run at once (default `4`; the deploy suite raises it) — it
-is the deliberate cap on concurrent live-run spend and provider rate limits.
+Because this gate is a single file, its only parallelism lever was running the
+seeded cells concurrently within the file (each cell is an independent live
+session with a uniquely-named runner script and idempotency key). Under
+`bun test` the cells currently run **serially**: bun has no config-driven
+in-file concurrency and the cells are not marked `test.concurrent`, so the
+spend bound is 1 concurrent session — strictly lower than the previous cap of
+4 — at the cost of wall-clock (up to ~4x). `AEX_USER_TEST_TOOL_FUZZ_CONCURRENCY`
+is therefore inert until the cells are marked `test.concurrent` and the lane
+passes `--max-concurrency` (follow-up; live-validate on the dev plane first).
 
 ## Per-provider correctness suite
 
@@ -202,8 +207,8 @@ matrix, so the release gate never depends on its account's billing state.
 
 Each file hard-fails when its provider key is absent (e.g. `ANTHROPIC_API_KEY`, `DOUBAO_API_KEY`);
 run the suite only in an environment provisioned for the provider matrix. The suite is **excluded**
-from the default `test:user` sweep (see `vitest.config.ts`) and runs via its
-own config:
+from the default `test:user` sweep (see `collectDefaultSweepFiles()` in
+`scripts/user-bun-test.mjs`) and runs via its own lane script:
 
 ```bash
 bun run --filter @aexhq/user-tests test:user:providers

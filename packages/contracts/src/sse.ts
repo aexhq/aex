@@ -181,17 +181,18 @@ export async function* iterateSse(
   signal?: AbortSignal
 ): AsyncIterable<SseFrame> {
   const reader = body.getReader();
+  // Derived from the reader so the annotation follows the ambient stream lib
+  // (@types/node vs bun-types disagree on the read-result shape).
+  type ReadResult = Awaited<ReturnType<typeof reader.read>>;
   const parser = new SseParser();
   const ABORT_SENTINEL = Symbol("aborted");
   try {
     while (true) {
       if (signal?.aborted) return;
       const readPromise = reader.read();
-      let result: ReadableStreamReadResult<Uint8Array> | typeof ABORT_SENTINEL;
+      let result: ReadResult | typeof ABORT_SENTINEL;
       if (signal) {
-        result = await Promise.race<
-          ReadableStreamReadResult<Uint8Array> | typeof ABORT_SENTINEL
-        >([
+        result = await Promise.race<ReadResult | typeof ABORT_SENTINEL>([
           readPromise,
           new Promise((resolve) => {
             const onAbort = (): void => resolve(ABORT_SENTINEL);

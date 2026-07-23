@@ -6,7 +6,7 @@
  * `afterEach(restoreEnv)`).
  */
 export { stubEnv, restoreEnv } from "./testing/stub-env.js";
-export { withFakeClock, type FakeClock } from "./testing/fake-clock.js";
+export { createFakeTimers, withFakeClock, type FakeClock, type FakeTimers } from "./testing/fake-clock.js";
 export { waitForCondition, type WaitForConditionOptions } from "./testing/wait-for-condition.js";
 export {
   caps,

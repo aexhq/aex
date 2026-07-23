@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { PROVIDERS } from "@aexhq/contracts";
 import {
   collectRepeated,
@@ -59,7 +59,7 @@ const REPEATED_VALUE_FLAGS = [
 const REPEATED_KV_FLAGS = ["--mcp", "--metadata", "--proxy-auth"] as const;
 
 describe("value-taking option syntax", () => {
-  it.each(SINGLE_VALUE_FLAGS)("gives %s identical split and equals consumption", (flag) => {
+  it.each([...SINGLE_VALUE_FLAGS])("gives %s identical split and equals consumption", (flag) => {
     const split = takeOptionFlag(["before", flag, "value=with=equals", "after"], flag);
     const joined = takeOptionFlag(["before", `${flag}=value=with=equals`, "after"], flag);
     expect(joined).toEqual(split);
@@ -95,7 +95,7 @@ describe("value-taking option syntax", () => {
     });
   });
 
-  it.each(REPEATED_VALUE_FLAGS)("gives repeatable %s identical split and equals consumption", (flag) => {
+  it.each([...REPEATED_VALUE_FLAGS])("gives repeatable %s identical split and equals consumption", (flag) => {
     const split = collectRepeated([flag, "one", "middle", flag, "two=2"], flag);
     const joined = collectRepeated([`${flag}=one`, "middle", `${flag}=two=2`], flag);
     expect(joined).toEqual(split);
@@ -115,7 +115,7 @@ describe("value-taking option syntax", () => {
     });
   });
 
-  it.each(REPEATED_KV_FLAGS)("gives repeatable key/value %s identical split and equals consumption", (flag) => {
+  it.each([...REPEATED_KV_FLAGS])("gives repeatable key/value %s identical split and equals consumption", (flag) => {
     const split = collectRepeatedKv([flag, "a=one", "middle", flag, "a=two=2"], flag);
     const joined = collectRepeatedKv([`${flag}=a=one`, "middle", `${flag}=a=two=2`], flag);
     expect(joined).toEqual(split);

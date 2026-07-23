@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { Aex } from "../../sdk/dist/index.js";
 import type { KeysClient, OrgsClient, SessionFiles, SessionStartOptions, WorkspacesClient } from "../../sdk/dist/index.js";
 import { CLI_VERB_NAMES, FILES_SUBVERBS, START_FLAGS as SESSION_FLAGS, findVerbSpec } from "../../cli/dist/index.js";

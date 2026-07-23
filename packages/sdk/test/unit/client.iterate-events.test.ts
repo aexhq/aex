@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import type { AexEvent } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
@@ -22,7 +23,7 @@ function event(sequence: number): AexEvent {
 
 function clientWithPagedEvents() {
   const eventRequests: string[] = [];
-  const fetch: typeof globalThis.fetch = async (input) => {
+  const fetch: FetchLike = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url === `${BASE_URL}/api/sessions/${SESSION_ID}`) {
       return Response.json({ session: { id: SESSION_ID, status: "idle", acceptsMessages: true } });

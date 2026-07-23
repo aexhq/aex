@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getAexBinPath, installAex, type InstallResult } from "../_fixtures/install.js";
 
 type InstalledStreamEvent = {
@@ -154,7 +154,7 @@ describe("install shape", () => {
     const expectedHex = digestText.trim().split(/\s+/)[0];
     expect(expectedHex).toMatch(/^[0-9a-f]{64}$/);
     const actualHex = createHash("sha256").update(cliBytes).digest("hex");
-    expect(actualHex).toBe(expectedHex);
+    expect(actualHex).toBe(expectedHex!);
   });
 
   it("dist/cli.mjs has a platform executable entry point", () => {

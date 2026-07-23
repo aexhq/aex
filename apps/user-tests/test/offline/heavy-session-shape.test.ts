@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { assertManagedShape, type CaseResult } from "../_fixtures/heavy-session-shape.js";
 
 const SKILL_PREFIXES = [

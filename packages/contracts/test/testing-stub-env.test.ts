@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
 import { restoreEnv, stubEnv } from "../src/testing.js";
 
 const KEY = "AEX_TESTING_STUB_ENV_PROBE";

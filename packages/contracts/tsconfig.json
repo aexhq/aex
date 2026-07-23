@@ -1,4 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "test", "vitest.config.ts"]
+  "compilerOptions": {
+    // bun:test types replace the root vitest/globals injection for this
+    // bun-test-native package (explicit imports only; no test globals).
+    "types": ["node", "bun"]
+  },
+  "include": ["src", "test"]
 }

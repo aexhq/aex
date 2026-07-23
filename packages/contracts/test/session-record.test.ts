@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   SESSION_RECORD_MANIFEST_SCHEMA_VERSION,
   SESSION_RECORD_SCHEMA_VERSION,

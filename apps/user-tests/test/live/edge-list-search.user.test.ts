@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   buildEdgeListSearchChildScript,
   EDGE_SESSION_DEBUG_BODY

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 // `sessionBudgetLimits` is the platform-facing boot helper (it rides the
 // `export * from "./submission.js"` re-export, like parseSessionLimits). Pin it
 // through the `@aexhq/contracts/internal` subpath the private runtime consumes.

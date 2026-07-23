@@ -1,5 +1,5 @@
 /** `GET /api/whoami` has one canonical identity and admission-limits envelope. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { whoami } from "../src/operations.js";
 import { RUNTIME_SIZES } from "../src/runtime-sizes.js";

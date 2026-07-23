@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AexApiError } from "@aexhq/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { CliIO } from "../src/internal.js";
 import {
   RUNTIME_ERR,

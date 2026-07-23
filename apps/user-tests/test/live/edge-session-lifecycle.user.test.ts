@@ -13,7 +13,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -336,7 +336,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       `;
       const r = await runChild("edge-unicode-message.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
       expect(r.ok).toBe(true);
-      expect(["idle", "suspended", "succeeded"]).toContain(r.status);
+      expect(["idle", "suspended", "succeeded"]).toContain(String(r.status));
       expect(Number(r.textLen)).toBeGreaterThan(0);
       expect(r.textContainsProbe).toBe(true);
       expect(r.leakedKeyAnywhere).toBe(false);
@@ -436,7 +436,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       const r = await runChild("edge-tiny-timeout.mjs", body, { childTimeoutMs: 120_000, waitMs: 5_000 });
       // The one hard requirement from the brief: no hang, no leak. A hang would
       // be caught by the 120s child timeout above and fail this test.
-      expect(["resolved", "threw"]).toContain(r.outcome);
+      expect(["resolved", "threw"]).toContain(String(r.outcome));
       expect(r.leakedKeyAnywhere).toBe(false);
       expect(Number(r.elapsedMs)).toBeLessThan(90_000);
     },

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, AexApiError } from "../../src/index.js";
 
 const BASE_URL = "https://example.test";
@@ -6,7 +7,7 @@ const SESSION_ID = "session-1";
 
 function archiveErrorClient(status: 413 | 503, code: string) {
   let archiveAttempts = 0;
-  const fetch: typeof globalThis.fetch = async (input) => {
+  const fetch: FetchLike = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url === `${BASE_URL}/api/sessions/${SESSION_ID}`) {
       return Response.json({ session: { id: SESSION_ID, status: "idle", acceptsMessages: true } });

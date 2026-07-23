@@ -14,11 +14,11 @@
  *
  * Run offline (no dev network):
  *   cd aex/apps/user-tests
- *   bun run vitest run --config vitest.offline.config.ts test/offline/edge-retry-injected.test.ts
+ *   bun test --isolate --timeout=180000 test/offline/edge-retry-injected.test.ts
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 const CHILD_HARNESS = String.raw`

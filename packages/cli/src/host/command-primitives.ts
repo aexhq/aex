@@ -20,6 +20,13 @@ export function parsePositiveLimit(
   return { ok: true, limit };
 }
 
-export function pollingDelay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** The single host-timer call {@link pollingDelay} schedules on; injectable for deterministic tests. */
+export interface PollingDelayTimer {
+  setTimeout(callback: () => void, delayMs: number): unknown;
+}
+
+export function pollingDelay(ms: number, timers: PollingDelayTimer = globalThis): Promise<void> {
+  return new Promise((resolve) => {
+    timers.setTimeout(resolve, ms);
+  });
 }

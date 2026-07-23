@@ -3,7 +3,8 @@
  * other value-free declarations: `submission.secretEnv` is hashed while
  * ephemeral values live in `secrets.envSecrets` (vaulted, hash-excluded).
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, Secret, SessionConfigValidationError } from "../../src/index.js";
 
 interface CapturedRequest {
@@ -12,9 +13,9 @@ interface CapturedRequest {
   readonly body: unknown;
 }
 
-function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
+function makeStubFetch(): { fetch: FetchLike; calls: CapturedRequest[] } {
   const calls: CapturedRequest[] = [];
-  const stub: typeof fetch = vi.fn(async (input, init) => {
+  const stub: FetchLike = mock(async (input, init) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     let body: unknown = init?.body;

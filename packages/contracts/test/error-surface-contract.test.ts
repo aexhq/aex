@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import * as root from "../src/index.js";
 import {
   AexApiError as DirectAexApiError,
@@ -69,7 +69,7 @@ describe("public error surface ownership", () => {
   it("pins the exact client exception and serialized wire taxonomies", () => {
     expect(errorCodeIsExact).toBe(true);
     expect(root.AEX_API_ERROR_CODES).toEqual(AEX_API_ERROR_CODES);
-    expect(Object.keys(root.AEX_API_ERROR_MESSAGES)).toEqual(AEX_API_ERROR_CODES);
+    expect(Object.keys(root.AEX_API_ERROR_MESSAGES)).toEqual([...AEX_API_ERROR_CODES]);
     for (const code of AEX_API_ERROR_CODES) {
       expect(root.AEX_API_ERROR_MESSAGES[code], code).toBeTypeOf("string");
       expect(root.AEX_API_ERROR_MESSAGES[code].length, code).toBeGreaterThan(0);

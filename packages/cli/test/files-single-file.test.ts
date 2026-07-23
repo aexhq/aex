@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import { makeIo, type FetchCall } from "./support.js";
 

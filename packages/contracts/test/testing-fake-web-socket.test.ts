@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { FakeWebSocket } from "../src/testing.js";
 import type { WebSocketFactory } from "../src/index.js";
 

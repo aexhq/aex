@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   SESSION_COST_TELEMETRY_SCHEMA_VERSION,
   SESSION_USAGE_SAMPLE_SCHEMA_VERSION,

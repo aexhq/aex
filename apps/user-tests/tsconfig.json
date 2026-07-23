@@ -4,7 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "declaration": false,
-    "noEmit": true
+    "noEmit": true,
+    // bun:test types replace the root vitest/globals injection for this
+    // bun-test-native package (explicit imports only; no test globals).
+    "types": ["node", "bun"]
   },
   "include": ["test", "vitest*.ts"]
 }

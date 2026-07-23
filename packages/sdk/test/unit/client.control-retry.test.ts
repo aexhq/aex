@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, type SessionHandle } from "../../src/index.js";
 
 interface MutationCall {
@@ -16,7 +17,7 @@ function json(body: unknown, status = 200): Response {
 
 function controlHarness(): { readonly client: Aex; readonly calls: MutationCall[] } {
   const calls: MutationCall[] = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: FetchLike = async (input, init) => {
     const url = new URL(
       typeof input === "string"
         ? input
@@ -68,7 +69,7 @@ const handleControls: ReadonlyArray<{
 ];
 
 describe("lifecycle controls do not retry without server deduplication", () => {
-  it.each(handleControls)("$name carries no idempotency key and gets one transport attempt", async (control) => {
+  it.each([...handleControls])("$name carries no idempotency key and gets one transport attempt", async (control) => {
     const { client, calls } = controlHarness();
     const session = await client.sessions.open("session-1");
 

@@ -17,7 +17,7 @@
  * Used as the values of `secretEnv: Record<envName, Secret>`; the client keys
  * the split by env-var name at submit time.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { SecretString } from "@aexhq/contracts";
 
 import { Secret } from "../../src/secret.js";

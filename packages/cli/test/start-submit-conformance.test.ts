@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import ts from "typescript";
 import { Skill } from "../../sdk/src/skill.js";
 import { Tool } from "../../sdk/src/tool.js";

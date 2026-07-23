@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   SIDE_EFFECT_AUDIT_ACTIONS,
   SIDE_EFFECT_AUDIT_KIND,

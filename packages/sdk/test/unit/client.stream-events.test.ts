@@ -5,7 +5,8 @@
  * low-latency live envelope stream is covered separately (streamEnvelopes →
  * coordinator WS, shared event-stream-client tests).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
 import { FakeWebSocket } from "@aexhq/contracts/testing";
@@ -15,11 +16,11 @@ function jsonResponse(body: unknown): Response {
 }
 
 function makeFetch(plan: ReadonlyArray<{ match: RegExp; respond: () => Response }>): {
-  fetch: typeof fetch;
+  fetch: FetchLike;
   calls: string[];
 } {
   const calls: string[] = [];
-  const fakeFetch: typeof fetch = async (input) => {
+  const fakeFetch: FetchLike = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     calls.push(url);
     for (const entry of plan) {
@@ -356,7 +357,7 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
     const requested = new Promise<void>((resolve) => {
       markRequested = resolve;
     });
-    const fetchStub: typeof fetch = async (input) => {
+    const fetchStub: FetchLike = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       if (url.endsWith("/events")) {
         markRequested();

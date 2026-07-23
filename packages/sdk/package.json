@@ -31,16 +31,17 @@
     "lint:unlocked": "tsc --noEmit",
     "test": "bun run test:unit",
     "test:unit": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:unit:unlocked",
-    "test:unit:unlocked": "vitest run test/unit",
+    "test:unit:unlocked": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-unit.xml test/unit && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-unit.xml",
     "test:security": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:security:unlocked",
-    "test:security:unlocked": "vitest run test/security",
-    "test:property": "vitest run property",
-    "test:coverage": "vitest run --coverage test/unit",
+    "test:security:unlocked": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-security.xml test/security && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-security.xml",
+    "test:property": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-property.xml property && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-property.xml",
+    "test:coverage": "bun test --coverage test/unit",
     "prepack": "bun run build",
     "pack:dry-run": "bun ../../scripts/with-generated-dist-lock.mjs bun pm pack --dry-run --ignore-scripts"
   },
   "devDependencies": {
-    "@aexhq/contracts": "workspace:*"
+    "@aexhq/contracts": "workspace:*",
+    "@types/bun": "1.3.14"
   },
   "engines": {
     "bun": ">=1.3.14"

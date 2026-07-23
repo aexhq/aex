@@ -12,7 +12,7 @@
  * (the managed-runtime half also requires the runner image to be rebuilt, since the
  * file is written by the runtime materialization step).
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 

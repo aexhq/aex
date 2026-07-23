@@ -3,7 +3,7 @@
  * Fully offline — a fake `webSocketFactory` drives frames and a fake `fetchImpl`
  * answers the ticket broker + getSession.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import { type CliIO } from "../src/internal.js";
 import type { AexEvent, WebSocketLike } from "@aexhq/contracts";

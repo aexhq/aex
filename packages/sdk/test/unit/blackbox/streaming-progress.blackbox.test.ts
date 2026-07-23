@@ -6,7 +6,7 @@
  * two ways through the public surface: the assembled `result.text`, and a LIVE
  * `for await` over the turn stream that observes each delta as it arrives.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { AexStreamEventView } from "@aexhq/contracts";
 import { FakePlatform } from "./fake-platform.js";
 

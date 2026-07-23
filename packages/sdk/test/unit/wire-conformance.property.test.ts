@@ -1,5 +1,6 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import {
   SUPPORTED_MODELS,
   RUNTIME_SIZES,
@@ -7,7 +8,8 @@ import {
   type ModelName
 } from "@aexhq/contracts";
 import { parseSessionSubmissionRequest } from "@aexhq/contracts/internal";
-import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
+import { Aex, Secret } from "../../src/index.js";
+import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
 
 /**
  * SDK ⇄ API WIRE-CONFORMANCE property (the prompt-delivery wire-shape bug class).
@@ -30,7 +32,7 @@ import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
 
 function captureClient(): { client: Aex; bodies: unknown[] } {
   const bodies: unknown[] = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url.endsWith("/api/sessions") && (init?.method ?? "GET") === "POST") {
       const raw = init?.body;
@@ -111,13 +113,17 @@ const goodOptions = validModel.chain((model) => {
   );
 });
 
-describe("SDK wire-conformance (property)", { timeout: 30_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces the
+// former vitest describe-level { timeout: 30_000 } (single suite spans the file).
+setDefaultTimeout(30_000);
+
+describe("SDK wire-conformance (property)", () => {
   it("every accepted session-create builds a body the contracts validator accepts", async () => {
     await fc.assert(
       fc.asyncProperty(goodOptions, async (options) => {
         const { client, bodies } = captureClient();
         try {
-          await client.sessions.create(options as unknown as SessionCreateOptions);
+          await client.sessions.create(unvalidatedCreateOptions(options));
         } catch (err) {
           // Rejection path: must be a TYPED error, never an undefined/non-Error crash.
           expect(err).toBeInstanceOf(Error);
@@ -146,7 +152,7 @@ describe("SDK wire-conformance (property)", { timeout: 30_000 }, () => {
       fc.asyncProperty(adversarial, async (options) => {
         const { client, bodies } = captureClient();
         try {
-          await client.sessions.create(options as unknown as SessionCreateOptions);
+          await client.sessions.create(unvalidatedCreateOptions(options));
         } catch (err) {
           expect(err).toBeInstanceOf(Error);
           return;

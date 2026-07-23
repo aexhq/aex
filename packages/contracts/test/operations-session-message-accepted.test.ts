@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/index.js";
 import { operations } from "../src/internal.js";
 
@@ -22,7 +22,7 @@ function clientFor(body: unknown): HttpClient {
   });
 }
 
-async function send(body: unknown) {
+async function send(body: unknown): Promise<unknown> {
   return operations.sendSessionMessage(clientFor(body), "ses_1", { input: "continue" });
 }
 

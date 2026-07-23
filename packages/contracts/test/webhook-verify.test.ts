@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { verifyAexWebhook } from "../src/index.js";
 
 // 32 random bytes is the production secret size; a fixed value keeps the vector

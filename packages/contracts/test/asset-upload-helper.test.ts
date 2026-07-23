@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 import {
   DIRECT_UPLOAD_MAX_ATTEMPTS,
   DIRECT_UPLOAD_MAX_ELAPSED_MS,
@@ -115,7 +115,7 @@ describe("asset upload internal helpers", () => {
   it("does not retry permanent direct-upload 4xx responses", async () => {
     const uploadUrl = "https://storage.example.test/b/k?X-Amz-Signature=signature";
     const { options, slept } = deterministicRetryOptions();
-    const fetch: AssetFetch = vi.fn(async () => ({
+    const fetch: AssetFetch = mock(async () => ({
       ok: false,
       status: 403,
       text: async () => `Forbidden for ${uploadUrl}`
@@ -134,7 +134,7 @@ describe("asset upload internal helpers", () => {
   it("honors Retry-After seconds and HTTP dates before retrying direct uploads", async () => {
     const uploadUrl = "https://storage.example.test/b/k?X-Amz-Signature=signature";
     let secondsCall = 0;
-    const secondsFetch: AssetFetch = vi.fn(async () => {
+    const secondsFetch: AssetFetch = mock(async () => {
       secondsCall += 1;
       return secondsCall === 1 ? uploadResponse(429, { "retry-after": "2" }, "slow") : uploadResponse(200);
     });
@@ -148,7 +148,7 @@ describe("asset upload internal helpers", () => {
     const now = Date.UTC(2026, 0, 1, 0, 0, 0);
     const retryAt = new Date(now + 3_000).toUTCString();
     let dateCall = 0;
-    const dateFetch: AssetFetch = vi.fn(async () => {
+    const dateFetch: AssetFetch = mock(async () => {
       dateCall += 1;
       return dateCall === 1 ? uploadResponse(503, { "Retry-After": retryAt }, "unavailable") : uploadResponse(200);
     });
@@ -164,7 +164,7 @@ describe("asset upload internal helpers", () => {
     const uploadUrl = "https://storage.example.test/b/k?X-Amz-Signature=signature";
     const abort = new Error("caller aborted");
     abort.name = "AbortError";
-    const fetch: AssetFetch = vi.fn(async () => {
+    const fetch: AssetFetch = mock(async () => {
       throw abort;
     });
     const { options, slept } = deterministicRetryOptions();
@@ -179,7 +179,7 @@ describe("asset upload internal helpers", () => {
   it("uses the injected sleep with the computed full-jitter delay", async () => {
     const uploadUrl = "https://storage.example.test/b/k?X-Amz-Signature=signature";
     let call = 0;
-    const fetch: AssetFetch = vi.fn(async () => {
+    const fetch: AssetFetch = mock(async () => {
       call += 1;
       return call === 1 ? uploadResponse(500, {}, "temporary") : uploadResponse(200);
     });
@@ -193,7 +193,7 @@ describe("asset upload internal helpers", () => {
 
   it("stops retrying when the next direct-upload delay would exceed the elapsed budget", async () => {
     const uploadUrl = "https://storage.example.test/b/k?X-Amz-Signature=signature";
-    const fetch: AssetFetch = vi.fn(async () => uploadResponse(503, {}, "still unavailable"));
+    const fetch: AssetFetch = mock(async () => uploadResponse(503, {}, "still unavailable"));
     const { options, slept } = deterministicRetryOptions({
       random: 1,
       initialDelayMs: 100,

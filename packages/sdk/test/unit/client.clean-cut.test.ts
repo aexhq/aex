@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, type SessionFilesSnapshot } from "../../src/index.js";
 import { SessionRunStream } from "../../src/client.js";
 import type { Session } from "@aexhq/contracts";
@@ -20,7 +21,7 @@ const file = {
 
 function harness() {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     calls.push({ url, method: init?.method ?? "GET", ...(body === undefined ? {} : { body }) });
@@ -124,7 +125,7 @@ describe("public SDK clean cut", () => {
   });
 
   it("rejects the removed sessionId response alias at runtime", async () => {
-    const fetch: typeof globalThis.fetch = async () => new Response(JSON.stringify({
+    const fetch: FetchLike = async () => new Response(JSON.stringify({
       session: { id: "session_1", sessionId: "session_1", status: "idle", acceptsMessages: true }
     }), { status: 201, headers: { "content-type": "application/json" } });
     const client = new Aex({ apiKey: "token", baseUrl: "https://api.example.test", fetch });
@@ -135,7 +136,7 @@ describe("public SDK clean cut", () => {
   });
 
   it("rejects flat session responses instead of guessing a legacy envelope", async () => {
-    const fetch: typeof globalThis.fetch = async () => new Response(JSON.stringify({
+    const fetch: FetchLike = async () => new Response(JSON.stringify({
       id: "session_1",
       status: "idle",
       acceptsMessages: true
@@ -178,7 +179,7 @@ describe("public SDK clean cut", () => {
     ["shared-1x-6gb", "1cpu-6gb"],
     ["shared-2x-8gb", "2cpu-8gb"],
     ["shared-4x-12gb", "4cpu-12gb"]
-  ])("normalizes a legacy read-side runtime-size token (%s)", async (legacy, canonical) => {
+  ] as const)("normalizes a legacy read-side runtime-size token (%s)", async (legacy, canonical) => {
     const client = new Aex({
       apiKey: "token",
       baseUrl: "https://api.example.test",
@@ -214,7 +215,7 @@ describe("public SDK clean cut", () => {
   });
 
   it("rejects bare child and webhook arrays", async () => {
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const value = url.endsWith("/children") || url.endsWith("/webhook-deliveries")
         ? []

@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import {
   verifyAexWebhook
 } from "../src/index.js";
@@ -34,7 +34,12 @@ function signWebhook(id: string, ts: number, body: string, material = SECRET_MAT
 const wid = fc.string({ minLength: 1, maxLength: 40 }).filter((s) => !s.includes(" "));
 const wbody = fc.string({ maxLength: 256 });
 
-describe("verifyAexWebhook (property)", { timeout: 30_000 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces
+// the former vitest describe-level { timeout: 30_000 } (a 30s ceiling for the
+// property suites below).
+setDefaultTimeout(30_000);
+
+describe("verifyAexWebhook (property)", () => {
   it("accepts any faithfully-signed delivery within tolerance", async () => {
     await fc.assert(
       fc.asyncProperty(wid, wbody, async (id, body) => {
@@ -107,7 +112,7 @@ const sessionId = fc.string({ minLength: 1, maxLength: 40 });
 const ticketSecret = fc.string({ minLength: 8, maxLength: 48 });
 const channel = fc.constantFrom<ConnectionTicketChannel>("event", "log", "all");
 
-describe("connection ticket mint/verify (property)", { timeout: 30_000 }, () => {
+describe("connection ticket mint/verify (property)", () => {
   it("a freshly minted ticket verifies for its run + channel", async () => {
     await fc.assert(
       fc.asyncProperty(sessionId, ticketSecret, channel, async (id, secret, ch) => {

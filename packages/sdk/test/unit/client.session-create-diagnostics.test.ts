@@ -1,6 +1,7 @@
 import { inspect } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { Aex, SessionConfigValidationError } from "../../src/index.js";
+import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
 
 const COMPLEX_DIAGNOSTIC_FIELDS = new Set([
   "webhook.url",
@@ -173,7 +174,7 @@ const cases: readonly Case[] = [
 ];
 
 describe("aex.sessions.create validator diagnostics", () => {
-  it.each(cases)("preserves the top-level $label error and adds only a safe cause", async (row) => {
+  it.each([...cases])("preserves the top-level $label error and adds only a safe cause", async (row) => {
     let fetchCalls = 0;
     const client = new Aex({
       apiKey: "safe-placeholder",
@@ -183,7 +184,7 @@ describe("aex.sessions.create validator diagnostics", () => {
         throw new Error("network must not be reached");
       }
     });
-    const error = await client.sessions.create(row.options() as never).catch((caught: unknown) => caught);
+    const error = await client.sessions.create(unvalidatedCreateOptions(row.options())).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(SessionConfigValidationError);
     expect(error).toMatchObject({
@@ -225,7 +226,7 @@ describe("aex.sessions.create validator diagnostics", () => {
     ["unknown key", { ...base(), futureOption: true }, "futureOption", "futureOption is not a supported option"]
   ])("keeps direct $0 validation causeless", async (_label, options, field, message) => {
     const client = new Aex({ apiKey: "safe-placeholder", baseUrl: "https://example.test" });
-    const error = await client.sessions.create(options as never).catch((caught: unknown) => caught);
+    const error = await client.sessions.create(unvalidatedCreateOptions(options)).catch((caught: unknown) => caught);
     expect(error).toMatchObject({
       name: "SessionConfigValidationError",
       code: "SESSION_CONFIG_INVALID",

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient, type SessionRunPhase } from "../src/index.js";
 import { operations } from "../src/internal.js";
 
@@ -31,7 +31,7 @@ describe("canonical session clean cut", () => {
   it("has no public finalizing phase", () => {
     // @ts-expect-error finalization is internal; callers observe RUN_FINISHED/RUN_ERROR.
     const phase: SessionRunPhase = "finalizing";
-    expect(phase).toBe("finalizing");
+    expect<string>(phase).toBe("finalizing");
   });
 
   it.each([
@@ -48,7 +48,9 @@ describe("canonical session clean cut", () => {
       session: { ...session, currentRun: { ...run, serverTraceId: "trace-1" } }
     }), session.id);
 
-    expect(result.currentRun).toEqual(run);
+    // expect<unknown>: the golden literal widens phase to string; the deep
+    // equality is the assertion.
+    expect<unknown>(result.currentRun).toEqual(run);
     expect(result.currentRun).not.toHaveProperty("serverTraceId");
   });
 

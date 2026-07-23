@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
 
@@ -60,9 +60,11 @@ function hasRawCauseObject(node: ts.Node): boolean {
 }
 
 function hasVoidIdentifier(node: ts.Node): boolean {
+  // `void err` parses as a VoidExpression (not a PrefixUnaryExpression, whose
+  // operator union excludes `void`) — the old filter made this guard vacuous.
   return descendants(node)
-    .filter(ts.isPrefixUnaryExpression)
-    .some((expression) => expression.operator === ts.SyntaxKind.VoidKeyword && ts.isIdentifier(expression.operand));
+    .filter(ts.isVoidExpression)
+    .some((expression) => ts.isIdentifier(expression.expression));
 }
 
 function isExactKeyOwner(name: string): boolean {

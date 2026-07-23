@@ -3,8 +3,10 @@
  * code-carrying `AexError` subclass (not a bare `Error`), so callers can `catch`
  * by `err.code` / `instanceof SessionConfigValidationError`.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import type { ModelName } from "@aexhq/contracts";
+import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
 import {
   AexError,
   Aex,
@@ -13,9 +15,9 @@ import {
 
 /** A fetch that NEVER resolves a network call — every assertion below must fail
  *  offline, before any request leaves the SDK. */
-function noNetworkFetch(): { fetch: typeof fetch; calls: number } {
+function noNetworkFetch(): { fetch: FetchLike; calls: number } {
   const state = { calls: 0 };
-  const stub: typeof fetch = vi.fn(async () => {
+  const stub: FetchLike = mock(async () => {
     state.calls++;
     throw new Error("no network call should be made for an invalid session");
   });
@@ -27,7 +29,7 @@ function noNetworkFetch(): { fetch: typeof fetch; calls: number } {
   };
 }
 
-function makeClient(fetchImpl: typeof fetch): Aex {
+function makeClient(fetchImpl: FetchLike): Aex {
   return new Aex({ apiKey: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
 }
 
@@ -147,12 +149,12 @@ describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", ()
   it("rejects a non-Tool / non-builtin tools entry with code SESSION_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
-    const error = await captureRejected(() => client.sessions.create({
+    const error = await captureRejected(() => client.sessions.create(unvalidatedCreateOptions({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         // not a builtin tool name
-        tools: ["definitely_not_a_builtin"] as unknown as never
-      } as never)
+        tools: ["definitely_not_a_builtin"]
+      }))
     );
     expectConfigError(error, "tools");
     expect(calls).toBe(0);

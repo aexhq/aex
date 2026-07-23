@@ -3,7 +3,7 @@
  * into checkpoint file objects or internal log prefixes.
  * Diagnostics are stored under canonical log namespaces.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   isSessionLogRelPath,
   runCheckpointWorkspaceObjectKey,

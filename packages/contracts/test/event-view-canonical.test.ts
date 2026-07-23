@@ -3,7 +3,7 @@
  * non-optional `sequence`, the loose `TurnEvent` retired (import fails),
  * `toolCallId()` returns `data.id`, and the new guard methods exist.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { asAexEventView, asAexStreamEventView, type AexEvent, type AexEventView } from "../src/index.js";
 
 // @ts-expect-error — the loose `TurnEvent` type is RETIRED; importing it must fail.

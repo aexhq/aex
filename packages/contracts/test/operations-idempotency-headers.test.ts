@@ -4,7 +4,7 @@
  * `idempotencyHeaders` (exercised via `createSession`) fails closed before any
  * fetch is issued.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   HttpClient,
   SessionConfigValidationError,
@@ -67,7 +67,7 @@ describe("idempotency key fail-closed (WS4)", () => {
       }
     });
     await operations.createSession(capture, createRequest, { idempotencyKey: "key-abc" });
-    expect(seenHeader).toBe("key-abc");
+    expect<string | null>(seenHeader).toBe("key-abc");
   });
 });
 
@@ -123,7 +123,7 @@ describe("billing mutation identities", () => {
 
     await operation(capture, request as never, { idempotencyKey: "billing-key" });
 
-    expect(seenHeader).toBe("billing-key");
+    expect<string | null>(seenHeader).toBe("billing-key");
     expect(seenBody).toEqual(request);
     expect(seenBody).not.toHaveProperty("idempotencyKey");
   });

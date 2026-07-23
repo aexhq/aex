@@ -1,3 +1,11 @@
+// RETIRED as a runner config: the lanes run through `bun test` (see
+// scripts/user-bun-test.mjs and the package.json scripts — this repo's runner
+// is bun, and scripts/user-bun-test.mjs owns the sweep's include/exclude set
+// via collectDefaultSweepFiles()). This file survives ONLY because
+// scripts/validate/shard-files.test.ts still collects the edge-chat shards
+// through `bun x vitest list --config vitest.config.ts`. Delete it (plus
+// vitest.worker-count.ts and the vitest devDep here) together with that
+// validate test's collection replacement.
 import { defineConfig } from "vitest/config";
 import { loadLocalEnv } from "./test/env-local";
 import { workerCountFromEnv } from "./vitest.worker-count";

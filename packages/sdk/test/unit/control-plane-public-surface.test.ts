@@ -9,7 +9,7 @@
  * runtime `it` mirrors slim's Aex-centric check: the barrel still centers on
  * `Aex`, whose instance actually surfaces the three control-plane clients.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type {
   // Instance-field control-plane client classes (type-only on the barrel).
   OrgsClient,

@@ -23,7 +23,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -394,7 +394,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
         const v = p.value as { text: string; truncated: boolean; totalBytes: number; file?: { sizeBytes?: number } };
-        expect(v.text, `${label} wrong text${ctx}`).toBe(r.marker);
+        expect(v.text, `${label} wrong text${ctx}`).toBe(r.marker as string);
         expect(v.truncated, `${label} unexpectedly truncated${ctx}`).toBe(false);
         // totalBytes must equal the byte size of the marker (ASCII → 1 byte/char).
         expect(v.totalBytes, `${label} totalBytes != marker length${ctx}`).toBe((r.marker as string).length);
@@ -416,24 +416,24 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const lv = link.value as { hasUrl: boolean; getStatus: number | null; getText: string | null };
       expect(lv.hasUrl, `link returned no url${ctx}`).toBe(true);
       expect(lv.getStatus, `presigned URL GET not 200${ctx}`).toBe(200);
-      expect(lv.getText, `presigned URL body mismatch${ctx}`).toBe(r.marker);
+      expect(lv.getText, `presigned URL body mismatch${ctx}`).toBe(r.marker as string);
       const fetchP = byLabel(probes, "fetch");
       expect(fetchP.ok, `fetch threw: ${JSON.stringify(fetchP.error)}${ctx}`).toBe(true);
       const fv = fetchP.value as { status: number; text: string };
       expect(fv.status, `fetch() status not 200${ctx}`).toBe(200);
-      expect(fv.text, `fetch() body mismatch${ctx}`).toBe(r.marker);
+      expect(fv.text, `fetch() body mismatch${ctx}`).toBe(r.marker as string);
 
       // 7. download(selector) → raw bytes == content; archive verbs → valid zips.
       const dsel = byLabel(probes, "download_selector");
       expect(dsel.ok, `download(selector) threw: ${JSON.stringify(dsel.error)}${ctx}`).toBe(true);
       const dv = dsel.value as { len: number; text: string };
-      expect(dv.text, `download(selector) content mismatch${ctx}`).toBe(r.marker);
-      expect(dv.len, `download(selector) len != sizeBytes${ctx}`).toBe(report!.sizeBytes);
+      expect(dv.text, `download(selector) content mismatch${ctx}`).toBe(r.marker as string);
+      expect(dv.len, `download(selector) len != sizeBytes${ctx}`).toBe(report!.sizeBytes!);
       const dselTimeout = byLabel(probes, "download_selector_timeout_option");
       expect(dselTimeout.ok, `download(selector, timeoutMs) threw: ${JSON.stringify(dselTimeout.error)}${ctx}`).toBe(true);
       const dtv = dselTimeout.value as { len: number; text: string };
-      expect(dtv.text, `download(selector, timeoutMs) content mismatch${ctx}`).toBe(r.marker);
-      expect(dtv.len, `download(selector, timeoutMs) len != sizeBytes${ctx}`).toBe(report!.sizeBytes);
+      expect(dtv.text, `download(selector, timeoutMs) content mismatch${ctx}`).toBe(r.marker as string);
+      expect(dtv.len, `download(selector, timeoutMs) len != sizeBytes${ctx}`).toBe(report!.sizeBytes!);
       for (const label of ["download_files_zip", "download_files_zip_timeout_option", "download_all_zip", "download_metadata_zip"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
@@ -514,7 +514,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const full = byLabel(probes, "download_full");
       expect(full.ok, `download_full threw: ${JSON.stringify(full.error)}${ctx}`).toBe(true);
       const fv = full.value as { len: number; allA: boolean };
-      expect(fv.len, `downloaded length != sizeBytes (truncation/corruption)${ctx}`).toBe(sizeBytes);
+      expect(fv.len, `downloaded length != sizeBytes (truncation/corruption)${ctx}`).toBe(sizeBytes!);
       expect(fv.allA, `downloaded content not all 'A' (corruption)${ctx}`).toBe(true);
 
       const def = byLabel(probes, "read_default_cap");
@@ -522,14 +522,14 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const dv = def.value as { textLen: number; truncated: boolean; totalBytes: number };
       expect(dv.truncated, `read() over the 50KB default cap must set truncated=true${ctx}`).toBe(true);
       expect(dv.textLen, `read() default cap text length must be 50_000${ctx}`).toBe(50_000);
-      expect(dv.totalBytes, `read() default cap totalBytes must equal full size${ctx}`).toBe(sizeBytes);
+      expect(dv.totalBytes, `read() default cap totalBytes must equal full size${ctx}`).toBe(sizeBytes!);
 
       const raised = byLabel(probes, "read_raised_cap");
       expect(raised.ok, `read_raised_cap threw: ${JSON.stringify(raised.error)}${ctx}`).toBe(true);
       const rv = raised.value as { textLen: number; truncated: boolean; totalBytes: number; allA: boolean };
       expect(rv.truncated, `read() above file size must NOT be truncated${ctx}`).toBe(false);
-      expect(rv.textLen, `read() raised cap must return the full text${ctx}`).toBe(sizeBytes);
-      expect(rv.totalBytes, `read() raised cap totalBytes${ctx}`).toBe(sizeBytes);
+      expect(rv.textLen, `read() raised cap must return the full text${ctx}`).toBe(sizeBytes!);
+      expect(rv.totalBytes, `read() raised cap totalBytes${ctx}`).toBe(sizeBytes!);
       expect(rv.allA, `read() raised cap content not all 'A'${ctx}`).toBe(true);
     },
     10 * 60_000
@@ -598,12 +598,12 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       expect(rid.ok && rid.value === r.marker, `read by id wrong content${ctx}`).toBe(true);
       const dl = byLabel(probes, "download_by_id");
       expect(dl.ok, `download unicode file threw: ${JSON.stringify(dl.error)}${ctx}`).toBe(true);
-      expect((dl.value as { text: string }).text, `download unicode content mismatch${ctx}`).toBe(r.marker);
+      expect((dl.value as { text: string }).text, `download unicode content mismatch${ctx}`).toBe(r.marker as string);
       const lf = byLabel(probes, "link_fetch_unicode");
       expect(lf.ok, `link/fetch unicode file threw: ${JSON.stringify(lf.error)}${ctx}`).toBe(true);
       const lv = lf.value as { status: number; text: string };
       expect(lv.status, `presigned GET for unicode filename not 200${ctx}`).toBe(200);
-      expect(lv.text, `presigned GET body mismatch for unicode filename${ctx}`).toBe(r.marker);
+      expect(lv.text, `presigned GET body mismatch for unicode filename${ctx}`).toBe(r.marker as string);
     },
     10 * 60_000
   );

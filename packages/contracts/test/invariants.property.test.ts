@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import {
   type JsonValue
 } from "../src/index.js";
@@ -67,7 +67,12 @@ const submission = fc.record({
   })
 }, { requiredKeys: ["workspaceId", "idempotencyKey", "submission", "secrets"] });
 
-describe("shared platform invariants", { timeout: 0 }, () => {
+// bun's describe() takes no options object; this file-wide default replaces
+// the former vitest describe-level { timeout: 0 } (no limit for the
+// property suites below).
+setDefaultTimeout(0);
+
+describe("shared platform invariants", () => {
   it("accepts generated JSON-serializable platform submissions", () => {
     fc.assert(fc.property(submission, (input) => {
       const parsed = parseSessionSubmissionRequest(input);

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import ts from "typescript";
 import type { CliIO } from "../src/internal.js";
 import { parseStartArguments } from "../src/host/start-arguments.js";
@@ -183,7 +183,11 @@ describe("start-specific parser", () => {
     ["--proxy-auth"]
   ])("rejects a missing value for %s", (flag) => {
     const parsed = parseStartArguments([flag]);
-    expect(parsed).toMatchObject({ ok: false, error: expect.stringContaining("requires") });
+    // Field-wise asserts instead of toMatchObject: bun's toMatchObject writes
+    // asymmetric matchers back into the received object, which would replace
+    // parsed.error with the matcher before the prefix assertion below reads it.
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toContain("requires");
     if (!parsed.ok) expect(parsed.error).toMatch(new RegExp(`^aex start ${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`));
   });
 

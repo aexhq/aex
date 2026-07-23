@@ -15,7 +15,7 @@
  * Only passes once the instructions multi-ref fix is DEPLOYED to the remote
  * dev worker.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 

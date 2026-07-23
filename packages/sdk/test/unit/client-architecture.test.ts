@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ import ts from "typescript";
 const here = dirname(fileURLToPath(import.meta.url));
 const sourceRoot = resolve(here, "..", "..", "src");
 const privateLeaves = ["client-types", "event-projection", "session-validate", "submission-wire"] as const;
-const modules = [...privateLeaves, "client"] as const;
+const modules: readonly string[] = [...privateLeaves, "client"];
 
 function sourceFile(name: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -31,7 +31,8 @@ function relativeImports(name: string): readonly string[] {
 }
 
 function isExported(node: ts.Node): boolean {
-  return !!node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+  if (!ts.canHaveModifiers(node)) return false;
+  return !!ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
 }
 
 function descendants(node: ts.Node): readonly ts.Node[] {
@@ -54,7 +55,7 @@ function exportedFunctionNames(file: ts.SourceFile): readonly string[] {
 
 describe("SDK client module architecture", () => {
   it("keeps private leaves acyclic and independent of client/index orchestration", () => {
-    const graph = new Map(modules.map((name) => [name, relativeImports(name).filter((dep) => modules.includes(dep as never))]));
+    const graph = new Map(modules.map((name) => [name, relativeImports(name).filter((dep) => modules.includes(dep))]));
     for (const leaf of privateLeaves) {
       expect(relativeImports(leaf), `${leaf} must not import an orchestration root`).not.toContain("client");
       expect(relativeImports(leaf), `${leaf} must not import the package barrel`).not.toContain("index");
@@ -66,7 +67,7 @@ describe("SDK client module architecture", () => {
       if (visiting.has(name)) throw new Error(`SDK client module cycle reaches ${name}`);
       if (visited.has(name)) return;
       visiting.add(name);
-      for (const dependency of graph.get(name as typeof modules[number]) ?? []) visit(dependency);
+      for (const dependency of graph.get(name) ?? []) visit(dependency);
       visiting.delete(name);
       visited.add(name);
     };

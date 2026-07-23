@@ -72,7 +72,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { finishedRunReadinessSource } from "../_fixtures/finished-run-readiness.js";

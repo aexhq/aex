@@ -14,9 +14,10 @@ function writeReport(dir: string, name: string, content: string): string {
   return path;
 }
 
-function run(reportPath: string): { status: number; output: string } {
+function run(args: string | readonly string[]): { status: number; output: string } {
+  const argv = typeof args === "string" ? [args] : [...args];
   try {
-    const output = execFileSync(process.execPath, [scriptPath, reportPath], {
+    const output = execFileSync(process.execPath, [scriptPath, ...argv], {
       cwd: repoRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
@@ -28,10 +29,15 @@ function run(reportPath: string): { status: number; output: string } {
   }
 }
 
-function inTempDir(name: string, content: string, assert: (result: { status: number; output: string }) => void): void {
+function inTempDir(
+  name: string,
+  content: string,
+  assert: (result: { status: number; output: string }) => void,
+  extraArgs: readonly string[] = []
+): void {
   const dir = mkdtempSync(resolve(tmpdir(), "aex-no-skips-"));
   try {
-    assert(run(writeReport(dir, name, content)));
+    assert(run([...extraArgs, writeReport(dir, name, content)]));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -86,6 +92,25 @@ const skippedJunit = `<?xml version="1.0" encoding="UTF-8"?>
         <skipped />
       </testcase>
     </testsuite>
+  </testsuite>
+</testsuites>
+`;
+
+// Real bun 1.3.14 output for `bun test pass.test.ts -t "adds"` — bun marks
+// every NON-selected test <skipped/>, so a `-t`-filtered run must be gated with
+// the matching --name-pattern or the gate false-fails (Wave-0 finding).
+const filteredJunit = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" assertions="1" failures="0" skipped="2" time="0.131097">
+  <testsuite name="pass.test.ts" file="pass.test.ts" tests="3" assertions="1" failures="0" skipped="2" time="0" hostname="">
+    <testsuite name="alpha suite" file="pass.test.ts" line="3" tests="2" assertions="1" failures="0" skipped="1" time="0" hostname="">
+      <testcase name="adds numbers" classname="alpha suite" time="0.000066" file="pass.test.ts" line="4" assertions="1" />
+      <testcase name="concats strings" classname="alpha suite" time="0" file="pass.test.ts" line="7" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testcase name="top-level passes" classname="" time="0" file="pass.test.ts" line="12" assertions="0">
+      <skipped />
+    </testcase>
   </testsuite>
 </testsuites>
 `;
@@ -179,5 +204,120 @@ describe("assert-no-skips release gate", () => {
     const result = run(resolve(tmpdir(), "aex-no-skips-definitely-missing", "report.xml"));
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("report not found");
+  });
+});
+
+// `bun test -t <pattern>` marks every non-selected test <skipped/> in the junit
+// report, so gate calls for -t-filtered lanes (tool-fuzz) must scope the skip
+// check with --name-pattern. Semantics mirror the platform repo's copy of
+// assert-no-skips.mjs exactly.
+describe("assert-no-skips --name-pattern scoping", () => {
+  it("fails a -t-filtered bun JUnit report when gated WITHOUT the pattern (the Wave-0 hazard)", () => {
+    inTempDir("report.xml", filteredJunit, (result) => {
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("reported skipped/disabled tests");
+    });
+  });
+
+  it("scopes JUnit skip checks to the selected name pattern (bun -t marks the rest skipped)", () => {
+    inTempDir(
+      "report.xml",
+      filteredJunit,
+      (result) => {
+        expect(result.status).toBe(0);
+        expect(result.output).toContain('OK: 1 tests matching --name-pattern "adds numbers"');
+      },
+      ["--name-pattern", "adds numbers"]
+    );
+  });
+
+  it("still fails when a selected name-pattern JUnit test is skipped", () => {
+    inTempDir(
+      "report.xml",
+      skippedJunit,
+      (result) => {
+        expect(result.status).not.toBe(0);
+        expect(result.output).toContain("reported skipped/disabled tests");
+        expect(result.output).toContain("beta suite explicitly skipped (skipped)");
+      },
+      ["--name-pattern", "explicitly skipped"]
+    );
+  });
+
+  it("fails loudly when the name pattern matches zero JUnit testcases", () => {
+    inTempDir(
+      "report.xml",
+      passingJunit,
+      (result) => {
+        expect(result.status).not.toBe(0);
+        expect(result.output).toContain('reported zero tests matching --name-pattern "no such test anywhere"');
+      },
+      ["--name-pattern", "no such test anywhere"]
+    );
+  });
+
+  it("scopes Vitest JSON skip checks to the selected name pattern", () => {
+    const report = JSON.stringify({
+      numTotalTests: 2,
+      numPendingTests: 1,
+      testResults: [
+        {
+          name: "tool-fuzz.test.ts",
+          assertionResults: [
+            { status: "skipped", fullName: "seeded web case +0 covers web_fetch", title: "seeded web case +0" },
+            { status: "passed", fullName: "seeded files case +0 covers read/write", title: "seeded files case +0" }
+          ]
+        }
+      ]
+    });
+    inTempDir(
+      "report.json",
+      report,
+      (result) => {
+        expect(result.status).toBe(0);
+        expect(result.output).toContain('OK: 1 tests matching --name-pattern "seeded files"');
+      },
+      ["--name-pattern", "seeded files"]
+    );
+    inTempDir(
+      "report.json",
+      report,
+      (result) => {
+        expect(result.status).not.toBe(0);
+        expect(result.output).toContain("reported skipped/disabled tests");
+      },
+      ["--name-pattern", "seeded web"]
+    );
+  });
+
+  it("rejects an invalid --name-pattern regex", () => {
+    inTempDir(
+      "report.xml",
+      passingJunit,
+      (result) => {
+        expect(result.status).not.toBe(0);
+        expect(result.output).toContain("invalid --name-pattern");
+      },
+      ["--name-pattern", "["]
+    );
+  });
+
+  it("rejects --name-pattern without a value", () => {
+    const result = run(["--name-pattern"]);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("--name-pattern requires a regex value");
+  });
+
+  it("rejects more than one report path (the gate proves exactly one report)", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "aex-no-skips-"));
+    try {
+      const first = writeReport(dir, "a.xml", passingJunit);
+      const second = writeReport(dir, "b.xml", passingJunit);
+      const result = run([first, second]);
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("usage: assert-no-skips.mjs");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

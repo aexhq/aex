@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 import { extractGlobalFlags, prepareHostCommand } from "../src/host/common.js";

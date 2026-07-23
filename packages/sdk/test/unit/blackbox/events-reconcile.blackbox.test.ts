@@ -11,7 +11,7 @@
  *   T11c the tool START/RESULT join key is discoverable via `toolCallId()`.
  *   WS8  a session's subagent children expose read-only observation handles with lineage.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { SessionStartOptions } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 

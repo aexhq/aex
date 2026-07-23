@@ -10,7 +10,8 @@
  * Posture (confirmed): `get` returns METADATA only (no value). Secret values are
  * write-only through the public SDK after create/rotate.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, Secret } from "../../src/index.js";
 
 interface CapturedRequest {
@@ -20,11 +21,11 @@ interface CapturedRequest {
 }
 
 function makeStubFetch(routes: (req: CapturedRequest) => Response): {
-  fetch: typeof fetch;
+  fetch: FetchLike;
   calls: CapturedRequest[];
 } {
   const calls: CapturedRequest[] = [];
-  const stub: typeof fetch = vi.fn(async (input, init) => {
+  const stub: FetchLike = mock(async (input, init) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toString();

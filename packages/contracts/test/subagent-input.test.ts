@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   BUILTIN_TOOL_NAMES,
   buildSubagentAssetsInputSchema,
@@ -63,11 +63,13 @@ describe("subagent nested input contract", () => {
     const snapshot = structuredClone(input);
     const parsed = parseSubagentAssetsInput(input);
 
-    expect(parsed).toEqual(snapshot);
+    // expect<unknown>: the input/snapshot literals widen kind to string; the
+    // deep equality is the assertion.
+    expect<unknown>(parsed).toEqual(snapshot);
     expect(input).toEqual(snapshot);
     expect(parsed).not.toBe(input);
     expect(parsed?.files).not.toBe(input.files);
-    expect(parsed?.files[0]).toBe(input.files[0]);
+    expect<unknown>(parsed?.files[0]).toBe(input.files[0]);
     expect(parsed?.skills[0]?.description).toBe("  keep surrounding whitespace  ");
     expect(parsed?.tools[0]?.entry).toBe("src/index.mjs");
 
@@ -140,13 +142,15 @@ describe("subagent nested input contract", () => {
     );
   });
 
+  // One-element tuples: bun's it.each spreads array cases into callback
+  // arguments, so bare array inputs must be wrapped to arrive as one value.
   it.each([
-    undefined,
-    "default",
-    "none",
-    [],
-    ["git"],
-    [...BUILTIN_TOOL_NAMES]
+    [undefined],
+    ["default"],
+    ["none"],
+    [[]],
+    [["git"]],
+    [[...BUILTIN_TOOL_NAMES]]
   ])("accepts builtin selection %#", (input) => {
     expect(() => parseSubagentBuiltinToolsInput(input)).not.toThrow();
   });
@@ -157,7 +161,8 @@ describe("subagent nested input contract", () => {
     expect(parseSubagentBuiltinToolsInput(input)).toEqual(["git"]);
   });
 
-  it.each([null, {}, true, 1, "unknown", ["git", "unknown"], ["git", null], new Array(1)])(
+  // One-element tuples for the same it.each array-spread reason as above.
+  it.each([[null], [{}], [true], [1], ["unknown"], [["git", "unknown"]], [["git", null]], [new Array(1)]])(
     "retains the exact builtin rejection for %#",
     (input) => {
       expect(() => parseSubagentBuiltinToolsInput(input)).toThrowError(

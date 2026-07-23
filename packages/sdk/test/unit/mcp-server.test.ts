@@ -10,7 +10,7 @@
  * `{name, url}` BEFORE the shared parser sessions, so the parser only
  * ever sees inline shapes.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { McpServer } from "../../src/mcp-server.js";
 
 describe("McpServer.remote (inline)", () => {

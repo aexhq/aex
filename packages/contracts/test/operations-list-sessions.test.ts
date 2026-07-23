@@ -1,5 +1,5 @@
 /** `operations.listSessions` validates the public page contract without masking server defects. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { operations } from "../src/internal.js";
 
@@ -70,7 +70,9 @@ describe("operations.listSessions", () => {
 
     const page = await operations.listSessions(client, { limit: 3, cursor: "c1" });
 
-    expect(page.sessions).toEqual([{
+    // expect<unknown>: the golden literal widens status to string; the deep
+    // equality is the assertion.
+    expect<unknown>(page.sessions).toEqual([{
       id: WELL_FORMED.id,
       status: WELL_FORMED.status,
       acceptsMessages: true,

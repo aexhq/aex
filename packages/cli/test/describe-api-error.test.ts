@@ -5,7 +5,7 @@
  * that carry fields beyond the standard `{ ok, error, code, message }`
  * envelope.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { AexApiError, AexError, AexNetworkError } from "@aexhq/contracts";
 import { describeApiError } from "../src/host/common.js";
 

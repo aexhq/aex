@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 interface RecordedCall {
@@ -17,7 +18,7 @@ function json(body: unknown): Response {
 
 function billingClient(body: unknown): { readonly client: Aex; readonly calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const requestBody = init?.body?.toString();
     calls.push({

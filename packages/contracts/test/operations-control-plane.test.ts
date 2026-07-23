@@ -4,7 +4,7 @@
  * pinned here so the platform endpoints can be built to match, and the
  * one-time-reveal creates fail closed when the minted key is missing.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { HttpClient } from "../src/http.js";
 import { operations } from "../src/internal.js";
 

@@ -1,5 +1,5 @@
 /** `renderEnvelope` one-line projections for the canonical run lifecycle. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { AexEvent } from "@aexhq/contracts";
 import { renderEnvelope } from "../src/host/stream-render.js";
 

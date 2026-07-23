@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 function listedFile(id: string, contents: string, filename = "report.txt") {
@@ -29,7 +30,7 @@ function checkpointSnapshot(files: readonly ReturnType<typeof listedFile>[]) {
 }
 
 function downloadClient(): Aex {
-  const fetch: typeof globalThis.fetch = async (input) => {
+  const fetch: FetchLike = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url.endsWith("/api/sessions/session-1/files/abc/download?checkpointId=cp-1")) {
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
@@ -101,7 +102,7 @@ describe("SessionHandle download { to } options", () => {
 
   it("downloadSessionFile retries a stalled selected-file body once", async () => {
     let downloadCalls = 0;
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       if (url.endsWith("/api/sessions/session-1")) {
         return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
@@ -128,7 +129,7 @@ describe("SessionHandle download { to } options", () => {
 
   it("verifies a selected download once and does not retry an integrity mismatch", async () => {
     let downloadCalls = 0;
-    const fetch: typeof globalThis.fetch = async (input) => {
+    const fetch: FetchLike = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       if (url.endsWith("/api/sessions/session-1")) {
         return Response.json({ session: { id: "session-1", status: "idle", acceptsMessages: true } });

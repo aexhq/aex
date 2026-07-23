@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 import { assertAllowedKeys, defineAllowedKeys } from "../src/allowed-keys.js";
 
 describe("allowed-key assertion", () => {
@@ -20,9 +20,9 @@ describe("allowed-key assertion", () => {
 
   it("reports only the first unknown key in native Object.keys order", () => {
     const ordinary = { allowed: true, later: true, earlier: true };
-    const ordinaryError = vi.fn((key: string, keys: readonly string[]) => new Error(`${key}:${keys.join("|")}`));
+    const ordinaryError = mock((key: string, keys: readonly string[]) => new Error(`${key}:${keys.join("|")}`));
     expect(() => assertAllowedKeys(ordinary, ["allowed"], ordinaryError)).toThrow("later:allowed");
-    expect(ordinaryError).toHaveBeenCalledOnce();
+    expect(ordinaryError).toHaveBeenCalledTimes(1);
     expect(ordinaryError).toHaveBeenCalledWith("later", ["allowed"]);
 
     const integerLike = { 10: true, 2: true, allowed: true, z: true };

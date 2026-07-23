@@ -6,7 +6,7 @@
  *   - presign → object storage PUT → finalize  → normal upload (bytes bypass the hosted API)
  *   - presign errors fail without a buffered `/api/assets` retry
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 import { ASSET_ARCHIVE_LIMITS, HttpClient } from "@aexhq/contracts";
 import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/asset-upload.js";
 import { AexApiError, AexNetworkError } from "../../src/index.js";
@@ -26,7 +26,7 @@ async function hashOf(b: Uint8Array): Promise<string> {
 
 describe("uploadAsset (direct-to-storage)", () => {
   it("rejects an oversized runtime archive before hashing or presign", async () => {
-    const http: AssetsHttpClient = { request: vi.fn() as AssetsHttpClient["request"] };
+    const http: AssetsHttpClient = { request: mock() as AssetsHttpClient["request"] };
     const oversized = { byteLength: ASSET_ARCHIVE_LIMITS.maxCompressedBytes + 1 } as Uint8Array;
 
     await expect(uploadAsset({ http, bytes: oversized, hash: `sha256:${"0".repeat(64)}` }))
@@ -38,12 +38,12 @@ describe("uploadAsset (direct-to-storage)", () => {
     const hash = await hashOf(bytes);
     const calls: string[] = [];
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string) => {
+      request: mock(async (path: string) => {
         calls.push(path);
         return { ok: true, exists: true, assetId: `asset_x`, contentHash: hash, sizeBytes: bytes.byteLength } as unknown;
       }) as AssetsHttpClient["request"]
     };
-    const fetch: AssetFetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => "" }));
+    const fetch: AssetFetch = mock(async () => ({ ok: true, status: 200, text: async () => "" }));
     const out = await uploadAsset({ http, bytes, hash, fetch });
     expect(out.exists).toBe(true);
     expect(calls).toEqual(["/api/assets/presign"]);
@@ -58,7 +58,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     let presignIdempotencyKey: string | null = null;
     let finalizeIdempotencyKey: string | null = null;
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string, init?: RequestInit) => {
+      request: mock(async (path: string, init?: RequestInit) => {
         calls.push(path);
         if (path === "/api/assets/presign") {
           presignBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -80,7 +80,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     let putMethod = "";
     let putBody: BodyInit | null | undefined;
     let putHeaders: Record<string, string> = {};
-    const fetch: AssetFetch = vi.fn(async (url: string, init?: RequestInit) => {
+    const fetch: AssetFetch = mock(async (url: string, init?: RequestInit) => {
       putUrl = url;
       putMethod = init?.method ?? "";
       putBody = init?.body;
@@ -92,8 +92,10 @@ describe("uploadAsset (direct-to-storage)", () => {
     expect(out.assetId).toBe(`asset_${hex}`);
     expect(out.contentType).toBe("application/x-aex-bundle");
     expect(presignBody).toMatchObject({ contentType: "application/x-aex-bundle" });
-    expect(presignIdempotencyKey).toBe(`asset-presign:${hex}`);
-    expect(finalizeIdempotencyKey).toBe(`asset-finalize:${hex}`);
+    // Explicit type args: the closure assignments above are invisible to
+    // narrowing, so the bindings read as `null` at this point.
+    expect<string | null>(presignIdempotencyKey).toBe(`asset-presign:${hex}`);
+    expect<string | null>(finalizeIdempotencyKey).toBe(`asset-finalize:${hex}`);
     expect(calls).toEqual(["/api/assets/presign", "/api/assets/finalize"]);
     expect(putUrl).toBe("https://object-storage.example.test/bucket/assets/ws/" + hex + "?X-Amz-Signature=sig");
     expect(putMethod).toBe("PUT");
@@ -106,7 +108,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     const hash = await hashOf(bytes);
     const calls: string[] = [];
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string) => {
+      request: mock(async (path: string) => {
         calls.push(path);
         if (path === "/api/assets/presign") {
           throw new AexApiError(503, "object storage S3 creds not configured", { ok: false, code: "presign_unconfigured" });
@@ -114,7 +116,7 @@ describe("uploadAsset (direct-to-storage)", () => {
         throw new Error(`unexpected request: ${path}`);
       }) as AssetsHttpClient["request"]
     };
-    const fetch: AssetFetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => "" }));
+    const fetch: AssetFetch = mock(async () => ({ ok: true, status: 200, text: async () => "" }));
     await expect(uploadAsset({ http, bytes, hash, fetch })).rejects.toThrow(/object storage S3 creds not configured/);
     expect(calls).toEqual(["/api/assets/presign"]);
     expect(fetch).not.toHaveBeenCalled();
@@ -134,7 +136,7 @@ describe("uploadAsset (direct-to-storage)", () => {
         throw raw;
       }
     });
-    const put: AssetFetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => "" }));
+    const put: AssetFetch = mock(async () => ({ ok: true, status: 200, text: async () => "" }));
     let thrown: unknown;
     try {
       await uploadAsset({ http, bytes, hash, fetch: put });
@@ -155,14 +157,14 @@ describe("uploadAsset (direct-to-storage)", () => {
     const uploadUrl =
       "https://acct.object-storage.example.test/b/k?X-Amz-Security-Token=token&X-Amz-Signature=s";
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string) => {
+      request: mock(async (path: string) => {
         if (path === "/api/assets/presign") {
           return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl, requiredHeaders: {} } as unknown;
         }
         return {} as unknown;
       }) as AssetsHttpClient["request"]
     };
-    const fetch: AssetFetch = vi.fn(async () => ({ ok: false, status: 400, text: async () => "BadDigest: checksum mismatch" }));
+    const fetch: AssetFetch = mock(async () => ({ ok: false, status: 400, text: async () => "BadDigest: checksum mismatch" }));
     let thrown: unknown;
     try {
       await uploadAsset({ http, bytes, hash, fetch });
@@ -183,7 +185,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     const hex = hash.slice("sha256:".length);
     const calls: string[] = [];
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string) => {
+      request: mock(async (path: string) => {
         calls.push(path);
         if (path === "/api/assets/presign") {
           return {
@@ -198,8 +200,7 @@ describe("uploadAsset (direct-to-storage)", () => {
         return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, sizeBytes: bytes.byteLength } as unknown;
       }) as AssetsHttpClient["request"]
     };
-    const fetch: AssetFetch = vi
-      .fn()
+    const fetch: AssetFetch = mock()
       .mockResolvedValueOnce({ ok: false, status: 429, text: async () => "SlowDown" })
       .mockResolvedValueOnce({ ok: false, status: 500, text: async () => "InternalError" })
       .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "" });
@@ -218,7 +219,7 @@ describe("uploadAsset (direct-to-storage)", () => {
       `https://AKIA_TEST:secret@acct.object-storage.example.test/b/${hex}` +
       "?X-Amz-Credential=credential&X-Amz-Security-Token=token&X-Amz-Signature=signature";
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string) => {
+      request: mock(async (path: string) => {
         if (path === "/api/assets/presign") {
           return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl, requiredHeaders: {} } as unknown;
         }
@@ -226,7 +227,7 @@ describe("uploadAsset (direct-to-storage)", () => {
       }) as AssetsHttpClient["request"]
     };
     const fetchErr = Object.assign(new TypeError(`fetch failed for ${uploadUrl}: ECONNRESET`), { code: "ECONNRESET" });
-    const fetch: AssetFetch = vi.fn(async () => {
+    const fetch: AssetFetch = mock(async () => {
       throw fetchErr;
     });
 
@@ -251,7 +252,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     const hash = await hashOf(bytes);
     const hex = hash.slice("sha256:".length);
     const http: AssetsHttpClient = {
-      request: vi.fn(async (path: string) => {
+      request: mock(async (path: string) => {
         if (path === "/api/assets/presign") {
           return {
             ok: true,
@@ -265,7 +266,7 @@ describe("uploadAsset (direct-to-storage)", () => {
         throw new Error(`unexpected request: ${path}`);
       }) as AssetsHttpClient["request"]
     };
-    const fetch: AssetFetch = vi.fn(async () => ({
+    const fetch: AssetFetch = mock(async () => ({
       ok: false,
       status: 403,
       text: async () => "Forbidden for https://acct.object-storage.example.test/b/k?X-Amz-Signature=s"
@@ -286,7 +287,7 @@ describe("uploadAsset (direct-to-storage)", () => {
   });
 
   it("rejects a client-side hash mismatch before any network call", async () => {
-    const http: AssetsHttpClient = { request: vi.fn() as AssetsHttpClient["request"] };
+    const http: AssetsHttpClient = { request: mock() as AssetsHttpClient["request"] };
     await expect(uploadAsset({ http, bytes, hash: `sha256:${"0".repeat(64)}` })).rejects.toThrow(/client-side hash mismatch/);
     expect(http.request).not.toHaveBeenCalled();
   });

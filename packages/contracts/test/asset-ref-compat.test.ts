@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   isAssetRef,
   isFileAssetRef,
@@ -37,7 +37,7 @@ describe("asset ref public compatibility", () => {
     const legacyFile: FileRef = { ...asset, kind: "file" };
     // @ts-expect-error - FileRef has no skill discriminator variant.
     const skill: FileRef = { ...asset, kind: "skill" };
-    expect([legacyFile.kind, skill.kind]).toEqual(["file", "skill"]);
+    expect<string[]>([legacyFile.kind, skill.kind]).toEqual(["file", "skill"]);
   });
 
   it("exports the deprecated name as the canonical function object", () => {

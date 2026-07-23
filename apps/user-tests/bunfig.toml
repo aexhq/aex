@@ -1,0 +1,7 @@
+[test]
+preload = ["./test/preload.ts"]
+# NOTE: no `[test] timeout` here — bun 1.3.14 ignores it (verified
+# empirically), so the per-lane `--timeout` flag in each package.json script
+# is the ONLY timeout source. Raw `bun test <file>` in this package therefore
+# runs on bun's 5s default and will fail the install-heavy suites — always go
+# through the lane scripts.

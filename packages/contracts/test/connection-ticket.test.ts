@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mintConnectionTicket, verifyConnectionTicket } from "../src/internal.js";
 
 const SECRET = "dev-coordinator-secret-at-least-32-chars-xx";

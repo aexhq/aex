@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const runtimeTypes = readFileSync(new URL("../src/runtime-types.ts", import.meta.url), "utf8");
 const operations = readFileSync(new URL("../src/operations.ts", import.meta.url), "utf8");

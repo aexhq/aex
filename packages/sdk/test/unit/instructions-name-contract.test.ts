@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { unzipSync } from "fflate";
 import {
   CANONICAL_SHA256_DIGEST_PATTERN,
@@ -34,7 +34,7 @@ const rejectedNames = [
 ] as const;
 
 describe("Instructions persisted resource names", () => {
-  it.each(acceptedNames)("preserves accepted name %j without canonicalization", async (name) => {
+  it.each([...acceptedNames])("preserves accepted name %j without canonicalization", async (name) => {
     expect(WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN.test(name)).toBe(true);
     expect(() => assertWorkspaceInstructionResourceName(name, "name")).not.toThrow();
 
@@ -46,7 +46,7 @@ describe("Instructions persisted resource names", () => {
     expect(CANONICAL_SHA256_DIGEST_PATTERN.test(bundle.contentHash)).toBe(true);
   });
 
-  it.each(rejectedNames)("rejects invalid name %j with SDK provenance", async (name) => {
+  it.each([...rejectedNames])("rejects invalid name %j with SDK provenance", async (name) => {
     await expect(Instructions.fromContent("Follow the repository guide.", { name }))
       .rejects.toThrow(/^Instructions\.fromContent: name /);
   });

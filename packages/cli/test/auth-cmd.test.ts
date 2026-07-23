@@ -4,7 +4,7 @@
  * - logout clears the store.
  * - auth status never prints the token value.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
 import { type CliIO, type StoredCliConfig } from "../src/internal.js";
 import { canonicalWhoami } from "./canonical-whoami.js";

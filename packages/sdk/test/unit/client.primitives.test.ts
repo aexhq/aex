@@ -1,7 +1,8 @@
 /**
  * Schema decode, HITL approval gates, and subagent children.
  */
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 import { ChildSessionHandle, SessionHandle } from "../../src/client.js";
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
@@ -68,7 +69,7 @@ function makeEnv(session: Record<string, unknown> = {
   const bodies: Record<string, unknown>[] = [];
   const headers: Array<Record<string, string>> = [];
   const urls: string[] = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     urls.push(`${(init?.method ?? "GET").toString()} ${url}`);
     headers.push(headersRecord(init?.headers));

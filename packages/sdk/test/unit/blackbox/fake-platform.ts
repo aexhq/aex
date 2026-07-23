@@ -24,7 +24,7 @@
  *   POST /api/sessions/:id/{suspend,cancel,resume,approve,deny,request-approval}
  *   GET  /api/sessions/:id/children              subagent lineage
  */
-import type { AexEvent, AexLiveEvent, JsonValue } from "@aexhq/contracts";
+import type { AexEvent, AexLiveEvent, FetchLike, JsonValue } from "@aexhq/contracts";
 import { FakeWebSocket } from "@aexhq/contracts/testing";
 import { Aex } from "../../../src/index.js";
 import { SessionHandle } from "../../../src/client.js";
@@ -277,7 +277,7 @@ export class FakePlatform {
     this.#scriptedErrors.push(error);
   }
 
-  readonly #fetch: typeof globalThis.fetch = async (input, init) => {
+  readonly #fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toString().toUpperCase();
     const path = url.replace(/^https?:\/\/[^/]+/, "");

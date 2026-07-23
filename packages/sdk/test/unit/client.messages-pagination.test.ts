@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { Aex, SessionStateError } from "../../src/index.js";
 
 function json(body: unknown): Response {

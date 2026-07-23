@@ -3,7 +3,7 @@
  * costUsd/usage/terminal-status, so a path that forgets to populate them fails
  * typecheck. Plus the UsageSummary projector from providerUsage.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { usageFromProviderUsage, type TurnResult, type UsageSummary, type SessionCostProviderUsage } from "../src/index.js";
 
 describe("TurnResult non-optional terminal fields (WS3)", () => {

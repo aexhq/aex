@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 function source(relative: string): string {
   return readFileSync(new URL(`../../src/${relative}`, import.meta.url), "utf8");

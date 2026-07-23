@@ -3,12 +3,13 @@
  * silently disable dedup: `?? generate()` kept `''`, then a downstream truthy
  * header-drop shipped no `Idempotency-Key`). Omitted keys auto-generate.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { FetchLike } from "@aexhq/contracts";
 import { Aex, SessionConfigValidationError } from "../../src/index.js";
 
 function makeClient(): { client: Aex; keys: (string | undefined)[] } {
   const keys: (string | undefined)[] = [];
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url.endsWith("/api/sessions") && (init?.method ?? "GET") === "POST") {
       const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers as HeadersInit);

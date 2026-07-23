@@ -28,7 +28,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
@@ -309,7 +309,7 @@ afterAll(() => {
 });
 
 describe("live skill invocation — agent actually follows skill content", () => {
-  it.each(CELLS)(
+  it.each([...CELLS])(
     "$id: SKILL.md drives reply (canonical alpha, distractor beta)",
     async (cell) => {
       // XKCD-927-<random> per case so model recall of the well-known
