@@ -27,7 +27,7 @@
     "source": "fumadocs-mdx",
     "prelint": "bun run generate && bun run source",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "bun run generate && tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.0",
