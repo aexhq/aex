@@ -21,7 +21,7 @@ import {
 } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
-const SESSION: SessionStartOptions = { model: "claude-haiku-4-5", message: "go", apiKeys: { anthropic: "sk-ant" } };
+const SESSION: SessionStartOptions = { model: "anthropic/claude-haiku-4-5", message: "go" };
 
 describe("blackbox: typed error dispatch", () => {
   it("a 409 idempotency_conflict surfaces as a narrowable typed error with a stable apiCode", async () => {

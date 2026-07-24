@@ -43,8 +43,7 @@ function openWith(secrets: Record<string, Secret>) {
     calls,
     run: () =>
       client.sessions.create({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         environment: { secrets }
       })
   };
@@ -112,7 +111,7 @@ describe("sessions.create environment.secrets split", () => {
   it("omits both fields when environment.secrets is not provided", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
-    await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-x" } });
+    await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     const body = calls[0]!.body as Record<string, unknown>;
     expect("secretEnv" in (body.submission as object)).toBe(false);
     expect("envSecrets" in (body.secrets as object)).toBe(false);
@@ -128,8 +127,7 @@ describe("sessions.create environment.secrets split", () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const error = await rejected(() => client.sessions.create({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         environment: { secrets: { SERPER_API_KEY: "sk-x" as unknown as Secret } }
       }));
     expectConfigError(error, "environment.secrets");

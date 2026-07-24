@@ -22,9 +22,8 @@ describe("blackbox: structured-output decode", () => {
     const platform = new FakePlatform();
     const result = await platform.start<Sentiment>(
       {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "classify sentiment",
-        apiKeys: { anthropic: "sk-ant" },
         responseFormat: RESPONSE_FORMAT
       },
       {
@@ -49,9 +48,8 @@ describe("blackbox: structured-output decode", () => {
     const platform = new FakePlatform();
     const result = await platform.start<Sentiment>(
       {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "classify sentiment",
-        apiKeys: { anthropic: "sk-ant" },
         responseFormat: RESPONSE_FORMAT
       },
       {
@@ -73,9 +71,8 @@ describe("blackbox: structured-output decode", () => {
     const platform = new FakePlatform();
     const result = await platform.start<Sentiment>(
       {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "classify sentiment",
-        apiKeys: { anthropic: "sk-ant" },
         responseFormat: RESPONSE_FORMAT
       },
       {

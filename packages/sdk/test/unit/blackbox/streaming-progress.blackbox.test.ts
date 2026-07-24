@@ -16,7 +16,7 @@ describe("blackbox: streaming per-token progress", () => {
   it("assembles ordered per-token deltas into the final text", async () => {
     const platform = new FakePlatform();
     const result = await platform.start(
-      { model: "claude-haiku-4-5", message: "stream it", outputMode: "stream", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "stream it", outputMode: "stream" },
       { chunks: CHUNKS, costUsd: 0.01 }
     );
 
@@ -31,9 +31,8 @@ describe("blackbox: streaming per-token progress", () => {
   it("delivers deltas LIVE over the turn stream as they arrive", async () => {
     const platform = new FakePlatform();
     const handle = await platform.aex.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       outputMode: "stream",
-      apiKeys: { anthropic: "sk-ant" }
     });
 
     const stream = platform.turn(handle, "stream it", { chunks: CHUNKS, costUsd: 0.01 });

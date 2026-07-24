@@ -161,9 +161,8 @@ describe("start<T> — typed schema-decode outcome (WS10)", () => {
     ];
     const { client } = makeEnv();
     const result = await client.start<{ answer: number }>({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "give me the number",
-      apiKeys: { anthropic: "sk-ant" },
       responseFormat: { kind: "json_schema", schema: { type: "object" } }
     });
     expect(result.outcome).toEqual({ kind: "decoded", value: { answer: 42 } });
@@ -176,9 +175,8 @@ describe("start<T> — typed schema-decode outcome (WS10)", () => {
     ];
     const { client } = makeEnv();
     const result = await client.start({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "give me the number",
-      apiKeys: { anthropic: "sk-ant" },
       responseFormat: { kind: "json_schema", schema: { type: "object" } }
     });
     expect(result.outcome).toEqual({ kind: "refused", reason: "schema_violation", detail: "bad json" });
@@ -210,7 +208,7 @@ describe("sessions.get — failed run projection", () => {
 describe("HITL approval gate (WS10)", () => {
   it("requestApproval → awaiting_approval; approve → running; deny → idle with a cancelled run", async () => {
     const { client } = makeEnv();
-    const session = await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     await session.requestApproval();
     expect(session.record.status).toBe("awaiting_approval");
     await session.approve();
@@ -223,8 +221,7 @@ describe("HITL approval gate (WS10)", () => {
   it("threads a declarative approvalGate into the submission wire body", async () => {
     const { client, bodies } = makeEnv();
     await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" },
+      model: "anthropic/claude-haiku-4-5",
       approvalGate: { tools: ["delete_file"] }
     });
     const create = bodies.find((b) => b.submission);
@@ -235,7 +232,7 @@ describe("HITL approval gate (WS10)", () => {
 describe("subagent children (WS8)", () => {
   it("session.children() returns read-only handles whose observation resources work", async () => {
     const { client } = makeEnv();
-    const session = await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     const children = await session.children();
     expect(children).toHaveLength(1);
     const child = children[0]!;

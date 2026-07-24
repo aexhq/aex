@@ -478,9 +478,8 @@ async function collectRun(events: readonly FuzzEvent[], firstSeq: number): Promi
   const harness = captureSessionClient(firstSeq);
   const promise = harness.client.start(
     {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "start",
-      apiKeys: { anthropic: "sk-ant-property" }
     },
     {
       webSocketFactory: harness.webSocketFactory,

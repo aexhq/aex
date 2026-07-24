@@ -168,9 +168,8 @@ describe("Aex sessions", () => {
   it("start creates a session, sends one message, and stops at RUN_FINISHED", async () => {
     const { client, calls, sockets, webSocketFactory } = makeClient();
     const promise = client.start({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "say hello",
-      apiKeys: { anthropic: "sk-ant" },
       stream: { webSocketFactory }
     });
 
@@ -212,9 +211,8 @@ describe("Aex sessions", () => {
   it("fails closed when RUN_FINISHED is visible before the session state is committed", async () => {
     const { client, sockets, webSocketFactory } = makeClient({ getSessionStatus: "running" });
     const promise = client.start({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "say hello",
-      apiKeys: { anthropic: "sk-ant" },
       stream: { webSocketFactory }
     });
 
@@ -234,9 +232,8 @@ describe("Aex sessions", () => {
     async (committedLastRun) => {
       const { client, sockets, webSocketFactory } = makeClient({ committedLastRun });
       const promise = client.start({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "say hello",
-        apiKeys: { anthropic: "sk-ant" },
         stream: { webSocketFactory }
       });
 
@@ -254,8 +251,7 @@ describe("Aex sessions", () => {
   it("session.send can be consumed as an async event stream", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
     const seen: number[] = [];
     const consume = (async () => {
@@ -281,8 +277,7 @@ describe("Aex sessions", () => {
   it("excludes replayed events from earlier runs from the accepted run stream and result", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
     const turn = session.messages.send("continue", { webSocketFactory });
     const seenRunIds: string[] = [];
@@ -309,8 +304,7 @@ describe("Aex sessions", () => {
   it("yields events carrying the is*() type-guard methods, and narrows in the branch", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
     const texts: string[] = [];
     const toolNames: string[] = [];
@@ -360,9 +354,8 @@ describe("Aex sessions", () => {
   it("collected result.events carry the is*() methods too", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
     const promise = client.start({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "say hello",
-      apiKeys: { anthropic: "sk-ant" },
       stream: { webSocketFactory }
     });
 
@@ -404,9 +397,8 @@ describe("Aex sessions", () => {
   it("sessions.create lets callers override the idle-to-suspend TTL", async () => {
     const { client, calls } = makeClient();
     await client.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       overrides: { idleTtl: "10m" },
-      apiKeys: { anthropic: "sk-ant" }
     });
 
     const create = calls.find((call) => call.method === "POST" && call.url.endsWith("/api/sessions"));
@@ -418,9 +410,8 @@ describe("Aex sessions", () => {
   it("rejects the old idleSuspendAfter override", async () => {
     const { client } = makeClient();
     const error = await captureRejected(() => client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         overrides: { idleSuspendAfter: "10m" },
-        apiKeys: { anthropic: "sk-ant" }
       })));
     expectConfigError(error, "overrides.idleSuspendAfter");
   });
@@ -429,9 +420,8 @@ describe("Aex sessions", () => {
     const { client, calls } = makeClient();
 
     const error = await captureRejected(() => client.start(unvalidatedStartOptions({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "legacy one-shot input",
-        apiKeys: { anthropic: "sk-ant" }
       })));
     expectConfigError(error, "prompt");
     expect(calls).toHaveLength(0);
@@ -441,9 +431,8 @@ describe("Aex sessions", () => {
     const { client, calls } = makeClient();
 
     const error = await captureRejected(() => client.start(unvalidatedStartOptions({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "hello",
-        apiKeys: { anthropic: "sk-ant" },
         totallyUnknownOption: { nope: true }
       })));
     expectExactConfigError(
@@ -457,9 +446,8 @@ describe("Aex sessions", () => {
   it("rejects unknown Aex.start control and stream keys with exact pre-transport errors", async () => {
     const { client, calls, sockets } = makeClient();
     const input = {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "hello",
-      apiKeys: { anthropic: "sk-ant" }
     } as const;
 
     const controlError = await captureRejected(() => client.start(
@@ -492,20 +480,17 @@ describe("Aex sessions", () => {
 
     const invalidMessages = [
       () => client.start(unvalidatedStartOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-ant" }
+        model: "anthropic/claude-haiku-4-5",
       })),
-      () => client.start({ model: "claude-haiku-4-5", message: "", apiKeys: { anthropic: "sk-ant" } }),
-      () => client.start({ model: "claude-haiku-4-5", message: "  \n\t ", apiKeys: { anthropic: "sk-ant" } }),
+      () => client.start({ model: "anthropic/claude-haiku-4-5", message: "" }),
+      () => client.start({ model: "anthropic/claude-haiku-4-5", message: "  \n\t " }),
       () => client.start({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: ["ok", ""],
-        apiKeys: { anthropic: "sk-ant" }
       }),
       () => client.start({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: ["  ", "\n"],
-        apiKeys: { anthropic: "sk-ant" }
       })
     ];
     for (const operation of invalidMessages) {
@@ -517,8 +502,7 @@ describe("Aex sessions", () => {
   it("rejects invalid session.send input before sending a message request", async () => {
     const { client, calls } = makeClient();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
     calls.length = 0;
 
@@ -533,15 +517,13 @@ describe("Aex sessions", () => {
     const { client } = makeClient();
     const signal = new AbortController().signal;
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
 
     expectConfigError(captureThrown(() => session.messages.send("continue", unvalidatedSendOptions({ signal }))), "signal");
     const error = await captureRejected(() => client.start(unvalidatedStartOptions({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "continue",
-        apiKeys: { anthropic: "sk-ant" },
         stream: { signal }
       })));
     expectConfigError(error, "stream.signal");
@@ -550,8 +532,7 @@ describe("Aex sessions", () => {
   it("keeps replay cursors on session.events instead of message sends", async () => {
     const { client, calls } = makeClient();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
     calls.length = 0;
 
@@ -562,8 +543,7 @@ describe("Aex sessions", () => {
   it("rejects an unknown send key with the exact synchronous error", async () => {
     const { client, calls, sockets } = makeClient();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-ant" }
+      model: "anthropic/claude-haiku-4-5",
     });
     calls.length = 0;
 

@@ -12,7 +12,7 @@ import type { SessionHandle } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
 async function openHandle(platform: FakePlatform): Promise<SessionHandle> {
-  return platform.aex.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+  return platform.aex.sessions.create({ model: "anthropic/claude-haiku-4-5" });
 }
 
 describe("blackbox: HITL + control gates", () => {

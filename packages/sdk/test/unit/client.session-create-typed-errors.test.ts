@@ -51,7 +51,11 @@ function expectConfigError(error: unknown, field: string): void {
   expect((error as Error).message.trim().length).toBeGreaterThan(0);
 }
 
-const unknownModel = "totally-unknown-model-xyz" as unknown as ModelName;
+// A malformed model id: not a `creator/model` gateway slug (no creator prefix).
+const malformedModel = "totally-unknown-model-xyz";
+// A well-formed but unknown-to-this-client gateway slug — forward-compat: the
+// SDK does not gate against a catalog, so this reaches the server.
+const unknownButValidSlug = "newvendor/brand-new-model-2030" as unknown as ModelName;
 
 describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", () => {
   it("throws SessionConfigValidationError with code SESSION_CONFIG_INVALID for a missing options object", async () => {
@@ -71,8 +75,7 @@ describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", ()
     let caught: unknown;
     try {
       await client.sessions.create({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "" }
+        model: malformedModel as unknown as ModelName,
       });
     } catch (err) {
       caught = err;
@@ -81,7 +84,7 @@ describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", ()
     expect(caught).toBeInstanceOf(AexError);
     expect(caught).toBeInstanceOf(Error);
     expect((caught as AexError).code).toBe("SESSION_CONFIG_INVALID");
-    expect((caught as SessionConfigValidationError).details).toEqual({ field: "apiKeys.anthropic" });
+    expect((caught as SessionConfigValidationError).details).toEqual({ field: "model" });
   });
 
   it("rejects an empty one-shot message with stable error metadata", async () => {
@@ -89,69 +92,45 @@ describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", ()
     const client = makeClient(fetch);
     const error = await captureRejected(() =>
       client.start({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "",
-        apiKeys: { anthropic: "sk-x" }
       })
     );
     expectConfigError(error, "message");
     expect(calls).toBe(0);
   });
 
-  it("rejects a missing provider API key with its provider-specific field", async () => {
-    const { fetch } = noNetworkFetch();
-    const client = makeClient(fetch);
-    const error = await captureRejected(() => client.sessions.create({ model: "claude-haiku-4-5" }));
-    expectConfigError(error, "apiKeys.anthropic");
-  });
-
-  it("identifies an unknown model without echoing its value", async () => {
+  it("identifies a malformed model slug without echoing its value", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
-    // Unknown model + no provider + a key for a real provider: the old
-    // behavior fell back to the default provider and complained about a
-    // missing apiKeys["anthropic"], pointing at the wrong problem.
+    // A model id that is not a `creator/model` slug is rejected at the boundary,
+    // and the rejected value is redacted out of the diagnostic.
     const error = await captureRejected(() => client.sessions.create({
-        model: unknownModel,
-        apiKeys: { deepseek: "sk-x" }
+        model: malformedModel as unknown as ModelName,
       }));
     expectConfigError(error, "model");
-    expect((error as Error).message).not.toContain(unknownModel);
+    expect((error as Error).message).not.toContain(malformedModel);
     expect(calls).toBe(0);
   });
 
-  it("still forwards an unknown model when the caller names the provider explicitly (forward-compat)", async () => {
+  it("forwards a well-formed but unknown model slug to the server (forward-compat)", async () => {
     const { fetch } = noNetworkFetch();
     const client = makeClient(fetch);
-    // Explicit provider + key: client-side validation must NOT hard-reject the
-    // unknown model (server owns that) — the request reaches the fetch stub.
+    // The SDK validates only the slug SHAPE, not a catalog — a well-formed slug
+    // this client doesn't recognize must NOT be hard-rejected (the gateway owns
+    // that), so the request reaches the fetch stub.
     await expect(
       client.sessions.create({
-        model: unknownModel,
-        provider: "deepseek",
-        apiKeys: { deepseek: "sk-x" }
+        model: unknownButValidSlug,
       })
     ).rejects.toThrow(/no network call should be made/);
-  });
-
-  it("rejects a provider that does not serve the model with code SESSION_CONFIG_INVALID", async () => {
-    const { fetch, calls } = noNetworkFetch();
-    const client = makeClient(fetch);
-    const error = await captureRejected(() => client.sessions.create({
-        model: "gpt-4.1",
-        provider: "anthropic",
-        apiKeys: { anthropic: "sk-x" }
-      }));
-    expectConfigError(error, "provider");
-    expect(calls).toBe(0);
   });
 
   it("rejects a non-Tool / non-builtin tools entry with code SESSION_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     const error = await captureRejected(() => client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         // not a builtin tool name
         tools: ["definitely_not_a_builtin"]
       }))

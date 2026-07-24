@@ -82,10 +82,9 @@ describe("public SDK clean cut", () => {
   it("submits resource refs under assets and keeps builtin tools separate", async () => {
     const { client, calls } = harness();
     await client.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       assets: { files: [file] },
       builtinTools: "none",
-      apiKeys: { anthropic: "test-key" }
     });
     const request = calls.find((call) => call.url.endsWith("/api/sessions") && call.method === "POST");
     const submission = (request?.body as { submission: Record<string, unknown> }).submission;
@@ -130,8 +129,7 @@ describe("public SDK clean cut", () => {
     }), { status: 201, headers: { "content-type": "application/json" } });
     const client = new Aex({ apiKey: "token", baseUrl: "https://api.example.test", fetch });
     await expect(client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "test-key" }
+      model: "anthropic/claude-haiku-4-5",
     })).rejects.toThrow(/removed sessionId field/);
   });
 

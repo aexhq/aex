@@ -16,9 +16,8 @@ import type { SessionStartOptions } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
 const SESSION: SessionStartOptions = {
-  model: "claude-haiku-4-5",
+  model: "anthropic/claude-haiku-4-5",
   message: "write a file",
-  apiKeys: { anthropic: "sk-ant" }
 };
 
 describe("blackbox: canonical event identity + lineage", () => {

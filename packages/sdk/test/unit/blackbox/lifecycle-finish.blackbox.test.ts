@@ -15,7 +15,7 @@ import { describe, expect, it } from "bun:test";
 import type { SessionStartOptions } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
-const ONE_SHOT: SessionStartOptions = { model: "claude-haiku-4-5", message: "do the thing", apiKeys: { anthropic: "sk-ant" } };
+const ONE_SHOT: SessionStartOptions = { model: "anthropic/claude-haiku-4-5", message: "do the thing" };
 
 describe("blackbox: committed run terminal boundary", () => {
   it("a clean one-shot reports outcome 'succeeded' with cost + usage always present", async () => {
@@ -81,7 +81,7 @@ describe("blackbox: committed run terminal boundary", () => {
     const viaRun = await run.start(ONE_SHOT, { text: "hi", costUsd: 0.002, usage: { inputTokens: 4, outputTokens: 1 } });
 
     const send = new FakePlatform();
-    const handle = await send.aex.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const handle = await send.aex.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     const viaFinished = (await send.send(handle, "hi", {
       text: "hi",
       costUsd: 0.002,
@@ -96,7 +96,7 @@ describe("blackbox: committed run terminal boundary", () => {
 
   it("each turn of a reused session carries its OWN outcome + cost (no bleed)", async () => {
     const platform = new FakePlatform();
-    const handle = await platform.aex.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const handle = await platform.aex.sessions.create({ model: "anthropic/claude-haiku-4-5" });
 
     const t1 = (await platform.send(handle, "turn one", { text: "one", costUsd: 0.01, outcome: "succeeded" })) as {
       ok: boolean;

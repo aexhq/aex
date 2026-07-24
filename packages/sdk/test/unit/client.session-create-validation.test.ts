@@ -62,8 +62,7 @@ describe("aex.sessions.create — removed field validation", () => {
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
         runtimeSize: "shared-1x-4gb",
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" }
+        model: "anthropic/claude-haiku-4-5",
       }))
     ).rejects.toThrow(/runtimeSize is not a supported option; use runtime/);
 
@@ -76,8 +75,7 @@ describe("aex.sessions.create — removed field validation", () => {
 
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         secretEnv: { SERPER_API_KEY: { ref: "serper" } }
       }))
     ).rejects.toThrow(/secretEnv is not a supported option; use environment\.secrets/);
@@ -91,7 +89,7 @@ describe("aex.sessions.create — removed field validation", () => {
 
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         secrets: { apiKeys: { anthropic: "sk-x" } }
       }))
     ).rejects.toThrow(/secrets is not a supported option/);
@@ -105,8 +103,7 @@ describe("aex.sessions.create — removed field validation", () => {
 
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         parentSessionId: "ses_parent"
       }))
     ).rejects.toThrow(/parentSessionId is not a supported option; subagent lineage is assigned by the platform/);
@@ -120,8 +117,7 @@ describe("aex.sessions.create — removed field validation", () => {
 
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         message: "hello there"
       }))
     ).rejects.toThrow(/message is not a supported option; sessions are created without a first message/);
@@ -136,8 +132,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectExactConfigError(
       () => client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         futureFirst: true,
         futureSecond: true
       })),
@@ -152,8 +147,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         runtime: { size: "lite" }
       }))
     ).rejects.toThrow(SessionConfigValidationError);
@@ -165,8 +159,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         runtime: { kind: "fargate" }
       }))
     ).rejects.toThrow(SessionConfigValidationError);
@@ -178,8 +171,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         runtime: { tier: "big" }
       }))
     ).rejects.toThrow(SessionConfigValidationError);
@@ -191,8 +183,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         overrides: { timeout: "banana" }
       })
     ).rejects.toThrow(SessionConfigValidationError);
@@ -204,8 +195,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         overrides: { timeout: "10s" }
       })
     ).rejects.toThrow(SessionConfigValidationError);
@@ -216,8 +206,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-x" },
+      model: "anthropic/claude-haiku-4-5",
       runtime: { kind: "spot_container", size: "0.5cpu-4gb" },
       overrides: { timeout: "30m" }
     });
@@ -237,8 +226,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectConfigError(
       () => client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         ...extra
       })),
       field,
@@ -290,8 +278,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectConfigError(
       () => client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         ...extra
       })),
       field,
@@ -310,8 +297,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expectExactConfigError(
       () => client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-x" },
+        model: "anthropic/claude-haiku-4-5",
         ...extra
       })),
       field,
@@ -334,8 +320,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
       contentType: "application/zip"
     } as const;
     await client.sessions.create(unvalidatedCreateOptions({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-x", future_provider: "future-key" },
+      model: "anthropic/claude-haiku-4-5",
       metadata: { callerDefined: { nested: true } },
       assets: {
         files: [{ ...common, kind: "file", name: "input.txt", mountPath: "/workspace/input.txt" }],

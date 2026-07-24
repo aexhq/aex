@@ -108,8 +108,7 @@ describe("SDK client private leaves", () => {
     expect(normalized).not.toBe(input);
 
     expect(() => assertSupportedSessionFields({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "test" },
+      model: "anthropic/claude-haiku-4-5",
       runtime: { kind: "container", tier: "large" }
     } as never, "aex.sessions.create", false)).toThrowError(expect.objectContaining({
       name: "SessionConfigValidationError",
@@ -125,7 +124,7 @@ describe("SDK client private leaves", () => {
       allowedDirs: ["/workspace"]
     });
     expect(fileCaptureForWire({ allowedDirs: [], deniedDirs: [] })).toBeUndefined();
-    expect(sessionRetentionForWire({ model: "claude-haiku-4-5" })).toEqual({ idleTtl: "3m" });
+    expect(sessionRetentionForWire({ model: "anthropic/claude-haiku-4-5" })).toEqual({ idleTtl: "3m" });
     expect(sessionEnvironmentForWire({
       variables: { MODE: "test" },
       networking: { mode: "limited", allowedHosts: ["example.test"] }

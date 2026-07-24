@@ -48,11 +48,10 @@ describe("aex.sessions.create", () => {
   it("groups pinned resources under assets and keeps builtin tools separate", async () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       system: "Be concise.",
       assets: { tools: [tool] },
       builtinTools: ["bash"],
-      apiKeys: { anthropic: "sk-test" },
       idempotencyKey: "idem_1"
     });
 
@@ -71,13 +70,12 @@ describe("aex.sessions.create", () => {
   it("moves MCP credentials to the secret channel", async () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       mcpServers: [McpServer.remote({
         name: "github",
         url: "https://mcp.example.test/github",
         headers: { Authorization: "Bearer secret" }
       })],
-      apiKeys: { anthropic: "sk-test" }
     });
     const body = calls[0]!.body;
     expect((body.submission as Record<string, unknown>).mcpServers).toEqual([
@@ -91,12 +89,11 @@ describe("aex.sessions.create", () => {
   it("serializes file capture, runtime.size, limits, timeout, and webhook", async () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       runtime: { size: "0.5cpu-4gb" },
       overrides: { timeout: "10m", maxSpendUsd: 3, maxTurns: 20, idleTtl: "5m" },
       fileCapture: { allowedDirs: ["/workspace/out"], maxFiles: 20 },
       webhook: { url: "https://hooks.example.test/aex" },
-      apiKeys: { anthropic: "sk-test" }
     });
     expect(calls[0]!.body).toMatchObject({
       runtimeSize: "0.5cpu-4gb",
@@ -113,9 +110,8 @@ describe("aex.sessions.create", () => {
   it("forwards runtime.kind + runtime.size to the wire and exposes both on the record", async () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       runtime: { kind: "spot_container", size: "2cpu-8gb" },
-      apiKeys: { anthropic: "sk-test" }
     });
     expect(calls[0]!.body).toMatchObject({
       runtimeSize: "2cpu-8gb",
@@ -127,48 +123,32 @@ describe("aex.sessions.create", () => {
   it("omits the runtime wire fields when not selected (Lambda default applied downstream)", async () => {
     const { client, calls } = harness();
     await client.sessions.create({
-      model: "claude-haiku-4-5",
-      apiKeys: { anthropic: "sk-test" }
+      model: "anthropic/claude-haiku-4-5",
     });
     expect(calls[0]!.body).not.toHaveProperty("runtimeKind");
     expect(calls[0]!.body).not.toHaveProperty("runtime");
   });
 
-  it("requires the selected provider key before network access", async () => {
+  it("creates a session from a model slug alone — no provider key needed (managed keys)", async () => {
     const { client, calls } = harness();
-    const error = await client.sessions.create({ model: "claude-haiku-4-5" }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(SessionConfigValidationError);
-    expect(error).toMatchObject({ name: "SessionConfigValidationError", code: "SESSION_CONFIG_INVALID" });
-    expect((error as SessionConfigValidationError).details).toEqual({ field: "apiKeys.anthropic" });
-    expect((error as Error).message.trim().length).toBeGreaterThan(0);
-    expect(calls).toHaveLength(0);
+    await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.body).not.toHaveProperty("provider");
+    expect(calls[0]!.body.secrets).toEqual({});
   });
 
-  it("derives deepseek from its model", async () => {
+  it("puts the model slug on the wire submission with no provider selector", async () => {
     const { client, calls } = harness();
-    await client.sessions.create({ model: "deepseek-v4-flash", apiKeys: { deepseek: "sk-test" } });
-    expect(calls[0]!.body.provider).toBe("deepseek");
-  });
-
-  it("rejects a provider that cannot serve the selected model", async () => {
-    const { client, calls } = harness();
-    const error = await client.sessions.create({
-      model: "gpt-4.1",
-      provider: "anthropic",
-      apiKeys: { anthropic: "sk-test" }
-    }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(SessionConfigValidationError);
-    expect((error as SessionConfigValidationError).details).toEqual({ field: "provider" });
-    expect((error as Error).message.trim().length).toBeGreaterThan(0);
-    expect(calls).toHaveLength(0);
+    await client.sessions.create({ model: "deepseek/deepseek-v4-flash" });
+    expect(calls[0]!.body).not.toHaveProperty("provider");
+    expect((calls[0]!.body.submission as { model: string }).model).toBe("deepseek/deepseek-v4-flash");
   });
 
   for (const field of ["tools", "skills", "files", "agentsMd"] as const) {
     it(`rejects the legacy ${field} field rather than ignoring it`, async () => {
       const { client, calls } = harness();
       await expect(client.sessions.create(unvalidatedCreateOptions({
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-test" },
+        model: "anthropic/claude-haiku-4-5",
         [field]: []
       }))).rejects.toThrow(new RegExp(`${field} is not a supported option`));
       expect(calls).toHaveLength(0);

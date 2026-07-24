@@ -16,7 +16,7 @@ describe("SDK unknown model validation", () => {
     const invalidModel = "deepseek-v4-flsh";
     const client = new Aex({ apiKey: "tk", baseUrl: "https://x", fetch: noNetwork });
     const err = await client
-      .start(unvalidatedStartOptions({ model: invalidModel, message: "hi", apiKeys: { deepseek: "K" } }))
+      .start(unvalidatedStartOptions({ model: invalidModel, message: "hi" }))
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SessionConfigValidationError);
     expect(err).toMatchObject({ name: "SessionConfigValidationError", code: "SESSION_CONFIG_INVALID" });

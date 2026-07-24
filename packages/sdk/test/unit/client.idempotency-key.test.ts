@@ -25,7 +25,7 @@ function makeClient(): { client: Aex; keys: (string | undefined)[] } {
 }
 
 describe("empty idempotencyKey fail-fast (WS4)", () => {
-  const base = { model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } } as const;
+  const base = { model: "anthropic/claude-haiku-4-5" } as const;
 
   it("sessions.create throws synchronously on an empty key (no HTTP)", async () => {
     const { client, keys } = makeClient();

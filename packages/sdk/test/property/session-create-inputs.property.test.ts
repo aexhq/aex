@@ -3,16 +3,12 @@ import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import type { FetchLike } from "@aexhq/contracts";
 import {
   BUILTIN_TOOL_NAMES,
-  SUPPORTED_MODELS,
-  PROVIDERS,
   RUNTIME_SIZES,
   RUNTIME_KINDS,
-  providersForModel,
   type BuiltinToolName,
   type JsonValue,
   type OutputMode,
   type ModelName,
-  type ProviderName,
   type RuntimeSize,
   type RuntimeKind,
   type SessionRuntime
@@ -20,7 +16,6 @@ import {
 import { parseSessionSubmissionRequest } from "@aexhq/contracts/internal";
 import {
   Aex,
-  Models,
   SessionConfigValidationError,
   Secret,
   type SessionCreateOptions
@@ -28,6 +23,19 @@ import {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 type CreateSurface = "sessions.create";
+
+// Public model ids are open gateway `creator/model` slug strings — there is no
+// closed catalog and no provider concept. A representative spread of well-formed
+// slugs stands in for "any slug the gateway serves".
+const MODEL_SLUGS: readonly ModelName[] = [
+  "anthropic/claude-haiku-4-5",
+  "anthropic/claude-sonnet-4-6",
+  "deepseek/deepseek-v4-flash",
+  "openai/gpt-4.1",
+  "google/gemini-2.5-flash",
+  "mistral/mistral-large-latest",
+  "x-ai/grok-2"
+];
 
 interface CapturedRequest {
   readonly url: string;
@@ -41,20 +49,13 @@ interface CaptureHarness {
   readonly calls: CapturedRequest[];
 }
 
-interface ProviderChoice {
-  readonly model: ModelName;
-  readonly provider?: ProviderName;
-  readonly resolvedProvider: ProviderName;
-}
-
 interface ValidCase {
   readonly surface: CreateSurface;
   readonly options: SessionCreateOptions;
-  readonly resolvedProvider: ProviderName;
 }
 
 const createSurface = fc.constant<CreateSurface>("sessions.create");
-const modelName = fc.constantFrom<ModelName>(...(SUPPORTED_MODELS as readonly ModelName[]));
+const modelName = fc.constantFrom<ModelName>(...MODEL_SLUGS);
 const runtimeSize = fc.constantFrom<RuntimeSize>(...(RUNTIME_SIZES as readonly RuntimeSize[]));
 const runtimeKind = fc.constantFrom<RuntimeKind>(...(RUNTIME_KINDS as readonly RuntimeKind[]));
 // The grouped runtime selector: at least one of { kind, size } present.
@@ -65,7 +66,7 @@ const runtimeArb: fc.Arbitrary<SessionRuntime> = fc
     ...(r.kind !== undefined ? { kind: r.kind } : {}),
     ...(r.size !== undefined ? { size: r.size } : {})
   }));
-const outputMode = fc.constant<OutputMode>("buffered");
+const outputMode = fc.constantFrom<OutputMode>("buffered", "stream");
 const safeToken = fc.stringMatching(/^[A-Za-z0-9_-]{1,24}$/);
 const shortText = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{1,64}$/);
 const envValue = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{0,64}$/);
@@ -86,22 +87,6 @@ const builtinTools = fc.subarray(builtinToolNames, {
 const nonEmptyBuiltinTools = fc.subarray(builtinToolNames, {
   minLength: 1,
   maxLength: 5
-});
-
-const providerChoice: fc.Arbitrary<ProviderChoice> = modelName.chain((model) => {
-  const providers = providersForModel(model);
-  const defaultProvider = providers[0];
-  if (defaultProvider === undefined) {
-    throw new Error(`test invariant failed: model ${model} has no provider`);
-  }
-  return fc.oneof(
-    fc.constant({ model, resolvedProvider: defaultProvider }),
-    fc.constantFrom(...providers).map((provider) => ({
-      model,
-      provider,
-      resolvedProvider: provider
-    }))
-  );
 });
 
 const jsonScalar: fc.Arbitrary<JsonValue> = fc.oneof(
@@ -214,82 +199,74 @@ const sparseEnvironment = fc
   )
   .map((parts) => buildEnvironment(parts));
 
-const richValidCase = providerChoice.chain((choice) =>
-  apiKeysFor(choice.resolvedProvider).chain((apiKeys) =>
-    fc
-      .record({
-        surface: createSurface,
-        system: shortText,
-        metadata: nonEmptyMetadata,
-        environment: richEnvironment,
-        fileCapture: richFileCapture,
-        overrides: richOverrides,
-        runtime: runtimeArb,
-        outputMode,
-        builtinTools: fc.oneof(fc.constant("default" as const), fc.constant("none" as const), nonEmptyBuiltinTools),
-        webhook,
-        idempotencyKey,
+const richValidCase = modelName.chain((model) =>
+  fc
+    .record({
+      surface: createSurface,
+      system: shortText,
+      metadata: nonEmptyMetadata,
+      environment: richEnvironment,
+      fileCapture: richFileCapture,
+      overrides: richOverrides,
+      runtime: runtimeArb,
+      outputMode,
+      builtinTools: fc.oneof(fc.constant("default" as const), fc.constant("none" as const), nonEmptyBuiltinTools),
+      webhook,
+      idempotencyKey,
+    })
+    .map((parts): ValidCase => ({
+      surface: parts.surface,
+      options: buildSessionOptions(model, {
+        system: parts.system,
+        metadata: parts.metadata,
+        environment: parts.environment,
+        fileCapture: parts.fileCapture,
+        overrides: parts.overrides,
+        runtime: parts.runtime,
+        outputMode: parts.outputMode,
+        builtinTools: parts.builtinTools,
+        webhook: parts.webhook,
+        idempotencyKey: parts.idempotencyKey,
       })
-      .map((parts): ValidCase => ({
-        surface: parts.surface,
-        resolvedProvider: choice.resolvedProvider,
-        options: buildSessionOptions(choice, {
-          apiKeys,
-          system: parts.system,
-          metadata: parts.metadata,
-          environment: parts.environment,
-          fileCapture: parts.fileCapture,
-          overrides: parts.overrides,
-          runtime: parts.runtime,
-          outputMode: parts.outputMode,
-          builtinTools: parts.builtinTools,
-          webhook: parts.webhook,
-          idempotencyKey: parts.idempotencyKey,
-        })
-      }))
-  )
+    }))
 );
 
-const sparseValidCase = providerChoice.chain((choice) =>
-  apiKeysFor(choice.resolvedProvider).chain((apiKeys) =>
-    fc
-      .record(
-        {
-          surface: createSurface,
-          system: fc.option(shortText, { nil: undefined }),
-          metadata: fc.option(metadata, { nil: undefined }),
-          environment: fc.option(sparseEnvironment, { nil: undefined }),
-          fileCapture: fc.option(sparseFileCapture, { nil: undefined }),
-          overrides: fc.option(sparseOverrides, { nil: undefined }),
-          runtime: fc.option(runtimeArb, { nil: undefined }),
-          outputMode: fc.option(outputMode, { nil: undefined }),
-          builtinTools: fc.option(
-            fc.oneof(fc.constant("default" as const), fc.constant("none" as const), builtinTools),
-            { nil: undefined }
-          ),
-          webhook: fc.option(webhook, { nil: undefined }),
-          idempotencyKey: fc.option(idempotencyKey, { nil: undefined }),
-        },
-        { requiredKeys: ["surface"] }
-      )
-      .map((parts): ValidCase => ({
-        surface: parts.surface,
-        resolvedProvider: choice.resolvedProvider,
-        options: buildSessionOptions(choice, {
-          apiKeys,
-          system: parts.system,
-          metadata: parts.metadata,
-          environment: parts.environment,
-          fileCapture: parts.fileCapture,
-          overrides: parts.overrides,
-          runtime: parts.runtime,
-          outputMode: parts.outputMode,
-          builtinTools: parts.builtinTools,
-          webhook: parts.webhook,
-          idempotencyKey: parts.idempotencyKey,
-        })
-      }))
-  )
+const sparseValidCase = modelName.chain((model) =>
+  fc
+    .record(
+      {
+        surface: createSurface,
+        system: fc.option(shortText, { nil: undefined }),
+        metadata: fc.option(metadata, { nil: undefined }),
+        environment: fc.option(sparseEnvironment, { nil: undefined }),
+        fileCapture: fc.option(sparseFileCapture, { nil: undefined }),
+        overrides: fc.option(sparseOverrides, { nil: undefined }),
+        runtime: fc.option(runtimeArb, { nil: undefined }),
+        outputMode: fc.option(outputMode, { nil: undefined }),
+        builtinTools: fc.option(
+          fc.oneof(fc.constant("default" as const), fc.constant("none" as const), builtinTools),
+          { nil: undefined }
+        ),
+        webhook: fc.option(webhook, { nil: undefined }),
+        idempotencyKey: fc.option(idempotencyKey, { nil: undefined }),
+      },
+      { requiredKeys: ["surface"] }
+    )
+    .map((parts): ValidCase => ({
+      surface: parts.surface,
+      options: buildSessionOptions(model, {
+        system: parts.system,
+        metadata: parts.metadata,
+        environment: parts.environment,
+        fileCapture: parts.fileCapture,
+        overrides: parts.overrides,
+        runtime: parts.runtime,
+        outputMode: parts.outputMode,
+        builtinTools: parts.builtinTools,
+        webhook: parts.webhook,
+        idempotencyKey: parts.idempotencyKey,
+      })
+    }))
 );
 
 const legacyProxyField = "proxy" + "Endpoints";
@@ -299,6 +276,8 @@ const legacyFields = [
   "runtimeSize",
   "secretEnv",
   "secrets",
+  "provider",
+  "apiKeys",
   legacyProxyField,
   "postHook",
   "limits",
@@ -320,27 +299,15 @@ const legacyValue = fc.oneof(
   fc.dictionary(fc.stringMatching(/^[a-z][a-z0-9_]{0,8}$/), shortText, { maxKeys: 3 })
 );
 
-const providerMismatch = modelName.chain((model) => {
-  const supported = providersForModel(model);
-  const unsupported = PROVIDERS.filter((provider) => !supported.includes(provider));
-  return fc.constantFrom(...unsupported).map((provider) =>
-    buildSessionOptions(
-      { model, provider, resolvedProvider: provider },
-      { apiKeys: { [provider]: `fake-${provider}-key` } }
-    )
-  );
-});
-
-const missingProviderKey = providerChoice.chain((choice) => {
-  const otherProviders = PROVIDERS.filter((provider) => provider !== choice.resolvedProvider);
-  return fc
-    .oneof(
-      fc.constant(undefined),
-      fc.constant({}),
-      fc.constantFrom(...otherProviders).map((provider) => ({ [provider]: `fake-${provider}-key` }))
-    )
-    .map((apiKeys) => buildSessionOptions(choice, apiKeys === undefined ? {} : { apiKeys }));
-});
+// Malformed model ids: not a `creator/model` slug (no slash, uppercase creator,
+// empty). The SDK rejects these at the boundary before any HTTP call.
+const malformedModel = fc.constantFrom(
+  "claude-haiku-4-5",
+  "Anthropic/claude-haiku-4-5",
+  "openai/",
+  "/gpt-4.1",
+  "no slash here"
+);
 
 function captureClient(): CaptureHarness {
   const calls: CapturedRequest[] = [];
@@ -418,6 +385,8 @@ function validateAcceptedCreate({ calls }: CaptureHarness, testCase: ValidCase):
 
   const body = requireRecord(call.body, "session create body");
   expect("idempotencyKey" in body).toBe(false);
+  // Managed keys: the wire carries no provider selector.
+  expect("provider" in body).toBe(false);
   expect(body.retention).toEqual({ idleTtl: testCase.options.overrides?.idleTtl ?? "3m" });
 
   const submission = requireRecord(body.submission, "session create submission");
@@ -435,11 +404,7 @@ function validateAcceptedCreate({ calls }: CaptureHarness, testCase: ValidCase):
     }
   });
 
-  expect(parsed.provider).toBe(testCase.resolvedProvider);
   expect(parsed.submission.model).toBe(testCase.options.model);
-  expect(parsed.secrets.apiKeys?.[testCase.resolvedProvider]).toBe(
-    testCase.options.apiKeys?.[testCase.resolvedProvider]
-  );
 }
 
 function requireRecord(input: unknown, label: string): Record<string, unknown> {
@@ -450,9 +415,8 @@ function requireRecord(input: unknown, label: string): Record<string, unknown> {
 }
 
 function buildSessionOptions(
-  choice: ProviderChoice,
+  model: ModelName,
   parts: {
-    readonly apiKeys?: Partial<Record<ProviderName, string>> | undefined;
     readonly system?: string | undefined;
     readonly metadata?: Record<string, JsonValue> | undefined;
     readonly environment?: SessionCreateOptions["environment"] | undefined;
@@ -465,9 +429,7 @@ function buildSessionOptions(
     readonly idempotencyKey?: string | undefined;
   }
 ): SessionCreateOptions {
-  const options: Mutable<SessionCreateOptions> = { model: choice.model };
-  if (choice.provider !== undefined) options.provider = choice.provider;
-  if (parts.apiKeys !== undefined) options.apiKeys = parts.apiKeys;
+  const options: Mutable<SessionCreateOptions> = { model };
   if (parts.system !== undefined) options.system = parts.system;
   if (parts.metadata !== undefined) options.metadata = parts.metadata;
   if (parts.environment !== undefined) options.environment = parts.environment;
@@ -521,25 +483,9 @@ function buildOverrides(parts: {
   return overrides;
 }
 
-function apiKeysFor(provider: ProviderName): fc.Arbitrary<Partial<Record<ProviderName, string>>> {
-  const otherProviders = PROVIDERS.filter((entry) => entry !== provider);
-  return fc
-    .tuple(safeToken, fc.uniqueArray(fc.constantFrom(...otherProviders), { maxLength: 3 }))
-    .map(([token, extras]) => {
-      const apiKeys: Partial<Record<ProviderName, string>> = {
-        [provider]: `fake-${provider}-${token}`
-      };
-      for (const extra of extras) {
-        apiKeys[extra] = `fake-${extra}-${token}`;
-      }
-      return apiKeys;
-    });
-}
-
 function minimalValidOptions(): SessionCreateOptions {
   return {
-    model: Models.CLAUDE_HAIKU_4_5,
-    apiKeys: { anthropic: "fake-anthropic-key" }
+    model: "anthropic/claude-haiku-4-5",
   };
 }
 
@@ -588,27 +534,16 @@ describe("session create inputs (property)", () => {
     }
   });
 
-  it("rejects provider/model mismatches and missing provider keys before HTTP", async () => {
+  it("rejects malformed model slugs before any HTTP call", async () => {
     await fc.assert(
-      fc.asyncProperty(createSurface, providerMismatch, async (surface, options) => {
+      fc.asyncProperty(createSurface, malformedModel, async (surface, model) => {
         const harness = captureClient();
         await expect(
-          createWithSurface(harness.client, surface, options)
+          createWithSurface(harness.client, surface, { model } as SessionCreateOptions)
         ).rejects.toBeInstanceOf(SessionConfigValidationError);
         expect(harness.calls).toHaveLength(0);
       }),
-      { numRuns: 120 }
-    );
-
-    await fc.assert(
-      fc.asyncProperty(createSurface, missingProviderKey, async (surface, options) => {
-        const harness = captureClient();
-        await expect(
-          createWithSurface(harness.client, surface, options)
-        ).rejects.toBeInstanceOf(SessionConfigValidationError);
-        expect(harness.calls).toHaveLength(0);
-      }),
-      { numRuns: 120 }
+      { numRuns: 60 }
     );
   });
 });

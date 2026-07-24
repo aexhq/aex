@@ -22,39 +22,17 @@ interface Case {
 }
 
 const base = (): Record<string, unknown> => ({
-  model: "claude-haiku-4-5",
-  apiKeys: { anthropic: "safe-placeholder" }
+  model: "anthropic/claude-haiku-4-5",
 });
 
 const cases: readonly Case[] = [
   {
-    label: "unknown model",
+    label: "malformed model slug",
     options: () => ({ ...base(), model: "unknown-model-q7" }),
     field: "model",
-    message: "model must be recognized unless provider is supplied explicitly",
+    message: "model must be a gateway model slug of the form \"creator/model\"",
     rejectedTokens: ["unknown-model-q7"],
-    usefulCause: /known model id|provider explicitly/
-  },
-  {
-    label: "provider mismatch",
-    options: () => ({ ...base(), model: "gpt-4.1", provider: "anthropic" }),
-    field: "provider",
-    message: "provider cannot serve the selected model",
-    rejectedTokens: ["gpt-4.1", "anthropic"],
-    usefulCause: /available/
-  },
-  {
-    label: "non-streamable output mode",
-    options: () => ({
-      model: "gemini-2.5-flash",
-      provider: "gemini",
-      apiKeys: { gemini: "safe-placeholder" },
-      outputMode: "stream"
-    }),
-    field: "outputMode",
-    message: "outputMode is not supported for the selected provider",
-    rejectedTokens: ["stream", "gemini"],
-    usefulCause: /available for/
+    usefulCause: /gateway model slug|creator\/model/
   },
   {
     label: "runtime size",

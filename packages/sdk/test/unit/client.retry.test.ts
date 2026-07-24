@@ -197,7 +197,7 @@ describe("Aex idempotency (sdk-dx-3)", () => {
   it("start() derives the message key from the create key so a retried run never double-bills", async () => {
     const h = harness();
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" }, idempotencyKey: "fixed-key" },
+      { model: "anthropic/claude-haiku-4-5", message: "hello", idempotencyKey: "fixed-key" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -214,7 +214,7 @@ describe("Aex idempotency (sdk-dx-3)", () => {
   it("start() without a key still ties the message key to the create key", async () => {
     const h = harness();
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hello" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -230,9 +230,8 @@ describe("Aex idempotency (sdk-dx-3)", () => {
   it("Aex.start() derives the message key the same way", async () => {
     const h = harness();
     const promise = h.client.start({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "hello",
-      apiKeys: { anthropic: "sk-ant" },
       idempotencyKey: "session-key",
       stream: { webSocketFactory: h.webSocketFactory }
     });
@@ -247,9 +246,8 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     const h = harness();
     const createKey = "k".repeat(255);
     const promise = h.client.start({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       message: "hello",
-      apiKeys: { anthropic: "sk-ant" },
       idempotencyKey: createKey,
       stream: { webSocketFactory: h.webSocketFactory }
     });
@@ -268,7 +266,7 @@ describe("Aex built-in transport retry", () => {
   it("retries a throttled create with the SAME idempotency key (no duplicate billable session turn)", async () => {
     const h = harness({ id: "session-1", status: "idle" }, [429, 201]);
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" }, idempotencyKey: "K" },
+      { model: "anthropic/claude-haiku-4-5", message: "hello", idempotencyKey: "K" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -284,7 +282,7 @@ describe("Aex built-in transport retry", () => {
   it("surfaces AexRateLimitError when a create is throttled past the attempt budget", async () => {
     const h = harness({ id: "session-1", status: "idle" }, [429]);
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hello" },
       { webSocketFactory: h.webSocketFactory }
     );
     const err = await promise.catch((e: unknown) => e);
@@ -300,7 +298,7 @@ describe("Aex built-in transport retry", () => {
 describe("SessionHandle.replayLast", () => {
   it("replays the last message reusing the same idempotency key", async () => {
     const h = harness();
-    const session = await h.client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await h.client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
 
     const first = session.messages.send("do the thing", { webSocketFactory: h.webSocketFactory }).finished();
     await waitForSocket(h.sockets, 1);
@@ -320,13 +318,13 @@ describe("SessionHandle.replayLast", () => {
 
   it("throws a clear error when nothing has been sent yet", async () => {
     const h = harness();
-    const session = await h.client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await h.client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     expect(() => session.messages.replayLast()).toThrow(/no message has been sent/);
   });
 
   it("a fresh idempotency key forces a brand-new billable turn", async () => {
     const h = harness();
-    const session = await h.client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await h.client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     const first = session.messages.send("go", { webSocketFactory: h.webSocketFactory }).finished();
     await waitForSocket(h.sockets, 1);
     h.sockets[0]!.message(idleEvent());
@@ -347,7 +345,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
   it("ends a session turn on RUN_ERROR even when no aex.session.error event follows", async () => {
     const h = harness({ id: "session-1", status: "error", errorMessage: "provider returned no public assistant content" });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -367,7 +365,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
   it("fails closed when RUN_ERROR omits per-run billing", async () => {
     const h = harness({ id: "session-1", status: "error", acceptsMessages: true });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -382,7 +380,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
   it("fails closed when a RUN terminal omits its explicit outcome", async () => {
     const h = harness({ id: "session-1", status: "error", acceptsMessages: true });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -401,7 +399,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
       providerFault: { provider: "anthropic", kind: "overloaded", status: 529, retryAfterMs: 4000 }
     });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -424,7 +422,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
       errorMessage: "llm provider unavailable (HTTP 429) — throttled or overloaded; request was not replayed automatically: secret detail"
     }, [201], (line) => diagnostics.push(line));
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -445,7 +443,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
   ])("does not classify arbitrary failure prose as a provider throttle: %s", async (errorMessage) => {
     const h = harness({ id: "session-1", status: "error", errorMessage });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -464,7 +462,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
       errorMessage: "llm provider unavailable (HTTP 429) — throttled or overloaded; request was not replayed automatically"
     });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -477,7 +475,7 @@ describe("Aex throttle error on a provider-throttled turn", () => {
   it("a non-throttle failure still raises the plain SessionStateError", async () => {
     const h = harness({ id: "session-1", status: "error", errorMessage: "disk full" });
     const promise = h.client.start(
-      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { model: "anthropic/claude-haiku-4-5", message: "hi" },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);

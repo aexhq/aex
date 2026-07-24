@@ -2,11 +2,18 @@ import fc from "fast-check";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import type { FetchLike } from "@aexhq/contracts";
 import {
-  SUPPORTED_MODELS,
   RUNTIME_SIZES,
-  providersForModel,
   type ModelName
 } from "@aexhq/contracts";
+
+// Public model ids are open gateway `creator/model` slug strings.
+const MODEL_SLUGS: readonly ModelName[] = [
+  "anthropic/claude-haiku-4-5",
+  "deepseek/deepseek-v4-flash",
+  "openai/gpt-4.1",
+  "google/gemini-2.5-flash",
+  "mistral/mistral-large-latest"
+];
 import { parseSessionSubmissionRequest } from "@aexhq/contracts/internal";
 import { Aex, Secret } from "../../src/index.js";
 import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
@@ -70,7 +77,7 @@ function validateWire(body: unknown): void {
   });
 }
 
-const validModel = fc.constantFrom<ModelName>(...(SUPPORTED_MODELS as readonly ModelName[]));
+const validModel = fc.constantFrom<ModelName>(...MODEL_SLUGS);
 const jsonScalar = fc.oneof(fc.string({ maxLength: 24 }), fc.integer(), fc.boolean(), fc.constant(null));
 const metadata = fc.dictionary(
   fc.string({ minLength: 1, maxLength: 12 }).filter((k) => !/key|token|secret|password|credential|auth/i.test(k)),
@@ -86,11 +93,9 @@ const timeout = fc.oneof(fc.constant(undefined), fc.constantFrom("1m", "30m", "1
 const runtime = fc.oneof(fc.constant(undefined), fc.constantFrom(...RUNTIME_SIZES));
 const outputMode = fc.oneof(fc.constant(undefined), fc.constantFrom("buffered" as const, "stream" as const));
 
-// A session-create option shape whose CREDENTIALS are always self-consistent (a
-// key for the model's resolved provider), so the credential gate never rejects —
-// leaving the wire SHAPE as the thing under test.
+// A session-create option shape — under managed gateway keys there are no
+// credentials to keep consistent, so the wire SHAPE is the thing under test.
 const goodOptions = validModel.chain((model) => {
-  const provider = providersForModel(model)[0] ?? "anthropic";
   return fc.record(
     {
       model: fc.constant(model),
@@ -106,10 +111,9 @@ const goodOptions = validModel.chain((model) => {
         fc.constant("none" as const),
         fc.constant(["bash"] as const)
       ),
-      idempotencyKey: fc.oneof(fc.constant(undefined), fc.string({ minLength: 1, maxLength: 20 })),
-      apiKeys: fc.constant({ [provider]: "sk-ant-fuzztestkey0123456789" })
+      idempotencyKey: fc.oneof(fc.constant(undefined), fc.string({ minLength: 1, maxLength: 20 }))
     },
-    { requiredKeys: ["model", "apiKeys"] }
+    { requiredKeys: ["model"] }
   );
 });
 

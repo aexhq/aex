@@ -7,8 +7,7 @@ import { FakeWebSocket } from "@aexhq/contracts/testing";
 
 const BASE_URL = "https://api.example.test";
 const SESSION_ID = "sess_property";
-const MODEL = "claude-haiku-4-5";
-const API_KEYS = { anthropic: "sk-ant-fuzztestkey0123456789" } as const;
+const MODEL = "anthropic/claude-haiku-4-5";
 const TEXT_SEQUENCE_START = 1024;
 const PROPERTY_RUNS = { numRuns: 150 };
 const EVENT_PROPERTY_RUNS = { numRuns: 100 };
@@ -160,7 +159,6 @@ function runOptions(input: SessionInput, keys: IdempotencyCase = {}): SessionSta
   return {
     model: MODEL,
     message: input,
-    apiKeys: API_KEYS,
     ...(keys.createKey !== undefined ? { idempotencyKey: keys.createKey } : {}),
     ...(keys.messageKey !== undefined ? { messageIdempotencyKey: keys.messageKey } : {})
   };
