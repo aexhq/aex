@@ -15,12 +15,11 @@ provider-session retention is not a supported session option, and the removed
 retention field is rejected if supplied.
 
 ```ts
-import { Models } from "@aexhq/sdk";
+import {  } from "@aexhq/sdk";
 
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "...",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

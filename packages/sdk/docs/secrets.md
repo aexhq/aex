@@ -4,26 +4,25 @@ title: Secrets
 
 # Secrets
 
-aex supports BYOK provider keys, per-session credentials, and reusable workspace
-secrets. Secret values are excluded from the idempotency fingerprint and do not
-belong in session config.
+aex supports per-session credentials and reusable workspace secrets for your own
+code and MCP servers. Model access needs no provider key — the managed gateway
+routes every model. Secret values are excluded from the idempotency fingerprint
+and do not belong in session config.
 
-Runnable examples need both `AEX_API_KEY` for aex and the matching BYOK
-provider key, such as `ANTHROPIC_API_KEY` for Claude.
+Runnable examples need only `AEX_API_KEY` for aex.
 
-## Use A Provider Key For One Session
+## Run A Model In One Session
 
 ### TypeScript
 
 ```ts
-import { Aex, Models } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Write a short report and save it as a file.",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -32,8 +31,7 @@ await aex.start({
 ```bash
 aex start \
   --api-key "$AEX_API_KEY" \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --model claude-haiku-4-5 \
+  --model anthropic/claude-haiku-4-5 \
   --prompt "Write a short report and save it as a file."
 ```
 
@@ -43,7 +41,7 @@ Create durable secrets through the workspace namespace, then reference the
 stored name in later sessions.
 
 ```ts
-import { Aex, Models, Providers, Secret } from "@aexhq/sdk";
+import { Aex, Secret } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
@@ -54,11 +52,9 @@ await aex.workspace.secrets.set({
 const githubToken = Secret.ref("github-token");
 
 await aex.start({
-  provider: Providers.ANTHROPIC,
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Inspect the repository issues.",
   environment: { secrets: { GITHUB_TOKEN: githubToken } },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -94,16 +90,14 @@ Reference workspace secrets with `Secret.ref(name)`. The value resolves
 server-side and is injected as the named environment variable.
 
 ```ts
-import { Models, Providers, Secret } from "@aexhq/sdk";
+import { Secret } from "@aexhq/sdk";
 
 await aex.start({
-  provider: Providers.ANTHROPIC,
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Use SERPER_API_KEY for web search.",
   environment: {
     secrets: { SERPER_API_KEY: Secret.ref("serper-api-key") }
   },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -113,7 +107,7 @@ await aex.start({
 await aex.workspace.secrets.delete("serper-api-key");
 ```
 
-The CLI supports per-session provider and MCP credentials. Workspace secret
+The CLI supports per-session runtime and MCP credentials. Workspace secret
 administration is exposed through the SDK.
 
 ## Redaction Scope And Session Files

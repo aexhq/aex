@@ -13,22 +13,20 @@ delivery.
 ## Register a callback
 
 ```ts
-import { Aex, Models } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
 
 const session = await aex.sessions.create({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   webhook: { url: "https://hooks.example.com/aex" },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
 ```bash
 aex start \
   --api-key "$AEX_API_KEY" \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --model claude-haiku-4-5 \
+  --model anthropic/claude-haiku-4-5 \
   --prompt "Write the report." \
   --webhook https://hooks.example.com/aex
 ```

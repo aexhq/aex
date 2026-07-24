@@ -16,12 +16,12 @@ per-noun "does the frame depict X?" verdict.
 ## Submit the session
 
 ```ts
-import { Aex, Models, Secret, Skill } from "@aexhq/sdk";
+import { Aex, Secret, Skill } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const result = await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Read skills/frame-vision-gate/SKILL.md, then caption and verify the frame.",
   skills: [await Skill.fromDir("./vision-skill", { name: "frame-vision-gate" })],
   environment: {
@@ -33,7 +33,6 @@ const result = await aex.start({
       allowedHosts: ["ark.ap-southeast.bytepluses.com"]
     }
   },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
 console.log(result.sessionId, result.text);

@@ -44,13 +44,12 @@ one of the managed capabilities above. Package registries implied by
 ### TypeScript
 
 ```ts
-import { Aex, Models, Providers } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 await aex.start({
-  provider: Providers.ANTHROPIC,
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Fetch the public status page and summarize it.",
   environment: {
     networking: {
@@ -58,7 +57,6 @@ await aex.start({
       allowedHosts: ["api.example.com", "status.example.com"]
     }
   },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -79,10 +77,9 @@ boundary still applies.
 
 ```ts
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Research the topic across the open web.",
   environment: { networking: { mode: "open" } },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

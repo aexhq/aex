@@ -1,7 +1,7 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.45.0",
-  "description": "TypeScript SDK for autonomous agent sessions across Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao.",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for autonomous agent sessions with managed Vercel AI Gateway model access.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

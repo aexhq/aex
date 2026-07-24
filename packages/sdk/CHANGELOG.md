@@ -4,6 +4,52 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 1.0.0
+
+Managed Vercel AI Gateway model access. Customers no longer supply provider API
+keys — the platform routes every model through one managed gateway key.
+
+### Changed (BREAKING)
+
+- **`model` is now a Vercel AI Gateway `creator/model` slug string** (e.g.
+  `"anthropic/claude-haiku-4-5"`, `"deepseek/deepseek-v4-flash"`), validated at
+  the boundary by `parseModelSlug` against `^[a-z0-9-]+/[A-Za-z0-9._:-]+$`. The
+  catalog is open — a well-formed slug the gateway serves works with no code
+  change, and an unknown-but-well-formed slug is arbitrated by the gateway at
+  submit time.
+- **Streaming is allowed for ALL models.** `outputMode: "stream"` is no longer
+  capability-gated; there is no per-model/provider streaming gate.
+
+### Removed (BREAKING)
+
+- **`provider`** option/field — routing is the managed gateway's job; there is
+  no provider selector on `SessionCreateOptions` or the wire.
+- **`apiKeys`** option and `secrets.apiKeys` — a run needs no provider API key.
+- **`Models` / `SUPPORTED_MODELS` / `SUPPORTED_MODELS_BY_PROVIDER` /
+  `MODEL_PROVIDER_IDS`** and the model→provider resolvers
+  (`resolveModelProvider`, `resolveProviderModelId`, `providerForModel`,
+  `providersForModel`, `assertModelNameMatchesProvider`, `isModelName`,
+  `parseModelName`).
+- **`Providers` / `PROVIDERS` / `DEFAULT_PROVIDER`** — the closed provider set.
+- **`STREAMABLE_SHAPES` / `StreamableShape` / `isStreamableProvider` /
+  `assertStreamableOutputMode`** — the streaming-capability machinery.
+- **`PROVIDER_PUBLIC_SUPPORT`** and the provider capability matrix (the generated
+  provider/runtime doc is now a model-access doc).
+- **OpenRouter and Doubao** are dropped from the supported set.
+
+### Added
+
+- **`parseModelSlug` / `isModelSlug` / `MODEL_SLUG_PATTERN`** — the gateway
+  model-slug validators. `ModelName` is now a `string` alias; `ProviderName` is a
+  thin `string` alias retained only for serving-provider telemetry.
+
+### Migration
+
+Replace `model: Models.CLAUDE_HAIKU_4_5, provider: Providers.ANTHROPIC,
+apiKeys: { anthropic: … }` with `model: "anthropic/claude-haiku-4-5"`. Drop every
+`provider` / `apiKeys` argument and every `--provider` / `--<provider>-api-key`
+CLI flag. Models are open gateway slugs — no key setup required.
+
 ## 0.45.0
 
 ### Added

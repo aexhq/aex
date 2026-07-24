@@ -11,7 +11,7 @@ Files, skills, custom tools, and instructions follow one lifecycle:
 3. Pass the returned immutable, version-pinned ref under `assets`.
 
 ```ts
-import { Aex, File, Instructions, Models, Skill } from "@aexhq/sdk";
+import { Aex, File, Instructions, Skill } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const [input, rules, reportWriter] = await Promise.all([
@@ -23,14 +23,13 @@ const [input, rules, reportWriter] = await Promise.all([
 ]);
 
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Use the attached material to produce a report.",
   assets: {
     files: [input],
     instructions: [rules],
     skills: [reportWriter]
   },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

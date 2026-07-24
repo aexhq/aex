@@ -10,16 +10,15 @@
   "installCommand": "npm i @aexhq/sdk",
   "examples": {
     "typescriptLines": [
-      "import { Aex, Models, Sizes } from \"@aexhq/sdk\";",
+      "import { Aex, Sizes } from \"@aexhq/sdk\";",
       "",
       "const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });",
       "",
       "const session = await aex.sessions.create({",
-      "  model: Models.CLAUDE_HAIKU_4_5,",
+      "  model: \"anthropic/claude-haiku-4-5\",",
       "  system: \"You are a concise engineering assistant.\",",
       "  runtime: { size: Sizes.CPU_0_25_1GB },",
-      "  overrides: { idleTtl: \"3m\" },",
-      "  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }",
+      "  overrides: { idleTtl: \"3m\" }",
       "});",
       "",
       "const result = await session.messages.send(\"Write a short report and save it as a file.\").finished();",
@@ -28,21 +27,11 @@
     "cliLines": [
       "aex start \\",
       "  --api-key \"$AEX_API_KEY\" \\",
-      "  --anthropic-api-key \"$ANTHROPIC_API_KEY\" \\",
-      "  --model claude-haiku-4-5 \\",
+      "  --model anthropic/claude-haiku-4-5 \\",
       "  --prompt \"Write a short report and save it as a file.\" \\",
       "  --follow"
     ]
   },
-  "providers": [
-    { "id": "anthropic", "name": "Anthropic" },
-    { "id": "deepseek", "name": "DeepSeek" },
-    { "id": "openai", "name": "OpenAI" },
-    { "id": "gemini", "name": "Gemini" },
-    { "id": "mistral", "name": "Mistral" },
-    { "id": "openrouter", "name": "OpenRouter" },
-    { "id": "doubao", "name": "Doubao" }
-  ],
   "featureAreas": [
     {
       "slug": "agent-runtime",
@@ -69,16 +58,16 @@
       "description": "Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation."
     },
     {
-      "slug": "models-and-providers",
-      "href": "/docs/features/#models-and-providers",
-      "title": "Models and providers",
-      "description": "Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao behind one submission shape."
+      "slug": "managed-model-access",
+      "href": "/docs/features/#managed-model-access",
+      "title": "Managed model access",
+      "description": "Name any model by its Vercel AI Gateway `creator/model` slug — the platform's managed key routes it. No provider selection, no provider API keys."
     },
     {
       "slug": "typed-control-surface",
       "href": "/docs/features/#typed-control-surface",
       "title": "Typed control surface",
-      "description": "Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy."
+      "description": "Strongly typed SDK inputs, CLI parity, workspace secrets, redaction, assistant text modes, and file capture policy."
     }
   ]
 }

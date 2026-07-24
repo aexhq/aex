@@ -23,12 +23,12 @@ Version-pinned skills, files, custom tools, instructions, remote MCP servers, en
 
 Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 
-## Models and providers
+## Managed model access
 
-Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao behind one submission shape.
+Name any model by its Vercel AI Gateway `creator/model` slug — the platform's managed key routes it. No provider selection, no provider API keys.
 
 ## Typed control surface
 
-Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy.
+Strongly typed SDK inputs, CLI parity, workspace secrets, redaction, assistant text modes, and file capture policy.
 
 For product boundaries and unsupported claims, see [Limits](/docs/guides/limits/).

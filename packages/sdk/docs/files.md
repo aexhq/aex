@@ -37,7 +37,6 @@ const source = await aex.workspace.files.publish(
 const session = await aex.sessions.create({
   model: "claude-haiku-4-5",
   assets: { files: [source] },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

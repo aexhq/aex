@@ -317,7 +317,6 @@ async function generateSdkReference() {
 
 async function generateLlmsFiles() {
   await mkdir(publicRoot, { recursive: true });
-  const providerNames = publicSurface.providers.map((provider) => `${provider.name} (\`${provider.id}\`)`).join(", ");
   const summary = [
     "# aex",
     "",
@@ -325,7 +324,7 @@ async function generateLlmsFiles() {
     "",
     publicSurface.description,
     "",
-    `Providers: ${providerNames}.`,
+    "Models are named by their Vercel AI Gateway `creator/model` slug and routed through the platform's managed key — no provider selection, no provider API keys.",
     "",
     "## Feature areas",
     "",

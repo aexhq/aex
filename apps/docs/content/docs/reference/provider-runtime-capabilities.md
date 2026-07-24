@@ -1,97 +1,32 @@
 ---
-title: Provider runtime capabilities
+title: Model access
 ---
 
-# Provider runtime capabilities
+# Model access
 
-Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`.
+Generated from `packages/contracts/src/models.ts`.
 
 Regenerate with `bun run capabilities:generate`; check with `bun run capabilities:check`.
 
-Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`).
+Aex routes every model through the managed Vercel AI Gateway. You name a model
+by its gateway `creator/model` **slug** and the platform's single managed key
+handles the upstream provider relationship — you never supply a provider API
+key, and there is no `provider` field.
 
-All new submissions run on the managed runtime. Public support is expressed as supported providers and supported model ids.
+## Model ids are gateway slugs
 
-## Supported models
+- A model id is a `creator/model` slug string, validated at the boundary by `parseModelSlug` against `^[a-z0-9-]+\/[A-Za-z0-9._:-]+$` (lowercase creator, then `/`, then the model segment).
+- Examples: `anthropic/claude-haiku-4-5`, `anthropic/claude-sonnet-4-6`, `deepseek/deepseek-v4-flash`, `openai/gpt-4.1`, `google/gemini-2.5-flash`.
+- The catalog is OPEN: adding a model the gateway serves needs zero code — a well-formed slug just works. A slug this SDK does not recognize is still accepted at the boundary and arbitrated by the gateway at submit time; a truly unknown model fails there.
 
-| Provider | Selector | Supported models | Docs | Evidence |
-| --- | --- | --- | --- | --- |
-| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts) |
-| [DeepSeek](#deepseek) | `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
-| [OpenAI](#openai) | `openai` | `gpt-4.1`, `gpt-4o-mini` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| [Gemini](#gemini) | `gemini` | `gemini-2.5-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| [Mistral](#mistral) | `mistral` | `mistral-large-latest`, `mistral-small-latest` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| [OpenRouter](#openrouter) | `openrouter` | `gpt-4o-mini`, `gpt-4o`, `gemini-2.0-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| [Doubao](#doubao) | `doubao` | `doubao-seed-pro`, `doubao-seed-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+## Streaming
 
-## Managed evidence
-
-| Provider | Enforcement path | Evidence |
-| --- | --- | --- |
-| `anthropic` | submission parser + managed execution | [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts) |
-| `deepseek` | submission parser + managed execution | [Installed-SDK DeepSeek live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
-| `openai` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `gemini` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `mistral` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `openrouter` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `doubao` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+`outputMode: "stream"` is honored for ALL models — every model streams through the gateway. There is no per-model streaming-capability gate.
 
 ## Skills
 
 Skills are supplied through the top-level `skills` option. Build one with `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles`, `Skill.fromContent`, or `Skill.fromBytes`; each normalizes to a named workspace skill that the platform snapshots into durable session asset storage.
 
-Notes:
+## Runtime selection is independent of model
 
-- Supported models are the public SDK model ids accepted for each provider.
-- Runtime selection is independent of provider/model selection: `runtime.kind` accepts `container`, `spot_container`, or `lambda`; `runtime.size` accepts the managed size presets.
-
-## Provider anchors
-
-### Anthropic
-
-- Wire provider: `anthropic`
-- Supported models: `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts)
-
-### DeepSeek
-
-- Wire provider: `deepseek`
-- Supported models: `deepseek-v4-flash`, `deepseek-v4-pro`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts)
-
-### OpenAI
-
-- Wire provider: `openai`
-- Supported models: `gpt-4.1`, `gpt-4o-mini`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
-
-### Gemini
-
-- Wire provider: `gemini`
-- Supported models: `gemini-2.5-flash`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
-
-### Mistral
-
-- Wire provider: `mistral`
-- Supported models: `mistral-large-latest`, `mistral-small-latest`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
-
-### OpenRouter
-
-- Wire provider: `openrouter`
-- Supported models: `gpt-4o-mini`, `gpt-4o`, `gemini-2.0-flash`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
-
-### Doubao
-
-- Wire provider: `doubao`
-- Supported models: `doubao-seed-pro`, `doubao-seed-flash`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
+Runtime selection is independent of the model: `runtime.kind` accepts `container`, `spot_container`, or `lambda`; `runtime.size` accepts the managed size presets.

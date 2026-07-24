@@ -10,7 +10,7 @@ one-shot `aex.start(...)` accepts the same fields plus `message`,
 
 Core fields include:
 
-- `model` and optional `provider`
+- `model` — a Vercel AI Gateway `creator/model` slug (no `provider` field)
 - `system`
 - immutable workspace refs grouped under `assets`
 - `builtinTools`
@@ -19,15 +19,14 @@ Core fields include:
 - `fileCapture`
 - `runtime`, `metadata`, and `overrides`
 - `outputMode`, `responseFormat`, `approvalGate`, and `webhook`
-- `apiKeys` and `idempotencyKey`
+- `idempotencyKey`
 
-Secrets are never part of a reusable JSON config. Supply provider credentials
-through `apiKeys` and runtime secrets through `environment.secrets` at the call
-site.
+Secrets are never part of a reusable JSON config. Model access needs no provider
+key; supply runtime secrets through `environment.secrets` at the call site.
 
 ```ts
 const base = {
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   system: "You are a concise automation agent.",
   builtinTools: "default" as const,
   overrides: { idleTtl: "3m", timeout: "30m", maxTurns: 20 }
@@ -36,7 +35,6 @@ const base = {
 const session = await aex.sessions.create({
   ...base,
   assets: { files: [input], instructions: [rules] },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

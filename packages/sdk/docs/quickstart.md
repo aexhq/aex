@@ -10,11 +10,11 @@ title: Quickstart
 npm i @aexhq/sdk
 ```
 
-Set an aex workspace key and the BYOK key for your model:
+Set an aex workspace key. Model access needs no provider key — the managed
+gateway routes every model:
 
 ```bash
 export AEX_API_KEY="<your-aex-api-key>"
-export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
 The workspace key needs `sessions:read`, `sessions:write`, and `files:read` for
@@ -24,14 +24,13 @@ billing-account resources.
 ## Run a session
 
 ```ts
-import { Aex, Models, Sizes } from "@aexhq/sdk";
+import { Aex, Sizes } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
 const session = await aex.sessions.create({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   system: "You are a concise engineering assistant.",
   runtime: Sizes.CPU_0_25_1GB,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
 const run = session.messages.send("Write a short report and save it as a file.");
@@ -76,10 +75,9 @@ const source = await aex.workspace.files.publish(
 );
 
 const withInput = await aex.sessions.create({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   assets: { files: [source] },
   builtinTools: "default",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -111,9 +109,8 @@ Session file IDs are meaningful only with their checkpoint. File objects carry
 
 ```ts
 const result = await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Summarize this repository.",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
 console.log(result.sessionId, result.status, result.text);
@@ -124,8 +121,7 @@ The bundled CLI provides the same one-shot workflow:
 ```bash
 npx aex start \
   --api-key "$AEX_API_KEY" \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --model claude-haiku-4-5 \
+  --model anthropic/claude-haiku-4-5 \
   --prompt "Write a short report and save it as a file." \
   --follow
 ```

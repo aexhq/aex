@@ -1,20 +1,22 @@
 ---
-title: Providers & runtimes
-description: How provider selection maps to managed runtime execution.
+title: Models & runtimes
+description: How gateway model slugs map to managed runtime execution.
 icon: Network
 ---
 
-aex exposes one submission shape across supported providers:
+aex routes every model through the managed Vercel AI Gateway. You name a model
+by its gateway `creator/model` **slug** and the platform's single managed key
+handles the upstream provider relationship — there is no `provider` selector and
+you never supply a provider API key.
 
-| Provider | Selector |
-| --- | --- |
-| Anthropic | `Providers.ANTHROPIC` |
-| DeepSeek | `Providers.DEEPSEEK` |
-| OpenAI | `Providers.OPENAI` |
-| Gemini | `Providers.GEMINI` |
-| Mistral | `Providers.MISTRAL` |
-| OpenRouter | `Providers.OPENROUTER` |
-| Doubao | `Providers.DOUBAO` |
+```ts
+model: "anthropic/claude-haiku-4-5"   // creator/model gateway slug
+```
+
+The slug is validated at the boundary by `parseModelSlug` (shape only). The
+catalog is OPEN: a well-formed slug the gateway serves just works with zero code
+changes; a slug this SDK does not recognize is still accepted and arbitrated by
+the gateway at submit time.
 
 All submissions run on a managed runtime. The optional `runtime` object has two
 independent selectors:
@@ -46,7 +48,7 @@ without yet appearing in your workspace's available set.
 ### TypeScript
 
 ```ts
-import { Models, Providers, RuntimeKinds, Sizes } from "@aexhq/sdk";
+import { RuntimeKinds, Sizes } from "@aexhq/sdk";
 
 const capabilities = (await aex.whoami()).runtimeCapabilities;
 if (!capabilities?.availableRuntimeKinds.includes(RuntimeKinds.LAMBDA)) {
@@ -54,14 +56,12 @@ if (!capabilities?.availableRuntimeKinds.includes(RuntimeKinds.LAMBDA)) {
 }
 
 await aex.start({
-  provider: Providers.OPENAI,
-  model: Models.GPT_4_1,
+  model: "openai/gpt-4.1",
   message: "Summarise the attached files.",
   runtime: {
     kind: RuntimeKinds.LAMBDA,
     size: Sizes.CPU_0_25_1GB
-  },
-  apiKeys: { openai: process.env.OPENAI_API_KEY! }
+  }
 });
 ```
 
@@ -70,9 +70,7 @@ await aex.start({
 ```bash
 aex start \
   --api-key "$AEX_API_KEY" \
-  --provider openai \
-  --openai-api-key "$OPENAI_API_KEY" \
-  --model gpt-4.1 \
+  --model openai/gpt-4.1 \
   --runtime lambda \
   --runtime-size 0.25cpu-1gb \
   --prompt "Summarise the attached files." \
@@ -80,6 +78,5 @@ aex start \
 ```
 
 Events, files, streaming/replay, controls, cleanup, and downloads use the same
-SDK and CLI surface for every runtime and provider. For the exact supported
-model list, use the generated
-[provider/runtime capability matrix](../provider-runtime-capabilities.md).
+SDK and CLI surface for every runtime and model. For the model-access contract,
+see the generated [model access reference](../provider-runtime-capabilities.md).

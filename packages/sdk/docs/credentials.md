@@ -7,9 +7,12 @@ title: Credentials
 aex uses explicit, per-session credentials:
 
 - `AEX_API_KEY` authenticates the SDK or CLI to aex.
-- `apiKeys` carries BYOK provider keys for the model provider.
 - `McpServer.remote(..., { headers })` carries MCP auth when a remote MCP server needs it.
 - `environment.secrets` carries runtime secrets for your own code.
+
+Model access needs **no** provider API key: aex routes every model through the
+managed Vercel AI Gateway with its own key. You name a model by its
+`creator/model` gateway slug and nothing else.
 
 Secrets never belong in reusable session config, files, prompts, or examples.
 
@@ -29,23 +32,18 @@ const aex = new Aex(process.env.AEX_API_KEY!);          // preferred shorthand
 See [Authentication](authentication.md) for how keys are scoped, rotated, and
 issued during the beta.
 
-## Provider keys
+## Choosing a model
 
-A session selects one upstream provider and must carry a BYOK key for it. Include
-additional provider keys only when subagents may use those providers.
+Name the model by its Vercel AI Gateway `creator/model` slug. There is no
+`provider` field and no provider key — the platform's managed gateway key routes
+the call.
 
 ```ts
 const result = await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Write a short report and save it as a file.",
-  apiKeys: {
-    anthropic: process.env.ANTHROPIC_API_KEY!
-  }
 });
 ```
-
-Provider keys are used by the managed runtime for model calls. They are not saved
-as client defaults.
 
 ## Runtime secrets
 
@@ -54,12 +52,12 @@ can be ephemeral with `Secret.value(...)` or a workspace secret reference with
 `Secret.ref(...)`.
 
 ```ts
-import { Aex, Models, Secret } from "@aexhq/sdk";
+import { Aex, Secret } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Call https://api.example.com/v1/status with INTERNAL_API_TOKEN and summarize it.",
   environment: {
     secrets: {
@@ -70,7 +68,6 @@ await aex.start({
       allowedHosts: ["api.example.com"]
     }
   },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -93,14 +90,13 @@ await aex.workspace.secrets.set({
 });
 
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
+  model: "anthropic/claude-haiku-4-5",
   message: "Use INTERNAL_API_TOKEN for the status request.",
   environment: {
     secrets: {
       INTERNAL_API_TOKEN: Secret.ref("internal-api-token")
     }
   },
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -116,5 +112,5 @@ the two-layer enforcement model.
 ## Explicit call-site rule
 
 There is no `defaultSecrets` and no client-held secret state. Each
-`aex.sessions.create(...)` or `aex.start(...)` call should show the provider
-keys, MCP auth, and runtime secrets needed for that call.
+`aex.sessions.create(...)` or `aex.start(...)` call should show the MCP auth and
+runtime secrets needed for that call.
