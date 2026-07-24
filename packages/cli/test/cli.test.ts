@@ -104,18 +104,15 @@ describe("aex --help", () => {
   });
 });
 
-describe("aex start provider inference (SDK parity)", () => {
-  it("infers the provider from a single-provider model instead of demanding the anthropic key", async () => {
-    // Session creation resolves `provider ?? providersForModel(model)[0] ?? default`;
-    // the CLI (which advertises 1:1 SDK parity) jumped straight to the anthropic
-    // default, so `aex start --model deepseek-v4-flash --deepseek-api-key K` failed
-    // with "--anthropic-api-key is required". Live-observed on dev.
+describe("aex start managed gateway model (SDK parity)", () => {
+  it("submits a gateway model slug with no provider selector and no key", async () => {
+    // Managed keys: the customer names a `creator/model` slug and the platform
+    // routes it — no provider inference, no per-provider key.
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "deepseek-v4-flash",
+        "--model", "deepseek/deepseek-v4-flash",
         "--prompt", "hi",
-        "--deepseek-api-key", "dsk-test",
         "--api-key", "tok",
         "--aex-url", "https://api.test"
       ],
@@ -123,27 +120,28 @@ describe("aex start provider inference (SDK parity)", () => {
         new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } })
     });
     await executeCli(cap.io);
-    expect(cap.stderr).not.toContain("--anthropic-api-key is required");
     expect(cap.fetchCalls.length).toBeGreaterThan(0);
     const body = JSON.parse(String(cap.fetchCalls[0]!.init?.body ?? "{}")) as Record<string, unknown>;
-    const provider = body["provider"] ?? (body["submission"] as Record<string, unknown> | undefined)?.["provider"];
-    expect(provider).toBe("deepseek");
+    expect(body).not.toHaveProperty("provider");
+    const submission = body["submission"] as Record<string, unknown> | undefined;
+    expect(submission?.["model"]).toBe("deepseek/deepseek-v4-flash");
+    expect(submission).not.toHaveProperty("provider");
   });
 
-  it("still requires the matching key for an explicitly selected provider", async () => {
+  it("rejects a bare (non-slug) model id at the boundary", async () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--provider", "deepseek",
-        "--model", "deepseek-v4-flash",
+        "--model", "not-a-slug",
         "--prompt", "hi",
         "--api-key", "tok",
         "--aex-url", "https://api.test"
       ]
     });
     await executeCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("aex start --deepseek-api-key: is required");
+    expect(cap.exitCode).not.toBe(0);
+    expect(cap.stderr).toContain("--model");
+    expect(cap.fetchCalls.length).toBe(0);
   });
 });
 

@@ -2,7 +2,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
-import { PROVIDERS } from "@aexhq/contracts";
 import {
   collectRepeated,
   collectRepeatedKv,
@@ -13,11 +12,8 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const hostSource = resolve(here, "../src/host");
-const PROVIDER_KEY_FLAGS = PROVIDERS.map((provider) => `--${provider}-api-key`);
 
 const SINGLE_VALUE_FLAGS = [
-  "--provider",
-  ...PROVIDER_KEY_FLAGS,
   "--idempotency-key",
   "--webhook",
   "--runtime-size",
@@ -221,10 +217,9 @@ describe("value-parser ownership", () => {
       ...literalFlagArguments(source, "takeOptionFlag"),
       ...literalSingleFlagArguments(startSource, "option")
     ])).toEqual(
-      sortedUnique(SINGLE_VALUE_FLAGS.filter((flag) => !PROVIDER_KEY_FLAGS.includes(flag)))
+      sortedUnique(SINGLE_VALUE_FLAGS)
     );
     expect(startSource).toContain("takeOptionFlag(state.rest, flag)");
-    expect(startSource).toContain("option(`--${provider}-api-key`)");
     expect(sortedUnique([
       ...literalFlagArguments(source, "collectRepeated"),
       ...literalSingleFlagArguments(startSource, "repeated")

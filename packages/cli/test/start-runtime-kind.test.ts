@@ -30,9 +30,8 @@ describe("aex start --runtime", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-1",
         "--runtime", "spot_container",
         ...COMMON
       ],
@@ -48,9 +47,8 @@ describe("aex start --runtime", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-1",
         ...COMMON
       ],
       fetchHandler: runSubmitHandler
@@ -64,9 +62,8 @@ describe("aex start --runtime", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-1",
         "--runtime", "fargate",
         ...COMMON
       ]

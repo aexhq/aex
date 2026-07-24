@@ -33,9 +33,8 @@ describe("aex start --session-timeout floor (T6d — SSoT parser, sync reject)",
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-1",
         "--session-timeout", "30s",
         ...COMMON
       ]
@@ -53,9 +52,8 @@ describe("aex start --session-timeout floor (T6d — SSoT parser, sync reject)",
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-1",
         "--session-timeout", "2h",
         ...COMMON
       ],

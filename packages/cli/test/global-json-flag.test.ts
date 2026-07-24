@@ -10,7 +10,7 @@ import { extractGlobalFlags, prepareHostCommand } from "../src/host/common.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const hostSource = resolve(here, "../src/host");
 
-const DISCOVERY_VERBS = ["models", "providers", "tools", "runtime-sizes"] as const;
+const DISCOVERY_VERBS = ["tools", "runtime-sizes"] as const;
 const DATA_VERBS = [
   "start", "status", "deliveries", "wait", "events", "tail", "inspect", "files",
   "download", "cancel", "delete", "delete-asset", "sessions", "whoami", "billing", "webhooks"

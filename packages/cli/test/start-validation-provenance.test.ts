@@ -1,15 +1,13 @@
 import { resolve as resolvePath } from "node:path";
 import { describe, expect, it } from "bun:test";
-import { PROVIDERS } from "@aexhq/contracts";
 import { executeCli } from "../src/main.js";
 import { makeIo } from "./support.js";
 
 const COMMON = ["--api-key", "token", "--aex-url", "https://api.example.test"];
 const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 const VALID_START = [
-  "--model", "claude-haiku-4-5",
-  "--prompt", "hello",
-  "--anthropic-api-key", "provider-key"
+  "--model", "anthropic/claude-haiku-4-5",
+  "--prompt", "hello"
 ] as const;
 
 interface ValidationCase {
@@ -35,17 +33,15 @@ const cases: readonly ValidationCase[] = [
   },
   {
     label: "parse",
-    argv: ["--provider", "anthropicc", ...VALID_START],
+    argv: ["--runtime", "fargate", ...VALID_START],
     exitCode: 2,
     code: null,
-    flag: "--provider",
-    message:
-      `aex start --provider: must be one of: ${PROVIDERS.join(", ")} (got: anthropicc); ` +
-      'did you mean "anthropic"?'
+    flag: "--runtime",
+    message: "aex start --runtime: must be one of: container, spot_container, lambda"
   },
   {
     label: "config",
-    argv: ["--prompt", "hello", "--anthropic-api-key", "provider-key"],
+    argv: ["--prompt", "hello"],
     exitCode: 2,
     code: null,
     flag: "--model",
@@ -104,7 +100,6 @@ describe("aex start validation provenance", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--provider", "anthropicc",
         "--runtime", "fargate",
         "--session-timeout", "1s",
         "--skill", "@missing.md",
@@ -116,7 +111,7 @@ describe("aex start validation provenance", () => {
 
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toBe(
-      `aex start --provider: must be one of: ${PROVIDERS.join(", ")} (got: anthropicc); did you mean "anthropic"?\n`
+      "aex start --runtime: must be one of: container, spot_container, lambda\n"
     );
     expect(cap.calls).toHaveLength(0);
   });

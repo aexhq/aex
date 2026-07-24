@@ -92,7 +92,7 @@ describe("CLI host-auth resolver ownership", () => {
       ["keys", "control"]
     ]);
     const authOnly = new Set(["login", "logout", "auth"]);
-    const unauthenticated = new Set(["models", "providers", "tools", "runtime-sizes"]);
+    const unauthenticated = new Set(["tools", "runtime-sizes"]);
 
     expect([...dispatch.keys()].sort()).toEqual(CLI_VERBS.map((verb) => verb.name).sort());
     expect([...authenticated.values()].filter((policy) => policy === "data")).toHaveLength(17);

@@ -7,7 +7,7 @@ import { resolveStartConfig } from "../src/host/start-config.js";
 import { buildStartAttachments } from "../src/host/start-attachments.js";
 import { buildStartSubmission } from "../src/host/start-submission.js";
 
-const MODEL = "claude-haiku-4-5";
+const MODEL = "anthropic/claude-haiku-4-5";
 const SKILL = "---\nname: staged-skill\ndescription: staged skill\n---\nUse stages.\n";
 
 function parseOk(argv: readonly string[]) {
@@ -93,14 +93,6 @@ describe("start stage ownership", () => {
 
 describe("start-specific parser", () => {
   it.each([
-    ["--provider", "anthropic"],
-    ["--anthropic-api-key", "secret"],
-    ["--openai-api-key", "secret"],
-    ["--deepseek-api-key", "secret"],
-    ["--gemini-api-key", "secret"],
-    ["--mistral-api-key", "secret"],
-    ["--openrouter-api-key", "secret"],
-    ["--doubao-api-key", "secret"],
     ["--idempotency-key", "idem"],
     ["--webhook", "https://hooks.example.test/aex"],
     ["--runtime-size", "0.25cpu-1gb"],
@@ -137,8 +129,6 @@ describe("start-specific parser", () => {
 
   it("preserves every duplicate-precedence family", () => {
     const parsed = parseOk([
-      "--provider=anthropic", "--provider", "deepseek",
-      "--deepseek-api-key=first", "--deepseek-api-key", "last",
       "--model=first-model", "--model", "last-model",
       "--prompt=one", "--prompt", "two",
       "--mcp=docs=https://first.example", "--mcp", "docs=https://last.example",
@@ -148,8 +138,6 @@ describe("start-specific parser", () => {
     ]);
 
     expect(parsed).toMatchObject({
-      explicitProvider: "deepseek",
-      providerApiKeys: { deepseek: "last" },
       model: "last-model",
       prompts: ["one", "two"],
       mcpEntries: { docs: "https://last.example" },
@@ -160,8 +148,6 @@ describe("start-specific parser", () => {
   });
 
   it.each([
-    ["--provider"],
-    ["--anthropic-api-key"],
     ["--idempotency-key"],
     ["--webhook"],
     ["--runtime-size"],
@@ -192,7 +178,6 @@ describe("start-specific parser", () => {
   });
 
   it.each([
-    [["--provider", "anthropc"], "aex start --provider: must be one of:"],
     [["--runtime-size", "tiny"], "aex start --runtime-size: must be one of:"],
     [["--runtime", "fargate"], "aex start --runtime: must be one of:"],
     [["--session-timeout", "1s"], "aex start --session-timeout:"],
@@ -207,7 +192,7 @@ describe("start-specific parser", () => {
 });
 
 describe("start config, attachment, and submission stages", () => {
-  it("reads all prompt files before the system file, then resolves provider and MCP headers", async () => {
+  it("reads all prompt files before the system file, then resolves the model and MCP headers", async () => {
     const reads: string[] = [];
     const io = makeIo(async (path) => {
       reads.push(path.replaceAll("\\", "/").split("/").at(-1)!);
@@ -218,9 +203,7 @@ describe("start config, attachment, and submission stages", () => {
       "--prompt", "@p1.txt", "--prompt=@p2.txt",
       "--system", "@system.txt",
       "--mcp", "docs=https://mcp.example.test",
-      "--mcp-auth", "docs=Authorization:Bearer token",
-      "--anthropic-api-key", "secret"
-    ]);
+      "--mcp-auth", "docs=Authorization:Bearer token",]);
 
     const resolved = await resolveStartConfig(io, args);
 
@@ -228,7 +211,6 @@ describe("start config, attachment, and submission stages", () => {
       ok: true,
       value: {
         model: MODEL,
-        provider: "anthropic",
         message: ["one", "two"],
         system: "system",
         mcpServers: [{
@@ -241,24 +223,18 @@ describe("start config, attachment, and submission stages", () => {
     expect(reads).toEqual(["p1.txt", "p2.txt", "system.txt"]);
   });
 
-  it("preserves config XOR, load, provider-key, and MCP diagnostics", async () => {
+  it("preserves config XOR, load, and MCP diagnostics", async () => {
     const noReads = makeIo(() => {
       throw new Error("unexpected read");
     });
     await expect(resolveStartConfig(noReads, parseOk([
-      "--config", "config.json", "--model", MODEL, "--anthropic-api-key", "secret"
+      "--config", "config.json", "--model", MODEL
     ]))).resolves.toEqual({
       ok: false,
       error: "aex start --config: cannot be combined with --model/--system/--prompt/--mcp/--metadata"
     });
     await expect(resolveStartConfig(noReads, parseOk([
-      "--model", MODEL, "--prompt", "hello"
-    ]))).resolves.toEqual({
-      ok: false,
-      error: expect.stringContaining("aex start --anthropic-api-key: is required")
-    });
-    await expect(resolveStartConfig(noReads, parseOk([
-      "--model", MODEL, "--prompt", "hello", "--anthropic-api-key", "secret",
+      "--model", MODEL, "--prompt", "hello",
       "--mcp-auth", "missing=Authorization:token"
     ]))).resolves.toEqual({
       ok: false,
@@ -308,9 +284,7 @@ describe("start config, attachment, and submission stages", () => {
     const io = makeIo(() => config);
     const args = parseOk([
       "--config", "config.json",
-      "--runtime-size=", "--session-timeout=",
-      "--anthropic-api-key", "secret"
-    ]);
+      "--runtime-size=", "--session-timeout=",]);
     const resolved = await resolveStartConfig(io, args);
     if (!resolved.ok) throw new Error(resolved.error);
     const options = buildStartSubmission(args, resolved.value, {

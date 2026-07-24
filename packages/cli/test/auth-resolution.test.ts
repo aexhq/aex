@@ -175,10 +175,8 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
-        "--prompt", "auth regression",
-        "--anthropic-api-key", "provider-secret"
-      ],
+        "--model", "anthropic/claude-haiku-4-5",
+        "--prompt", "auth regression",],
       stored: { schemaVersion: 1, apiKey: "stored-tok", aexUrl: "https://stored.example" },
       fetchHandler: (url) => url.endsWith("/api/sessions")
         ? new Response(JSON.stringify({

@@ -1,7 +1,9 @@
 /**
- * DX2: `aex models|providers|tools|runtime-sizes list` — pure reads of the
- * contracts SSoT. No token, no network; human table by default, raw array under
- * `--json`.
+ * DX2: `aex tools|runtime-sizes list` — pure reads of the contracts SSoT. No
+ * token, no network; human table by default, raw array under `--json`.
+ *
+ * There is no `models`/`providers` list any more: model ids are open Vercel AI
+ * Gateway `creator/model` slugs, not a closed set the CLI can enumerate offline.
  */
 import { describe, expect, it } from "bun:test";
 import { executeCli } from "../src/main.js";
@@ -41,45 +43,19 @@ function makeIo(argv: readonly string[]): {
   };
 }
 
-describe("aex models list", () => {
-  it("prints a human table with a known model + its default provider", async () => {
+describe("aex models/providers verbs are removed", () => {
+  it("treats `aex models` as an unknown subcommand", async () => {
     const cap = makeIo(["models", "list"]);
     await executeCli(cap.io);
-    expect(cap.exit()).toBe(0);
-    expect(cap.out()).toContain("MODEL");
-    expect(cap.out()).toContain("claude-sonnet-4-6");
-    expect(cap.out()).toContain("anthropic");
+    expect(cap.exit()).toBe(2);
     expect(cap.fetchCount()).toBe(0);
   });
 
-  it("emits a JSON array under --json with the expected shape", async () => {
-    const cap = makeIo(["models", "list", "--json"]);
+  it("treats `aex providers` as an unknown subcommand", async () => {
+    const cap = makeIo(["providers", "list"]);
     await executeCli(cap.io);
-    expect(cap.exit()).toBe(0);
-    const arr = JSON.parse(cap.out().trim()) as Array<{ model: string; defaultProvider: string | null; providers: string[] }>;
-    const haiku = arr.find((e) => e.model === "claude-haiku-4-5");
-    expect(haiku).toBeDefined();
-    expect(haiku!.defaultProvider).toBe("anthropic");
-    expect(haiku!.providers).toContain("anthropic");
-  });
-
-  it("works without the explicit `list` subcommand", async () => {
-    const cap = makeIo(["models"]);
-    await executeCli(cap.io);
-    expect(cap.exit()).toBe(0);
-    expect(cap.out()).toContain("claude-haiku-4-5");
-  });
-});
-
-describe("aex providers list", () => {
-  it("lists providers with their display name + models", async () => {
-    const cap = makeIo(["providers", "list", "--json"]);
-    await executeCli(cap.io);
-    expect(cap.exit()).toBe(0);
-    const arr = JSON.parse(cap.out().trim()) as Array<{ provider: string; displayName: string; models: string[] }>;
-    const anthropic = arr.find((e) => e.provider === "anthropic");
-    expect(anthropic!.displayName).toBe("Anthropic");
-    expect(anthropic!.models.length).toBeGreaterThan(0);
+    expect(cap.exit()).toBe(2);
+    expect(cap.fetchCount()).toBe(0);
   });
 });
 

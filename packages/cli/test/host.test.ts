@@ -767,7 +767,7 @@ function sessionStartHandler(sessionId: string, status = "running"): (call: Fetc
 describe("aex start", () => {
   it("opens a session from --config, sends the prompt as the first turn, prints the session record", async () => {
     const runConfig = {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       system: "be helpful",
       prompt: ["hi"],
       mcpServers: [
@@ -783,8 +783,6 @@ describe("aex start", () => {
         "start",
         "--config",
         "/abs/session.json",
-        "--anthropic-api-key",
-        "sk-ant-1",
         "--idempotency-key",
         "idem-deterministic",
         ...COMMON
@@ -811,7 +809,7 @@ describe("aex start", () => {
     expect("postHook" in createBody).toBe(false);
     expect(createBody.retention).toEqual({ idleTtl: "3m" });
     const submission = createBody.submission as Record<string, unknown>;
-    expect(submission.model).toBe("claude-haiku-4-5");
+    expect(submission.model).toBe("anthropic/claude-haiku-4-5");
     // the prompt is NOT part of the create submission — it rides the create `input`.
     expect("prompt" in submission).toBe(false);
     expect(submission.assets).toEqual({ files: [], skills: [], tools: [], instructions: [] });
@@ -820,7 +818,8 @@ describe("aex start", () => {
       { name: "github", url: "https://example.com/mcp" }
     ]);
     const secrets = createBody.secrets as Record<string, unknown>;
-    expect(secrets.apiKeys).toEqual({ anthropic: "sk-ant-1" });
+    // Managed keys: no provider apiKeys ride the wire.
+    expect(secrets).not.toHaveProperty("apiKeys");
     expect(secrets.mcpServers).toEqual([
       {
         name: "github",
@@ -839,15 +838,13 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "hello",
         "--mcp",
         "github=https://example.com/mcp",
         "--mcp-auth",
         "github=Authorization:Bearer t",
-        "--anthropic-api-key",
-        "sk-ant-2",
         "--idempotency-key",
         "idem-flat",
         ...COMMON
@@ -882,11 +879,9 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "hello",
-        "--anthropic-api-key",
-        "sk-ant-2",
         "--idempotency-key",
         "idem-retry",
         ...COMMON
@@ -927,18 +922,14 @@ describe("aex start", () => {
     expect(cap.calls[2]!.url).toBe("https://dash.example/api/sessions/sess-retry/messages");
   });
 
-  it("opens DeepSeek sessions with --provider deepseek and --deepseek-api-key", async () => {
+  it("opens a DeepSeek session from its gateway slug with no provider selector or key", async () => {
     const cap = makeHostIo({
       argv: [
         "start",
-        "--provider",
-        "deepseek",
         "--model",
-        "deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash",
         "--prompt",
         "hello",
-        "--deepseek-api-key",
-        "sk-ds-1",
         "--idempotency-key",
         "idem-ds",
         ...COMMON
@@ -948,8 +939,9 @@ describe("aex start", () => {
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
-    expect(body.provider).toBe("deepseek");
-    expect(body.secrets).toEqual({ apiKeys: { deepseek: "sk-ds-1" } });
+    expect(body).not.toHaveProperty("provider");
+    expect(body.secrets).toEqual({});
+    expect((body.submission as Record<string, unknown>).model).toBe("deepseek/deepseek-v4-flash");
   });
 
   it("threads --webhook into the request body as webhook.url", async () => {
@@ -957,13 +949,11 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "hello",
         "--webhook",
         "https://hooks.example.com/aex",
-        "--anthropic-api-key",
-        "sk-ant-1",
         "--idempotency-key",
         "idem-webhook",
         ...COMMON
@@ -976,13 +966,15 @@ describe("aex start", () => {
     expect(body.webhook).toEqual({ url: "https://hooks.example.com/aex" });
   });
 
-  it("rejects when --anthropic-api-key is missing", async () => {
+  it("opens a session from a model slug alone (managed keys — no provider key)", async () => {
     const cap = makeHostIo({
-      argv: ["start", "--model", "claude-haiku-4-5", "--prompt", "p", ...COMMON]
+      argv: ["start", "--model", "anthropic/claude-haiku-4-5", "--prompt", "p", ...COMMON],
+      fetchHandler: sessionStartHandler("sess-managed")
     });
     await executeCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--anthropic-api-key");
+    expect(cap.exitCode).toBe(0);
+    const body = cap.calls[0]!.body as Record<string, unknown>;
+    expect(body.secrets).toEqual({});
   });
 
   it("rejects removed proxy endpoint flags", async () => {
@@ -997,11 +989,9 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "x",
-        "--anthropic-api-key",
-        "sk-ant-1",
         "--proxy-endpoint",
         JSON.stringify(endpoint),
         "--proxy-auth",
@@ -1021,11 +1011,9 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "x",
-        "--anthropic-api-key",
-        "sk-ant-1",
         "--proxy-auth",
         "stripe=basic:u:p",
         ...COMMON
@@ -1041,15 +1029,13 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "x",
         "--mcp",
         "github=https://example.com/mcp",
         "--mcp-auth",
         "gitlab=Authorization:Bearer t",
-        "--anthropic-api-key",
-        "sk-ant-1",
         ...COMMON
       ]
     });
@@ -1063,7 +1049,7 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "x",
         "--mcp",
@@ -1072,8 +1058,6 @@ describe("aex start", () => {
         "github=Authorization:Bearer t",
         "--mcp-auth",
         "github=X-Trace-Id:abc-123",
-        "--anthropic-api-key",
-        "sk-ant-1",
         ...COMMON
       ],
       fetchHandler: sessionStartHandler("sess-merge")
@@ -1096,7 +1080,7 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "x",
         "--mcp",
@@ -1105,8 +1089,6 @@ describe("aex start", () => {
         "github=Authorization:Bearer t1",
         "--mcp-auth",
         "github=Authorization:Bearer t2",
-        "--anthropic-api-key",
-        "sk-ant-1",
         ...COMMON
       ]
     });
@@ -1117,7 +1099,7 @@ describe("aex start", () => {
 
   it("rejects positional arguments (no session-config positional)", async () => {
     const cap = makeHostIo({
-      argv: ["start", "/some/session.json", "--anthropic-api-key", "x", ...COMMON]
+      argv: ["start", "/some/session.json", ...COMMON]
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
@@ -1129,11 +1111,9 @@ describe("aex start", () => {
       argv: [
         "start",
         "--model",
-        "claude-haiku-4-5",
+        "anthropic/claude-haiku-4-5",
         "--prompt",
         "@@alice please look at this",
-        "--anthropic-api-key",
-        "sk-ant-1",
         ...COMMON
       ],
       fetchHandler: sessionStartHandler("sess-esc")

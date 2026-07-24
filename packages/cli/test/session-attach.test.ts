@@ -80,10 +80,9 @@ describe("aex start workspace resource flags", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
         "--file", "@binary.dat",
-        "--anthropic-api-key", "sk-ant-1",
         ...COMMON
       ],
       binaryFiles: { [abs("binary.dat")]: original },
@@ -106,13 +105,12 @@ describe("aex start workspace resource flags", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
         "--skill", "@s.md",
         "--tool", "@t.js",
         "--instructions", "@a.md",
         "--file", "@f.txt",
-        "--anthropic-api-key", "sk-ant-1",
         ...COMMON
       ],
       files: {
@@ -157,10 +155,9 @@ describe("aex start workspace resource flags", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
         "--file", "@missing.txt",
-        "--anthropic-api-key", "sk-ant-1",
         ...COMMON
       ]
     });

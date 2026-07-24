@@ -28,14 +28,12 @@ function runSubmitHandler(call: { readonly url: string; readonly init: RequestIn
   });
 }
 
-describe("aex start model policy (T6c/T6g — SDK arbitrates, no SUPPORTED_MODELS gate)", () => {
-  it("accepts a forward-compat unknown model when --provider is explicit", async () => {
+describe("aex start model policy (gateway slugs — server arbitrates, no closed catalog)", () => {
+  it("forwards a well-formed but unknown model slug to the server", async () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "future-model-x",
-        "--provider", "deepseek",
-        "--deepseek-api-key", "sk-ds-1",
+        "--model", "newvendor/future-model-x",
         "--prompt", "hi",
         ...COMMON
       ],
@@ -45,23 +43,22 @@ describe("aex start model policy (T6c/T6g — SDK arbitrates, no SUPPORTED_MODEL
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(2);
     const body = cap.calls[0]!.body as { provider?: string; submission?: { model?: string } };
-    expect(body.provider).toBe("deepseek");
-    expect(body.submission?.model).toBe("future-model-x");
+    expect(body.provider).toBeUndefined();
+    expect(body.submission?.model).toBe("newvendor/future-model-x");
   });
 
-  it("emits a shared did-you-mean hint for a typo'd known model (no --provider)", async () => {
+  it("rejects a bare (non-slug) model id at the boundary with no network call", async () => {
     const cap = makeIo({
       argv: [
         "start",
         "--model", "deepseek-v4-flsh",
-        "--deepseek-api-key", "sk-ds-1",
         "--prompt", "hi",
         ...COMMON
       ]
     });
     await executeCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain('did you mean "deepseek-v4-flash"');
+    expect(cap.exitCode).not.toBe(0);
+    expect(cap.stderr).toContain("--model");
     expect(cap.calls).toHaveLength(0);
   });
 });

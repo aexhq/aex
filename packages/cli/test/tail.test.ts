@@ -376,9 +376,8 @@ describe("aex start --follow", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-test",
         "--follow",
         ...COMMON
       ],
@@ -399,9 +398,8 @@ describe("aex start --follow", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-test",
         "--follow",
         ...COMMON
       ],
@@ -433,9 +431,8 @@ describe("aex start --follow", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-test",
         "--follow",
         "--timeout", "0ms",
         ...COMMON
@@ -457,9 +454,8 @@ describe("aex start --follow", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-test",
         "--follow",
         ...COMMON
       ],
@@ -484,9 +480,8 @@ describe("aex start --follow", () => {
     const cap = makeIo({
       argv: [
         "start",
-        "--model", "claude-haiku-4-5",
+        "--model", "anthropic/claude-haiku-4-5",
         "--prompt", "hi",
-        "--anthropic-api-key", "sk-ant-test",
         "--follow",
         ...COMMON
       ],

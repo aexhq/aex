@@ -5,7 +5,6 @@ import { CLI_VERB_NAMES, FILES_SUBVERBS, START_FLAGS as SESSION_FLAGS, findVerbS
 import {
   CLI_PARITY_BARE_LIST,
   CLI_PARITY_NOT_SURFACED,
-  CLI_PARITY_PROVIDER_KEY_FLAG,
   CLI_SDK_PARITY_MANIFEST,
   CONTROL_PLANE_VERB_BY_CLIENT
 } from "../src/index.js";
@@ -19,14 +18,12 @@ import {
  * the two can't drift.
  */
 const SESSION_OPTION_COVERAGE = {
-  provider: "--provider",
   model: "--model",
   system: "--system",
   assets: "--file|--skill|--tool|--instructions",
   mcpServers: "--mcp",
   metadata: "--metadata",
   idempotencyKey: "--idempotency-key",
-  apiKeys: CLI_PARITY_PROVIDER_KEY_FLAG,
   environment: "--config",
   runtime: "--runtime|--runtime-size",
   overrides: "--session-timeout",
@@ -133,7 +130,7 @@ describe("CLI ↔ SDK parity manifest", () => {
 
   it("maps every surfaced session-option to a REGISTERED `aex start` flag", () => {
     for (const [key, flag] of Object.entries(CLI_SDK_PARITY_MANIFEST.sessionOptionFlags)) {
-      if (flag === CLI_PARITY_NOT_SURFACED || flag === CLI_PARITY_PROVIDER_KEY_FLAG) continue;
+      if (flag === CLI_PARITY_NOT_SURFACED) continue;
       for (const mappedFlag of flag.split("|")) {
         expect(SESSION_FLAGS, `session-option "${key}" -> flag "${mappedFlag}"`).toContain(mappedFlag);
       }
