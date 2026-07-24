@@ -124,7 +124,7 @@ describe("aex.sessions.create", () => {
     expect(session.record.runtime).toEqual({ kind: "spot_container", size: "2cpu-8gb" });
   });
 
-  it("omits the runtime wire fields when not selected (container default applied downstream)", async () => {
+  it("omits the runtime wire fields when not selected (Lambda default applied downstream)", async () => {
     const { client, calls } = harness();
     await client.sessions.create({
       model: "claude-haiku-4-5",

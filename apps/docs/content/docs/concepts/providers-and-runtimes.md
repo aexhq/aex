@@ -19,13 +19,13 @@ aex exposes one submission shape across supported providers:
 All submissions run on a managed runtime. The optional `runtime` object has two
 independent selectors:
 
-- `runtime.kind` selects the execution backend: `RuntimeKinds.CONTAINER`
-  (the default, `"container"`), `RuntimeKinds.SPOT_CONTAINER`
-  (`"spot_container"`), or `RuntimeKinds.LAMBDA` (`"lambda"`).
+- `runtime.kind` selects the execution backend: `RuntimeKinds.LAMBDA`
+  (the default, `"lambda"`), `RuntimeKinds.SPOT_CONTAINER`
+  (`"spot_container"`), or `RuntimeKinds.CONTAINER` (`"container"`).
 - `runtime.size` selects a managed machine-size preset; use `Sizes.*` in
   TypeScript.
 
-Omit either field to use its default (`container` for `kind` and
+Omit either field to use its default (`lambda` for `kind` and
 `0.25cpu-1gb` for `size`). The CLI equivalents are `--runtime <kind>` and
 `--runtime-size <size>`.
 

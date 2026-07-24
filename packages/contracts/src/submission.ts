@@ -853,7 +853,7 @@ export interface PlatformSessionSubmissionRequest {
    * Execution-runtime selector — which backend runs the session
    * ({@link RuntimeKind}: `container` | `spot_container` | `lambda`). Distinct
    * from {@link runtimeSize} (the box preset). Absent ⇒ downstream applies
-   * {@link import("./runtime-kind.js").DEFAULT_RUNTIME_KIND} (`container`).
+   * {@link import("./runtime-kind.js").DEFAULT_RUNTIME_KIND} (`lambda`).
    * `spot_container` implies interruptible capacity (reconciled with
    * {@link machine}); `lambda` is availability-gated server-side.
    */

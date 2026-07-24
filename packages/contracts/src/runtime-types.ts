@@ -39,7 +39,7 @@ export interface SessionRun {
 /**
  * The execution runtime a session runs on. Both fields are optional (the
  * platform applies defaults): `kind` selects the backend
- * (`container` (default) | `spot_container` | `lambda`), `size` selects the
+ * (`lambda` (default) | `spot_container` | `container`), `size` selects the
  * managed box preset. Grouped so the SDK surface reads
  * `runtime: { kind: "lambda", size: Sizes.CPU_2_8GB }`.
  */

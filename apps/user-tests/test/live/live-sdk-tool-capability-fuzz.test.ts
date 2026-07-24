@@ -192,17 +192,15 @@ const client = new Aex({
 const MODEL = process.env.MODEL_DEEPSEEK;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 
-// Execution-runtime fan-out: when AEX_USER_TEST_RUNTIME selects a NON-default
-// runtime, every seeded tool scenario submits with that runtimeKind so the SAME
-// tool surface is proven on spot_container / lambda instead of only the default
-// (container). Unset OR "container" ⇒ omit runtime entirely, keeping the historical
-// container-default submission byte-identical. An unknown value fails loud — never
-// a silent degrade to the default runtime.
-const RUNTIME_KIND = process.env.AEX_USER_TEST_RUNTIME;
-if (RUNTIME_KIND !== undefined && RUNTIME_KIND !== "" && !["container", "spot_container", "lambda"].includes(RUNTIME_KIND)) {
+// Execution-runtime fan-out: every seeded tool scenario runs against the selected
+// runtime. Omitted test configuration defaults to spot_container so the test lane
+// is interruption-tolerant; the product API still defaults omitted customer input
+// to Lambda. An unknown value fails loud — never a silent degrade.
+const RUNTIME_KIND = process.env.AEX_USER_TEST_RUNTIME?.trim() || "spot_container";
+if (!["container", "spot_container", "lambda"].includes(RUNTIME_KIND)) {
   throw new Error("AEX_USER_TEST_RUNTIME must be one of container|spot_container|lambda, got: " + RUNTIME_KIND);
 }
-const RUNTIME_KIND_OVERRIDE = RUNTIME_KIND && RUNTIME_KIND !== "container" ? { runtime: { kind: RUNTIME_KIND } } : {};
+const RUNTIME_KIND_OVERRIDE = { runtime: { kind: RUNTIME_KIND } };
 
 function eventData(event) {
   return event && event.data && typeof event.data === "object" ? event.data : {};

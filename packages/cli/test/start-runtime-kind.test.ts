@@ -44,7 +44,7 @@ describe("aex start --runtime", () => {
     expect(cap.calls[0]!.body).toMatchObject({ runtimeKind: "spot_container" });
   });
 
-  it("does not send runtimeKind when the flag is omitted (container default downstream)", async () => {
+  it("does not send runtimeKind when the flag is omitted (Lambda default downstream)", async () => {
     const cap = makeIo({
       argv: [
         "start",

@@ -65,7 +65,7 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(matrix.filter((entry) => entry.runtimeKind !== null).map((entry) => entry.file).sort()).toEqual(
       [...RUNTIME_PAIRED_FILES].sort()
     );
-    expect(matrix.filter((entry) => entry.runtimeKind !== null).every((entry) => entry.runtimeKind === "container"))
+    expect(matrix.filter((entry) => entry.runtimeKind !== null).every((entry) => entry.runtimeKind === "spot_container"))
       .toBe(true);
   });
 

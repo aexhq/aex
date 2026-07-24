@@ -12,8 +12,8 @@ describe("runtime-kind constants", () => {
     expect(RUNTIME_KINDS).toEqual(["container", "spot_container", "lambda"]);
   });
 
-  it("defaults to container (today's co-located Fargate path)", () => {
-    expect(DEFAULT_RUNTIME_KIND).toBe("container");
+  it("defaults to Lambda (the product's event-driven path)", () => {
+    expect(DEFAULT_RUNTIME_KIND).toBe("lambda");
     expect((RUNTIME_KINDS as readonly string[]).includes(DEFAULT_RUNTIME_KIND)).toBe(true);
   });
 

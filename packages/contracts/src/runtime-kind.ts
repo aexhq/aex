@@ -8,7 +8,7 @@
  *
  * Three product runtimes, selected per session (feature addition, not a
  * migration — see `references/microvm-migration-2026-07-15/00`§0):
- *   - `container`      — today's co-located Fargate (on-demand). Default.
+ *   - `container`      — today's co-located Fargate (on-demand). Explicit opt-in.
  *   - `spot_container` — the same behavior on Fargate Spot: cheaper and
  *                        interruption tolerant through durable recovery.
  *   - `lambda`         — event-driven Lambda + on-demand MicroVM sandbox;
@@ -26,8 +26,8 @@ export const RUNTIME_KINDS = ["container", "spot_container", "lambda"] as const;
 /** One of the closed {@link RUNTIME_KINDS} tokens. */
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
 
-/** Default when `runtimeKind` is omitted (today's co-located Fargate path). */
-export const DEFAULT_RUNTIME_KIND: RuntimeKind = "container";
+/** Default when `runtimeKind` is omitted (the event-driven Lambda path). */
+export const DEFAULT_RUNTIME_KIND: RuntimeKind = "lambda";
 
 /**
  * Symbol-style accessors for TS callers: `RuntimeKinds.SPOT_CONTAINER` resolves

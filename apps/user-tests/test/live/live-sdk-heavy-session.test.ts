@@ -68,7 +68,7 @@
  *     OR AEX_USER_TEST_VERSION       published package version
  * Optional:
  *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek-v4-flash"
- *   AEX_USER_TEST_RUNTIME          default "container"
+ *   AEX_USER_TEST_RUNTIME          default "spot_container"
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -92,7 +92,7 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "de
 const runtimeKind = selectedRuntimeKind();
 
 function selectedRuntimeKind(): "container" | "spot_container" | "lambda" {
-  const value = process.env["AEX_USER_TEST_RUNTIME"]?.trim() || "container";
+  const value = process.env["AEX_USER_TEST_RUNTIME"]?.trim() || "spot_container";
   if (value !== "container" && value !== "spot_container" && value !== "lambda") {
     throw new Error(`user-tests live (heavy-session): invalid AEX_USER_TEST_RUNTIME ${JSON.stringify(value)}.`);
   }

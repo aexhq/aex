@@ -150,7 +150,7 @@ export function excludeFiles(files, excludedFiles) {
   return files.filter((file) => !excluded.has(file));
 }
 
-export function buildFileMatrix(files, runtimeKinds = ["container"]) {
+export function buildFileMatrix(files, runtimeKinds = ["spot_container"]) {
   if (files.length === 0) throw new Error("no test files collected");
   if (!Array.isArray(runtimeKinds) || runtimeKinds.length === 0) {
     throw new Error("runtime kinds must be a non-empty array");
