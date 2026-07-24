@@ -4,149 +4,131 @@ import {
   BuiltinTools,
   DEFAULT_BUILTIN_TOOLS,
   resolveBuiltinToolNames,
-  DEFAULT_PROVIDER,
-  Models,
-  SUPPORTED_MODELS,
-  SUPPORTED_MODELS_BY_PROVIDER,
-  Providers,
-  PROVIDERS,
-  providerForModel,
-  providersForModel,
-  resolveProviderModelId,
-  assertModelNameMatchesProvider,
-  MODEL_PROVIDER_IDS,
-  type ProviderName
+  MODEL_SLUG_PATTERN,
+  isModelSlug,
+  parseModelSlug
 } from "../src/index.js";
 import { parseSessionSubmissionRequest } from "../src/internal.js";
 
-function assetRef(name: string, seed = 1) {
-  const hex = String(seed).padStart(64, "0");
-  return { kind: "asset" as const, assetId: `asset_${hex}`, name };
-}
+const MODEL = "anthropic/claude-haiku-4-5";
 
-function baseRequest(
-  overrides: Partial<{ provider: ProviderName }> = {}
-) {
-  const provider = overrides.provider ?? "anthropic";
-  const model = {
-    anthropic: Models.CLAUDE_HAIKU_4_5,
-    deepseek: Models.DEEPSEEK_V4_FLASH,
-    openai: Models.GPT_4_1,
-    gemini: Models.GEMINI_2_5_FLASH,
-    mistral: Models.MISTRAL_LARGE_LATEST,
-    openrouter: Models.GPT_4O_MINI,
-    doubao: Models.DOUBAO_SEED_PRO
-  }[provider];
+function baseRequest() {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
-    provider,
     submission: {
-      model,
+      model: MODEL,
       prompt: ["hello"],
       assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
       mcpServers: []
     },
-    secrets: { apiKeys: { [provider]: `sk-${provider}-test` } }
+    secrets: {}
   };
 }
 
-describe("submission parser - providers and secrets", () => {
-  it("accepts every provider in PROVIDERS", () => {
-    for (const provider of PROVIDERS) {
-      const parsed = parseSessionSubmissionRequest(baseRequest({ provider }));
-      expect(parsed.provider).toBe(provider);
+describe("submission parser - managed gateway model slug", () => {
+  it("accepts a well-formed creator/model slug and preserves it verbatim", () => {
+    const parsed = parseSessionSubmissionRequest(baseRequest());
+    expect(parsed.submission.model).toBe(MODEL);
+  });
+
+  it("accepts arbitrary gateway slugs (open catalog, no closed list)", () => {
+    for (const slug of [
+      "deepseek/deepseek-v4-flash",
+      "openai/gpt-4.1",
+      "x-ai/grok-2",
+      "google/gemini-2.5-flash",
+      "anthropic/claude-sonnet-4-6:beta"
+    ]) {
+      const base = baseRequest();
+      const parsed = parseSessionSubmissionRequest({
+        ...base,
+        submission: { ...base.submission, model: slug }
+      });
+      expect(parsed.submission.model).toBe(slug);
     }
   });
 
-  it("rejects unknown providers with a helpful enumeration", () => {
+  it("rejects a bare model id with no creator prefix", () => {
+    const base = baseRequest();
     expect(() =>
-      parseSessionSubmissionRequest({ ...baseRequest(), provider: "bogus" })
-    ).toThrow(/provider must be one of: anthropic, deepseek, openai, gemini, mistral/);
+      parseSessionSubmissionRequest({
+        ...base,
+        submission: { ...base.submission, model: "claude-haiku-4-5" }
+      })
+    ).toThrow(/submission\.model must be a gateway model slug/);
   });
 
-  it("rejects unknown model ids with a helpful enumeration", () => {
+  it("rejects an uppercase creator segment", () => {
+    const base = baseRequest();
+    expect(() =>
+      parseSessionSubmissionRequest({
+        ...base,
+        submission: { ...base.submission, model: "Anthropic/claude-haiku-4-5" }
+      })
+    ).toThrow(/submission\.model must be a gateway model slug/);
+  });
+
+  it("rejects a missing model", () => {
+    const base = baseRequest();
+    const { model: _drop, ...submission } = base.submission;
+    expect(() =>
+      parseSessionSubmissionRequest({ ...base, submission })
+    ).toThrow(/submission\.model must be a non-empty gateway model slug/);
+  });
+});
+
+describe("submission parser - provider and apiKeys are removed from the contract", () => {
+  it("rejects a top-level provider field", () => {
+    expect(() =>
+      parseSessionSubmissionRequest({ ...baseRequest(), provider: "anthropic" })
+    ).toThrow(/submission\.provider is not an allowed field/);
+  });
+
+  it("rejects secrets.apiKeys (managed keys only)", () => {
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseRequest(),
-        submission: { ...baseRequest().submission, model: "model-x" }
+        secrets: { apiKeys: { anthropic: "sk-ant" } }
       })
-    ).toThrow(/submission\.model must be one of: claude-haiku-4-5, claude-3-5-haiku-latest/);
+    ).toThrow(/secrets\.apiKeys is not an allowed field; permitted: mcpServers, envSecrets/);
   });
 
-  it("rejects provider/model mismatches", () => {
-    expect(() =>
-      parseSessionSubmissionRequest({
-        ...baseRequest({ provider: "deepseek" }),
-        submission: {
-          ...baseRequest({ provider: "deepseek" }).submission,
-          model: Models.CLAUDE_HAIKU_4_5
-        }
-      })
-    ).toThrow(/not supported for provider deepseek/);
+  it("accepts an empty secrets bundle (a run needs no provider key)", () => {
+    const parsed = parseSessionSubmissionRequest(baseRequest());
+    expect(parsed.secrets).toEqual({});
   });
-
-  it("defaults to anthropic when provider is omitted", () => {
-    const { provider: _drop, ...rest } = baseRequest();
-    const parsed = parseSessionSubmissionRequest({
-      ...rest,
-      secrets: { apiKeys: { anthropic: "sk-ant-default" } }
-    });
-    expect(DEFAULT_PROVIDER).toBe("anthropic");
-    expect(parsed.provider).toBe("anthropic");
-  });
-
-  it("rejects explicit credentialMode as a removed choice field", () => {
-    expect(() => parseSessionSubmissionRequest({
-      ...baseRequest(),
-      credentialMode: "byok"
-    })).toThrow(/submission\.credentialMode is not an allowed field/);
-  });
-
-  it.each(["deepseek", "openai", "gemini", "mistral"] as const)(
-    "requires a BYOK provider key when provider is %s",
-    (provider) => {
-      const req = baseRequest({ provider });
-      expect(() =>
-        parseSessionSubmissionRequest({ ...req, secrets: {} })
-      ).toThrow(new RegExp(`secrets\\.apiKeys\\["${provider}"\\] is required`));
-    }
-  );
 
   it("rejects unknown sibling keys inside the secrets bundle", () => {
-    const req = baseRequest({ provider: "anthropic" });
     expect(() =>
       parseSessionSubmissionRequest({
-        ...req,
-        secrets: { ...req.secrets, openai: { apiKey: "sk-openai-x" } }
+        ...baseRequest(),
+        secrets: { openai: { apiKey: "sk-openai-x" } }
       })
     ).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKeys, mcpServers, envSecrets/
+      /secrets\.openai is not an allowed field; permitted: mcpServers, envSecrets/
     );
   });
+});
 
-  it("rejects an unknown provider key inside apiKeys", () => {
-    const req = baseRequest({ provider: "anthropic" });
-    expect(() =>
-      parseSessionSubmissionRequest({ ...req, secrets: { apiKeys: { bogus: "sk-x" } } })
-    ).toThrow(/secrets\.apiKeys\["bogus"\] is not a known provider/);
+describe("parseModelSlug / isModelSlug", () => {
+  it("MODEL_SLUG_PATTERN matches creator/model shapes", () => {
+    expect(MODEL_SLUG_PATTERN.test("anthropic/claude-haiku-4-5")).toBe(true);
+    expect(MODEL_SLUG_PATTERN.test("openai/gpt-4.1")).toBe(true);
+    expect(MODEL_SLUG_PATTERN.test("no-slash")).toBe(false);
+    expect(MODEL_SLUG_PATTERN.test("UPPER/model")).toBe(false);
   });
 
-  it("rejects a non-string apiKeys value", () => {
-    const req = baseRequest({ provider: "anthropic" });
-    expect(() =>
-      parseSessionSubmissionRequest({ ...req, secrets: { apiKeys: { anthropic: 123 } } })
-    ).toThrow(/secrets\.apiKeys\["anthropic"\] must be a non-empty string/);
+  it("isModelSlug narrows well-formed strings", () => {
+    expect(isModelSlug("deepseek/deepseek-v4-flash")).toBe(true);
+    expect(isModelSlug("deepseek")).toBe(false);
+    expect(isModelSlug(123)).toBe(false);
   });
 
-  it("accepts and preserves multiple provider keys for cross-provider subagents", () => {
-    const req = baseRequest({ provider: "deepseek" });
-    const parsed = parseSessionSubmissionRequest({
-      ...req,
-      secrets: { apiKeys: { deepseek: "sk-ds", anthropic: "sk-ant" } }
-    });
-    expect(parsed.secrets.apiKeys).toEqual({ deepseek: "sk-ds", anthropic: "sk-ant" });
+  it("parseModelSlug returns the slug or throws with field context", () => {
+    expect(parseModelSlug("anthropic/claude-haiku-4-5")).toBe("anthropic/claude-haiku-4-5");
+    expect(() => parseModelSlug("bogus", "my.field")).toThrow(/my\.field must be a gateway model slug/);
   });
 });
 
@@ -154,7 +136,7 @@ describe("submission parser - removed choice fields", () => {
   // `parentSessionId` was the legacy lineage field for API-submitted child sessions.
   // Child sessions are now in-brain threads, so the top-level submit contract no
   // longer accepts it — the strict allow-list rejects it like any unknown field.
-  it.each(["runtime", "region", "credentialMode", "parentSessionId"] as const)(
+  it.each(["runtime", "region", "credentialMode", "parentSessionId", "provider"] as const)(
     "rejects top-level %s",
     (field) => {
       expect(() =>
@@ -164,43 +146,7 @@ describe("submission parser - removed choice fields", () => {
   );
 });
 
-describe("PROVIDERS exports", () => {
-  it("SUPPORTED_MODELS is the public model allowlist", () => {
-    expect([...SUPPORTED_MODELS]).toEqual([
-      "claude-haiku-4-5",
-      "claude-3-5-haiku-latest",
-      "claude-3-5-sonnet-latest",
-      "claude-sonnet-4-6",
-      "deepseek-v4-flash",
-      "deepseek-v4-pro",
-      "gpt-4.1",
-      "gpt-4o-mini",
-      "gpt-4o",
-      "gemini-2.0-flash",
-      "gemini-2.5-flash",
-      "mistral-large-latest",
-      "mistral-small-latest",
-      "doubao-seed-pro",
-      "doubao-seed-flash"
-    ]);
-  });
-
-  it("PROVIDERS is the v1 set", () => {
-    expect([...PROVIDERS]).toEqual([
-      "anthropic",
-      "deepseek",
-      "openai",
-      "gemini",
-      "mistral",
-      "openrouter",
-      "doubao"
-    ]);
-  });
-
-  it("Providers mirrors PROVIDERS exactly (no drift)", () => {
-    expect(Object.values(Providers)).toEqual([...PROVIDERS]);
-  });
-
+describe("builtin tool exports", () => {
   it("BUILTIN_TOOL_NAMES is the closed builtin tool-name set (HANDS_TOOLS order)", () => {
     expect([...BUILTIN_TOOL_NAMES]).toEqual([
       "bash",
@@ -251,81 +197,6 @@ describe("PROVIDERS exports", () => {
     expect(() => resolveBuiltinToolNames(["nope" as never])).toThrow(/is not a builtin tool/);
     expect(() => resolveBuiltinToolNames(["notebook_edit" as never])).toThrow(/is not a builtin tool/);
   });
-
-});
-
-describe("providerForModel / providersForModel", () => {
-  it("SUPPORTED_MODELS_BY_PROVIDER and MODEL_PROVIDER_IDS agree", () => {
-    for (const [provider, models] of Object.entries(SUPPORTED_MODELS_BY_PROVIDER)) {
-      for (const model of models) {
-        expect<readonly string[]>(providersForModel(model), model).toContain(provider);
-      }
-    }
-  });
-
-  it("providerForModel returns the first declared (default) provider", () => {
-    for (const model of SUPPORTED_MODELS) {
-      const declared = Object.keys(MODEL_PROVIDER_IDS[model]);
-      expect<string | undefined>(providerForModel(model), model).toBe(declared[0]);
-    }
-  });
-
-  it("exposes the exact supported provider routes for canonical models", () => {
-    expect(providersForModel(Models.GPT_4O_MINI)).toEqual(["openai", "openrouter"]);
-    expect(providerForModel(Models.GPT_4O_MINI)).toBe("openai");
-    expect(providersForModel(Models.GEMINI_2_0_FLASH)).toEqual(["openrouter"]);
-    expect(providerForModel(Models.GEMINI_2_0_FLASH)).toBe("openrouter");
-    expect(providersForModel(Models.GPT_4O)).toEqual(["openrouter"]);
-  });
-
-  it("maps the new DeepSeek v4 ids to deepseek", () => {
-    expect(providerForModel(Models.DEEPSEEK_V4_FLASH)).toBe("deepseek");
-    expect(providerForModel(Models.DEEPSEEK_V4_PRO)).toBe("deepseek");
-  });
-
-  it("serves Doubao models through the international BytePlus gateway", () => {
-    expect(providersForModel(Models.DOUBAO_SEED_PRO)).toEqual(["doubao"]);
-    expect(providersForModel(Models.DOUBAO_SEED_FLASH)).toEqual(["doubao"]);
-    expect(providerForModel(Models.DOUBAO_SEED_PRO)).toBe("doubao");
-  });
-
-  it("returns undefined / empty for an unknown model string", () => {
-    expect(providerForModel("not-a-model")).toBeUndefined();
-    expect(providersForModel("not-a-model")).toEqual([]);
-  });
-});
-
-describe("resolveProviderModelId", () => {
-  it("translates a canonical id to the provider-native string", () => {
-    expect(resolveProviderModelId(Models.GPT_4O_MINI, "openai")).toBe("gpt-4o-mini");
-    expect(resolveProviderModelId(Models.GPT_4O_MINI, "openrouter")).toBe("openai/gpt-4o-mini");
-    expect(resolveProviderModelId(Models.GEMINI_2_0_FLASH, "openrouter")).toBe("google/gemini-2.0-flash-001");
-    expect(resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "anthropic")).toBe("claude-haiku-4-5");
-    expect(resolveProviderModelId(Models.DOUBAO_SEED_PRO, "doubao")).toBe("doubao-seed-1-8-251228");
-    expect(() => resolveProviderModelId(Models.DOUBAO_SEED_FLASH, "doubao-cn" as never)).toThrow(/not available/);
-  });
-
-  it("throws when the provider does not serve the model", () => {
-    expect(() => resolveProviderModelId(Models.GPT_4O_MINI, "anthropic")).toThrow(/not available for provider/);
-    expect(() => resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "openrouter")).toThrow(/not available for provider/);
-    expect(() => resolveProviderModelId(Models.GEMINI_2_0_FLASH, "gemini")).toThrow(
-      'resolveProviderModelId: model "gemini-2.0-flash" is not available for provider "gemini"; available: openrouter'
-    );
-  });
-});
-
-describe("assertModelNameMatchesProvider", () => {
-  it("accepts any provider that serves the model", () => {
-    expect(() => assertModelNameMatchesProvider("openai", Models.GPT_4O_MINI)).not.toThrow();
-    expect(() => assertModelNameMatchesProvider("openrouter", Models.GPT_4O_MINI)).not.toThrow();
-  });
-
-  it("rejects a provider that does not serve the model", () => {
-    expect(() => assertModelNameMatchesProvider("anthropic", Models.GPT_4O_MINI)).toThrow(/not supported for provider/);
-    expect(() => assertModelNameMatchesProvider("gemini", Models.GEMINI_2_0_FLASH)).toThrow(
-      'submission.model "gemini-2.0-flash" is not supported for provider gemini; expected one of: openrouter'
-    );
-  });
 });
 
 describe("submission parser - builtinTools", () => {
@@ -374,7 +245,7 @@ describe("submission parser - builtinTools", () => {
 });
 
 describe("submission parser - outputMode", () => {
-  it("accepts 'buffered' and 'stream'", () => {
+  it("accepts 'buffered' and 'stream' for any model (streaming is unconditional)", () => {
     for (const mode of ["buffered", "stream"] as const) {
       const req = baseRequest();
       const parsed = parseSessionSubmissionRequest({

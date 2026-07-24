@@ -25,13 +25,13 @@ const baseSubmission = {
   workspaceId: "workspace-1",
   idempotencyKey: "idem-1",
   submission: {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: "do the thing",
     assets: { files: [], skills: [], tools: [], instructions: [] },
     builtinTools: "default",
     mcpServers: []
   },
-  secrets: { apiKeys: { anthropic: "sk-ant-x" } }
+  secrets: {}
 } as const;
 
 describe("asset archive limits", () => {
@@ -268,7 +268,7 @@ describe("session-config — validateSkillBundleManifest", () => {
 describe("session-config — parseSessionRequestConfig", () => {
   it("preserves a string prompt verbatim (normalisation happens at submission time)", () => {
     const config = parseSessionRequestConfig({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: "do it",      mcpServers: []
     });
     expect(config.prompt).toBe("do it");
@@ -276,7 +276,7 @@ describe("session-config — parseSessionRequestConfig", () => {
 
   it("preserves a multi-part prompt array", () => {
     const config = parseSessionRequestConfig({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["first turn", "follow up"],      mcpServers: []
     });
     expect(config.prompt).toEqual(["first turn", "follow up"]);
@@ -284,14 +284,14 @@ describe("session-config — parseSessionRequestConfig", () => {
 
   it("rejects an empty string prompt at the session-config boundary", () => {
     expect(() =>
-      parseSessionRequestConfig({ model: "claude-haiku-4-5", prompt: "", mcpServers: [] })
+      parseSessionRequestConfig({ model: "anthropic/claude-haiku-4-5", prompt: "", mcpServers: [] })
     ).toThrow(/prompt/i);
   });
 
   it("rejects an empty string in a prompt array", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: ["first", ""],        mcpServers: []
       })
     ).toThrow(/prompt/i);
@@ -300,7 +300,7 @@ describe("session-config — parseSessionRequestConfig", () => {
   it("rejects extra top-level fields", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "x",        mcpServers: [],
         extra: 1
       } as unknown)
@@ -311,7 +311,7 @@ describe("session-config — parseSessionRequestConfig", () => {
     const env = { networking: { mode: "limited" as const, allowedHosts: ["api.x.com"] } };
     const metadata = { ticket: "ANT-1" };
     const config = parseSessionRequestConfig({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: "x",      mcpServers: [],
       environment: env,
       metadata
@@ -323,7 +323,7 @@ describe("session-config — parseSessionRequestConfig", () => {
   it("rejects proxyEndpoints as a removed session-config field", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "x",
         proxyEndpoints: []
       })
@@ -333,7 +333,7 @@ describe("session-config — parseSessionRequestConfig", () => {
   it("rejects region as a removed choice field", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "x",
         region: "us-west"
       })
@@ -343,7 +343,7 @@ describe("session-config — parseSessionRequestConfig", () => {
   it("rejects postHook config at the session-config boundary", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "x",
         postHook: { command: "bun test" }
       })
@@ -353,7 +353,7 @@ describe("session-config — parseSessionRequestConfig", () => {
   it("rejects removed cleanup config", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "x",
         cleanup: { session: "delete" }
       })
@@ -363,7 +363,7 @@ describe("session-config — parseSessionRequestConfig", () => {
   it("rejects duplicate mcpServer names at the session-config boundary", () => {
     expect(() =>
       parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "x",        mcpServers: [
           { name: "gh", url: "https://x" },
           { name: "gh", url: "https://y" }
@@ -377,7 +377,7 @@ describe("session-config — parseSessionRequestConfig", () => {
 describe("session-config — normaliseSessionRequestConfig", () => {
   it("splits MCP headers out of the public field into the secret bundle", () => {
     const config: SessionRequestConfig = {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["x"],      mcpServers: [
         { name: "gh", url: "https://x", headers: { Authorization: "Bearer y" } }
       ]
@@ -391,7 +391,7 @@ describe("session-config — normaliseSessionRequestConfig", () => {
 
   it("returns an empty mcpServerSecrets array when no headers were provided", () => {
     const config: SessionRequestConfig = {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: "x",      mcpServers: [{ name: "noauth", url: "https://x" }]
     };
     const norm = normaliseSessionRequestConfig(config);
@@ -401,7 +401,7 @@ describe("session-config — normaliseSessionRequestConfig", () => {
 
   it("includes only entries whose session-config entry had headers in mcpServerSecrets", () => {
     const config: SessionRequestConfig = {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: "x",      mcpServers: [
         { name: "noauth", url: "https://x" },
         { name: "gh", url: "https://y", headers: { Authorization: "Bearer z" } }
@@ -424,7 +424,7 @@ describe("session-config — parseSessionSubmissionRequest", () => {
     expect(parsed.idempotencyKey).toBe("idem-1");
     expect(parsed.submission.prompt).toEqual(["do the thing"]);
     expect(parsed.submission.mcpServers).toEqual([]);
-    expect(parsed.secrets.apiKeys?.anthropic).toBe("sk-ant-x");
+    expect(parsed.submission.model).toBe("anthropic/claude-haiku-4-5");
   });
 
   it("normalises a string prompt into an array on the wire", () => {

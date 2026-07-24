@@ -15,15 +15,14 @@ function makeValid(): PlatformSessionSubmissionRequest {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",
-    provider: "anthropic",
     submission: {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["hello"],
       assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
       mcpServers: []
     },
-    secrets: { apiKeys: { anthropic: "sk-ant-test" } }
+    secrets: {}
   };
 }
 

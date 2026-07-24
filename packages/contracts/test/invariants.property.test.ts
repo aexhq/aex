@@ -52,7 +52,7 @@ const submission = fc.record({
   workspaceId: nonEmptyString,
   idempotencyKey: nonEmptyString,
   submission: fc.record({
-    model: fc.constant("claude-haiku-4-5"),
+    model: fc.constant("anthropic/claude-haiku-4-5"),
     system: fc.option(nonEmptyString, { nil: undefined }),
     prompt: fc.array(nonEmptyString, { minLength: 1, maxLength: 5 }),
     assets: fc.constant({ files: [], skills: [], tools: [], instructions: [] }),
@@ -60,11 +60,7 @@ const submission = fc.record({
     mcpServers: fc.constant([] as never[]),
     metadata: fc.option(jsonRecord, { nil: undefined })
   }),
-  secrets: fc.record({
-    apiKeys: fc.record({
-      anthropic: nonEmptyString
-    })
-  })
+  secrets: fc.constant({} as const)
 }, { requiredKeys: ["workspaceId", "idempotencyKey", "submission", "secrets"] });
 
 // bun's describe() takes no options object; this file-wide default replaces
@@ -79,7 +75,7 @@ describe("shared platform invariants", () => {
       expect(parsed.workspaceId).toBe(input.workspaceId);
       expect(parsed.idempotencyKey).toBe(input.idempotencyKey);
       expect(parsed.submission.prompt.length).toBeGreaterThan(0);
-      expect(parsed.secrets.apiKeys?.anthropic).toBe(input.secrets.apiKeys.anthropic);
+      expect(parsed.submission.model).toBe(input.submission.model);
     }), { numRuns: 100 });
   });
 
@@ -125,15 +121,14 @@ function makeValidSubmission(): PlatformSessionSubmissionRequest {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",
-    provider: "anthropic",
     submission: {
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["hello"],
       assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
       mcpServers: []
     },
-    secrets: { apiKeys: { anthropic: "sk-ant-test" } }
+    secrets: {}
   };
 }
 

@@ -72,7 +72,7 @@ describe("persisted workspace resource names", () => {
       const assets = { files: [], skills: [], tools: [], instructions: [] } as Record<string, unknown>;
       assets[field] = [{ ...pinnedBase, ...extra, kind, name }];
       expect(() => parseSubmission({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: ["work"],
         assets,
         builtinTools: "none",
@@ -84,7 +84,7 @@ describe("persisted workspace resource names", () => {
       const assets = { files: [], skills: [], tools: [], instructions: [] } as Record<string, unknown>;
       assets[field] = [{ ...pinnedBase, ...extra, kind, name }];
       expect(() => parseSubmission({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: ["work"],
         assets,
         builtinTools: "none",
@@ -104,7 +104,7 @@ describe("persisted workspace resource names", () => {
 
   it("does not broaden the independent skill-name grammar", () => {
     expect(() => parseSubmission({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["work"],
       assets: {
         files: [],

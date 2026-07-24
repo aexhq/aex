@@ -9,7 +9,6 @@ import {
   SESSION_PROCESS_KILL_GRACE_MS,
   SESSION_TERMINAL_GRACE_MS,
   RuntimeSizes,
-  Models,
   orchestrationTimeoutString,
   parseDurationToMs,
   parseSessionTimeout,
@@ -23,10 +22,9 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
-    provider: "anthropic",
-    submission: { model: Models.CLAUDE_HAIKU_4_5, prompt: ["hello"], assets: { files: [], skills: [], tools: [], instructions: [] },
+    submission: { model: "anthropic/claude-haiku-4-5", prompt: ["hello"], assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default", mcpServers: [] },
-    secrets: { apiKeys: { anthropic: "sk-anthropic-test" } },
+    secrets: {},
     ...overrides
   };
 }

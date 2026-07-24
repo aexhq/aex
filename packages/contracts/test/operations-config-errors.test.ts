@@ -7,14 +7,13 @@ import {
 import { operations } from "../src/internal.js";
 
 const createRequest: SessionCreateRequest = {
-  provider: "deepseek",
   submission: {
-    model: "deepseek-v4-flash",
+    model: "deepseek/deepseek-v4-flash",
     assets: { files: [], skills: [], tools: [], instructions: [] },
     builtinTools: "default",
     mcpServers: []
   },
-  secrets: { apiKeys: { deepseek: "sk-test" } }
+  secrets: {}
 };
 
 function noNetworkHttp(): { readonly http: HttpClient; readonly calls: { value: number } } {

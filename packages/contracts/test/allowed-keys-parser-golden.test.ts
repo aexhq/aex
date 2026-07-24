@@ -20,7 +20,7 @@ import { parsePostHook } from "../src/post-hook.js";
 
 function baseSubmission(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: ["hello"],
     assets: { files: [], skills: [], tools: [], instructions: [] },
     mcpServers: [],
@@ -33,9 +33,8 @@ function baseRequest(overrides: Record<string, unknown> = {}): Record<string, un
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",
-    provider: "anthropic",
     submission: baseSubmission(),
-    secrets: { apiKeys: { anthropic: "test-provider-key" } },
+    secrets: {},
     ...overrides
   };
 }
@@ -60,7 +59,7 @@ describe("strict parser key compatibility", () => {
     [
       "inline secrets",
       () => parseInlineSecrets({ unknown: true }),
-      "secrets.unknown is not an allowed field; permitted: apiKeys, mcpServers, envSecrets"
+      "secrets.unknown is not an allowed field; permitted: mcpServers, envSecrets"
     ],
     [
       "MCP secret",
@@ -70,7 +69,7 @@ describe("strict parser key compatibility", () => {
     [
       "top-level submission request",
       () => parseSessionSubmissionRequest(baseRequest({ unknown: true })),
-      "submission.unknown is not an allowed field; permitted: workspaceId, idempotencyKey, provider, submission, runtimeSize, runtimeKind, timeout, webhook, limits, machine, secrets"
+      "submission.unknown is not an allowed field; permitted: workspaceId, idempotencyKey, submission, runtimeSize, runtimeKind, timeout, webhook, limits, machine, secrets"
     ],
     [
       "webhook",
@@ -140,7 +139,7 @@ describe("strict parser key compatibility", () => {
     [
       "session-config MCP ref",
       () => parseSessionRequestConfig({
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "hello",
         mcpServers: [{ unknown: true }]
       }),
@@ -191,7 +190,7 @@ describe("strict parser key compatibility", () => {
 
   it("preserves first-key and reserved-secret error precedence", () => {
     expect(() => parseInlineSecrets({ unknown: true, __aex_internal: true })).toThrowError(
-      "secrets.unknown is not an allowed field; permitted: apiKeys, mcpServers, envSecrets"
+      "secrets.unknown is not an allowed field; permitted: mcpServers, envSecrets"
     );
     expect(() => parseInlineSecrets({ __aex_internal: true, unknown: true })).toThrowError(
       "secrets.__aex_internal uses the platform-internal __aex_ namespace and may not be set by callers"

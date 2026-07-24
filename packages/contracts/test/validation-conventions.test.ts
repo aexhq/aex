@@ -9,9 +9,8 @@ import {
   parseDurationToMs,
   parseInlineSecrets,
   parseMcpServerRef,
-  parseModelName,
+  parseModelSlug,
   parseProviderFault,
-  parseProviderName,
   parseResponseFormat,
   parseRuntimeSize,
   parseRuntimeKind,
@@ -80,7 +79,7 @@ describe("contract validation conventions", () => {
   });
 
   it.each([
-    ["parseModelName", () => parseModelName("invalid")],
+    ["parseModelSlug", () => parseModelSlug("invalid")],
     ["parseProviderFault", () => parseProviderFault(null)],
     ["parseRuntimeKind", () => parseRuntimeKind("invalid")],
     ["parseRuntimeSize", () => parseRuntimeSize("invalid")],
@@ -98,7 +97,6 @@ describe("contract validation conventions", () => {
     ["parseSessionWebhook", () => parseSessionWebhook(10)],
     ["parseSessionLimits", () => parseSessionLimits(10)],
     ["parseSessionMachine", () => parseSessionMachine(10)],
-    ["parseProviderName", () => parseProviderName("invalid")],
     ["parseSubmission", () => parseSubmission(null)],
     ["parseResponseFormat", () => parseResponseFormat(10)],
     ["parseApprovalGate", () => parseApprovalGate(10)]

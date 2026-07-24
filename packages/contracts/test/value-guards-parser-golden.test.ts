@@ -7,7 +7,7 @@ import { parseSubmission } from "../src/submission.js";
 
 function submission(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: ["hello"],
     assets: { files: [], skills: [], tools: [], instructions: [] },
     mcpServers: [],

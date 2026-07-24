@@ -49,16 +49,15 @@ describe("responseFormat through the full submission parser (WS10)", () => {
     const parsed = parseSessionSubmissionRequest({
       workspaceId: "w1",
       idempotencyKey: "i1",
-      provider: "deepseek",
       submission: {
-        model: "deepseek-v4-flash",
+        model: "deepseek/deepseek-v4-flash",
         prompt: ["hi"],
         assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
         mcpServers: [],
         responseFormat: { kind: "json_schema", schema: { type: "object" } }
       },
-      secrets: { apiKeys: { deepseek: "sk-x" } }
+      secrets: {}
     });
     expect(parsed.submission.responseFormat).toEqual({ kind: "json_schema", schema: { type: "object" } });
   });

@@ -64,10 +64,10 @@ describe("structured unknown-field diagnostics", () => {
     expect(error).toBeInstanceOf(UnknownFieldError);
     expect(error).toMatchObject({
       name: "Error",
-      message: "secrets.unknown is not an allowed field; permitted: apiKeys, mcpServers, envSecrets",
+      message: "secrets.unknown is not an allowed field; permitted: mcpServers, envSecrets",
       objectPath: "secrets",
       unknownKey: "unknown",
-      permittedKeys: ["apiKeys", "mcpServers", "envSecrets"]
+      permittedKeys: ["mcpServers", "envSecrets"]
     });
   });
 
@@ -83,7 +83,6 @@ describe("structured unknown-field diagnostics", () => {
     );
 
     expect(parseInlineSecrets({
-      apiKeys: { anthropic: "safe-placeholder" },
       mcpServers: [{
         name: "remote",
         url: "https://mcp.example.test",
@@ -91,7 +90,6 @@ describe("structured unknown-field diagnostics", () => {
       }],
       envSecrets: { SERVICE_TOKEN: "safe-placeholder" }
     })).toEqual({
-      apiKeys: { anthropic: "safe-placeholder" },
       mcpServers: [{
         name: "remote",
         url: "https://mcp.example.test",

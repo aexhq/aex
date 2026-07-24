@@ -16,12 +16,12 @@ const base = {
   workspaceId: "workspace-1",
   idempotencyKey: "idem-1",
   submission: {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: ["hi"],    assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
     mcpServers: []
   },
-  secrets: { apiKeys: { anthropic: "sk-ant-test" } }
+  secrets: {}
 } as const;
 
 describe("submission.secretEnv / secrets.envSecrets — contract", () => {

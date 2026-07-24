@@ -76,7 +76,7 @@ describe("run lifecycle contract", () => {
 describe("workspace resource submission contract", () => {
   it("accepts only grouped, immutable, version-pinned resources", () => {
     expect(parseSubmission({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["work"],
       assets: { files: [file], skills: [], tools: [], instructions: [] },
       builtinTools: "none",
@@ -84,7 +84,7 @@ describe("workspace resource submission contract", () => {
     }).assets.files).toEqual([file]);
 
     expect(() => parseSubmission({
-      model: "claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4-5",
       prompt: ["work"],
       files: [file],
       mcpServers: []

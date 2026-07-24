@@ -5,13 +5,13 @@ const baseSubmission = {
   workspaceId: "workspace-1",
   idempotencyKey: "idem-1",
   submission: {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: ["say hello"],
     assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
     mcpServers: []
   },
-  secrets: { apiKeys: { anthropic: "sk-ant-test" } }
+  secrets: {}
 } as const;
 
 describe("submission proxy endpoint fields", () => {
@@ -41,6 +41,6 @@ describe("submission proxy endpoint fields", () => {
           proxyEndpointAuth: [{ name: "stripe", value: { type: "bearer", token: "sk-test-token" } }]
         }
       })
-    ).toThrow(/secrets\.proxyEndpointAuth is not an allowed field; permitted: apiKeys, mcpServers, envSecrets/);
+    ).toThrow(/secrets\.proxyEndpointAuth is not an allowed field; permitted: mcpServers, envSecrets/);
   });
 });

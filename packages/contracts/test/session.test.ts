@@ -87,14 +87,13 @@ describe("session contracts", () => {
     const result = await operations.createSessionWithMessage(
       http,
       {
-        provider: "deepseek",
         submission: {
-          model: "deepseek-v4-flash",
+          model: "deepseek/deepseek-v4-flash",
           assets: { files: [], skills: [], tools: [], instructions: [] },
           builtinTools: "default",
           mcpServers: []
         },
-        secrets: { apiKeys: { deepseek: "sk-test" } }
+        secrets: {}
       },
       "start now",
       { idempotencyKey: "idem-create" }
@@ -119,14 +118,13 @@ describe("session contracts", () => {
     await operations.createSessionWithMessage(
       http,
       {
-        provider: "deepseek",
         submission: {
-          model: "deepseek-v4-flash",
+          model: "deepseek/deepseek-v4-flash",
           assets: { files: [], skills: [], tools: [], instructions: [] },
           builtinTools: "default",
           mcpServers: []
         },
-        secrets: { apiKeys: { deepseek: "sk-test" } }
+        secrets: {}
       },
       "start now",
       { idempotencyKey: "idem-create", messageIdempotencyKey: "idem-turn" }
@@ -141,14 +139,13 @@ describe("session contracts", () => {
     await operations.createSessionWithMessage(
       http,
       {
-        provider: "deepseek",
         submission: {
-          model: "deepseek-v4-flash",
+          model: "deepseek/deepseek-v4-flash",
           assets: { files: [], skills: [], tools: [], instructions: [] },
           builtinTools: "default",
           mcpServers: []
         },
-        secrets: { apiKeys: { deepseek: "sk-test" } }
+        secrets: {}
       },
       "start now",
       { idempotencyKey: createKey }
@@ -168,14 +165,13 @@ describe("session contracts", () => {
     await expect(operations.createSessionWithMessage(
       http,
       {
-        provider: "deepseek",
         submission: {
-          model: "deepseek-v4-flash",
+          model: "deepseek/deepseek-v4-flash",
           assets: { files: [], skills: [], tools: [], instructions: [] },
           builtinTools: "default",
           mcpServers: []
         },
-        secrets: { apiKeys: { deepseek: "sk-test" } }
+        secrets: {}
       },
       "start now",
       { idempotencyKey: "create", messageIdempotencyKey: "m".repeat(256) }

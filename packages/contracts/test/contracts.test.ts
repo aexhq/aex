@@ -49,9 +49,9 @@ describe("platform status contracts", () => {
 });
 
 describe("platform session submission schema", () => {
-  const baseSecrets = { apiKeys: { anthropic: "sk-ant-test" } } as const;
+  const baseSecrets = {} as const;
   const baseSubmission = {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: ["say hello"],
     assets: { files: [], skills: [], tools: [], instructions: [] },
     builtinTools: "default",
@@ -66,23 +66,21 @@ describe("platform session submission schema", () => {
       secrets: baseSecrets
     });
 
-    expect(parsed.provider).toBe("anthropic");
+    expect(parsed.submission.model).toBe("anthropic/claude-haiku-4-5");
     expect(parsed.submission.prompt).toEqual(["say hello"]);
     expect(parsed.submission.metadata?.topic).toBe("platform");
-    expect(parsed.secrets.apiKeys?.anthropic).toBe("sk-ant-test");
+    expect(parsed.secrets).toEqual({});
   });
 
-  it("accepts DeepSeek as an explicit provider with per-provider apiKeys", () => {
+  it("accepts any gateway model slug with no provider and no keys", () => {
     const parsed = parseSessionSubmissionRequest({
-      provider: "deepseek",
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
-      submission: { ...baseSubmission, model: "deepseek-v4-flash" },
-      secrets: { apiKeys: { deepseek: "sk-deepseek-test" } }
+      submission: { ...baseSubmission, model: "deepseek/deepseek-v4-flash" },
+      secrets: {}
     });
 
-    expect(parsed.provider).toBe("deepseek");
-    expect(parsed.secrets.apiKeys?.deepseek).toBe("sk-deepseek-test");
+    expect(parsed.submission.model).toBe("deepseek/deepseek-v4-flash");
   });
 
   it("rejects the removed cleanup policy field", () => {
@@ -140,21 +138,22 @@ describe("platform session submission schema", () => {
     })).toThrow(/idempotencyKey/);
   });
 
-  it("requires a secrets block", () => {
-    expect(() => parseSessionSubmissionRequest({
+  it("accepts an omitted secrets block (managed keys — a run needs no key)", () => {
+    const parsed = parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission
-    })).toThrow(/secrets/);
+    });
+    expect(parsed.secrets).toEqual({});
   });
 
-  it("requires a non-empty secrets.apiKeys value", () => {
+  it("rejects secrets.apiKeys as a removed field (managed keys only)", () => {
     expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { apiKeys: { anthropic: "" } }
-    })).toThrow(/secrets\.apiKeys\["anthropic"\] must be a non-empty string/);
+      secrets: { apiKeys: { anthropic: "sk-ant-test" } }
+    })).toThrow(/secrets\.apiKeys is not an allowed field; permitted: mcpServers, envSecrets/);
   });
 
   it("accepts mcpServers inside the secrets block", () => {
@@ -165,7 +164,7 @@ describe("platform session submission schema", () => {
         ...baseSubmission,
         mcpServers: [{ name: "files", url: "https://mcp.example.test" }]
       },
-      secrets: { apiKeys: { anthropic: "sk-ant-test" } ,
+      secrets: {
         mcpServers: [{ name: "files", url: "https://mcp.example.test", headers: { authorization: "Bearer x" } }]
       }
     });
@@ -193,7 +192,7 @@ describe("platform session submission schema", () => {
       workspaceId: "ws_123",
       idempotencyKey: "idem-tool",
       submission: {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         prompt: "use the lookup tool",
         assets: { files: [], skills: [], tools: [tool], instructions: [] },
         builtinTools: "default",
@@ -211,7 +210,7 @@ describe("platform session submission schema", () => {
         workspaceId: "ws_123",
         idempotencyKey: "idem-tool",
         submission: {
-          model: "claude-haiku-4-5",
+          model: "anthropic/claude-haiku-4-5",
           prompt: "use the lookup tool",
           assets: { files: [], skills: [], instructions: [], tools: [
             {
@@ -264,9 +263,9 @@ describe("platform session submission schema", () => {
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { apiKeys: { anthropic: "sk-ant-test" } , openai: { apiKey: "x" } }
+      secrets: { openai: { apiKey: "x" } }
     })).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKeys, mcpServers, envSecrets/
+      /secrets\.openai is not an allowed field; permitted: mcpServers, envSecrets/
     );
   });
 
@@ -301,10 +300,10 @@ describe("environment.packages ecosystem parsing", () => {
   const base = {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
-    secrets: { apiKeys: { anthropic: "sk-ant-test" } }
+    secrets: {}
   } as const;
   const baseSubmission = {
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     prompt: ["say hello"],    assets: { files: [], skills: [], tools: [], instructions: [] },
       builtinTools: "default",
     mcpServers: []
