@@ -6,7 +6,6 @@
   "test/live/config-packages.user.test.ts": 91,
   "test/live/config-posthook.user.test.ts": 1,
   "test/live/edge-instructions-files.user.test.ts": 181,
-  "test/live/edge-byok-secrets.user.test.ts": 168,
   "test/live/edge-chat-cancel-launch.user.test.ts": 70,
   "test/live/edge-chat-cancel-send.user.test.ts": 40,
   "test/live/edge-chat-concurrency.user.test.ts": 55,
