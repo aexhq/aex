@@ -10,8 +10,7 @@ import type { McpServerRef, ToolInputSchema } from "./session-config.js";
 import { parseSessionTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { parseRuntimeKind, type RuntimeKind } from "./runtime-kind.js";
 import {
-  assertModelNameMatchesProvider,
-  parseModelName,
+  parseModelSlug,
   type ModelName
 } from "./models.js";
 import {
@@ -194,51 +193,14 @@ export function packageInstallString(pkg: PlatformPackage): string {
 }
 
 /**
- * Submission-time provider selector. Aex exposes one customer interface
- * for every provider. All new submissions execute through the managed
- * runtime; provider selection only decides which upstream model route
- * the managed provider-proxy uses.
+ * A serving-provider label. Under the managed Vercel AI Gateway there is NO
+ * public provider selector and no closed provider set — routing is the
+ * gateway's job. This thin alias survives only because telemetry / cost /
+ * custody records still carry the *serving provider string* reported by the
+ * gateway's generation info (e.g. `"anthropic"`, `"deepseek"`); it is an open
+ * string, never a customer input.
  */
-export const PROVIDERS = [
-  "anthropic",
-  "deepseek",
-  "openai",
-  "gemini",
-  "mistral",
-  "openrouter",
-  "doubao"
-] as const;
-export type ProviderName = (typeof PROVIDERS)[number];
-export const DEFAULT_PROVIDER: ProviderName = "anthropic";
-
-/**
- * Symbol-style accessors for the closed provider set. Prefer these over raw
- * strings so an invalid token is a compile error, not a runtime 400 — e.g.
- * `Providers.DEEPSEEK`. The same model id can route through different upstream
- * providers (official vs OpenRouter, etc.), so `provider` is a first-class
- * submission field; name it explicitly with one of these constants rather than
- * relying on the model alone to determine routing.
- *
- * Every value mirrors {@link PROVIDERS} exactly; a unit test asserts
- * `Object.values(Providers)` deep-equals `PROVIDERS` so the two can never
- * drift.
- */
-export const Providers = {
-  /** Anthropic — Claude models. */
-  ANTHROPIC: "anthropic",
-  /** DeepSeek. */
-  DEEPSEEK: "deepseek",
-  /** OpenAI — GPT models. */
-  OPENAI: "openai",
-  /** Google Gemini. */
-  GEMINI: "gemini",
-  /** Mistral. */
-  MISTRAL: "mistral",
-  /** OpenRouter — OpenAI-compatible aggregator routing to many upstream models. */
-  OPENROUTER: "openrouter",
-  /** Doubao (ByteDance) via the official international BytePlus ModelArk gateway. */
-  DOUBAO: "doubao"
-} as const satisfies Readonly<Record<string, ProviderName>>;
+export type ProviderName = string;
 
 export interface PlatformMcpServerSecret {
   readonly name: string;
@@ -247,16 +209,13 @@ export interface PlatformMcpServerSecret {
 }
 
 /**
- * Per-session inline secrets bundle. `apiKeys` holds the BYOK provider keys, keyed
- * by {@link ProviderName}. A session REQUIRES a key for its own `provider`; it MAY
- * carry keys for additional providers so a subagent spawned with a
- * different-family model inherits them server-side from the vault (the keys
- * never transit the container). `mcpServers` credentials are cross-provider
- * (an MCP credential is the same secret whichever model is driving the MCP
- * client).
+ * Per-session inline secrets bundle. Under managed gateway keys the customer
+ * supplies NO provider API keys — the platform's single managed gateway key
+ * routes all model traffic. This bundle carries only non-LLM secret material:
+ * `mcpServers` credentials (an MCP credential is the same secret whichever
+ * model is driving the MCP client) and per-session `envSecrets`.
  */
 export interface PlatformInlineSecrets {
-  readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
   /**
    * Per-session env-var secret VALUES, keyed by env name. Each entry pairs with a
@@ -525,12 +484,11 @@ export function crossValidateSecretEnvAndValues(
 
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   return withContractParseError("parseInlineSecrets", () => {
-  // Absent/null secrets collapse to an empty bundle; the credential-policy gate
-  // (enforceCredentialSecretPolicy) decides whether that is admissible for the
-  // session's mode (a session inheriting keys server-side may legitimately omit them).
+  // Absent/null secrets collapse to an empty bundle. Under managed gateway keys
+  // a run needs no provider key, so an empty bundle is always admissible.
   if (input === undefined || input === null) return {};
   const value = requireRecord(input, "secrets");
-  const allowedTopLevel = defineAllowedKeys<PlatformInlineSecrets>()("apiKeys", "mcpServers", "envSecrets");
+  const allowedTopLevel = defineAllowedKeys<PlatformInlineSecrets>()("mcpServers", "envSecrets");
   assertAllowedKeys(
     value,
     allowedTopLevel,
@@ -538,39 +496,14 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
       ? new Error(`secrets.${key} uses the platform-internal __aex_ namespace and may not be set by callers`)
       : new UnknownFieldError("secrets", key, orderedKeys)
   );
-  const apiKeys = parseApiKeys(value.apiKeys);
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
   const envSecrets = parseEnvSecrets(value.envSecrets);
 
   return {
-    ...(apiKeys ? { apiKeys } : {}),
     ...(mcpServers ? { mcpServers } : {}),
     ...(envSecrets ? { envSecrets } : {})
   };
   });
-}
-
-/**
- * Parse the per-provider BYOK key map. Each key must name a known
- * {@link ProviderName}; each value must be a non-empty string. Returns
- * `undefined` for an absent or empty map so the spread above stays clean.
- */
-function parseApiKeys(input: unknown): Partial<Record<ProviderName, string>> | undefined {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "secrets.apiKeys");
-  const out: Partial<Record<ProviderName, string>> = {};
-  for (const [provider, key] of Object.entries(value)) {
-    if (!(PROVIDERS as readonly string[]).includes(provider)) {
-      throw new Error(
-        `secrets.apiKeys["${provider}"] is not a known provider; permitted: ${PROVIDERS.join(", ")}`
-      );
-    }
-    if (typeof key !== "string" || key.length === 0) {
-      throw new Error(`secrets.apiKeys["${provider}"] must be a non-empty string`);
-    }
-    out[provider as ProviderName] = key;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseEnvSecrets(input: unknown): Readonly<Record<string, string>> | undefined {
@@ -769,10 +702,8 @@ export interface PlatformSubmission {
   /**
    * Assistant-output granularity. `buffered` (the default) emits one event per
    * assistant message; `stream` emits the agent's per-token text deltas as they
-   * arrive, THEN a final coalesced block. Streaming is CAPABILITY-GATED: it is
-   * only honored for a streamable provider (see {@link STREAMABLE_SHAPES}) and a
-   * `stream` mode on a non-streamable provider is rejected at parse
-   * ({@link assertStreamableOutputMode}) — no silent downgrade.
+   * arrive, THEN a final coalesced block. Every model streams through the
+   * managed gateway, so `stream` is honored for ALL models.
    */
   readonly outputMode?: OutputMode;
   /**
@@ -836,12 +767,6 @@ export interface PlatformInjectionConfig {
 export interface PlatformSessionSubmissionRequest {
   readonly workspaceId: string;
   readonly idempotencyKey: string;
-  /**
-   * Provider selector. Always populated after parsing — absent on the
-   * wire means {@link DEFAULT_PROVIDER}. All providers are dispatched
-   * through the managed runtime.
-   */
-  readonly provider: ProviderName;
   readonly submission: PlatformSubmission;
   readonly secrets: PlatformInlineSecrets;
   /**
@@ -956,10 +881,9 @@ export interface SessionMachine {
  */
 export type PlatformSessionSubmissionInput = Omit<
   PlatformSessionSubmissionRequest,
-  "workspaceId" | "provider" | "timeoutMs"
+  "workspaceId" | "timeoutMs"
 > & {
   readonly workspaceId?: string;
-  readonly provider?: ProviderName;
   /**
    * Session deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
    * Parsed + bounded to [1m, 8h] server-side into
@@ -976,7 +900,6 @@ export function parseSessionSubmissionRequest(
   const allowedTopLevelFields = defineAllowedKeys<PlatformSessionSubmissionInput>()(
     "workspaceId",
     "idempotencyKey",
-    "provider",
     "submission",
     "runtimeSize",
     "runtimeKind",
@@ -1003,7 +926,6 @@ export function parseSessionSubmissionRequest(
     }
     assertNoSecretBearingFields(fieldValue, [key]);
   }
-  const provider = parseProviderName(value.provider);
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const runtimeKind = parseRuntimeKind(value.runtimeKind);
   const timeoutMs = parseSessionTimeout(value.timeout);
@@ -1011,13 +933,8 @@ export function parseSessionSubmissionRequest(
   const limits = parseSessionLimits(value.limits);
   const machine = parseSessionMachine(value.machine);
   const secrets = parseInlineSecrets(value.secrets);
-  enforceCredentialSecretPolicy(secrets, provider);
 
   const submission = parseSubmission(value.submission);
-  assertModelNameMatchesProvider(provider, submission.model);
-  // Fail-closed streaming: `outputMode:'stream'` on a non-streamable provider is
-  // a hard reject at parse time (no silent downgrade).
-  assertStreamableOutputMode(submission.outputMode, provider);
 
   crossValidateSecretEnvAndValues(submission.secretEnv, secrets.envSecrets);
 
@@ -1047,7 +964,6 @@ export function parseSessionSubmissionRequest(
   return {
     workspaceId: requireString(value.workspaceId, "workspaceId"),
     idempotencyKey: requireString(value.idempotencyKey, "idempotencyKey"),
-    provider,
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(runtimeKind ? { runtimeKind } : {}),
@@ -1209,45 +1125,6 @@ export function parseSessionMachine(input: unknown): SessionMachine | undefined 
   });
 }
 
-export function parseProviderName(input: unknown): ProviderName {
-  return withContractParseError("parseProviderName", () => {
-  if (input === undefined) {
-    return DEFAULT_PROVIDER;
-  }
-  if (typeof input !== "string" || !(PROVIDERS as readonly string[]).includes(input)) {
-    throw new Error(
-      `provider must be one of: ${PROVIDERS.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as ProviderName;
-  });
-}
-
-/**
- * Cross-check the supplied secrets bundle against the credential mode. BYOK
- * requires `secrets.apiKeys[provider]` (the key for the session's own `provider`).
- * Additional provider keys are optional (validated for shape only) so the session
- * can supply keys for the other providers its subagents may use. MCP / proxy
- * endpoint auth carry across providers and are not checked here.
- *
- * A CHILD session (`inheritsFromParent`) is exempt from the own-key requirement: it
- * inherits its provider keys server-side from the parent's vaulted bundle, so
- * it need not carry any of its own. The server still verifies, at admission,
- * that the parent actually holds a key for the child's provider.
- */
-export function enforceCredentialSecretPolicy(
-  secrets: PlatformInlineSecrets,
-  provider: ProviderName,
-  opts?: { readonly inheritsFromParent?: boolean }
-): void {
-  if (opts?.inheritsFromParent) return;
-  if (!secrets.apiKeys?.[provider]) {
-    throw new Error(
-      `secrets.apiKeys["${provider}"] is required`
-    );
-  }
-}
-
 export function parseSubmission(input: unknown): PlatformSubmission {
   return withContractParseError("parseSubmission", () => {
   const value = requireRecord(input, "submission.submission");
@@ -1271,7 +1148,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   assertAllowedKeys(value, allowed, (key, orderedKeys) =>
     new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
-  const model = parseModelName(value.model, "submission.model");
+  const model = parseModelSlug(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
   const assets = parseSubmissionAssets(value.assets);
@@ -1518,56 +1395,6 @@ function parseOutputMode(input: unknown): OutputMode | undefined {
     throw new Error(`submission.outputMode must be one of ${OUTPUT_MODES.join(", ")}`);
   }
   return input as OutputMode;
-}
-
-// ---------------------------------------------------------------------------
-// Streaming capability model — WS9. `outputMode:'stream'` is capability-gated.
-// ---------------------------------------------------------------------------
-
-/**
- * The provider wire-SHAPES that have a real per-token streaming producer. This
- * const is the contracts-side SSoT, pinned EQUAL to the platform's shape SSoT by
- * a cross-repo parity test so streaming can never be promised for a shape
- * nothing feeds.
- */
-export const STREAMABLE_SHAPES = ["anthropic", "openai_chat"] as const;
-export type StreamableShape = (typeof STREAMABLE_SHAPES)[number];
-
-/**
- * Each provider's wire shape, or `null` when it has no streaming producer wired
- * yet. `stream` output is only honored for a provider whose shape is streamable.
- */
-const PROVIDER_STREAM_SHAPE = {
-  anthropic: "anthropic",
-  deepseek: "openai_chat",
-  openai: "openai_chat",
-  gemini: null,
-  mistral: "openai_chat",
-  openrouter: "openai_chat",
-  doubao: "openai_chat"
-} as const satisfies Readonly<Record<ProviderName, StreamableShape | null>>;
-
-/** True when a provider has a streaming producer wired (a {@link STREAMABLE_SHAPES} shape). */
-export function isStreamableProvider(provider: ProviderName): boolean {
-  return PROVIDER_STREAM_SHAPE[provider] !== null;
-}
-
-function streamableProviders(): readonly ProviderName[] {
-  return (Object.keys(PROVIDER_STREAM_SHAPE) as ProviderName[]).filter(isStreamableProvider);
-}
-
-/**
- * Fail-closed streaming gate: `outputMode:'stream'` on a NON-streamable provider
- * throws (a HARD reject — no silent downgrade to buffered). Called by
- * {@link parseSessionSubmissionRequest} once mode + provider are both known.
- */
-export function assertStreamableOutputMode(outputMode: OutputMode | undefined, provider: ProviderName): void {
-  if (outputMode === "stream" && !isStreamableProvider(provider)) {
-    throw new Error(
-      `submission.outputMode 'stream' is not supported for provider ${provider}; ` +
-        `streaming is available for: ${streamableProviders().join(", ")}`
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ import {
   type PlatformEnvironment
 } from "./submission.js";
 import { rethrowContractParseError, withContractParseError } from "./contract-parse-error.js";
-import { parseModelName, type ModelName } from "./models.js";
+import { parseModelSlug, type ModelName } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 
@@ -833,7 +833,7 @@ export function parseSessionRequestConfig(input: unknown): SessionRequestConfig 
     "metadata"
   );
   assertAllowedKeys(record, allowed, (key) => new Error(`session request config contains unexpected field: ${key}`));
-  const model = parseModelName(record.model, "session request config model");
+  const model = parseModelSlug(record.model, "session request config model");
   const system = record.system;
   if (system !== undefined && typeof system !== "string") {
     throw new Error("session request config system, when provided, must be a string");

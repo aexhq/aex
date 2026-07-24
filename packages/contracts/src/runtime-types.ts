@@ -6,7 +6,6 @@ import type { ProviderFault } from "./provider-fault.js";
 import type {
   PlatformInlineSecrets,
   PlatformSubmission,
-  ProviderName,
   SessionLimits,
   SessionWebhookSpec
 } from "./submission.js";
@@ -138,7 +137,6 @@ export type SessionSubmission = Omit<PlatformSubmission, "prompt"> & {
 };
 
 export interface SessionCreateRequest {
-  readonly provider: ProviderName;
   readonly submission: SessionSubmission;
   readonly runtimeSize?: RuntimeSize;
   readonly runtimeKind?: RuntimeKind;

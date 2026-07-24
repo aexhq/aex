@@ -6,9 +6,8 @@
  * allowed to aggregate broader SDK helpers.
  */
 export {
-  assertModelNameMatchesProvider,
-  isModelName,
-  providerForModel
+  isModelSlug,
+  parseModelSlug
 } from "./models.js";
 export {
   BUILTIN_TOOL_NAMES
