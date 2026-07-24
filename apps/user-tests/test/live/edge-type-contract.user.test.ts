@@ -24,7 +24,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -36,7 +36,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-type-contract");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -69,7 +68,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-  const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const RAW_CONNECT_TRANSIENT_CODES = new Set([
@@ -126,8 +124,6 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      PROVIDER: GATE_PROVIDER,
-      PROVIDER_KEY: providerKey,
       MODEL: model
     })
   });
@@ -159,7 +155,6 @@ describe("edge: public type-contract gaps", () => {
         const out = { sessionId: null, resultUsage: null, sessionUsage: null, providerUsage: null, usageEvents: 0 };
         const result = await client.start(
           {
-            provider: PROVIDER,
             model: MODEL,
             builtinTools: "none",
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
@@ -199,7 +194,6 @@ describe("edge: public type-contract gaps", () => {
       const body = `
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
-          provider: PROVIDER,
           submission: {
             model: MODEL,
             builtinTools: "none",

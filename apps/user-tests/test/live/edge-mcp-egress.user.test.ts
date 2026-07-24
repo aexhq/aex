@@ -29,7 +29,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 import { finishedRunReadinessSource } from "../_fixtures/finished-run-readiness.js";
 
 function requireEnv(name: string): string {
@@ -42,7 +42,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-mcp-egress");
 const model = gateModel();
 
 // DeepWiki — public, unauthenticated remote MCP (same upstream the existing
@@ -68,7 +67,7 @@ async function runChild(install: InstallResult, scriptName: string, script: stri
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
     throw new Error(

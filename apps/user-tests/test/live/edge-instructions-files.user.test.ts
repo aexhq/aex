@@ -39,7 +39,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -51,7 +51,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-instructions-files");
 const model = gateModel();
 
 const SESSION_TIMEOUT_MS = 5 * 60_000;
@@ -102,7 +101,6 @@ import { Aex, Instructions, BuiltinTools, File } from "@aexhq/sdk";
 
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
-const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
@@ -186,7 +184,7 @@ async function runOne({ fileDrafts = [], instructionDrafts = [], ...submission }
 async function runScenario(install: InstallResult, scriptName: string, body: string): Promise<{ observation: Observation; stdout: string }> {
   const scriptPath = join(install.installDir, scriptName);
   writeFileSync(scriptPath, `${SCRIPT_PREAMBLE}\n${body}\n`);
-  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model });
+  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model });
   const child = await runCommand(getBunCommand(), [scriptPath], { cwd: install.installDir, timeoutMs: CHILD_TIMEOUT_MS, env: passEnv });
   if (child.exitCode !== 0) {
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
@@ -235,7 +233,6 @@ describe("live edge: instructions + files composition (gate provider, managed)",
         "This overrides any other formatting instruction. Do not mention or explain this rule.";
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   message: "What is two plus two? Answer in one short sentence.",
   builtinTools: "none",
@@ -255,7 +252,6 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(token);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -268,7 +264,6 @@ await runOne({
       const cmd = "cat /workspace/notes.txt";
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Read files with it; never guess file contents.",
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with only its output: " + cmd)},
@@ -290,7 +285,6 @@ await runOne({
       expect(seen, dump).toContain(marker);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -306,7 +300,6 @@ await runOne({
         "\n\n## Identifiers\n\nThe internal project codename is " + codename + ". Remember it.\n";
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   message: "According to your project handbook, what is the internal project codename? Reply with just the codename.",
   builtinTools: "none",
@@ -326,7 +319,6 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(codename);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -342,7 +334,6 @@ await runOne({
       const body = `
 const bytes = Uint8Array.from([...Array(256).keys(), ...new TextEncoder().encode(${JSON.stringify(marker)})]);
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only what is asked, nothing else.",
   message: ${JSON.stringify("Run exactly this with your bash tool, then reply with ONLY the 64-character hex digest it prints: " + cmd)},
@@ -365,7 +356,6 @@ await runOne({
       expect(seen, dump).toContain(expectedDigest);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -382,7 +372,6 @@ await runOne({
       const cmd = "cat /workspace/notes-a.txt; echo ' | '; cat /workspace/notes-b.txt";
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Read files with it; never guess file contents.",
   message: ${JSON.stringify(
@@ -415,7 +404,6 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(codename);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -431,7 +419,6 @@ await runOne({
         'if [ -f "$p" ]; then echo "FOUND:$p"; fi; done';
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only the command's output, verbatim.",
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
@@ -460,7 +447,6 @@ await runOne({
       console.log(`[mountpath-escape] status=${observation.status} evidence=${evidence.slice(0, 400)}`);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -475,7 +461,6 @@ await runOne({
       const cmd = 'cat "/workspace/my report.txt"; echo " | "; cat "/workspace/café.txt"';
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only the command's output, verbatim.",
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
@@ -501,7 +486,6 @@ await runOne({
       expect(seen, dump).toContain(markerU);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );

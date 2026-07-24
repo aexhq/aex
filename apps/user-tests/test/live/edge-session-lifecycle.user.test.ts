@@ -15,7 +15,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -26,7 +26,6 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const providerKey = requireGateKey("edge-session-lifecycle");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
 
@@ -39,8 +38,6 @@ import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
 const KEY = process.env.PROVIDER_KEY;
-const PROVIDER = process.env.PROVIDER;
-const gateKeys = { [PROVIDER]: KEY };
 const knownSecrets = [process.env.AEX_API_KEY, KEY]
   .filter((value) => typeof value === "string" && value.length > 0);
 const WAIT = Number(process.env.WAIT_MS || "240000");
@@ -83,7 +80,6 @@ function buildEnv(waitMs: number): Record<string, string> {
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     WAIT_MS: String(waitMs)
   };
@@ -120,7 +116,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       timeoutMs: opts.childTimeoutMs,
       env: buildEnv(opts.waitMs)
     });
-    const leakedKnownKey = [apiKey, providerKey].some(
+    const leakedKnownKey = [apiKey].some(
       (secret) => child.stdout.includes(secret) || child.stderr.includes(secret)
     );
     if (child.exitCode !== 0) {
@@ -184,16 +180,14 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
             return errInfo(e);
           }
         }
-        const emptyMsg     = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"", apiKeys:gateKeys }));
-        const emptyArr     = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:[], apiKeys:gateKeys }));
-        const emptySegment = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:["ok",""], apiKeys:gateKeys }));
-        const whitespaceMsg = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"  \\n\\t ", apiKeys:gateKeys }));
-        const whitespaceArray = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:["  ","\\n"], apiKeys:gateKeys }));
-        const missingKey   = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"hi" }));
-        const badProvider  = await rej(() => validationClient.start({ provider:"acme", model:MODEL, message:"hi", apiKeys:{ acme:"k" } }));
-        const legacyPrompt = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"hi", apiKeys:gateKeys, prompt:"x" }));
-        const unknownOption = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"hi", apiKeys:gateKeys, totallyUnknownOption:{nope:true} }));
-        print({ emptyMsg, emptyArr, emptySegment, whitespaceMsg, whitespaceArray, missingKey, badProvider, legacyPrompt, unknownOption, httpCalls });
+        const emptyMsg     = await rej(() => validationClient.start({ model:MODEL, message:"" }));
+        const emptyArr     = await rej(() => validationClient.start({ model:MODEL, message:[] }));
+        const emptySegment = await rej(() => validationClient.start({ model:MODEL, message:["ok",""] }));
+        const whitespaceMsg = await rej(() => validationClient.start({ model:MODEL, message:"  \\n\\t " }));
+        const whitespaceArray = await rej(() => validationClient.start({ model:MODEL, message:["  ","\\n"] }));
+        const legacyPrompt = await rej(() => validationClient.start({ model:MODEL, message:"hi", prompt:"x" }));
+        const unknownOption = await rej(() => validationClient.start({ model:MODEL, message:"hi", totallyUnknownOption:{nope:true} }));
+        print({ emptyMsg, emptyArr, emptySegment, whitespaceMsg, whitespaceArray, legacyPrompt, unknownOption, httpCalls });
       `;
       const r = await runChild("edge-clientside-validation.mjs", body, { childTimeoutMs: 120_000, waitMs: 60_000 });
       expectConfigError(r.emptyMsg, "message");
@@ -201,8 +195,6 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       expectConfigError(r.emptySegment, "message");
       expectConfigError(r.whitespaceMsg, "message");
       expectConfigError(r.whitespaceArray, "message");
-      expectConfigError(r.missingKey, `apiKeys.${GATE_PROVIDER}`);
-      expectConfigError(r.badProvider, "provider");
       expectConfigError(r.legacyPrompt, "prompt");
       expectConfigError(r.unknownOption, "totallyUnknownOption");
       expect(r.httpCalls).toBe(0);
@@ -217,10 +209,9 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       const body = `
         const probe = "OK-" + Math.random().toString(36).slice(2,8);
         const r = await client.start({
-          provider:PROVIDER, model:MODEL,
+          model:MODEL,
           message:"Reply with exactly this token and nothing else: " + probe,
           idempotencyKey: uid("edge-baseline"),
-          apiKeys: gateKeys
         }, { timeoutMs: WAIT });
         const out = {
           sessionId: r.sessionId, ok: r.ok, status: r.status,
@@ -248,7 +239,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const key = uid("edge-idem-seq");
-        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: SEQ", idempotencyKey:key, apiKeys:gateKeys });
+        const opts = () => ({ model:MODEL, message:"SessionFile verbatim: SEQ", idempotencyKey:key });
         const first = await client.start(opts(), { timeoutMs: WAIT });
         const second = await client.start(opts(), { timeoutMs: WAIT });
         print({ sessionId1:first.sessionId, sessionId2:second.sessionId, same:(first.sessionId === second.sessionId), ok1:first.ok, ok2:second.ok, status1:first.status, status2:second.status });
@@ -267,7 +258,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const key = uid("edge-idem-conc");
-        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: CONC", idempotencyKey:key, apiKeys:gateKeys });
+        const opts = () => ({ model:MODEL, message:"SessionFile verbatim: CONC", idempotencyKey:key });
         const settled = await Promise.allSettled([
           client.start(opts(), { timeoutMs: WAIT }),
           client.start(opts(), { timeoutMs: WAIT })
@@ -292,10 +283,9 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const r = await client.start({
-          provider:PROVIDER, model:MODEL,
+          model:MODEL,
           message:"SessionFile verbatim: DEL",
           idempotencyKey: uid("edge-del"),
-          apiKeys: gateKeys,
           deleteAfter: true
         }, { timeoutMs: WAIT });
         // Negative probe: a 404 rejection IS the expected outcome here; both
@@ -324,7 +314,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       const body = `
         const probe = "u" + Math.random().toString(36).slice(2,6);
         const msg = "Reply with exactly this token and nothing else: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
-        const r = await client.start({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-unicode"), apiKeys:gateKeys }, { timeoutMs: WAIT });
+        const r = await client.start({ model:MODEL, message: msg, idempotencyKey: uid("edge-unicode") }, { timeoutMs: WAIT });
         print({
           sessionId:r.sessionId,
           ok:r.ok,
@@ -353,7 +343,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         const t0 = Date.now();
         let outcome, res=null, err=null;
         try {
-          const r = await client.start({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-big"), apiKeys:gateKeys }, { timeoutMs: WAIT });
+          const r = await client.start({ model:MODEL, message: msg, idempotencyKey: uid("edge-big") }, { timeoutMs: WAIT });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, textLen:(r.text||"").length, hasError:!!r.error };
         } catch(e) { outcome="threw"; err = errInfo(e); }
@@ -375,7 +365,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const probe = "arr" + Math.random().toString(36).slice(2,6);
-        const r = await client.start({ provider:PROVIDER, model:MODEL, message:["Reply with exactly this token and nothing else:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
+        const r = await client.start({ model:MODEL, message:["Reply with exactly this token and nothing else:", probe], idempotencyKey: uid("edge-arr") }, { timeoutMs: WAIT });
         print({
           sessionId:r.sessionId,
           ok:r.ok,
@@ -400,7 +390,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       const body = `
         let outcome, res=null, err=null;
         try {
-          const r = await client.start({ provider:PROVIDER, model:"not-a-model", message:"hi", idempotencyKey: uid("edge-badmodel"), apiKeys:gateKeys }, { timeoutMs: 90_000 });
+          const r = await client.start({ model:"not-a-model", message:"hi", idempotencyKey: uid("edge-badmodel") }, { timeoutMs: 90_000 });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, hasError:!!r.error };
         } catch(e) { outcome = "threw"; err = errInfo(e); }
@@ -426,7 +416,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         const t0 = Date.now();
         let outcome, res=null, err=null;
         try {
-          const r = await client.start({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: TINY", idempotencyKey: uid("edge-tiny"), apiKeys:gateKeys }, { timeoutMs: 1 });
+          const r = await client.start({ model:MODEL, message:"SessionFile verbatim: TINY", idempotencyKey: uid("edge-tiny") }, { timeoutMs: 1 });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, eventCount: Array.isArray(r.events)?r.events.length:null, hasError:!!r.error };
         } catch(e) { outcome = "threw"; err = errInfo(e); }

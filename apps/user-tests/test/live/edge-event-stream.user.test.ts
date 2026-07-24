@@ -25,7 +25,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -37,7 +37,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-event-stream");
 const model = gateModel();
 
 /**
@@ -52,7 +51,6 @@ const model = gateModel();
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const SESSION_ID = process.env.SESSION_ID;
@@ -192,7 +190,7 @@ interface ChildFailure {
 let install: InstallResult;
 
 function redactChildText(text: string): string {
-  return text.split(apiKey).join("[REDACTED_AEX_API_KEY]").split(providerKey).join("[REDACTED_PROVIDER_KEY]");
+  return text.split(apiKey).join("[REDACTED_AEX_API_KEY]");
 }
 
 function isChildFailure(value: unknown): value is ChildFailure {
@@ -242,8 +240,6 @@ async function spawnScriptOnce<T>(
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    PROVIDER: GATE_PROVIDER,
-    PROVIDER_KEY: providerKey,
     MODEL: model,
     ...(opts.extraEnv ?? {})
   };
@@ -312,7 +308,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       "edge-evtstream-base.mjs",
       `
       const session = trackRun(await client.sessions.create({
-        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-base-")} + Date.now(),
@@ -678,7 +673,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // dropAfterFrames:1 keeps it robust even for sparse, few-event turns.
       const factory = makeFactory({ dropAfterFrames: 1, maxDrops: 2 });
       const result = trackRun(await client.start({
-        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-chaos-")} + Date.now(),
@@ -771,7 +765,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // stays 1 (no false disconnect). Either way the exactly-once contract holds.
       const factory = makeFactory({});
       const result = trackRun(await client.start({
-        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-keepalive-")} + Date.now(),
@@ -816,7 +809,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       "edge-evtstream-abort-live.mjs",
       `
       const session = trackRun(await client.sessions.create({
-        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-abortlive-")} + Date.now(),

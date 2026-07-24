@@ -1,13 +1,14 @@
 /**
- * Locks the clean public provider surface as it appears inside a clean
- * `npm i @aexhq/sdk` tempdir.
+ * Locks the managed-gateway public model surface as it appears inside a clean
+ * `npm i @aexhq/sdk` tempdir. Under managed keys there is no provider concept and
+ * no closed model catalog: model ids are open `creator/model` gateway slugs.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
-describe("managed-only provider surface (published package)", () => {
+describe("managed-only model surface (published package)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -24,27 +25,37 @@ describe("managed-only provider surface (published package)", () => {
     return runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
-  it("exports providers + runtime-kind helpers but no region selectors", async () => {
+  it("exports the gateway-slug model helpers but no provider or region selectors", async () => {
     const script = `
       const mod = await import("@aexhq/sdk");
       console.log(JSON.stringify({
-        providers: mod.PROVIDERS,
-        defaultProvider: mod.DEFAULT_PROVIDER,
+        hasProviders: "PROVIDERS" in mod,
+        hasDefaultProvider: "DEFAULT_PROVIDER" in mod,
+        hasProvidersConst: "Providers" in mod,
+        hasModels: "Models" in mod,
+        hasSupportedModels: "SUPPORTED_MODELS" in mod,
+        hasParseModelSlug: typeof mod.parseModelSlug === "function",
+        hasIsModelSlug: typeof mod.isModelSlug === "function",
+        hasModelSlugPattern: mod.MODEL_SLUG_PATTERN instanceof RegExp,
         hasRuntimeKinds: "RUNTIME_KINDS" in mod,
         hasRegions: "REGIONS" in mod || "Regions" in mod,
-        hasSelectRuntime: "selectRuntime" in mod,
-        hasRuntimeValidationError: "RuntimeValidationError" in mod
+        hasStreamableShapes: "STREAMABLE_SHAPES" in mod || "isStreamableProvider" in mod
       }));
     `;
     const { exitCode, stdout, stderr } = await runChild(script, "provider-exports.mjs");
     expect(exitCode, stderr).toBe(0);
     expect(JSON.parse(stdout.trim())).toEqual({
-      providers: ["anthropic", "deepseek", "openai", "gemini", "mistral", "openrouter", "doubao"],
-      defaultProvider: "anthropic",
+      hasProviders: false,
+      hasDefaultProvider: false,
+      hasProvidersConst: false,
+      hasModels: false,
+      hasSupportedModels: false,
+      hasParseModelSlug: true,
+      hasIsModelSlug: true,
+      hasModelSlugPattern: true,
       hasRuntimeKinds: true,
       hasRegions: false,
-      hasSelectRuntime: false,
-      hasRuntimeValidationError: false
+      hasStreamableShapes: false
     });
   });
 
@@ -78,30 +89,29 @@ describe("managed-only provider surface (published package)", () => {
     ]);
   });
 
-  it("openSession rejects removed legacy options before any HTTP call", async () => {
+  it("sessions.create rejects removed legacy + provider/BYOK options before any HTTP call", async () => {
     const script = `
       const { Aex } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
       const client = new Aex({ apiKey: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      // The one-shot/submit surface folded into sessions: these fields are the
-      // legacy submit inputs that no longer exist on the session API. Each must
-      // be rejected at the SDK boundary before any HTTP call.
-      const fields = ["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentSessionId"];
+      // Legacy submit inputs AND the now-removed managed-key fields (provider,
+      // apiKeys) must all be rejected at the SDK boundary before any HTTP call.
+      const fields = ["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentSessionId", "provider", "apiKeys"];
       const results = [];
       for (const field of fields) {
         try {
           await client.sessions.create({
-            provider: "anthropic",
-            model: "claude-haiku-4-5",
-            apiKeys: { anthropic: "sk-ant-test" },
+            model: "anthropic/claude-haiku-4-5",
             [field]: field === "secrets"
-              ? { apiKeys: { anthropic: "sk-ant-test" } }
+              ? { mcpServers: [] }
               : field === "limits"
                 ? { maxConcurrentChildSessions: 2 }
                 : field === "runtimeSize"
                   ? "2cpu-8gb"
-                  : "unsupported"
+                  : field === "apiKeys"
+                    ? { anthropic: "sk-ant-test" }
+                    : "unsupported"
           });
           results.push({ field, caught: false });
         } catch (err) {
@@ -134,7 +144,7 @@ describe("managed-only provider surface (published package)", () => {
       fetchCalls: number;
     };
     expect(out.fetchCalls).toBe(0);
-    expect(out.results.map((result) => result.field)).toEqual(["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentSessionId"]);
+    expect(out.results.map((result) => result.field)).toEqual(["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentSessionId", "provider", "apiKeys"]);
     for (const result of out.results) {
       expect(result).toMatchObject({
         caught: true,
@@ -152,11 +162,7 @@ describe("managed-only provider surface (published package)", () => {
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
       const client = new Aex({ apiKey: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      const base = {
-        provider: "anthropic",
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-ant-test" }
-      };
+      const base = { model: "anthropic/claude-haiku-4-5" };
       const cases = [
         { label: "runtime", options: { runtime: "unsupported-size" }, field: "runtime" },
         { label: "timeout", options: { overrides: { timeout: "unsupported-duration" } }, field: "overrides.timeout" },
@@ -219,7 +225,7 @@ describe("managed-only provider surface (published package)", () => {
     }
   });
 
-  it("sessions.create posts canonical top-level apiKeys secrets only", async () => {
+  it("sessions.create posts a gateway slug with no provider selector and an empty secrets bundle", async () => {
     const script = `
       const { Aex } = await import("@aexhq/sdk");
       const requests = [];
@@ -232,16 +238,13 @@ describe("managed-only provider surface (published package)", () => {
         }), { status: 201, headers: { "content-type": "application/json" } });
       };
       const client = new Aex({ apiKey: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      await client.sessions.create({
-        provider: "anthropic",
-        model: "claude-haiku-4-5",
-        apiKeys: { anthropic: "sk-ant-test-12345" }
-      });
+      await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
       const createBody = JSON.parse(requests[0].body);
       console.log(JSON.stringify({
         url: requests[0].url,
         method: requests[0].method,
-        provider: createBody.provider,
+        hasProvider: "provider" in createBody,
+        model: createBody.submission && createBody.submission.model,
         hasRuntimeSize: "runtimeSize" in createBody,
         hasRegion: "region" in createBody,
         secrets: createBody.secrets
@@ -252,10 +255,11 @@ describe("managed-only provider surface (published package)", () => {
     expect(JSON.parse(stdout.trim())).toMatchObject({
       url: expect.stringContaining("/api/sessions"),
       method: "POST",
-      provider: "anthropic",
+      hasProvider: false,
+      model: "anthropic/claude-haiku-4-5",
       hasRuntimeSize: false,
       hasRegion: false,
-      secrets: { apiKeys: { anthropic: "sk-ant-test-12345" } }
+      secrets: {}
     });
   });
 });

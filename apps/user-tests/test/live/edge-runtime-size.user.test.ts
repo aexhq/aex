@@ -22,7 +22,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -34,7 +34,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-runtime-size");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -67,7 +66,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-  const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const errShape = (e) => ({
@@ -130,8 +128,6 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      PROVIDER: GATE_PROVIDER,
-      PROVIDER_KEY: providerKey,
       MODEL: model
     })
   });
@@ -163,7 +159,6 @@ describe("edge: runtime honored, validated, and visible", () => {
         const out = { created: null, recordRuntime: null, leakedRuntimeSize: false, rawRuntimeSize: null, error: null };
         try {
           const session = await client.sessions.create({
-            provider: PROVIDER,
             model: MODEL,
             builtinTools: "none",
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
@@ -203,7 +198,6 @@ describe("edge: runtime honored, validated, and visible", () => {
       const body = `
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
-          provider: PROVIDER,
           runtimeSize: "shared-99x-1tb",
           submission: {
             model: MODEL,

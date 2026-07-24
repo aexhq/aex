@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -33,7 +33,6 @@ function requireEnv(name: string): string {
 
 const apiBase = requireEnv("AEX_API_URL").replace(/\/+$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-cli");
 const model = gateModel();
 const runtimeKind = requireRuntimeKind();
 
@@ -50,7 +49,7 @@ function requireRuntimeKind(): "container" | "spot_container" | "lambda" {
 const SESSION_READY = ["idle"];
 
 function redact(text: string): string {
-  return text.split(apiKey).join("[REDACTED_TOKEN]").split(providerKey).join("[REDACTED_KEY]");
+  return text.split(apiKey).join("[REDACTED_TOKEN]");
 }
 
 function diag(label: string, r: SessionResult): string {
@@ -60,7 +59,6 @@ function diag(label: string, r: SessionResult): string {
 function assertNoSecretLeak(label: string, r: SessionResult): void {
   const combined = r.stdout + r.stderr;
   expect(combined.includes(apiKey), `${label}: api key leaked to output`).toBe(false);
-  expect(combined.includes(providerKey), `${label}: provider key leaked to output`).toBe(false);
 }
 
 function parseJsonLines(stdout: string): Record<string, unknown>[] {
@@ -202,11 +200,9 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const run = await executeCli(
           [
             "start",
-            "--provider", GATE_PROVIDER,
             "--model", model,
             "--runtime", runtimeKind,
             "--prompt", `@${promptPath}`,
-            "--deepseek-api-key", providerKey,
             "--idempotency-key", `edge-cli-${asciiId.toLowerCase()}`,
             "--follow",
             "--timeout", "8m",

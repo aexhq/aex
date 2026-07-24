@@ -25,7 +25,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -37,7 +37,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-delete-retention");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -70,7 +69,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-  const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const errShape = (e) => ({
@@ -95,8 +93,6 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      PROVIDER: GATE_PROVIDER,
-      PROVIDER_KEY: providerKey,
       MODEL: model
     })
   });
@@ -139,7 +135,6 @@ describe("edge: deleting a session retires its files", () => {
       const body = `
         const marker = "DELETE-RETENTION-" + Date.now();
         const sessionResult = await client.start({
-          provider: PROVIDER,
           model: MODEL,
           message: "Write a file /workspace/keep.txt containing exactly this line: " + marker + " . Then reply done.",
           builtinTools: "default",

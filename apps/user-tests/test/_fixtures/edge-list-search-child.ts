@@ -2,7 +2,6 @@ export function buildEdgeListSearchChildScript(body: string): string {
   return `
     import { Aex } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-    const PROVIDER = process.env.PROVIDER;
     const PROVIDER_KEY = process.env.PROVIDER_KEY;
     const MODEL = process.env.MODEL;
     const knownSecrets = [process.env.AEX_API_KEY, PROVIDER_KEY]

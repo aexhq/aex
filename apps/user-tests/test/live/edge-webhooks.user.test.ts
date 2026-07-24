@@ -21,7 +21,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -35,7 +35,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-webhooks");
 const model = gateModel();
 
 /** Spawn a bun child that executes `body` in the install dir; parse its stdout JSON. */
@@ -50,7 +49,6 @@ async function runScript<T>(
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -81,8 +79,6 @@ async function runScript<T>(
 const CLIENT_PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-const PROVIDER = process.env.PROVIDER;
-const providerKey = process.env.PROVIDER_KEY;
 const model = process.env.MODEL;
 `;
 
@@ -130,9 +126,7 @@ describe("live hosted - session webhooks edge cases", () => {
         for (const c of cases) {
           try {
             const s = await client.sessions.create({
-              provider: PROVIDER,
               model,
-              apiKeys: { [PROVIDER]: providerKey },
               webhook: c.webhook
             });
             results.push({ name: c.name, rejected: false, sessionId: s.id });
@@ -197,10 +191,8 @@ describe("live hosted - session webhooks edge cases", () => {
       const body = `${CLIENT_PREAMBLE}
         const probe = "wh-" + Math.random().toString(36).slice(2, 8);
         const sessionResult = await client.start({
-          provider: PROVIDER,
           model,
           message: "Reply with exactly the following token and nothing else, character for character: " + probe,
-          apiKeys: { [PROVIDER]: providerKey },
           webhook: { url: "https://example.com/aex-webhook-probe" },
           idempotencyKey: "user-test-wh-valid-" + Date.now()
         }, { timeoutMs: 6 * 60 * 1000 });
@@ -358,10 +350,8 @@ describe("live hosted - session webhooks edge cases", () => {
           // catch so a read failure crashes the child loudly instead of being
           // misfiled as a submit rejection.
           const submitted = await client.start({
-            provider: PROVIDER,
             model,
             message: "SessionFile verbatim: ssrf-probe",
-            apiKeys: { [PROVIDER]: providerKey },
             webhook: { url: t.url },
             idempotencyKey: "user-test-wh-ssrf-" + t.name + "-" + Date.now()
           }, { timeoutMs: 5 * 60 * 1000 }).then(

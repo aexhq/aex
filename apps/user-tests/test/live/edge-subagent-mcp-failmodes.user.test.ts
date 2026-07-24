@@ -28,7 +28,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -40,7 +40,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-subagent-mcp-failmodes");
 const model = gateModel();
 
 function buildPassEnv(extra: Record<string, string>): Record<string, string> {
@@ -59,7 +58,6 @@ function buildPassEnv(extra: Record<string, string>): Record<string, string> {
 
 const CHILD_PRELUDE = `
   import { Aex, McpServer } from "@aexhq/sdk";
-  const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
@@ -78,7 +76,7 @@ async function runChild(install: InstallResult, scriptName: string, body: string
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
     throw new Error(`edge-subagent-mcp-failmodes runner (${scriptName}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
@@ -113,7 +111,6 @@ describe("live DEV — subagent + MCP failure modes", () => {
         // Create first so diagnostics always include the parent session id, even if
         // the turn throws or times out.
         const parent = await client.sessions.create({
-          provider: PROVIDER,
           model: MODEL,
           builtinTools: "default",
           apiKeys: { [PROVIDER]: PROVIDER_KEY },

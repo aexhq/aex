@@ -26,7 +26,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -40,7 +40,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-session-limits");
 const model = gateModel();
 
 /** Every valid runtime-size preset token (mirrors RUNTIME_SIZE_PRESETS keys). */
@@ -55,7 +54,6 @@ const VALID_SIZES = [
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const out = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
@@ -125,7 +123,6 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
     const passEnv: Record<string, string> = {
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
       MODEL: model
     };
     const child = await runCommand(getBunCommand(), [scriptPath], {

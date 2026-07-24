@@ -22,7 +22,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "./install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "./provider.js";
+import { gateModel } from "./provider.js";
 import { formatChildFailure, redactKnownValues } from "./live-diagnostics.js";
 import type { EdgeChatSessionShard } from "./edge-chat-session-manifest.js";
 
@@ -36,7 +36,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-chat-session");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -67,15 +66,11 @@ const PRE = `
 import { Aex } from "@aexhq/sdk";
 const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
 const apiKey = process.env.AEX_API_KEY;
-const PROVIDER = process.env.PROVIDER;
-const providerKey = process.env.PROVIDER_KEY;
 const model = process.env.MODEL;
 const client = new Aex({ baseUrl, apiKey });
 const CREATE = {
-  provider: PROVIDER,
   model,
   builtinTools: "none",
-  apiKeys: { [PROVIDER]: providerKey },
   system: "You are a terse assistant. Follow the user's instructions exactly and reply with as few words as possible.",
   overrides: { idleTtl: "10m" }
 };
@@ -102,7 +97,7 @@ async function waitForLifecycle(session, statuses, timeoutMs){
 }
 function leaks(obj){
   const s = JSON.stringify(obj);
-  return (providerKey && s.includes(providerKey)) || (apiKey && s.includes(apiKey));
+  return (apiKey && s.includes(apiKey));
 }
 function emit(o){ process.stdout.write(JSON.stringify(o)); process.exit(0); }
 `;
@@ -114,17 +109,17 @@ async function runChild(scriptName: string, body: string, timeoutMs = 8 * 60_000
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
-    throw new Error(formatChildFailure(scriptName, child, [apiKey, providerKey]));
+    throw new Error(formatChildFailure(scriptName, child, [apiKey]));
   }
   const out = child.stdout.trim();
   try {
     return JSON.parse(out) as Record<string, unknown>;
   } catch {
     throw new Error(
-      `${scriptName}: child stdout was not JSON:\n${redactKnownValues(out, [apiKey, providerKey])}\n--- stderr ---\n${redactKnownValues(child.stderr, [apiKey, providerKey])}`
+      `${scriptName}: child stdout was not JSON:\n${redactKnownValues(out, [apiKey])}\n--- stderr ---\n${redactKnownValues(child.stderr, [apiKey])}`
     );
   }
 }

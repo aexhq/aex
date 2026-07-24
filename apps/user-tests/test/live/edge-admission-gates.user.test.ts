@@ -27,7 +27,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -39,7 +39,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-admission-gates");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -73,7 +72,6 @@ const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
   const noRetryClient = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY, retry: false });
-  const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const MAX_SAFE_CAP = Number(process.env.AEX_ADMISSION_GATES_MAX_SAFE_CAP ?? "10");
@@ -143,8 +141,6 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      PROVIDER: GATE_PROVIDER,
-      PROVIDER_KEY: providerKey,
       MODEL: model,
       AEX_ADMISSION_GATES_MAX_SAFE_CAP: process.env.AEX_ADMISSION_GATES_MAX_SAFE_CAP ?? "10"
     })
@@ -244,7 +240,6 @@ describe("edge: session-path admission gates", () => {
         try {
           for (let i = 0; i < out.cap; i += 1) {
             const session = await client.sessions.create({
-              provider: PROVIDER,
               model: MODEL,
               builtinTools: "default",
               apiKeys: { [PROVIDER]: PROVIDER_KEY },
@@ -269,7 +264,6 @@ describe("edge: session-path admission gates", () => {
             const extra = await noRetryClient
               .start(
                 {
-                  provider: PROVIDER,
                   model: MODEL,
                   builtinTools: "default",
                   apiKeys: { [PROVIDER]: PROVIDER_KEY },
@@ -324,7 +318,6 @@ describe("edge: session-path admission gates", () => {
       const body = `
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
-          provider: PROVIDER,
           submission: {
             model: MODEL,
             builtinTools: "none",

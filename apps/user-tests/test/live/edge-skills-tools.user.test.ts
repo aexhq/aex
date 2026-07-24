@@ -35,7 +35,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -47,7 +47,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-skills-tools");
 const model = gateModel();
 
 const SESSION_TIMEOUT_MS = 5 * 60_000;
@@ -103,7 +102,6 @@ import { Aex, BuiltinTools, Tool } from "@aexhq/sdk";
 
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
-const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
@@ -188,7 +186,7 @@ async function runOne({ toolDrafts = [], ...submission }) {
 async function runScenario(install: InstallResult, scriptName: string, body: string): Promise<{ observation: Observation; stdout: string }> {
   const scriptPath = join(install.installDir, scriptName);
   writeFileSync(scriptPath, `${SCRIPT_PREAMBLE}\n${body}\n`);
-  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model });
+  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model });
   const child = await runCommand(getBunCommand(), [scriptPath], { cwd: install.installDir, timeoutMs: CHILD_TIMEOUT_MS, env: passEnv });
   if (child.exitCode !== 0) {
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
@@ -234,7 +232,6 @@ describe("live edge: skills & tools composition (gate provider, managed)", () =>
       const indexSrc = `export default async function ({ input }) { throw new Error(${JSON.stringify("boom-thrown " + marker)}); }`;
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "Call the boom_tool tool exactly once with x set to \\"go\\". It will return an error. After that, reply in one short sentence that the tool errored, and stop. Do not retry the tool.",
   message: "Call the boom_tool tool once with x=\\"go\\".",
@@ -271,7 +268,6 @@ await runOne({
 
       expect(observation.assistantTextEventCount, dump).toBeGreaterThan(0);
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -282,7 +278,6 @@ await runOne({
       const marker = "BLTN-" + tag();
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "You have exactly one tool: bash. Use it to run the requested command, then reply with the exact printed line.",
   message: "Using your bash tool, run: printf '${marker}\\\\n'  — then reply with the exact line you printed and nothing else.",
@@ -306,7 +301,6 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(marker);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -318,7 +312,6 @@ await runOne({
       const indexSrc = `export default async function ({ input }) { return ${JSON.stringify("stamp:")} + String(input.v); }`;
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "Use the echo_stamp tool for this task; do not answer from memory. After calling it, reply with its exact result on one line.",
   message: "Call the echo_stamp tool with v set to \\"${marker}\\", then reply with its exact result verbatim.",
@@ -350,7 +343,6 @@ await runOne({
       expect(norm(r!.text), dump).toContain(norm(`stamp:${marker}`));
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -363,7 +355,6 @@ await runOne({
       const srcB = `export default async function () { return ${JSON.stringify("dup-BBB-" + marker)}; }`;
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   system: "Call the dup_tool tool once with no arguments, then reply with its exact result.",
   message: "Call the dup_tool tool once (no arguments) and reply with its exact result.",
@@ -398,7 +389,6 @@ await runOne({
       expect(handledCleanly, dump).toBe(true);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
       // Diagnostic breadcrumb for the report (never fails the test).
       // eslint-disable-next-line no-console
       console.log(`[dup-name] outcome=${outcome}\n${dump}`);
@@ -412,7 +402,6 @@ await runOne({
       const marker = "EMPTY-" + tag();
       const body = `
 await runOne({
-  provider: PROVIDER,
   model: MODEL,
   message: "Reply with exactly: ${marker}. Do not add any other text.",
   builtinTools: "none",
@@ -432,7 +421,6 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(marker);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );

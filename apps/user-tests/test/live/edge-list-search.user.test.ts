@@ -14,7 +14,7 @@ import {
 } from "../_fixtures/edge-list-search-child.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { formatChildFailure } from "../_fixtures/live-diagnostics.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -24,15 +24,12 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-list-search");
 const model = gateModel();
 
 function childEnv(): Record<string, string> {
   const env: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    PROVIDER: GATE_PROVIDER,
-    PROVIDER_KEY: providerKey,
     MODEL: model
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -57,14 +54,14 @@ async function runChild(
     timeoutMs,
     env: childEnv()
   });
-  const leakedKnownKey = [apiKey, providerKey].some(
+  const leakedKnownKey = [apiKey].some(
     (secret) => child.stdout.includes(secret) || child.stderr.includes(secret)
   );
   if (child.exitCode !== 0) {
     throw new Error(formatChildFailure(
       `edge-list-search child ${scriptName}`,
       child,
-      [apiKey, providerKey]
+      [apiKey]
     ));
   }
   if (leakedKnownKey) {
@@ -102,7 +99,6 @@ describe("edge: finished consistency and session listing", () => {
     const marker = `finish-consistent-${randomBytes(6).toString("hex")}.txt`;
     const out = await runChild(install, "edge-finish-consistency.mjs", `
       const result = await client.start({
-        provider: PROVIDER,
         model: MODEL,
         message: ${JSON.stringify(`Use bash to write exactly "finish-consistent" to /workspace/files/${marker}, then reply done.`)},
         builtinTools: "default",
@@ -172,7 +168,6 @@ describe("edge: finished consistency and session listing", () => {
       try {
         for (let i = 0; i < 3; i++) {
           created.push(await client.sessions.create({
-            provider: PROVIDER,
             model: MODEL,
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-pagination-" + Date.now() + "-" + i

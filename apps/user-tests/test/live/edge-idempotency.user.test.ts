@@ -21,7 +21,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { gateModel } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -33,7 +33,6 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-idempotency");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -65,7 +64,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
-  const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
 
@@ -105,8 +103,6 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      PROVIDER: GATE_PROVIDER,
-      PROVIDER_KEY: providerKey,
       MODEL: model
     })
   });
@@ -144,7 +140,6 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
       const body = `
         const KEY = "edge-idem-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
         const base = {
-          provider: PROVIDER,
           model: MODEL,
           message: "Reply with the single word done. Do not use any tools.",
           builtinTools: "none",
