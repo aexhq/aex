@@ -32,7 +32,6 @@ export {
   CLI_SDK_PARITY_MANIFEST,
   CLI_PARITY_NOT_SURFACED,
   CLI_PARITY_BARE_LIST,
-  CLI_PARITY_PROVIDER_KEY_FLAG,
   CONTROL_PLANE_VERB_BY_CLIENT,
   type CliSdkParityManifest,
   type ControlPlaneSubverbManifest

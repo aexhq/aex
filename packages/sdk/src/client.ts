@@ -1,6 +1,5 @@
 import {
   CredentialValidationError,
-  DEFAULT_PROVIDER,
   HttpClient,
   PLANE_BASE_URLS,
   SessionStateError,
@@ -9,9 +8,8 @@ import {
   asAexStreamEventView,
   customName,
   isReplayableEvent,
-  assertStreamableOutputMode,
   tryParseApiKey,
-  resolveModelProvider,
+  parseModelSlug,
   resolveBuiltinToolNames,
   streamCoordinatorEvents,
   type AexEvent,
@@ -59,7 +57,6 @@ import {
   parseSessionTimeout,
   parseSessionWebhook,
   type SessionWebhookDelivery,
-  type ProviderName,
   type SecretRecord,
   type OrgRecord,
   type CreateOrgRequest,
@@ -131,8 +128,7 @@ import {
   assertSupportedSessionSendOptions,
   configError,
   normaliseSessionInput,
-  validatedSessionConfig,
-  validateApiKeys
+  validatedSessionConfig
 } from "./session-validate.js";
 import {
   fileCaptureForWire,
@@ -1401,41 +1397,21 @@ export class Aex {
       throw configError("aex.sessions.create", "options", "options are required");
     }
     assertSupportedSessionFields(options, "aex.sessions.create", false);
-    // Model is REQUIRED and checked BEFORE the provider key, so omitting `model`
-    // reports "model is required" rather than a misleading provider-key message.
+    // Model is REQUIRED and validated as a gateway `creator/model` slug string.
+    // This is a structural boundary gate only — a well-formed slug the gateway
+    // catalog doesn't yet serve is allowed through (the server arbitrates), so a
+    // slightly-old SDK can still run a newly-launched model.
     if (typeof options.model !== "string" || !options.model) {
       throw configError("aex.sessions.create", "model", "model is required");
     }
-    // One model→provider resolver (SSoT), shared with the CLI: it honors an
-    // explicit provider (forward-compat: an unknown model is allowed through so a
-    // slightly-old SDK can still run a newly-launched model), infers the default
-    // provider for a known model, and rejects an unknown model without a provider.
     const selectedModel = options.model;
-    const selectedProvider = options.provider;
-    const providerField = selectedProvider === undefined ? "model" : "provider";
-    const providerMessage = selectedProvider === undefined
-      ? "model must be recognized unless provider is supplied explicitly"
-      : "provider cannot serve the selected model";
-    const provider = validatedSessionConfig(
+    validatedSessionConfig(
       "aex.sessions.create",
-      providerField,
-      providerMessage,
-      () => resolveModelProvider(selectedModel, selectedProvider),
-      { kind: "scalar", rejectedValues: [selectedModel, selectedProvider] }
+      "model",
+      "model must be a gateway model slug of the form \"creator/model\"",
+      () => parseModelSlug(selectedModel),
+      { kind: "scalar", rejectedValues: [selectedModel] }
     );
-    validateApiKeys(options.apiKeys, provider, "aex.sessions.create");
-    // WS9 fail-closed: `outputMode:'stream'` on a NON-streamable provider is a
-    // hard reject at the earliest seam (no silent downgrade to buffered).
-    if (options.outputMode !== undefined) {
-      const outputMode = options.outputMode;
-      validatedSessionConfig(
-        "aex.sessions.create",
-        "outputMode",
-        "outputMode is not supported for the selected provider",
-        () => assertStreamableOutputMode(outputMode, provider),
-        { kind: "scalar", rejectedValues: [outputMode, provider] }
-      );
-    }
     // Fast client-side validation via the contract parsers (the SSoT). runtimeSize
     // and timeout are STABLE closed sets whose invalid values the create endpoint
     // otherwise SILENTLY defaults (no error ever — pre-launch edge-sweep F11/F12);
@@ -1582,7 +1558,6 @@ export class Aex {
     };
 
     const secrets: PlatformInlineSecrets = {
-      ...(options.apiKeys ? { apiKeys: options.apiKeys } : {}),
       ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
       ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
     };
@@ -1590,7 +1565,6 @@ export class Aex {
     const retention = sessionRetentionForWire(options);
 
     return {
-      provider,
       submission,
       ...(options.runtime?.size ? { runtimeSize: options.runtime.size } : {}),
       ...(options.runtime?.kind ? { runtimeKind: options.runtime.kind } : {}),

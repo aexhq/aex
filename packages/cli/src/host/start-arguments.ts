@@ -1,9 +1,7 @@
 import {
   parseSessionTimeout,
-  PROVIDERS,
   RUNTIME_KINDS,
-  RUNTIME_SIZES,
-  type ProviderName
+  RUNTIME_SIZES
 } from "@aexhq/contracts";
 import {
   collectRepeated,
@@ -21,8 +19,6 @@ import {
 } from "./start-validation.js";
 
 export interface StartArguments {
-  readonly explicitProvider?: ProviderName;
-  readonly providerApiKeys: Partial<Record<ProviderName, string>>;
   readonly idempotencyKey?: string;
   readonly webhookUrl?: string;
   readonly runtimeSize?: string;
@@ -80,31 +76,6 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
   };
   const failed = (): StartArgumentsResult | undefined =>
     state.error ? { ok: false, error: state.error } : undefined;
-
-  const providerValue = option("--provider");
-  if (state.error) return failed()!;
-  let explicitProvider: ProviderName | undefined;
-  if (providerValue !== undefined) {
-    if (!(PROVIDERS as readonly string[]).includes(providerValue)) {
-      const hint = suggest(providerValue, PROVIDERS);
-      return {
-        ok: false,
-        error: startValidationMessage(
-          "--provider",
-          `must be one of: ${PROVIDERS.join(", ")} (got: ${providerValue})` +
-          `${hint ? `; did you mean "${hint}"?` : ""}`
-        )
-      };
-    }
-    explicitProvider = providerValue as ProviderName;
-  }
-
-  const providerApiKeys: Partial<Record<ProviderName, string>> = {};
-  for (const provider of PROVIDERS) {
-    const value = option(`--${provider}-api-key`);
-    if (state.error) return failed()!;
-    if (value !== undefined) providerApiKeys[provider] = value;
-  }
 
   const idempotencyKey = option("--idempotency-key");
   const webhookUrl = option("--webhook");
@@ -191,8 +162,6 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
   return {
     ok: true,
     value: {
-      ...(explicitProvider ? { explicitProvider } : {}),
-      providerApiKeys,
       ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
       ...(webhookUrl !== undefined ? { webhookUrl } : {}),
       ...(runtimeSize !== undefined ? { runtimeSize } : {}),

@@ -232,22 +232,14 @@ export type { RuntimeKind } from "@aexhq/contracts";
 export { BUILTIN_TOOL_NAMES, BuiltinTools, DEFAULT_BUILTIN_TOOLS, resolveBuiltinToolNames } from "@aexhq/contracts";
 export type { BuiltinToolName } from "@aexhq/contracts";
 
-// Provider/model surface. Provider choice decides the upstream model route;
-// execution uses the managed path.
+// Model surface. Public model ids are plain Vercel AI Gateway `creator/model`
+// slug strings validated structurally by `parseModelSlug`; the managed gateway
+// routes them (no provider selection, no API key). `ProviderName` survives only
+// as a serving-provider telemetry string alias.
 export {
-  DEFAULT_PROVIDER,
-  SUPPORTED_MODELS,
-  SUPPORTED_MODELS_BY_PROVIDER,
-  MODEL_PROVIDER_IDS,
-  Models,
-  providerForModel,
-  providersForModel,
-  resolveModelProvider,
-  resolveProviderModelId,
-  isModelName,
-  parseModelName,
-  Providers,
-  PROVIDERS,
+  MODEL_SLUG_PATTERN,
+  isModelSlug,
+  parseModelSlug,
   suggest
 } from "@aexhq/contracts";
 export type {
@@ -280,16 +272,14 @@ export {
 } from "@aexhq/contracts";
 export type { ApiKeyPlane, ContractParseError, ParsedApiKey } from "@aexhq/contracts";
 
-// Structured-output (schema-decode), HITL approval-gate, and the streaming
-// capability model (WS9/WS10).
+// Structured-output (schema-decode) and HITL approval-gate (WS10). Streaming is
+// allowed for all models through the managed gateway — there is no capability gate.
 export {
   RESPONSE_FORMAT_KINDS,
-  STREAMABLE_SHAPES,
-  isStreamableProvider,
   parseApprovalGate,
   parseResponseFormat
 } from "@aexhq/contracts";
-export type { ApprovalGate, ResponseFormat, ResponseFormatKind, StreamableShape } from "@aexhq/contracts";
+export type { ApprovalGate, ResponseFormat, ResponseFormatKind } from "@aexhq/contracts";
 
 // Event methods. Durable list/archive/result events are `AexEventView` values
 // with a replay `sequence`. Live run/coordinator streams yield

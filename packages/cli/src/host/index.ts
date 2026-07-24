@@ -22,7 +22,7 @@ export { executeLoginCmd, executeLogoutCmd, executeAuthStatusCmd } from "./auth-
 export { executeOrgsCmd } from "./orgs-cmd.js";
 export { executeWorkspacesCmd } from "./workspaces-cmd.js";
 export { executeKeysCmd } from "./keys-cmd.js";
-export { modelNamesCmd, providerNamesCmd, executeToolsCmd, executeRuntimeSizesCmd } from "./discover-cmd.js";
+export { executeToolsCmd, executeRuntimeSizesCmd } from "./discover-cmd.js";
 export { executeTailCmd } from "./tail.js";
 export { executeInspectCmd } from "./inspect.js";
 export {

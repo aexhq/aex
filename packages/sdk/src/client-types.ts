@@ -6,7 +6,6 @@ import type {
   OutputMode,
   PlatformEnvironmentInput,
   PlatformSubmission,
-  ProviderName,
   ResponseFormat,
   Session,
   SessionCheckpointRevision,
@@ -55,14 +54,9 @@ export interface IdempotencyOptions {
  */
 export interface SessionCreateOptions extends IdempotencyOptions {
   /**
-   * Upstream provider selector. Prefer naming it explicitly with the
-   * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. When
-   * omitted it is derived from `model`; if supplied it MUST serve the model.
-   */
-  readonly provider?: ProviderName;
-  /**
-   * Closed public model id. Prefer the {@link Models} symbol const, e.g.
-   * `Models.CLAUDE_HAIKU_4_5`.
+   * The model to run, as a Vercel AI Gateway `creator/model` slug string
+   * (e.g. `"anthropic/claude-haiku-4-5"`, `"deepseek/deepseek-v4-flash"`).
+   * The managed gateway routes it — no provider selection and no API key.
    */
   readonly model: ModelName;
   readonly system?: string;
@@ -88,12 +82,11 @@ export interface SessionCreateOptions extends IdempotencyOptions {
    * Assistant-output granularity. `"buffered"` (default) delivers ONE coalesced
    * `TEXT_MESSAGE_CONTENT` per assistant message. `"stream"` delivers provisional,
    * non-replayable per-token `TEXT_MESSAGE_CONTENT` deltas (`replayable:false`,
-   * `liveSequence`, and no durable `sequence`) as they arrive. This is capability-gated:
-   * `"stream"` is only honored for a streamable provider (submitting `"stream"`
-   * against a non-streamable one is rejected at submit, never silently
-   * downgraded). A coalesced final `TEXT_MESSAGE_CONTENT` ALWAYS follows the
-   * deltas, so a buffered consumer sees the same final text either way; deltas
-   * are provisional until that coalesced block.
+   * `liveSequence`, and no durable `sequence`) as they arrive. Every model
+   * streams through the managed gateway, so `"stream"` is honored for ALL models.
+   * A coalesced final `TEXT_MESSAGE_CONTENT` ALWAYS follows the deltas, so a
+   * buffered consumer sees the same final text either way; deltas are
+   * provisional until that coalesced block.
    */
   readonly outputMode?: OutputMode;
   /**
@@ -112,8 +105,6 @@ export interface SessionCreateOptions extends IdempotencyOptions {
    */
   readonly approvalGate?: ApprovalGate;
   readonly metadata?: PlatformSubmission["metadata"];
-  /** BYOK provider key(s), keyed by provider. */
-  readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly environment?: SessionEnvironmentOptions;
   /**
    * The execution runtime for the session — grouped as `{ kind, size }`.

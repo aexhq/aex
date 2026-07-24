@@ -31,7 +31,6 @@
  * or prd plane. There is no `--workspace` flag — the workspace is derived
  * server-side from the API key.
  */
-import { PROVIDERS } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
 import { executeFilesSyncCmd } from "./files-sync.js";
 import { findVerbSpec, renderVerbHelp, wantsVerbHelp } from "./host/registry.js";
@@ -61,8 +60,6 @@ import {
   executeOrgsCmd,
   executeWorkspacesCmd,
   executeKeysCmd,
-  modelNamesCmd,
-  providerNamesCmd,
   executeToolsCmd,
   executeRuntimeSizesCmd,
   executeTailCmd,
@@ -171,13 +168,9 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
     case "auth":
       // `aex auth status` (default subcommand `status`). Token never printed.
       return executeAuthStatusCmd(io, rest[0] === "status" ? rest.slice(1) : rest);
-    case "models":
+    case "tools":
       // Discoverability reads of the contracts SSoT — no token, no network.
       // Each accepts an optional `list` subcommand and `--json`.
-      return modelNamesCmd(io, rest);
-    case "providers":
-      return providerNamesCmd(io, rest);
-    case "tools":
       return executeToolsCmd(io, rest);
     case "runtime-sizes":
       return executeRuntimeSizesCmd(io, rest);
@@ -194,8 +187,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   // by the conformance `cli-sdk-parity` manifest test.
   io.stdout("aex — unified CLI for the aex platform (a thin pass-through over the SDK)\n\n");
   io.stdout("Usage:\n");
-  io.stdout("  aex start --config <session.json> --<provider>-api-key K --api-key T [flags]\n");
-  io.stdout("  aex start --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-key T [flags]\n");
+  io.stdout("  aex start --config <session.json> --api-key T [flags]\n");
+  io.stdout("  aex start --model creator/model --prompt P [--system S] [--mcp name=url ...] --api-key T [flags]\n");
   io.stdout("  aex status <session-id> --api-key T\n");
   io.stdout("  aex deliveries <session-id> --api-key T\n");
   io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-key T\n");
@@ -223,8 +216,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex login --api-key T [--aex-url U]      Persist a workspace key (data-plane); then verbs need no --api-key\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");
-  io.stdout("  aex models list [--json]                   List models + default provider (no token needed)\n");
-  io.stdout("  aex providers list [--json]                List providers + their models (no token needed)\n");
   io.stdout("  aex tools list [--json]                    List builtin tools (all default; no token needed)\n");
   io.stdout("  aex runtime-sizes list [--json]              List managed runtime presets (no token needed)\n");
   io.stdout("  aex --help\n\n");
@@ -233,12 +224,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --aex-url <url>         Optional; defaults by key plane (prd https://api.aex.dev; dev https://dev-api.aex.dev)\n");
   io.stdout("  --debug                     Optional; print a redacted per-request trace to stderr (uploads nothing)\n\n");
   io.stdout("aex start flags:\n");
-  io.stdout(`  --provider <name>           Optional; one of: ${PROVIDERS.join(", ")} (default anthropic)\n`);
-  for (const provider of PROVIDERS) {
-    io.stdout(`  --${provider}-api-key <key>${" ".repeat(Math.max(1, 13 - provider.length))}REQUIRED when --provider ${provider}; never stored\n`);
-  }
   io.stdout("  --config <path>             Session request JSON (mutually exclusive with the flat --model/--prompt flags)\n");
-  io.stdout("  --model <model-id>          Provider model id (required in flat mode)\n");
+  io.stdout("  --model creator/model       Gateway model slug, e.g. anthropic/claude-haiku-4-5 (required in flat mode)\n");
   io.stdout("  --system @file | <text>     System message; @-prefix reads from file\n");
   io.stdout("  --prompt @file | <text>     User message; @-prefix reads from file (repeatable)\n");
   io.stdout("  --mcp name=url              MCP server entry (repeatable)\n");

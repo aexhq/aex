@@ -3,10 +3,10 @@ import {
   BUILTIN_TOOL_NAMES,
   DEFAULT_FILE_MOUNT_PATH,
   assertWorkspaceInstructionResourceName,
+  parseModelSlug,
   parseSessionLimits,
   parseSessionTimeout,
   parseSessionWebhook,
-  resolveModelProvider,
   type BuiltinToolName,
   type FetchLike,
   type HttpClient,
@@ -19,7 +19,6 @@ import {
   type PlatformSubmission,
   type SessionLimits,
   type ModelName,
-  type ProviderName,
   type SessionRuntime,
   type SessionMessageAccepted,
   type SessionCreateRequest,
@@ -80,7 +79,6 @@ export interface CliMcpServer {
 
 export interface CliSessionSubmitOptions {
   readonly message: string | readonly string[];
-  readonly provider?: ProviderName;
   readonly model: ModelName;
   readonly system?: string;
   readonly tools?: readonly (CliToolDraft | BuiltinToolName)[];
@@ -89,7 +87,6 @@ export interface CliSessionSubmitOptions {
   readonly files?: readonly CliFileDraft[];
   readonly mcpServers?: readonly CliMcpServer[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
-  readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly environment?: CliSessionEnvironmentOptions;
   readonly runtime?: SessionRuntime;
   readonly overrides?: {
@@ -221,13 +218,11 @@ async function buildSessionCreateRequest(
   fetchImpl: FetchLike | undefined,
   options: CliSessionSubmitOptions
 ): Promise<SessionCreateRequest> {
-  let provider: ProviderName;
   try {
-    provider = resolveModelProvider(options.model, options.provider);
+    parseModelSlug(options.model, "--model");
   } catch (err) {
     throw startValidationError("--model", err);
   }
-  validateApiKeys(options.apiKeys, provider);
 
   try {
     parseSessionTimeout(options.overrides?.timeout);
@@ -263,12 +258,10 @@ async function buildSessionCreateRequest(
   };
 
   const secrets: PlatformInlineSecrets = {
-    ...(options.apiKeys ? { apiKeys: options.apiKeys } : {}),
     ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {})
   };
 
   return {
-    provider,
     submission,
     ...(options.runtime?.size ? { runtimeSize: options.runtime.size } : {}),
     ...(options.runtime?.kind ? { runtimeKind: options.runtime.kind } : {}),
@@ -294,16 +287,6 @@ function normaliseSessionInput(input: string | readonly string[]): string | read
     }
   }
   return [...input];
-}
-
-function validateApiKeys(apiKeys: Partial<Record<ProviderName, string>> | undefined, provider: ProviderName): void {
-  const key = apiKeys?.[provider];
-  if (typeof key !== "string" || key.length === 0) {
-    throw new StartValidationError(
-      `--${provider}-api-key` as StartFlag,
-      `a provider API key is required for provider ${provider}`
-    );
-  }
 }
 
 async function prepareTools(

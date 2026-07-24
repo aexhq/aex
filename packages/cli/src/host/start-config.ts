@@ -1,11 +1,8 @@
 import {
   parseSessionRequestConfig,
-  providersForModel,
-  resolveModelProvider,
   type JsonValue,
   type ModelName,
   type PlatformEnvironment,
-  type ProviderName,
   type RuntimeSize
 } from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
@@ -16,7 +13,6 @@ import { startValidationMessage } from "./start-validation.js";
 
 export interface ResolvedStartConfig {
   readonly model: ModelName;
-  readonly provider: ProviderName;
   readonly system?: string;
   readonly message: readonly string[];
   readonly mcpServers: readonly CliMcpServer[];
@@ -30,7 +26,7 @@ export type ResolvedStartConfigResult =
   | { readonly ok: true; readonly value: ResolvedStartConfig }
   | { readonly ok: false; readonly error: string };
 
-/** Resolve config/flat input, provider policy, and MCP secrets before attachments. */
+/** Resolve config/flat input and MCP secrets before attachments. */
 export async function resolveStartConfig(
   io: CliIO,
   args: StartArguments
@@ -99,25 +95,6 @@ export async function resolveStartConfig(
     metadata = Object.keys(args.metadataEntries).length > 0 ? { ...args.metadataEntries } : undefined;
   }
 
-  let provider: ProviderName;
-  try {
-    provider = resolveModelProvider(model, args.explicitProvider);
-  } catch (err) {
-    return { ok: false, error: startValidationMessage("--model", (err as Error).message) };
-  }
-  if (!args.providerApiKeys[provider]) {
-    const inferred = args.explicitProvider === undefined && providersForModel(model).length > 0;
-    return {
-      ok: false,
-      error: startValidationMessage(
-        `--${provider}-api-key`,
-        `is required for provider ${provider}` +
-        `${inferred ? ` (inferred from --model ${model})` : ""}` +
-        " (the platform does not store provider keys on your behalf)"
-      )
-    };
-  }
-
   for (const [name, headerSpec] of args.mcpAuthEntries) {
     const colon = headerSpec.indexOf(":");
     if (colon <= 0 || colon >= headerSpec.length - 1) {
@@ -165,7 +142,6 @@ export async function resolveStartConfig(
     ok: true,
     value: {
       model,
-      provider,
       ...(system !== undefined ? { system } : {}),
       message,
       mcpServers,

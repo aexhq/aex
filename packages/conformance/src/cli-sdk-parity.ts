@@ -21,9 +21,6 @@ export const CLI_PARITY_NOT_SURFACED = "(not surfaced in CLI)";
 /** The bare `aex files <id>` list form (no sub-verb token). */
 export const CLI_PARITY_BARE_LIST = "(bare: aex files <id>)";
 
-/** The dynamic per-provider `--<provider>-api-key` flag family. */
-export const CLI_PARITY_PROVIDER_KEY_FLAG = "--<provider>-api-key";
-
 /**
  * The instance-field control-plane clients and their `aex <verb>` counterparts.
  * `client.orgs` / `client.workspaces` / `client.keys` are INSTANCE FIELDS set in
@@ -75,14 +72,12 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     webhookSigningSecret: "webhooks"
   },
   sessionOptionFlags: {
-    provider: "--provider",
     model: "--model",
     system: "--system",
     assets: "--file|--skill|--tool|--instructions",
     mcpServers: "--mcp",
     metadata: "--metadata",
     idempotencyKey: "--idempotency-key",
-    apiKeys: CLI_PARITY_PROVIDER_KEY_FLAG,
     environment: "--config",
     runtime: "--runtime|--runtime-size",
     overrides: "--session-timeout",

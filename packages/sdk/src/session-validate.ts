@@ -5,7 +5,6 @@ import {
   type ApprovalGate,
   type PlatformNetworking,
   type PlatformPackageInput,
-  type ProviderName,
   type ResponseFormat,
   type SessionRuntime,
   type SubmissionAssets,
@@ -36,9 +35,9 @@ export type ExactKeySet<Shape, Keys extends readonly PropertyKey[]> = ExactKeys<
 type Assert<T extends true> = T;
 
 const SESSION_CREATE_KEYS = [
-  "provider", "model", "system", "assets", "mcpServers", "fileCapture",
+  "model", "system", "assets", "mcpServers", "fileCapture",
   "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
-  "idempotencyKey", "apiKeys", "environment", "runtime", "overrides", "webhook"
+  "idempotencyKey", "environment", "runtime", "overrides", "webhook"
 ] as const satisfies readonly (keyof SessionCreateOptions)[];
 type SessionCreateKeysAreExact = Assert<ExactKeySet<SessionCreateOptions, typeof SESSION_CREATE_KEYS>>;
 
@@ -507,13 +506,3 @@ function assertAllowedKeys(
   }
 }
 
-export function validateApiKeys(
-  apiKeys: Partial<Record<ProviderName, string>> | undefined,
-  provider: ProviderName,
-  surface: string
-): void {
-  const key = apiKeys?.[provider];
-  if (typeof key !== "string" || key.length === 0) {
-    throw configError(surface, `apiKeys.${provider}`, "a provider API key is required in apiKeys");
-  }
-}

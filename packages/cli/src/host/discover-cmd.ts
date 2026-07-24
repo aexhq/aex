@@ -1,24 +1,21 @@
 /**
- * Discoverability list commands (DX2): `aex models|providers|tools|runtime-sizes list`.
+ * Discoverability list commands (DX2): `aex tools|runtime-sizes list`.
  *
  * Pure reads of the closed `@aexhq/contracts` SSoT sets — zero drift, no token,
  * no network — so they work on a host AND inside a managed session container (like
  * `--help`). Default output is a fixed-width human table; `--json` emits the raw
  * array for scripting.
+ *
+ * There is no `models`/`providers` list: model ids are now open Vercel AI
+ * Gateway `creator/model` slugs from the managed catalog, not a closed set the
+ * CLI can enumerate offline.
  */
 import {
   BUILTIN_TOOL_NAMES,
   DEFAULT_BUILTIN_TOOLS,
   DEFAULT_RUNTIME_SIZE,
-  PROVIDER_PUBLIC_SUPPORT,
-  SUPPORTED_MODELS,
-  SUPPORTED_MODELS_BY_PROVIDER,
-  PROVIDERS,
   RUNTIME_SIZES,
-  RUNTIME_SIZE_PRESETS,
-  providerForModel,
-  providersForModel,
-  type ProviderName
+  RUNTIME_SIZE_PRESETS
 } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import { type CliExitCode, SUCCESS, USAGE_ERR, extractGlobalFlags, rejectUnknownFlags } from "./common.js";
@@ -40,46 +37,6 @@ function renderTable(io: CliIO, headers: readonly string[], rows: readonly (read
 function discoveryArgs(argv: readonly string[]): { json: boolean; rest: readonly string[] } {
   const global = extractGlobalFlags(argv);
   return { json: global.json, rest: stripListSubcommand(global.rest) };
-}
-
-export function modelNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
-  const { json, rest } = discoveryArgs(argv);
-  if (hasUnknown(io, rest, "models")) return USAGE_ERR;
-  const entries = SUPPORTED_MODELS.map((model) => ({
-    model,
-    defaultProvider: providerForModel(model) ?? null,
-    providers: providersForModel(model)
-  }));
-  if (json) {
-    io.stdout(JSON.stringify(entries) + "\n");
-  } else {
-    renderTable(
-      io,
-      ["MODEL", "DEFAULT PROVIDER", "PROVIDERS"],
-      entries.map((e) => [e.model, e.defaultProvider ?? "-", e.providers.join(", ")])
-    );
-  }
-  return SUCCESS;
-}
-
-export function providerNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
-  const { json, rest } = discoveryArgs(argv);
-  if (hasUnknown(io, rest, "providers")) return USAGE_ERR;
-  const entries = PROVIDERS.map((provider) => ({
-    provider,
-    displayName: PROVIDER_PUBLIC_SUPPORT[provider as ProviderName].displayName,
-    models: SUPPORTED_MODELS_BY_PROVIDER[provider as ProviderName] ?? []
-  }));
-  if (json) {
-    io.stdout(JSON.stringify(entries) + "\n");
-  } else {
-    renderTable(
-      io,
-      ["PROVIDER", "NAME", "MODELS"],
-      entries.map((e) => [e.provider, e.displayName, e.models.join(", ")])
-    );
-  }
-  return SUCCESS;
 }
 
 export function executeToolsCmd(io: CliIO, argv: readonly string[]): CliExitCode {

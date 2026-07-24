@@ -26,7 +26,6 @@ export function buildStartSubmission(
 
   return {
     message: resolved.message,
-    provider: resolved.provider,
     model: resolved.model,
     ...(resolved.system ? { system: resolved.system } : {}),
     ...(attachments.skills.length > 0 ? { skills: attachments.skills } : {}),
@@ -35,7 +34,6 @@ export function buildStartSubmission(
     ...(attachments.files.length > 0 ? { files: attachments.files } : {}),
     ...(resolved.mcpServers.length > 0 ? { mcpServers: resolved.mcpServers } : {}),
     ...(resolved.metadata ? { metadata: resolved.metadata } : {}),
-    apiKeys: args.providerApiKeys,
     ...(environment ? { environment } : {}),
     ...(runtime ? { runtime } : {}),
     overrides: {

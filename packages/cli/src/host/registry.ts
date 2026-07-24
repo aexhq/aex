@@ -38,7 +38,6 @@ export const COMMON_HOST_FLAGS: readonly string[] = ["--api-key", "--aex-url", "
  * gets a flag here, and the parity test proves the mapping is complete.
  */
 export const START_FLAGS: readonly string[] = [
-  "--provider",
   "--model",
   "--system",
   "--prompt",
@@ -67,8 +66,8 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     name: "start",
     summary: "One-shot: open a session, send the prompt as the first turn (delegates to the SDK).",
     usage: [
-      "aex start --model M --prompt P [--system S] [--provider name] --<provider>-api-key K",
-      "aex start --config <session.json> --<provider>-api-key K",
+      "aex start --model creator/model --prompt P [--system S]",
+      "aex start --config <session.json>",
       "  --skill @file        Attach a workspace skill bundle (repeatable)",
       "  --tool @file.js      Attach a custom tool module (repeatable)",
       "  --instructions @file Publish and attach session instructions (repeatable)",
@@ -238,16 +237,6 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     summary: "Show the resolved config (token never printed).",
     usage: ["aex auth status"],
     subverbs: ["status"]
-  },
-  {
-    name: "models",
-    summary: "List models + default provider (no token needed).",
-    usage: ["aex models list [--json]"]
-  },
-  {
-    name: "providers",
-    summary: "List providers + their models (no token needed).",
-    usage: ["aex providers list [--json]"]
   },
   {
     name: "tools",
