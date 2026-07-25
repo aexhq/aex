@@ -10,7 +10,7 @@
  */
 import * as z from "zod/mini";
 import type { AssetRef } from "../session-config.js";
-import { parseWire, unspecifiedField, wireObject } from "./wire.js";
+import { parseWire, wireObject } from "./wire.js";
 
 /**
  * Asset ids are storage-neutral product ids. Current uploads derive the id from
@@ -94,10 +94,14 @@ export function assetRefSchema(path: string) {
   return wireObject(
     path,
     {
-      // Declared so it is not an unknown key, and deliberately unread: the
-      // normaliser stamps `kind: "asset"` on the way out, so whatever a caller
-      // sent is replaced. The allow-list this replaces admitted it the same way.
-      kind: unspecifiedField,
+      // Optional, because the normaliser stamps `kind: "asset"` on the way out
+      // and a caller that omits it is complete. Not unread, though: `AssetRef`
+      // declares `kind: "asset"` and nothing else, so a ref labelled anything
+      // else is a caller mistake and is now told so rather than silently
+      // relabelled.
+      kind: z.optional(
+        z.literal("asset", { error: `${path}.kind, when provided, must be "asset"` })
+      ),
       assetId: z.string({ error: assetId }).check(z.regex(ASSET_ID_PATTERN, { error: assetId })),
       name: z
         .string({ error: name })

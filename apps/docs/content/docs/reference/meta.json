@@ -6,6 +6,7 @@
     "index",
     "sdk",
     "cli",
+    "api",
     "events",
     "provider-runtime-capabilities"
   ]

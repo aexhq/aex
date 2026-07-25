@@ -26,14 +26,15 @@ describe("allowed-key assertion ownership", () => {
     }
   });
 
-  it("keeps the helper off both supported barrels and retains only fflate", () => {
+  it("keeps the helper off both supported barrels", () => {
     expect(source("index.ts")).not.toMatch(/allowed-keys/);
     expect(source("internal.ts")).not.toMatch(/allowed-keys/);
-    const packageJson = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8")
-    ) as { readonly dependencies?: Readonly<Record<string, string>> };
-    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate", "zod"]);
   });
+
+  // The permitted runtime dependency set is asserted once, in
+  // value-guards-ownership.test.ts, against `public-boundary-baseline.json`.
+  // It used to be restated here as a literal, which meant two tests to update
+  // for one decision — and both were stale for a while.
 
   // The remaining hand-rolled allow-list call sites are counted by the C1 parser
   // ratchet (`scripts/cicd/check-parser-ratchet.mjs`, run from root `lint`), which

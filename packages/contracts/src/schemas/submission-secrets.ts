@@ -11,12 +11,16 @@ import {
   SECRET_ENV_NAME_PATTERN
 } from "../submission-limits.js";
 import { UnknownFieldError } from "../unknown-field-error.js";
-import { wireObject, wirePath } from "./wire.js";
+import { indexedPath, wireObject, wirePath } from "./wire.js";
 
 const SECRETS = "secrets";
+const MCP_SERVERS = `${SECRETS}.mcpServers`;
 
 const McpServerSecretSchema = wireObject(
-  (issuePath) => wirePath(SECRETS, issuePath),
+  // Depth-proof: the bundle is also mounted under the request envelope, and a
+  // path folded from the whole reported position would double the segment
+  // there. See `indexedPath`.
+  indexedPath(MCP_SERVERS),
   {
     name: z.string(),
     url: z.string(),
@@ -37,7 +41,7 @@ const McpServerSecretSchema = wireObject(
  * anything that has to name its position is stated here.
  */
 export const McpServerSecretsSchema = z
-  .array(McpServerSecretSchema, { error: `${SECRETS}.mcpServers must be an array` })
+  .array(McpServerSecretSchema, { error: `${MCP_SERVERS} must be an array` })
   .check(
     z.check((payload) => {
       const entries = payload.value as readonly { readonly name: unknown; readonly url: unknown }[];
@@ -46,7 +50,7 @@ export const McpServerSecretsSchema = z
       };
       const seen = new Set<string>();
       for (const [index, entry] of entries.entries()) {
-        const base = wirePath(`${SECRETS}.mcpServers`, [index]);
+        const base = wirePath(MCP_SERVERS, [index]);
         if (typeof entry.name !== "string" || entry.name.length === 0) {
           reject(`${base}.name must be a non-empty string`);
           return;
@@ -56,7 +60,7 @@ export const McpServerSecretsSchema = z
           return;
         }
         if (seen.has(entry.name)) {
-          reject(`${SECRETS}.mcpServers duplicate name: ${entry.name}`);
+          reject(`${MCP_SERVERS} duplicate name: ${entry.name}`);
           return;
         }
         seen.add(entry.name);
