@@ -111,6 +111,23 @@ export class HttpClient {
         const response = await this.#fetch(url, { ...init, headers });
         this.#trace(method, url, response.status, startedMs);
         const body = await readJson(response);
+        // C4: the harness validates real server bytes against the response
+        // schemas. Every JSON response the SDK, the CLI and the user-test suites
+        // receive passes through this one call, which is why the gate attaches
+        // here instead of at each of ~120 call sites.
+        //
+        // Reported BEFORE the non-2xx throw, and with the RAW body rather than
+        // the `withResponseRequestId` enrichment below: the generated spec
+        // declares an error envelope for every operation, and a harness that
+        // only ever saw 2xx could not check it. `HttpClient` never awaits the
+        // observer, so request timing is unchanged.
+        reportWireResponse(() => ({
+          method,
+          origin: url.origin,
+          path: url.pathname,
+          status: response.status,
+          body
+        }));
         if (!response.ok) {
           const errorBody = withResponseRequestId(body, response.headers);
           throw apiErrorFromResponse({
@@ -119,16 +136,6 @@ export class HttpClient {
             message: extractErrorMessage(errorBody)
           });
         }
-        // C4: the harness validates real server bytes against the response
-        // schemas. Every JSON response the SDK, the CLI and the user-test suites
-        // receive passes through this one line, which is why the gate attaches
-        // here instead of at each of ~120 call sites.
-        reportWireResponse(() => ({
-          method,
-          path: url.pathname,
-          status: response.status,
-          body
-        }));
         return body as T;
       } catch (err) {
         if (shouldRetryTransientRead(err, retry, attempt)) {
@@ -164,6 +171,19 @@ export class HttpClient {
         this.#trace(method, url, response.status, startedMs);
         if (!response.ok) {
           const body = await readJson(response);
+          // A download's SUCCESS body is not JSON (raw file bytes, or a 302),
+          // so there is nothing for a JSON response schema to check — that is
+          // why `sessions.otel`, `sessions.downloadFile` and
+          // `sessions.archiveInternal` stay unexercised. Its FAILURE body is the
+          // same error envelope every other route sends, and reporting it here
+          // costs one already-decoded object.
+          reportWireResponse(() => ({
+            method,
+            origin: url.origin,
+            path: url.pathname,
+            status: response.status,
+            body
+          }));
           const errorBody = withResponseRequestId(body, response.headers);
           throw apiErrorFromResponse({
             status: response.status,

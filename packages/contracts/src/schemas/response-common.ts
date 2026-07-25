@@ -13,10 +13,13 @@
  * 1. **Strict.** Every response object is a {@link responseObject}, i.e. a
  *    `z.strictObject`. A field the server added and we never declared FAILS the
  *    suite. That generalises what `parseWhoAmI` did by hand for three removed
- *    fields (`caps`, `tokenId`, `tokenName`) to the whole surface. Where one of
- *    our own declared TypeScript types carries an index signature — an explicit
- *    "additive server fields pass through" promise — the module that mirrors it
- *    says so at the schema and states which way the disagreement was resolved.
+ *    fields (`caps`, `tokenId`, `tokenName`) to the whole surface. Several of
+ *    our own declared types used to carry `[key: string]: unknown` — an explicit
+ *    "additive server fields pass through" promise — and these schemas
+ *    deliberately did not honour it. They no longer have to: an index signature
+ *    makes EVERY undeclared field structurally legal, which is how
+ *    `BillingSummary` came to omit two fields the server always sends without
+ *    anything being able to notice. The signatures are gone from the types too.
  * 2. **No `.transform()`.** `z.toJSONSchema(s, { io: "output" })` throws on any
  *    transform, which would make the response half of the generated spec
  *    ungenerable. Schemas validate; `normalize*()` functions transform.
@@ -161,4 +164,54 @@ export const NoContentResponseSchema = describeResponse(
   "An HTTP 204 with no body. `HttpClient` renders a zero-length body as `{}`, " +
     "so the assertion is that the route sends nothing at all.",
   responseObject({})
+);
+
+/**
+ * The error envelope EVERY operation declares — and, until now, the only
+ * declared response nothing ever checked.
+ *
+ * `scripts/openapi/generate.ts` gives all 68 operations a `default` response of
+ * `#/components/schemas/ApiErrorEnvelope`. C4 could not see it, because
+ * `HttpClient.request` threw on a non-2xx *before* reporting to the wire
+ * observer, so the harness only ever met 2xx bodies. Both halves move together:
+ * the report now happens ahead of the throw, and this is what the reported body
+ * is checked against.
+ *
+ * ## Why this one is NOT a `responseObject`
+ *
+ * Every other schema in this family is strict, deliberately — an undeclared
+ * field should fail the suite. The generated component declares
+ * `additionalProperties: true`, and it is right to: the envelope is a BASE that
+ * individual codes extend. `session_busy` adds the session's current `status`,
+ * `rate_limited` adds `retryAfterMs`, `content_deleted` adds `sessionId` /
+ * `purgedAt` / `deletedBy`, an auth failure adds `requiredScope` —
+ * `error-factory.ts` reads every one of them. Declaring this strict would fail
+ * the suite on error bodies our own client is built to consume, which is
+ * inventing a contract rather than checking one.
+ *
+ * ## What it therefore does assert
+ *
+ * That a non-2xx JSON body carries the two fields the spec marks required — a
+ * stable machine-readable `error` code and a human `message` — and that
+ * `requestId`, when present, is a string. That is a real assertion about the
+ * wire, not a tautology: the lambda's `finalizeApiResponse` only defaults a
+ * `message` for codes present in its `API_ERROR_MESSAGES` table, and only
+ * rewrites a body that already carries an `error` or a `code`. A rejection
+ * produced anywhere other than a route handler — an API-Gateway-native 403, say
+ * — carries neither and surfaces here as a violation. That is a FINDING about
+ * the declared contract; do not loosen this schema to make such a body pass.
+ */
+export const ApiErrorEnvelopeSchema = describeResponse(
+  "ApiErrorEnvelope",
+  "The body every non-2xx response carries: a stable `error` code, a human " +
+    "`message`, and the `requestId` to quote in a support request. Open by " +
+    "design — individual codes extend it with their own fields.",
+  z.looseObject(
+    {
+      error: wireNonEmptyString,
+      message: wireString,
+      requestId: z.optional(wireString)
+    },
+    { error: (issue) => `${responsePath(issue.path ?? [])} must be an object` }
+  )
 );

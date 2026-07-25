@@ -8,9 +8,11 @@
  *
  * The CONTROL plane serves a different body at the same path — an
  * `account_token` principal, parsed by `parseAccountWhoAmI`. It is declared here
- * too, and the two are NOT unioned: the harness matches on method and path only,
- * so a suite that talks to both planes needs to know which table it installed.
- * See `testing/response-bindings.ts`.
+ * too, and the two are NOT unioned: unioning them would let a data-plane whoami
+ * pass while carrying a control-plane body. They are kept apart by ORIGIN
+ * instead — `WireResponse` carries the origin it came from, and the harness is
+ * installed with the plane its bindings describe. See
+ * `testing/response-bindings.ts`.
  */
 import * as z from "zod/mini";
 import { RUNTIME_KINDS } from "./runtime-kind.js";

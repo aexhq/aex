@@ -126,6 +126,12 @@ export async function main() {
   const invocation = buildUserBunTestSpawnInvocation(bunTestArgs);
   const runTempRoot = createUserTestTempRoot();
   env.AEX_USER_TEST_TEMP_ROOT = runTempRoot;
+  // C4: one fragment directory per lane, emptied first so the aggregate below
+  // describes THIS run and cannot inherit an earlier one's coverage.
+  const wireConformanceDir = join(appRoot, ".tmp", "wire-conformance");
+  rmSync(wireConformanceDir, { recursive: true, force: true });
+  mkdirSync(wireConformanceDir, { recursive: true });
+  env.AEX_WIRE_CONFORMANCE_DIR = wireConformanceDir;
 
   let outcome;
   let runFailure;
@@ -167,11 +173,74 @@ export async function main() {
     console.error(`bun test exited with signal ${outcome.signal}`);
     return 1;
   }
+  // C4 runs whatever the lane's exit code was: a failing lane still produced
+  // real bytes, and the coverage picture is exactly what a reader needs in order
+  // to know how much of the surface that run actually covered.
+  const wireConformanceCode = await reportWireConformance(wireConformanceDir);
+
   if ((outcome.code ?? 1) !== 0) return outcome.code ?? 1;
+  if (wireConformanceCode !== 0) return wireConformanceCode;
 
   if (lane.gateArgs) {
     const gateCode = await runNoSkipsGate(lane.gateArgs);
     if (gateCode !== 0) return gateCode;
+  }
+  return 0;
+}
+
+/**
+ * C4 — the lane's wire-conformance verdict.
+ *
+ * Per-file failures already happen in `test/preload.ts`; this is the only place
+ * that can state COVERAGE, because coverage is a property of the run and no
+ * single test process sees more than a handful of routes. Per `04-gates.md`,
+ * both halves are printed unconditionally — what could have been checked
+ * (`formatResponseSchemaCoverage`) and what actually was
+ * (`formatWireConformanceReport`) — so a green lane over a dozen routes cannot
+ * be read as a verified surface.
+ */
+async function reportWireConformance(wireConformanceDir) {
+  const { readWireConformanceFragments } = await import(
+    join(appRoot, "test", "_fixtures", "wire-conformance.ts")
+  );
+  const { formatResponseSchemaCoverage, formatWireConformanceReport } = await import(
+    "@aexhq/contracts/testing"
+  );
+  const harvest = readWireConformanceFragments(wireConformanceDir);
+
+  console.error("");
+  console.error("=== C4 wire conformance ===");
+  console.error(formatResponseSchemaCoverage());
+  for (const reason of harvest.notArmed) {
+    console.error(`  NOT ARMED: ${reason}`);
+  }
+  if (harvest.fragments === 0) {
+    // Never read as a pass. A lane may legitimately observe nothing, but saying
+    // so out loud is the difference between "nothing was checked" and "checked
+    // and clean" — and only the first of those is true here.
+    console.error(
+      "wire conformance: NO PROCESS REPORTED. Nothing was checked against the wire in this lane."
+    );
+    return 0;
+  }
+  console.error(
+    `wire conformance: folded ${harvest.reports} report(s) from ${harvest.fragments} process(es)`
+  );
+  console.error(formatWireConformanceReport(harvest.report));
+  for (const failure of harvest.armFailures) {
+    console.error(`  ARM FAILURE: ${failure}`);
+  }
+
+  if (harvest.armFailures.length > 0) {
+    console.error(
+      `C4 FAILED: ${harvest.armFailures.length} process(es) could not attach the harness — ` +
+        `their responses were never checked.`
+    );
+    return 1;
+  }
+  if (harvest.report.violations.length > 0) {
+    console.error(`C4 FAILED: ${harvest.report.violations.length} wire-conformance violation(s).`);
+    return 1;
   }
   return 0;
 }
