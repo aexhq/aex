@@ -96,9 +96,7 @@ describe("installed aex CLI — offline edge cases", () => {
   it("start rejects an unknown flag with exit 2", async () => {
     const r = await executeCli([
       "start",
-      "--provider", "anthropic",
-      "--anthropic-api-key", "k",
-      "--model", "claude-haiku-4-5",
+      "--model", "anthropic/claude-haiku-4-5",
       "--prompt", "hi",
       "--api-key", "dummy",
       "--totally-bogus"
@@ -107,60 +105,64 @@ describe("installed aex CLI — offline edge cases", () => {
     expect(r.stderr).toBe("aex start --totally-bogus: unknown flag\n");
   });
 
-  it("session without the selected provider's key exits 2 with an actionable message", async () => {
-    const r = await executeCli(["start", "--model", "claude-haiku-4-5", "--prompt", "hi", "--api-key", "dummy"]);
-    expect(r.exitCode, diag("aex start (no provider key)", r)).toBe(2);
-    expect(r.stderr).toMatch(/aex start --anthropic-api-key: is required/);
+  it("start needs NO provider key — the removed per-provider flags are rejected", async () => {
+    // Under managed model access there is no customer key to supply, so the
+    // --<provider>-api-key flags are gone. A stale invocation must fail loudly
+    // rather than be quietly accepted and ignored.
+    const r = await executeCli([
+      "start", "--anthropic-api-key", "k",
+      "--model", "anthropic/claude-haiku-4-5", "--prompt", "hi", "--api-key", "dummy"
+    ]);
+    expect(r.exitCode, diag("aex start --anthropic-api-key", r)).toBe(2);
+    expect(r.stderr).toMatch(/unknown flag/);
   });
 
   it("session without --model exits 2", async () => {
-    const r = await executeCli(["start", "--anthropic-api-key", "k", "--prompt", "hi", "--api-key", "dummy"]);
+    const r = await executeCli(["start", "--prompt", "hi", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex start (no model)", r)).toBe(2);
     expect(r.stderr).toBe("aex start --model: is required when --config is not provided\n");
   });
 
   it("session without --prompt exits 2", async () => {
-    const r = await executeCli(["start", "--anthropic-api-key", "k", "--model", "claude-haiku-4-5", "--api-key", "dummy"]);
+    const r = await executeCli(["start", "--model", "anthropic/claude-haiku-4-5", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex start (no prompt)", r)).toBe(2);
     expect(r.stderr).toBe("aex start --prompt: is required (repeatable)\n");
   });
 
-  it("session with a near-miss model suggests the correct one (exit 2)", async () => {
+  it("a bare model name is a USAGE error naming the slug shape (exit 2)", async () => {
     const r = await executeCli([
       "start",
-      "--anthropic-api-key", "k",
       "--model", "claude-haiku",
       "--prompt", "hi",
       "--api-key", "dummy"
     ]);
     expect(r.exitCode, diag("aex start bad model", r)).toBe(2);
-    expect(r.stderr).toMatch(/"claude-haiku" is not a known model id/);
-    expect(r.stderr).toMatch(/pass provider explicitly/);
-    expect(r.stderr).toMatch(/did you mean "claude-haiku-4-5"/);
+    // A bare name is no longer a model id: the gateway takes creator/model slugs.
+    // This is the single most common migration mistake, so it must read as a flag
+    // error (exit 2, plain line) and not as a failed session (exit 1, JSON envelope).
+    expect(r.stderr).toMatch(/^aex start --model: --model must be a gateway model slug/);
+    expect(r.stderr).toMatch(/got "claude-haiku"/);
+    expect(r.stderr).not.toMatch(/session_failed/);
   });
 
-  it("session with a near-miss provider suggests the correct one (exit 2)", async () => {
+  it("the removed --provider flag exits 2 without leaking SDK internals", async () => {
+    // There is no provider to select: it is the model slug's creator prefix.
     const r = await executeCli([
       "start",
-      "--provider", "anthropicc",
-      "--anthropic-api-key", "k",
-      "--model", "claude-haiku-4-5",
+      "--provider", "anthropic",
+      "--model", "anthropic/claude-haiku-4-5",
       "--prompt", "hi",
       "--api-key", "dummy"
     ]);
-    expect(r.exitCode, diag("aex start bad provider", r)).toBe(2);
-    expect(r.stderr).toBe(
-      'aex start --provider: must be one of: anthropic, deepseek, openai, gemini, mistral, openrouter, doubao ' +
-      '(got: anthropicc); did you mean "anthropic"?\n'
-    );
+    expect(r.exitCode, diag("aex start --provider", r)).toBe(2);
+    expect(r.stderr).toMatch(/unknown flag/);
     expect(r.stderr).not.toMatch(/Aex\.start|Skill\.fromContent|Tool\.fromFiles/);
   });
 
   it("removed --proxy-endpoint flag on start exits 2 with a migration hint", async () => {
     const r = await executeCli([
       "start",
-      "--anthropic-api-key", "k",
-      "--model", "claude-haiku-4-5",
+      "--model", "anthropic/claude-haiku-4-5",
       "--prompt", "hi",
       "--proxy-endpoint", "https://example.com",
       "--api-key", "dummy"
@@ -210,14 +212,19 @@ describe("installed aex CLI — offline edge cases", () => {
 
   // ---------------------------------------------------------------- discovery reads (no token/network)
 
-  it("models list exits 0 and includes the canonical haiku model", async () => {
-    const r = await executeCli(["models", "list"]);
-    expect(r.exitCode, diag("aex models list", r)).toBe(0);
-    expect(r.stdout).toMatch(/claude-haiku-4-5/);
+  it("the removed models/providers verbs exit 2 (there is no closed catalog to list)", async () => {
+    // The managed gateway arbitrates an OPEN slug space, so aex no longer ships a
+    // model or provider catalog to enumerate. Both verbs are gone; a stale script
+    // calling them must fail, not silently print nothing and exit 0.
+    for (const verb of ["models", "providers"] as const) {
+      const r = await executeCli([verb, "list"]);
+      expect(r.exitCode, diag(`aex ${verb} list`, r)).toBe(2);
+      expect(r.stderr).toMatch(/unknown subcommand/);
+    }
   });
 
   it("all discovery verbs accept installed --json in every optional-list position", async () => {
-    for (const verb of ["models", "providers", "tools", "runtime-sizes"] as const) {
+    for (const verb of ["tools", "runtime-sizes"] as const) {
       for (const tail of [
         ["--json"],
         ["--json", "list"],
@@ -234,10 +241,10 @@ describe("installed aex CLI — offline edge cases", () => {
 
   it("the installed global parser leaves near-prefix, equals-like, and -- tokens command-owned", async () => {
     for (const arg of ["--jsonish", "--json=true", "--"] as const) {
-      const r = await executeCli(["models", arg, "--json"]);
-      expect(r.exitCode, diag(`aex models ${arg} --json`, r)).toBe(2);
+      const r = await executeCli(["tools", arg, "--json"]);
+      expect(r.exitCode, diag(`aex tools ${arg} --json`, r)).toBe(2);
       expect(r.stdout).toBe("");
-      expect(r.stderr).toBe(`unknown flag: ${arg}\nusage: aex models list [--json]\n`);
+      expect(r.stderr).toBe(`unknown flag: ${arg}\nusage: aex tools list [--json]\n`);
     }
   });
 
@@ -251,10 +258,8 @@ describe("installed aex CLI — offline edge cases", () => {
 
   it("--debug never echoes the api key or provider key, even on an error path", async () => {
     const SECRET_TOKEN = "SUPERSECRETTOKEN-do-not-leak-4711";
-    const SECRET_KEY = "SUPERSECRETKEY-do-not-leak-8842";
     const r = await executeCli([
       "start",
-      "--anthropic-api-key", SECRET_KEY,
       "--model", "definitely-not-a-model",
       "--prompt", "hi",
       "--api-key", SECRET_TOKEN,
@@ -263,10 +268,9 @@ describe("installed aex CLI — offline edge cases", () => {
     // Rejected at model validation (no network), but --debug has already
     // printed the auth-source line to stderr by then.
     expect(r.exitCode, diag("aex start --debug (bad model)", r)).toBe(2);
-    expect(r.stderr).toMatch(/"definitely-not-a-model" is not a known model id/);
+    expect(r.stderr).toMatch(/definitely-not-a-model/);
     const combined = r.stdout + r.stderr;
     expect(combined, "api key leaked to output").not.toContain(SECRET_TOKEN);
-    expect(combined, "provider key leaked to output").not.toContain(SECRET_KEY);
     // the debug line should confirm the source without the value
     expect(r.stderr).toMatch(/\[aex\] auth: --api-key flag/);
   });

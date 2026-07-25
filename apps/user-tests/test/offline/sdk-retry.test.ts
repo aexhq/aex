@@ -104,8 +104,7 @@ function client(fetch) {
 //    Idempotency-Key, so a retry never creates a duplicate billable session turn.
 const a = makeFetch([429, 500, 201]);
 const session = await client(a.fetch).sessions.create({
-  model: "claude-haiku-4-5",
-  apiKeys: { anthropic: "sk-ant" },
+  model: "anthropic/claude-haiku-4-5",
   idempotencyKey: "stable-key"
 });
 strictEqual(session.id, "sess_retry");
@@ -115,7 +114,7 @@ strictEqual(keys.every((k) => k === "stable-key"), true, "every retry reuses the
 
 // 2) A transient network error is retried, then succeeds.
 const b = makeFetch(["network", 201]);
-const s2 = await client(b.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+const s2 = await client(b.fetch).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 strictEqual(s2.id, "sess_retry");
 strictEqual(b.attempts.length, 2);
 
@@ -123,7 +122,7 @@ strictEqual(b.attempts.length, 2);
 const c = makeFetch([429]);
 let throttle;
 try {
-  await client(c.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+  await client(c.fetch).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 } catch (err) {
   throttle = err;
 }
@@ -138,7 +137,7 @@ ok(!/token|secret|sk-ant|workspace|margin|cost/i.test(throttle.message), "thrott
 const d = makeFetch([400]);
 let badRequest;
 try {
-  await client(d.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+  await client(d.fetch).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 } catch (err) {
   badRequest = err;
 }
@@ -156,7 +155,7 @@ const off = new Aex({
 });
 let raw;
 try {
-  await off.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+  await off.sessions.create({ model: "anthropic/claude-haiku-4-5" });
 } catch (err) {
   raw = err;
 }
@@ -167,7 +166,7 @@ strictEqual(raw instanceof AexApiError, true);
 
 // 6) A handle exposes replayLast for replaying a throttled turn.
 const f = makeFetch([201]);
-const handle = await client(f.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+const handle = await client(f.fetch).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 strictEqual(typeof handle.messages.replayLast, "function");
 
 console.log(JSON.stringify({

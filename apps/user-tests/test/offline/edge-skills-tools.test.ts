@@ -281,7 +281,7 @@ function makeClient() {
 // 1. Explicitly disabling builtins leaves custom assets empty.
 {
   const c = makeClient();
-  await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: "none", apiKeys: { anthropic: "sk-ant" } });
+  await c.client.sessions.create({ model: "anthropic/claude-haiku-4-5", builtinTools: "none" });
   deepStrictEqual(onlyCreateBody(c.calls).submission.assets.tools, []);
   strictEqual(onlyCreateBody(c.calls).submission.builtinTools, "none");
 }
@@ -290,7 +290,7 @@ function makeClient() {
 let cherry;
 {
   const c = makeClient();
-  await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: [BuiltinTools.bash], apiKeys: { anthropic: "sk-ant" } });
+  await c.client.sessions.create({ model: "anthropic/claude-haiku-4-5", builtinTools: [BuiltinTools.bash] });
   const body = onlyCreateBody(c.calls);
   deepStrictEqual(body.submission.builtinTools, ["bash"]);
   cherry = body.submission.builtinTools;
@@ -299,7 +299,7 @@ let cherry;
 // 3. Duplicate builtin names dedup to one, in first-seen order.
 {
   const c = makeClient();
-  await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: [BuiltinTools.bash, BuiltinTools.bash, BuiltinTools.grep, BuiltinTools.bash], apiKeys: { anthropic: "sk-ant" } });
+  await c.client.sessions.create({ model: "anthropic/claude-haiku-4-5", builtinTools: [BuiltinTools.bash, BuiltinTools.bash, BuiltinTools.grep, BuiltinTools.bash] });
   deepStrictEqual(onlyCreateBody(c.calls).submission.builtinTools, ["bash", "grep"]);
 }
 
@@ -308,7 +308,7 @@ let unknownError;
 {
   const c = makeClient();
   try {
-    await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: ["definitely_not_a_builtin"], apiKeys: { anthropic: "sk-ant" } });
+    await c.client.sessions.create({ model: "anthropic/claude-haiku-4-5", builtinTools: ["definitely_not_a_builtin"] });
   } catch (err) {
     unknownError = err;
   }
@@ -332,10 +332,9 @@ let dupWire;
   const tARef = await c.client.workspace.tools.publish(tA);
   const tBRef = await c.client.workspace.tools.publish(tB);
   await c.client.sessions.create({
-    model: "claude-haiku-4-5",
+    model: "anthropic/claude-haiku-4-5",
     builtinTools: "none",
-    assets: { tools: [tARef, tBRef] },
-    apiKeys: { anthropic: "sk-ant" }
+    assets: { tools: [tARef, tBRef] }
   });
   const entries = onlyCreateBody(c.calls).submission.assets.tools;
   strictEqual(entries.length, 2, "both same-named custom tools ride the wire");

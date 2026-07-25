@@ -14,10 +14,8 @@ import { join } from "node:path";
 import { strToU8, unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getAexBinPath, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-
 const REPORT_BYTES = strToU8("hello world");
 const REPORT_SHA256 = createHash("sha256").update(REPORT_BYTES).digest("hex");
-
 interface CapturedRequest {
   readonly method: string;
   readonly path: string;
@@ -25,13 +23,11 @@ interface CapturedRequest {
   readonly idempotencyKey: string | undefined;
   readonly body: unknown;
 }
-
 interface FakeApi {
   readonly baseUrl: string;
   readonly requests: CapturedRequest[];
   readonly close: () => Promise<void>;
 }
-
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -43,21 +39,17 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("error", reject);
   });
 }
-
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 }
-
 function bytes(res: ServerResponse, status: number, body: Uint8Array, contentType = "application/octet-stream"): void {
   res.writeHead(status, { "content-type": contentType });
   res.end(body);
 }
-
 async function startFakeApi(): Promise<FakeApi> {
   const requests: CapturedRequest[] = [];
   let statusPolls = 0;
-
   const server: Server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const rawBody = await readBody(req);
@@ -76,7 +68,6 @@ async function startFakeApi(): Promise<FakeApi> {
       idempotencyKey: typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : undefined,
       body: parsedBody
     });
-
     // --- session endpoints (run/status/events/wait/cancel speak these) ---
     if (req.method === "POST" && url.pathname === "/api/sessions") {
       json(res, 201, {
@@ -166,13 +157,11 @@ async function startFakeApi(): Promise<FakeApi> {
       });
       return;
     }
-
     // --- account/control-plane endpoint ---
     if (req.method === "GET" && url.pathname === "/api/orgs") {
       json(res, 200, { orgs: [{ id: "org-packed", name: "Packed", role: "admin" }] });
       return;
     }
-
     // --- workspace billing + webhook signing secret reads ---
     if (req.method === "GET" && url.pathname === "/api/billing") {
       json(res, 200, {
@@ -205,7 +194,6 @@ async function startFakeApi(): Promise<FakeApi> {
       json(res, 200, { whsec: "whsec_aW5zdGFsbGVkLWNsaS1zZWNyZXQ=" });
       return;
     }
-
     // Download assembles the public zip client-side from the session read endpoints.
     if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/files") {
       json(res, 200, {
@@ -231,54 +219,42 @@ async function startFakeApi(): Promise<FakeApi> {
       bytes(res, 200, REPORT_BYTES, "text/plain");
       return;
     }
-
     json(res, 404, { error: "not_found", path: url.pathname });
   });
-
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error("fake API did not bind to a TCP port");
   }
-
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
     close: () => new Promise((resolve) => server.close(() => resolve()))
   };
 }
-
 describe("installed CLI host commands", () => {
   let install: InstallResult;
   let api: FakeApi;
   let binPath: string;
-
   beforeAll(async () => {
     install = await installAex();
     api = await startFakeApi();
     binPath = getAexBinPath(install.installDir);
   });
-
   afterAll(async () => {
     await api?.close();
     install?.cleanup();
   });
-
   it("sessions start/status/events/wait/download/cancel through the installed binary", async () => {
     const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
-
     const run = await runCommand(
       binPath,
       [
         "start",
-        "--provider",
-        "deepseek",
         "--model",
-        "deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash",
         "--prompt",
         "hello_from_installed_cli",
-        "--deepseek-api-key",
-        "sk-deepseek-test",
         "--idempotency-key",
         "cli-host-installed-shape",
         ...common
@@ -294,7 +270,6 @@ describe("installed CLI host commands", () => {
       provider: "deepseek",
       runtime: { size: "0.25cpu-1gb" }
     });
-
     const status = await runCommand(binPath, ["status", "session-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -306,7 +281,6 @@ describe("installed CLI host commands", () => {
       provider: "deepseek",
       runtime: { size: "0.25cpu-1gb" }
     });
-
     const events = await runCommand(binPath, ["events", "session-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -314,7 +288,6 @@ describe("installed CLI host commands", () => {
     expect(events.exitCode, `stdout:\n${events.stdout}\nstderr:\n${events.stderr}`).toBe(0);
     const eventLines = events.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line) as { id: string });
     expect(eventLines.map((event) => event.id)).toEqual(["evt-1", "evt-2"]);
-
     const wait = await runCommand(
       binPath,
       ["wait", "session-cli-1", "--interval", "1ms", "--timeout", "2s", ...common],
@@ -328,7 +301,6 @@ describe("installed CLI host commands", () => {
       provider: "deepseek",
       runtime: { size: "0.25cpu-1gb" }
     });
-
     const outPath = join(install.installDir, "installed-cli-run.zip");
     const download = await runCommand(binPath, ["download", "session-cli-1", "--out", outPath, ...common], {
       cwd: install.installDir,
@@ -349,14 +321,12 @@ describe("installed CLI host commands", () => {
       "metadata/session.json"
     ]);
     expect(new TextDecoder().decode(entries["files/report.txt"]!)).toBe("hello world");
-
     const cancel = await runCommand(binPath, ["cancel", "session-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(cancel.exitCode, `stdout:\n${cancel.stdout}\nstderr:\n${cancel.stderr}`).toBe(0);
     expect(JSON.parse(cancel.stdout.trim())).toEqual({ sessionId: "session-cli-1", status: "cancelling" });
-
     expect(api.requests.every((request) => request.authorization === "Bearer tok-installed-cli")).toBe(true);
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
     // `aex start` creates the session, then posts the first turn as a message.
@@ -375,52 +345,50 @@ describe("installed CLI host commands", () => {
         "GET /api/sessions/session-cli-1/files/out-1/download?checkpointId=cp-1"
       ])
     );
-
     // submit transport: create carries session config, message carries the
     // first-turn input, and both idempotency keys ride request headers.
     const createReq = api.requests[0]!;
     const messageReq = api.requests[1]!;
     const submit = createReq.body as Record<string, unknown>;
     expect(submit.workspaceId).toBeUndefined();
-    expect(submit.provider).toBe("deepseek");
+    // Managed keys: the wire carries no caller-chosen provider and no customer key.
+    expect(submit).not.toHaveProperty("provider");
     expect(submit).not.toHaveProperty("region");
     expect(submit).not.toHaveProperty("idempotencyKey");
     expect(submit).not.toHaveProperty("input");
     expect(createReq.idempotencyKey).toBe("cli-host-installed-shape");
     expect(submit.retention).toEqual({ idleTtl: "3m" });
-    expect(submit.secrets).toEqual({ apiKeys: { deepseek: "sk-deepseek-test" } });
-    expect(submit.submission).toMatchObject({ model: "deepseek-v4-flash" });
+    // `secrets` may still be present as an empty bag (envSecrets/mcpServers ride it);
+    // what must never appear again is customer key material, under either name.
+    expect(submit.secrets ?? {}).not.toHaveProperty("apiKeys");
+    expect(submit.secrets ?? {}).not.toHaveProperty("apiKey");
+    expect(submit.submission).toMatchObject({ model: "deepseek/deepseek-v4-flash" });
     expect(submit.submission).not.toHaveProperty("prompt");
     expect(messageReq.idempotencyKey).toBe("cli-host-installed-shape:message");
     expect(messageReq.body).toEqual({ input: ["hello_from_installed_cli"] });
   });
-
   it("preserves described API error envelopes in the packed CLI binary", async () => {
     const status = await runCommand(
       binPath,
       ["status", "session-denied", "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
-
     expect(status.exitCode).toBe(1);
     expect(status.stdout).toBe("");
     expect(status.stderr).toBe(
       '{"error":"status_failed","message":"insufficient_scope: the token does not carry sessions:read — {\\"requestId\\":\\"req-packed-cli-error\\"}","sessionId":"session-denied","status":403,"remedy":"token lacks permission for this workspace/action"}\n'
     );
-
     const wait = await runCommand(
       binPath,
       ["wait", "session-denied", "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
-
     expect(wait.exitCode).toBe(1);
     expect(wait.stdout).toBe("");
     expect(wait.stderr).toBe(
       '{"error":"wait_failed","message":"insufficient_scope: the token does not carry sessions:read — {\\"requestId\\":\\"req-packed-cli-error\\"}","sessionId":"session-denied","status":403,"remedy":"token lacks permission for this workspace/action"}\n'
     );
   });
-
   it("preserves typed data/control preparation and no-network failures in the packed CLI", async () => {
     const configHome = join(install.installDir, "packed-preparation-config");
     mkdirSync(join(configHome, "aex"), { recursive: true });
@@ -431,7 +399,6 @@ describe("installed CLI host commands", () => {
       aexUrl: api.baseUrl
     }));
     const storedEnv = { ...process.env, XDG_CONFIG_HOME: configHome };
-
     const beforeStoredData = api.requests.length;
     const storedData = await runCommand(binPath, ["status", "session-cli-1", "--debug", "--json"], {
       cwd: install.installDir,
@@ -443,7 +410,6 @@ describe("installed CLI host commands", () => {
     expect(storedData.stderr).not.toContain("stored-data-packed-secret");
     expect(api.requests.slice(beforeStoredData)).toHaveLength(1);
     expect(api.requests.at(-1)?.authorization).toBe("Bearer stored-data-packed-secret");
-
     const beforeStoredControl = api.requests.length;
     const storedControl = await runCommand(binPath, ["orgs", "--debug", "--json"], {
       cwd: install.installDir,
@@ -455,7 +421,6 @@ describe("installed CLI host commands", () => {
     expect(storedControl.stderr).not.toContain("stored-control-packed-secret");
     expect(api.requests.slice(beforeStoredControl)).toHaveLength(1);
     expect(api.requests.at(-1)?.authorization).toBe("Bearer stored-control-packed-secret");
-
     const beforeData = api.requests.length;
     const data = await runCommand(
       binPath,
@@ -467,7 +432,6 @@ describe("installed CLI host commands", () => {
     expect(data.stderr).not.toContain("data-packed-secret");
     expect(api.requests.slice(beforeData)).toHaveLength(1);
     expect(api.requests.at(-1)?.authorization).toBe("Bearer data-packed-secret");
-
     const beforeControl = api.requests.length;
     const control = await runCommand(
       binPath,
@@ -484,7 +448,6 @@ describe("installed CLI host commands", () => {
     expect(control.stderr).not.toContain("control-packed-secret");
     expect(api.requests.slice(beforeControl)).toHaveLength(1);
     expect(api.requests.at(-1)?.authorization).toBe("Bearer control-packed-secret");
-
     const beforeMissing = api.requests.length;
     const missing = await runCommand(binPath, ["orgs"], {
       cwd: install.installDir,
@@ -498,10 +461,8 @@ describe("installed CLI host commands", () => {
     });
     expect(api.requests).toHaveLength(beforeMissing);
   });
-
   it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {
     const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
-
     const billing = await runCommand(binPath, ["billing", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -510,7 +471,6 @@ describe("installed CLI host commands", () => {
     expect(billing.stdout).toContain("$25.00");
     expect(billing.stdout).toContain("$1.50");
     expect(billing.stdout).toContain("$100.00");
-
     const billingJson = await runCommand(binPath, ["billing", "--json", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -523,7 +483,6 @@ describe("installed CLI host commands", () => {
       planKey: "free",
       subscriptionStatus: "none"
     });
-
     const ledger = await runCommand(binPath, ["billing", "ledger", "--limit", "10", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -532,7 +491,6 @@ describe("installed CLI host commands", () => {
     const ledgerEntries = JSON.parse(ledger.stdout.trim()) as Array<{ id: string; entryType: string }>;
     expect(ledgerEntries.map((entry) => entry.id)).toEqual(["led-1"]);
     expect(ledgerEntries[0]!.entryType).toBe("top_up");
-
     const secret = await runCommand(binPath, ["webhooks", "secret", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -542,14 +500,12 @@ describe("installed CLI host commands", () => {
     // verifier — and never echoes it to stderr.
     expect(secret.stdout.trim()).toBe("whsec_aW5zdGFsbGVkLWNsaS1zZWNyZXQ=");
     expect(secret.stderr).not.toContain("whsec_");
-
     const rotate = await runCommand(binPath, ["webhooks", "secret", "--rotate", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(rotate.exitCode).toBe(2);
     expect(rotate.stderr).toContain("not supported");
-
     const sessions = await runCommand(binPath, ["sessions", "--since", "2026-07-01T00:00:00Z", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -559,7 +515,6 @@ describe("installed CLI host commands", () => {
     // The CLI enforces --since client-side (the deployed API ignores the param),
     // so only the July session survives.
     expect(sessionsPage.sessions.map((session) => session.id)).toEqual(["session-cli-1"]);
-
     const limitedSessions = await runCommand(binPath, ["sessions", "--limit", "5", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
@@ -567,7 +522,6 @@ describe("installed CLI host commands", () => {
     expect(limitedSessions.exitCode, `stdout:\n${limitedSessions.stdout}\nstderr:\n${limitedSessions.stderr}`).toBe(0);
     const limitedSessionsPage = JSON.parse(limitedSessions.stdout.trim()) as { sessions: Array<{ id: string }> };
     expect(limitedSessionsPage.sessions.map((session) => session.id)).toEqual(["session-cli-1"]);
-
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
     expect(methodPaths).toEqual(
       expect.arrayContaining([
@@ -579,7 +533,6 @@ describe("installed CLI host commands", () => {
       ])
     );
   });
-
   it("shares installed --json positions across authenticated data/control and optional subcommands", async () => {
     const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
     for (const args of [
@@ -593,7 +546,6 @@ describe("installed CLI host commands", () => {
       expect(() => JSON.parse(result.stdout.trim())).not.toThrow();
       expect(result.stderr).toBe("");
     }
-
     const ledger = await runCommand(
       binPath,
       ["billing", "--json", "ledger", "--json", "--limit", "10", ...common],
@@ -605,14 +557,11 @@ describe("installed CLI host commands", () => {
     ]);
     expect(ledger.stderr).toBe("");
   });
-
   it("gives split and equals value syntax byte-for-byte parity in the packed CLI", async () => {
     const splitArgs = [
       "start",
-      "--provider", "deepseek",
-      "--model", "deepseek-v4-flash",
+      "--model", "deepseek/deepseek-v4-flash",
       "--prompt", "packed_equals_parity",
-      "--deepseek-api-key", "sk-packed-equals-secret",
       "--metadata", "syntax=split",
       "--idempotency-key", "packed-equals-parity",
       "--runtime", "container",
@@ -622,10 +571,8 @@ describe("installed CLI host commands", () => {
     ];
     const equalsArgs = [
       "start",
-      "--provider=deepseek",
-      "--model=deepseek-v4-flash",
+      "--model=deepseek/deepseek-v4-flash",
       "--prompt=packed_equals_parity",
-      "--deepseek-api-key=sk-packed-equals-secret",
       "--metadata=syntax=split",
       "--idempotency-key=packed-equals-parity",
       "--runtime=container",
@@ -633,20 +580,17 @@ describe("installed CLI host commands", () => {
       "--api-key=tok-installed-cli",
       `--aex-url=${api.baseUrl}`
     ];
-
     const beforeSplit = api.requests.length;
     const split = await runCommand(binPath, splitArgs, { cwd: install.installDir, timeoutMs: 30_000 });
     const splitRequests = api.requests.slice(beforeSplit);
     const beforeEquals = api.requests.length;
     const joined = await runCommand(binPath, equalsArgs, { cwd: install.installDir, timeoutMs: 30_000 });
     const joinedRequests = api.requests.slice(beforeEquals);
-
     expect(joined).toEqual(split);
     expect(joined.exitCode, `stdout:\n${joined.stdout}\nstderr:\n${joined.stderr}`).toBe(0);
     expect(joinedRequests).toEqual(splitRequests);
-    expect(joined.stdout).not.toContain("sk-packed-equals-secret");
-    expect(joined.stderr).not.toContain("sk-packed-equals-secret");
-
+    expect(joined.stdout).not.toContain("tok-installed-cli");
+    expect(joined.stderr).not.toContain("tok-installed-cli");
     const missing = await runCommand(
       binPath,
       ["status", "session-cli-1", "--api-key", "tok-installed-cli", "--aex-url"],
@@ -654,39 +598,32 @@ describe("installed CLI host commands", () => {
     );
     expect(missing).toMatchObject({ exitCode: 2, stdout: "", stderr: "--aex-url requires a value\n" });
   });
-
   it("preserves start duplicate precedence and negative ordering in the packed CLI", async () => {
     const before = api.requests.length;
     const duplicate = await runCommand(binPath, [
       "start",
-      "--provider=anthropic", "--provider", "deepseek",
-      "--model=claude-haiku-4-5", "--model", "deepseek-v4-flash",
+      "--model=anthropic/claude-haiku-4-5", "--model", "deepseek/deepseek-v4-flash",
       "--prompt=first", "--prompt", "second",
-      "--deepseek-api-key=old-secret", "--deepseek-api-key", "new-secret",
       "--metadata=mode=first", "--metadata", "mode=last",
       "--runtime-size=1cpu-4gb", "--runtime-size", "0.25cpu-1gb",
       "--api-key=old-token", "--api-key", "tok-installed-cli",
       `--aex-url=${api.baseUrl}`
     ], { cwd: install.installDir, timeoutMs: 30_000 });
     const requests = api.requests.slice(before);
-
     expect(duplicate.exitCode, `stdout:\n${duplicate.stdout}\nstderr:\n${duplicate.stderr}`).toBe(0);
-    expect(duplicate.stdout).not.toContain("new-secret");
-    expect(duplicate.stderr).not.toContain("new-secret");
+    expect(duplicate.stdout).not.toContain("tok-installed-cli");
+    expect(duplicate.stderr).not.toContain("tok-installed-cli");
     expect(requests).toHaveLength(2);
     expect(requests[0]).toMatchObject({
       method: "POST",
       path: "/api/sessions",
       authorization: "Bearer tok-installed-cli",
       body: {
-        provider: "deepseek",
         runtimeSize: "0.25cpu-1gb",
-        submission: { model: "deepseek-v4-flash", metadata: { mode: "last" } },
-        secrets: { apiKeys: { deepseek: "new-secret" } }
+        submission: { model: "deepseek/deepseek-v4-flash", metadata: { mode: "last" } }
       }
     });
     expect(requests[1]).toMatchObject({ body: { input: ["first", "second"] } });
-
     const negativeBefore = api.requests.length;
     const negative = await runCommand(binPath, [
       "start", "unexpected-position", "--unknown",

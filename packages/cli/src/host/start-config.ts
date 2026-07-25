@@ -1,4 +1,5 @@
 import {
+  parseModelSlug,
   parseSessionRequestConfig,
   type JsonValue,
   type ModelName,
@@ -76,6 +77,18 @@ export async function resolveStartConfig(
   } else {
     if (!args.model) {
       return { ok: false, error: startValidationMessage("--model", "is required when --config is not provided") };
+    }
+    // Shape-check the slug HERE, in the same tier as the missing-flag case above, so
+    // `--model` reports consistently: a missing value and a malformed one are both
+    // usage errors (exit 2, plain line). The gateway cutover left slug parsing to the
+    // submission builder, whose failures surface as a `session_failed` envelope with
+    // exit 1 — which made the commonest migration mistake (a bare model name instead
+    // of creator/model) look like a run that had started and failed. An unknown but
+    // WELL-FORMED slug still passes: the gateway owns the catalog, not the CLI.
+    try {
+      parseModelSlug(args.model, "--model");
+    } catch (err) {
+      return { ok: false, error: startValidationMessage("--model", err instanceof Error ? err.message : String(err)) };
     }
     model = args.model as ModelName;
     if (args.prompts.length === 0) return { ok: false, error: startValidationMessage("--prompt", "is required (repeatable)") };

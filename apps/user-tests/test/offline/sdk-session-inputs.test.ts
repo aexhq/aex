@@ -36,8 +36,8 @@ const instructions = { ...base, resourceId: "wres_" + "4".repeat(32), kind: "ins
 
 const client = new Aex({ apiKey: "aex_test", baseUrl: "https://api.example", fetch });
 await client.sessions.create({
-  provider: "anthropic",
-  model: "claude-haiku-4-5",
+
+  model: "anthropic/claude-haiku-4-5",
   system: "Be precise.",
   assets: { files: [file], skills: [skill], tools: [tool], instructions: [instructions] },
   builtinTools: ["grep", "bash"],
@@ -46,7 +46,6 @@ await client.sessions.create({
   outputMode: "buffered",
   responseFormat: { kind: "text" },
   metadata: { requestId: "req-1" },
-  apiKeys: { anthropic: "sk-ant" },
   environment: {
     variables: { MODE: "test" },
     secrets: { SERVICE_TOKEN: Secret.value("secret-value") },
@@ -71,7 +70,10 @@ ok(!("files" in request.submission));
 ok(!("skills" in request.submission));
 ok(!("tools" in request.submission));
 deepStrictEqual(request.submission.environment.envVars, { MODE: "test" });
-deepStrictEqual(request.secrets.apiKeys, { anthropic: "sk-ant" });
+// Managed keys: the wire carries NO customer provider key, under any name.
+ok(!("apiKeys" in request.secrets), "secrets.apiKeys must not be on the wire");
+ok(!("apiKey" in request.secrets), "secrets.apiKey must not be on the wire");
+ok(!("provider" in request), "the serving provider is derived from the model slug");
 deepStrictEqual(request.submission.secretEnv, { SERVICE_TOKEN: { ephemeral: true } });
 strictEqual(request.secrets.envSecrets.SERVICE_TOKEN, "secret-value");
 strictEqual(request.secrets.mcpServers[0].headers.Authorization, "Bearer secret");
@@ -90,7 +92,7 @@ for (const [field, value] of [
   const before = calls.length;
   let message = "";
   try {
-    await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" }, [field]: value });
+    await client.sessions.create({ model: "anthropic/claude-haiku-4-5", [field]: value });
   } catch (error) {
     message = error.message;
   }

@@ -101,7 +101,7 @@ function client(fetch, retry) {
   });
 }
 const create = (fetch, retry) =>
-  client(fetch, retry).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+  client(fetch, retry).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 
 // (1) Retry-After is honored as a delay FLOOR. Server says "wait 1s" (retry-after: 1)
 //     while our jittered backoff is ~1ms; the actual wait must be >= ~1s, and the
@@ -185,7 +185,7 @@ const faultChecks = {
 
 // (6) replayLast() before any send is a typed SessionStateError (not a bare throw).
 const ok201 = makeFetch([201]);
-const handle = await client(ok201.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+const handle = await client(ok201.fetch).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 let replayErr;
 try { handle.messages.replayLast(); } catch (err) { replayErr = err; }
 const replayCheck = {

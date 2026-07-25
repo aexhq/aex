@@ -12,6 +12,8 @@ function baseResult(overrides: Partial<CaseResult> = {}): CaseResult {
     sessionId: "session-heavy-managed",
     runOutcome: "succeeded",
     runtime: "managed",
+    // The provider the session RECORD reports — derived by the platform from the
+    // model slug's creator prefix, not something the caller submitted.
     provider: "deepseek",
     probes: {
       system: "REF.system",

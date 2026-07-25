@@ -79,10 +79,9 @@ strictEqual(skillRef.assetId, "asset_" + skillRef.contentHash.slice("sha256:".le
 strictEqual(toolRef.assetId, "asset_" + toolRef.contentHash.slice("sha256:".length));
 
 await client.sessions.create({
-  model: "claude-haiku-4-5",
+  model: "anthropic/claude-haiku-4-5",
   assets: { skills: [skillRef], tools: [toolRef] },
-  builtinTools: [BuiltinTools.grep],
-  apiKeys: { anthropic: "sk-ant" }
+  builtinTools: [BuiltinTools.grep]
 });
 const create = calls.find((call) => call.url.endsWith("/api/sessions"));
 deepStrictEqual(create.body.submission.assets, {

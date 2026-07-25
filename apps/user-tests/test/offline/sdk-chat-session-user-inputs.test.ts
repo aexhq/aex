@@ -103,7 +103,7 @@ class Socket {
 }
 
 const client = new Aex({ apiKey: "aex_test", baseUrl: "https://api.example", fetch });
-const session = await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+const session = await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
 const result = await session.messages.send(["hello", "again"], {
   idempotencyKey: "stable-message",
   webSocketFactory: (url) => new Socket(url)

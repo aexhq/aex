@@ -299,9 +299,8 @@ let sameInstance;
   const aRef = await c.client.workspace.instructions.publish(a);
   const fRef = await c.client.workspace.files.publish(f);
   await c.client.sessions.create({
-    model: "claude-haiku-4-5",
-    assets: { instructions: [aRef], files: [fRef, fRef] },
-    apiKeys: { anthropic: "sk-ant" }
+    model: "anthropic/claude-haiku-4-5",
+    assets: { instructions: [aRef], files: [fRef, fRef] }
   });
   const body = onlyCreateBody(c.calls);
   strictEqual(body.submission.assets.instructions[0].kind, "instruction");
@@ -328,9 +327,8 @@ let distinctInstances;
   const g1Ref = await c.client.workspace.files.publish(g1);
   const g2Ref = await c.client.workspace.files.publish(g2);
   await c.client.sessions.create({
-    model: "claude-haiku-4-5",
-    assets: { files: [g1Ref, g2Ref] },
-    apiKeys: { anthropic: "sk-ant" }
+    model: "anthropic/claude-haiku-4-5",
+    assets: { files: [g1Ref, g2Ref] }
   });
   const body = onlyCreateBody(c.calls);
   strictEqual(body.submission.assets.files[0].assetId, body.submission.assets.files[1].assetId, "distinct instances, same bytes => one assetId (store dedup)");
