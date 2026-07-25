@@ -23,7 +23,6 @@ related:
 | `packages/sdk/` | Public TypeScript SDK, canonical SDK docs, package changelog, and package tests. |
 | `packages/cli/` | Public CLI commands, help, and CLI tests. |
 | `packages/contracts/` | Public wire/runtime contracts and stable errors. |
-| `packages/conformance/` | Public conformance helpers and assertions. |
 | `apps/docs/` | Public documentation website and generated/reference presentation. |
 | `apps/user-tests/` | Blackbox public SDK/CLI and published-artifact behavior. |
 | `scripts/cicd/` | Public CI, package, release, and candidate-integrity tooling. |

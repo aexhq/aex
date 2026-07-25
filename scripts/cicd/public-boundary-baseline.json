@@ -9,8 +9,7 @@
   "publicSourceRoots": [
     "packages/contracts/src",
     "packages/sdk/src",
-    "packages/cli/src",
-    "packages/conformance/src"
+    "packages/cli/src"
   ],
   "temporaryAllowedPublicImports": [
     "@aexhq/contracts",
@@ -60,7 +59,7 @@
     "forbiddenPackedPathPatterns": [
       "(^|/)\\.env(?:\\.|$)",
       "^(?:\\.github|apps|eval|scripts|tools)(?:/|$)",
-      "^(?:packages/(?:cli|db|runtime-bridge|shared|conformance))(?:/|$)",
+      "^(?:packages/(?:cli|db|runtime-bridge|shared))(?:/|$)",
       "(^|/)vercel\\.json$"
     ]
   },

@@ -47,7 +47,6 @@
       "name": "@aexhq/user-tests",
       "version": "0.1.0",
       "devDependencies": {
-        "@aexhq/conformance": "workspace:*",
         "@aexhq/contracts": "workspace:*",
         "@types/bun": "1.3.14",
         "dotenv": "16.5.0",
@@ -69,15 +68,6 @@
         "esbuild": "^0.28.0",
       },
     },
-    "packages/conformance": {
-      "name": "@aexhq/conformance",
-      "version": "0.29.0",
-      "devDependencies": {
-        "@types/bun": "1.3.14",
-        "@types/node": "22.15.3",
-        "typescript": "5.8.3",
-      },
-    },
     "packages/contracts": {
       "name": "@aexhq/contracts",
       "version": "0.33.0",
@@ -90,7 +80,7 @@
     },
     "packages/sdk": {
       "name": "@aexhq/sdk",
-      "version": "0.45.0",
+      "version": "1.0.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },
@@ -114,8 +104,6 @@
   },
   "packages": {
     "@aexhq/cli": ["@aexhq/cli@workspace:packages/cli"],
-
-    "@aexhq/conformance": ["@aexhq/conformance@workspace:packages/conformance"],
 
     "@aexhq/contracts": ["@aexhq/contracts@workspace:packages/contracts"],
 

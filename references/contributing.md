@@ -17,7 +17,7 @@ related:
 # Contributing to aex
 
 Thanks for wanting to help. This is the canonical contributor flow for the
-public SDK, CLI, contracts, conformance helpers, user-test harness, and docs
+public SDK, CLI, contracts, user-test harness, and docs
 source.
 
 ## Before you open work
@@ -79,7 +79,7 @@ never enter docs.
 ## Review criteria
 
 - One focused concern and no drive-by cleanup.
-- Tests for new behavior at the public SDK, CLI, contracts, conformance, docs,
+- Tests for new behavior at the public SDK, CLI, contracts, docs,
   or user-test layer that owns it.
 - Public API changes documented under [`packages/sdk/docs/`](../packages/sdk/docs/).
 - No credentials, `.env*` values, private hosted detail, or unredacted

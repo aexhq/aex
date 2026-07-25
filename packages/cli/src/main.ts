@@ -183,8 +183,8 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
 
 async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   // Host-side help: the unified surface over the aex SDK. Capability parity
-  // (every SDK method/session-option/files accessor has a verb/flag) is enforced
-  // by the conformance `cli-sdk-parity` manifest test.
+  // (every SDK method/session-option/files accessor has a verb/flag) is held by
+  // review against `host/registry.ts`, not by a CI check.
   io.stdout("aex — unified CLI for the aex platform (a thin pass-through over the SDK)\n\n");
   io.stdout("Usage:\n");
   io.stdout("  aex start --config <session.json> --api-key T [flags]\n");

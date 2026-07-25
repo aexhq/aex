@@ -23,8 +23,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { expectStructuredError } from "@aexhq/conformance";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { expectStructuredError } from "../_fixtures/structured-error.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];

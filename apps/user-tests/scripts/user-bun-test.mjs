@@ -539,13 +539,13 @@ function quoteWindowsCommandArg(value) {
   return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, "$1$1")}"`;
 }
 
-// The harness process itself imports @aexhq/conformance (matchers) and
-// @aexhq/contracts/testing (waitForCondition) from the workspace, so both
-// must be built before `bun test` collects any file.
+// The harness process itself imports @aexhq/contracts/testing
+// (waitForCondition) from the workspace, so it must be built before
+// `bun test` collects any file.
 async function buildHarnessPackages() {
   await run(
     getBunCommand(),
-    ["run", "--cwd", repoRoot, "--filter", "@aexhq/contracts", "--filter", "@aexhq/conformance", "build"],
+    ["run", "--cwd", repoRoot, "--filter", "@aexhq/contracts", "build"],
     {
       cwd: repoRoot,
       timeoutMs: 240_000

@@ -1,6 +1,6 @@
 ---
 title: aex public repository agent guide
-description: Table of contents for the public aex SDK, CLI, contracts, conformance, docs, and user-test repository.
+description: Table of contents for the public aex SDK, CLI, contracts, docs, and user-test repository.
 keywords:
   - table of contents
   - public repository
@@ -20,7 +20,7 @@ related:
 # Agent guide
 
 This repository owns the public aex product surface: SDK, CLI, contracts,
-conformance, public docs, and user tests. This file is a table of contents only.
+public docs, and user tests. This file is a table of contents only.
 Put durable repository-wide rules, instructions, procedures, logs, and backlogs
 under `references/`.
 

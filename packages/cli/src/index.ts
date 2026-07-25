@@ -5,8 +5,8 @@
 export { executeCli } from "./main.js";
 export { AEX_INDEX_PATH } from "./internal.js";
 export type { CliIO } from "./internal.js";
-// The CLI verb registry — consumed by the conformance CLI↔SDK parity manifest
-// test to assert every SDK capability maps to a registered verb/flag.
+// The CLI verb registry — the declarative surface behind per-verb `--help`
+// and the dispatch-vs-registry ownership test.
 export {
   CLI_VERBS,
   CLI_VERB_NAMES,

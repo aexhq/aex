@@ -23,7 +23,7 @@ or docs.
 
 ## Public product boundary
 
-- This repository owns only public SDK, CLI, contracts, conformance, docs,
+- This repository owns only public SDK, CLI, contracts, docs,
   package metadata, and user-visible tests. Standalone runnable samples live in
   the sibling `examples/` repository and consume this repository's supported
   public surface.

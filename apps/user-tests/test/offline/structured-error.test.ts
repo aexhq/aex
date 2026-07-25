@@ -1,5 +1,12 @@
+/**
+ * Unit coverage for the `expectStructuredError` matcher that the live
+ * failure-case tests assert with. The matcher itself lives beside the other
+ * harness helpers in `test/_fixtures/`; its test lives here because
+ * `test/offline/` is the lane CI actually collects (`test:user:offline`),
+ * while `test/_fixtures/` is only swept locally.
+ */
 import { describe, expect, it } from "bun:test";
-import { expectStructuredError } from "../src/structured-error.js";
+import { expectStructuredError } from "../_fixtures/structured-error.js";
 
 describe("expectStructuredError", () => {
   it("accepts a named error class in the default allow-list", () => {

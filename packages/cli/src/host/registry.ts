@@ -5,12 +5,13 @@
  *   1. Per-verb `--help` (`aex <verb> --help`) renders a static usage table
  *      from here BEFORE any auth-requiring handler runs, so discovering a
  *      verb's flags never needs an API key.
- *   2. The conformance CLI↔SDK parity manifest test asserts every SDK public
- *      capability (Aex method / session option / files accessor) maps to a verb
- *      or flag REGISTERED here — turning "mirrors the SDK" from a comment into
- *      a CI-enforced invariant.
+ *   2. `host-auth-ownership.test.ts` asserts the `dispatch()` switch in
+ *      `main.ts` registers exactly these verbs.
  *
- * Keep this list in lockstep with the `dispatch()` switch in `main.ts`.
+ * Capability parity with the SDK public surface (every Aex method / session
+ * option / files accessor reachable as a verb or flag) is NOT currently
+ * CI-enforced — it holds by review. Keep this list in lockstep with the
+ * `dispatch()` switch in `main.ts`.
  */
 
 export interface CliVerbSpec {
