@@ -17,6 +17,16 @@ import {
   assertArchiveEntryCount,
   assertArchiveExpandedSize
 } from "./archive-limits.js";
+import {
+  archiveFileBytesSchema,
+  bundleFidelityMetaSchema,
+  bundleFileContentsSchema,
+  bundleFilesMapSchema,
+  bundleMetadataPathSchema,
+  bundleSymlinkRecordSchema,
+  bundleSymlinkTargetSchema
+} from "./schemas/asset-bundle.js";
+import { parseWire } from "./schemas/wire.js";
 
 /**
  * In-memory skill bundle: a flat path -> bytes map and the
@@ -138,9 +148,7 @@ function collectCanonicalArchiveFiles(
   assertArchiveEntryCount(entries.length, source);
   const collected = new Map<string, Uint8Array>();
   for (const [rawPath, bytes] of entries) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new Error(`${source} file ${JSON.stringify(rawPath)} must be a Uint8Array`);
-    }
+    parseWire(archiveFileBytesSchema(source, rawPath), bytes);
     const path = parseSkillBundleEntry({ path: rawPath, size: bytes.byteLength }).path;
     assertNotReservedMetaPath(path, source);
     if (collected.has(path)) throw new Error(`${source} contains duplicate path: ${path}`);
@@ -163,16 +171,7 @@ function validateBundleGraph(
     assertNoLeafPrefixConflicts(leaves, source);
     return undefined;
   }
-  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {
-    throw new Error(`${source} fidelity metadata must be an object`);
-  }
-  const raw = meta as { readonly exec?: unknown; readonly symlinks?: unknown };
-  if (raw.exec !== undefined && !Array.isArray(raw.exec)) {
-    throw new Error(`${source} fidelity metadata exec must be an array`);
-  }
-  if (raw.symlinks !== undefined && !Array.isArray(raw.symlinks)) {
-    throw new Error(`${source} fidelity metadata symlinks must be an array`);
-  }
+  const raw = parseWire(bundleFidelityMetaSchema(source), meta);
   const rawExec = raw.exec ?? [];
   const rawSymlinks = raw.symlinks ?? [];
   assertArchiveEntryCount(rawExec.length, `${source} executable metadata`);
@@ -192,25 +191,19 @@ function validateBundleGraph(
 
   const symlinks: BundleSymlink[] = [];
   for (const value of rawSymlinks) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error(`${source} fidelity metadata contains a malformed symlink`);
-    }
+    parseWire(bundleSymlinkRecordSchema(source), value);
     const record = value as { readonly path?: unknown; readonly target?: unknown };
     const path = canonicalMetadataPath(record.path, source, "symlink");
-    if (typeof record.target !== "string") {
-      throw new Error(`${source} symlink ${JSON.stringify(path)} target must be a string`);
-    }
-    if (record.target.length > MAX_SYMLINK_TARGET_LENGTH) {
-      throw new Error(
-        `${source} symlink ${JSON.stringify(path)} target exceeds ${MAX_SYMLINK_TARGET_LENGTH} characters`
-      );
-    }
+    const target = parseWire(
+      bundleSymlinkTargetSchema(source, path, MAX_SYMLINK_TARGET_LENGTH),
+      record.target
+    );
     const conflict = leaves.get(path);
     if (conflict !== undefined) {
       throw new Error(`${source} symlink path ${JSON.stringify(path)} conflicts with a ${conflict}`);
     }
     leaves.set(path, "symlink");
-    symlinks.push({ path, target: record.target });
+    symlinks.push({ path, target });
   }
 
   assertNoLeafPrefixConflicts(leaves, source);
@@ -218,15 +211,13 @@ function validateBundleGraph(
 }
 
 function canonicalMetadataPath(value: unknown, source: string, kind: "executable" | "symlink"): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`${source} ${kind} path must be a non-empty string`);
-  }
+  const supplied = parseWire(bundleMetadataPathSchema(source, kind), value);
   let path: string;
   try {
-    path = parseSkillBundleEntry({ path: value, size: 0 }).path;
+    path = parseSkillBundleEntry({ path: supplied, size: 0 }).path;
   } catch (error) {
     throw new Error(
-      `${source} ${kind} path ${JSON.stringify(value)} is invalid: ` +
+      `${source} ${kind} path ${JSON.stringify(supplied)} is invalid: ` +
         `${error instanceof Error ? error.message : String(error)}`
     );
   }
@@ -277,25 +268,15 @@ function bundleCanonicalFiles<State>(
 ): BundledSkill {
   const { kind } = policy;
   const source = `${kind} bundle`;
-  if (!files || typeof files !== "object") {
-    throw new Error(`${kind} files map is required`);
-  }
+  parseWire(bundleFilesMapSchema(kind, source, SKILL_BUNDLE_LIMITS.maxFiles), files);
   const entries = Object.entries(files);
-  if (entries.length === 0) {
-    throw new Error(`${kind} files map cannot be empty`);
-  }
-  if (entries.length > SKILL_BUNDLE_LIMITS.maxFiles) {
-    throw new Error(`${source} exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit (got ${entries.length})`);
-  }
 
   const state = policy.prepare();
   const collected = new Map<string, Uint8Array>();
   let totalDecompressed = 0;
   for (const [rawPath, contents] of entries) {
+    parseWire(bundleFileContentsSchema(kind, rawPath), contents);
     const bytes = typeof contents === "string" ? TEXT.encode(contents) : contents;
-    if (!(bytes instanceof Uint8Array)) {
-      throw new Error(`${kind} file "${rawPath}" must be a string or Uint8Array`);
-    }
     const entry = parseSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
     assertNotReservedMetaPath(entry.path, source);
     totalDecompressed += bytes.byteLength;

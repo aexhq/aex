@@ -32,12 +32,12 @@ describe("allowed-key assertion ownership", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly dependencies?: Readonly<Record<string, string>> };
-    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate"]);
+    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate", "zod"]);
   });
 
-  it("routes every static migrated boundary through typed ordered tuples", () => {
-    const combined = productionFiles.map(source).join("\n");
-    expect(combined.match(/defineAllowedKeys</g)).toHaveLength(29);
-    expect(combined.match(/assertAllowedKeys\(/g)).toHaveLength(25);
-  });
+  // The remaining hand-rolled allow-list call sites are counted by the C1 parser
+  // ratchet (`scripts/cicd/check-parser-ratchet.mjs`, run from root `lint`), which
+  // fails when the count rises and reaches zero when the last family is ported.
+  // A frozen count here would be a second statement of the same fact that also
+  // fails on the way *down*.
 });

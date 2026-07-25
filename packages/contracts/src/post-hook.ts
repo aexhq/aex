@@ -1,6 +1,7 @@
 import { parseDurationToMs } from "./runtime-sizes.js";
-import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 import { withContractParseError } from "./contract-parse-error.js";
+import { postHookGateSchema, postHookSchema, type PostHookWire } from "./schemas/post-hook.js";
+import { parseWire } from "./schemas/wire.js";
 
 /** Default post-agent-run hook timeout (5 minutes). */
 export const DEFAULT_POST_HOOK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -12,6 +13,9 @@ export const DEFAULT_POST_HOOK_MAX_TURNS = 10;
  * Private post-agent-run verifier input. The public SDK does not
  * accepts this field; platform-internal paths may still normalize old wire
  * records to {@link PlatformPostHook}.
+ *
+ * The runtime statement of this shape is `postHookSchema()` in
+ * `./schemas/post-hook.ts`; its keys are the accepted field list.
  */
 export interface PlatformPostHookInput {
   readonly command: string;
@@ -35,83 +39,51 @@ export interface PlatformPostHook {
  */
 export function parsePostHook(input: unknown, path = "postHook"): PlatformPostHook | undefined {
   return withContractParseError("parsePostHook", () => {
-  if (input === undefined || input === null) {
-    return undefined;
-  }
-  const value = requirePostHookRecord(input, path);
-  const allowed = defineAllowedKeys<PlatformPostHookInput>()("command", "timeout", "maxTurns", "maxChars");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`${path}.${key} is not an allowed field; permitted: command, timeout, maxTurns, maxChars`)
-  );
-  if (typeof value.command !== "string") {
-    throw new Error(`${path}.command must be a string`);
-  }
-  if (value.command.trim().length === 0) {
-    return undefined;
-  }
-  const timeoutMs = parsePostHookTimeout(value.timeout, `${path}.timeout`);
-  const maxTurns = parseNonNegativeInteger(
-    value.maxTurns,
-    `${path}.maxTurns`,
-    DEFAULT_POST_HOOK_MAX_TURNS
-  );
-  const maxChars =
-    value.maxChars === null
-      ? null
-      : parseNonNegativeInteger(value.maxChars, `${path}.maxChars`, null);
-
-  return {
-    command: value.command,
-    timeoutMs,
-    maxTurns,
-    maxChars
-  };
+    if (input === undefined || input === null) {
+      return undefined;
+    }
+    // Two passes, deliberately. The gate settles shape, the allow-list and the
+    // command; only if the command is non-blank do the sibling rules run. A
+    // single pass would reject `{ command: "", timeout: <junk> }`, which is
+    // exactly the pre-filled config the blank-command rule exists to allow.
+    if (parseWire(postHookGateSchema(path), input).command.trim().length === 0) {
+      return undefined;
+    }
+    return normalizePostHook(parseWire(postHookSchema(path), input), path);
   });
 }
 
-function parsePostHookTimeout(input: unknown, path: string): number {
-  if (input === undefined) {
+/**
+ * Apply the hook's defaults and turn its wire duration into milliseconds.
+ *
+ * Separate from the schema because both halves are transforms — per D4 a schema
+ * that transformed could not be converted on the output side — and because the
+ * duration parse belongs to {@link parseDurationToMs}, which brands its own
+ * failures.
+ *
+ * The blank-command collapse is repeated here so this function is correct on its
+ * own; the caller has already applied it via the gate schema, which is what
+ * keeps a blank command from ever reaching the sibling field rules.
+ */
+function normalizePostHook(hook: PostHookWire, path: string): PlatformPostHook | undefined {
+  if (hook.command.trim().length === 0) {
+    return undefined;
+  }
+  return {
+    command: hook.command,
+    timeoutMs: postHookTimeoutMs(hook.timeout, `${path}.timeout`),
+    maxTurns: hook.maxTurns ?? DEFAULT_POST_HOOK_MAX_TURNS,
+    maxChars: hook.maxChars ?? null
+  };
+}
+
+function postHookTimeoutMs(timeout: string | undefined, path: string): number {
+  if (timeout === undefined) {
     return DEFAULT_POST_HOOK_TIMEOUT_MS;
   }
-  if (typeof input !== "string") {
-    throw new Error(`${path} must be a duration string (e.g. "5m", "30s"); got ${JSON.stringify(input)}`);
-  }
-  const ms = parseDurationToMs(input);
+  const ms = parseDurationToMs(timeout);
   if (ms <= 0) {
     throw new Error(`${path} must be greater than 0ms; got ${ms}ms`);
   }
   return ms;
-}
-
-function parseNonNegativeInteger(
-  input: unknown,
-  path: string,
-  defaultValue: number
-): number;
-function parseNonNegativeInteger(
-  input: unknown,
-  path: string,
-  defaultValue: null
-): number | null;
-function parseNonNegativeInteger(
-  input: unknown,
-  path: string,
-  defaultValue: number | null
-): number | null {
-  if (input === undefined) {
-    return defaultValue;
-  }
-  if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0) {
-    throw new Error(`${path} must be a non-negative integer`);
-  }
-  return input;
-}
-
-function requirePostHookRecord(input: unknown, path: string): Record<string, unknown> {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error(`${path} must be an object`);
-  }
-  return input as Record<string, unknown>;
 }
