@@ -79,6 +79,57 @@ export function wirePath(base: string, issuePath: readonly PropertyKey[]): strin
 }
 
 /**
+ * The wire path of an object that sits at an INDEXED position in a list —
+ * `secrets.mcpServers[2]`, `submission.assets.files[0]` — derived from where
+ * Zod reports the issue rather than from the whole reported position.
+ *
+ * Prefer this over {@link wirePath} for anything mounted inside an array.
+ * Zod reports a position relative to the schema the parse STARTED at, so a
+ * schema that renders its own path by folding the whole issue path is only
+ * correct at one mount depth: parse the same object one level lower and the
+ * segment doubles (`submission.environment.environment.packages[0]`). The
+ * element's own diagnostics — not-an-object and rejected-key — always report at
+ * the element's position, so the element INDEX is the last segment whatever
+ * sits above it, and reading just that segment makes the message depth-proof.
+ */
+export function indexedPath(base: string): (issuePath: readonly PropertyKey[]) => string {
+  return (issuePath) => `${base}[${String(issuePath[issuePath.length - 1] ?? 0)}]`;
+}
+
+/**
+ * The path of a FIELD on an element at an indexed position:
+ * `submission.assets.files[0].mountPath`.
+ *
+ * Depth-proof for the same reason as {@link indexedPath}, reading the last two
+ * segments — the element index and the field name — off the reported position.
+ */
+export function indexedFieldPath(
+  base: string,
+  issuePath: readonly PropertyKey[] | undefined
+): string {
+  const path = issuePath ?? [];
+  return `${base}[${String(path[path.length - 2] ?? 0)}].${String(path[path.length - 1] ?? "")}`;
+}
+
+/** The last segment of a reported position — a record key, or an array index. */
+export function lastSegment(issuePath: readonly PropertyKey[] | undefined): string {
+  const segment = issuePath?.[issuePath.length - 1];
+  return segment === undefined ? "" : String(segment);
+}
+
+/**
+ * A required, non-empty string reported under `path`.
+ *
+ * The type failure and the emptiness failure share one message because the
+ * `requireString(value, path)` ladder this replaces collapsed them, and `abort`
+ * keeps the second from firing on a value that never cleared the first.
+ */
+export function nonEmptyString(path: string): z.ZodMiniString<string> {
+  const message = `${path} must be a non-empty string`;
+  return z.string({ error: message }).check(z.minLength(1, { error: message, abort: true }));
+}
+
+/**
  * A strict object schema that reports unknown keys and non-object input in the
  * caller's own words.
  *
@@ -145,21 +196,6 @@ function issueRank(issue: z.core.$ZodIssue): number {
 export function errorFromZod(error: z.core.$ZodError): Error {
   return new Error(primaryIssue(error.issues)?.message ?? "invalid input");
 }
-
-/**
- * A member whose KEY is declared but whose value shape is not yet expressed.
- *
- * A migration state, not a destination. It lets a family retire its hand-rolled
- * allow-list — the thing that could drift from the interface — while its
- * field-level rules still live in the parser below. The keys stay a single
- * declaration; only the value types are outstanding.
- *
- * **Consequence to keep in view:** a schema built from these generates an
- * OpenAPI object with untyped properties. Every use is a known gap in the
- * generated document, not a described one. Replace with a real schema as each
- * family's field validation is ported.
- */
-export const unspecifiedField = z.optional(z.unknown());
 
 /**
  * Drop explicit `undefined` from optional properties.

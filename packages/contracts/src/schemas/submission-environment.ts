@@ -20,14 +20,16 @@ import {
   AEX_RESERVED_ENV_PREFIX,
   PLATFORM_PACKAGE_ECOSYSTEMS
 } from "../submission-limits.js";
-import { wireObject, wirePath } from "./wire.js";
+import { indexedPath, lastSegment, wireObject } from "./wire.js";
 
 /**
- * Every schema below is mounted under {@link EnvironmentSchema} and never parsed
- * standalone. That matters for paths: Zod reports an issue position relative to
- * the schema the parse STARTED at, so a nested schema must anchor its messages
- * on {@link ENVIRONMENT} — anchoring on its own path would double the segment
- * (`…packages.packages[0]`).
+ * Every schema below is mounted under {@link EnvironmentSchema}, which is itself
+ * mounted under the submission brief. That matters for paths: Zod reports an
+ * issue position relative to the schema the parse STARTED at, so a message
+ * rendered by folding the whole reported position is only correct at one mount
+ * depth. Every path below is either a fixed string or derived from the last
+ * segment(s) Zod reports (`indexedPath`, `lastSegment`), which is what keeps it
+ * right however deeply the environment is mounted.
  */
 const ENVIRONMENT = "submission.environment";
 const NETWORKING = `${ENVIRONMENT}.networking`;
@@ -111,7 +113,8 @@ export const EnvVarsSchema = z
 /** A single allowed egress host. Case folding is {@link normalizeAllowedHosts}' job. */
 const allowedHost = z.string().check(
   z.refine((value: string) => typeof value === "string" && value.length > 0, {
-    error: (issue) => `${wirePath(ENVIRONMENT, issue.path ?? [])} must be a non-empty string`,
+    error: (issue) =>
+      `${NETWORKING}.allowedHosts[${lastSegment(issue.path)}] must be a non-empty string`,
     abort: true
   })
 );
@@ -171,7 +174,7 @@ export const NetworkingSchema = wireObject(
 );
 
 export const PlatformPackageSchema = wireObject(
-  (issuePath) => wirePath(ENVIRONMENT, issuePath),
+  indexedPath(PACKAGES),
   {
     name: z.string(),
     version: z.optional(z.string())

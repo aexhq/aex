@@ -57,6 +57,12 @@ export type PlatformPackageEcosystem = (typeof PLATFORM_PACKAGE_ECOSYSTEMS)[numb
 export const SECRET_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 /**
+ * Workspace secret handle a `secretEnv` ref points at (and the name
+ * `secret.upload` persists to).
+ */
+export const SECRET_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
  * Namespace reserved for platform-set values inside the secrets channel. A
  * caller-supplied key carrying it is rejected with its own message rather than
  * the generic unknown-field one, so the reason is legible.
