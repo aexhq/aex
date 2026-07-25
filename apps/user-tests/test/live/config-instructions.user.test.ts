@@ -53,11 +53,9 @@ describe("user/SDK: every instructions ref reaches the agent (not just the first
           const b = await client.workspace.instructions.publish(bDraft);
         `,
         session: `{
-          provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: ${JSON.stringify([PROMPT])},
           assets: { instructions: [a, b] },
-          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-instructions-deepseek-managed-a-" + Date.now()
         }`
       });

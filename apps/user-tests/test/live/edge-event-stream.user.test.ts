@@ -311,7 +311,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-base-")} + Date.now(),
-        apiKeys: { [PROVIDER]: PROVIDER_KEY }
       }));
       const events = [];
       const seqs = [];
@@ -676,7 +675,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-chaos-")} + Date.now(),
-        apiKeys: { [PROVIDER]: PROVIDER_KEY },
         message: "Write four short sentences about mountains. Keep each under 12 words."
       }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory }));
 
@@ -768,7 +766,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-keepalive-")} + Date.now(),
-        apiKeys: { [PROVIDER]: PROVIDER_KEY },
         message: "Write five short sentences about forests. Keep each under 14 words."
       }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory, idleTimeoutMs: 800, pingIntervalMs: 250 }));
 
@@ -812,7 +809,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-abortlive-")} + Date.now(),
-        apiKeys: { [PROVIDER]: PROVIDER_KEY }
       }));
       // Kick the turn live in the background (its own WS); we abort a SEPARATE
       // streamEnvelopes subscription with a signal while the session is producing.

@@ -2,8 +2,8 @@
  * Live edge-case sweep for the SKILLS & TOOLS composition surface, from a real
  * @aex-reliability-audit: post-finish-read
  * customer's seat, against the DEV plane via the installed `@aexhq/sdk` on the
- * managed runtime (gate provider DeepSeek, BYOK `apiKeys`, model
- * `deepseek-v4-flash`, tiny prompts). Each case drives one live run and reduces
+ * managed runtime (managed gateway, model `deepseek/deepseek-v4-flash`, tiny
+ * prompts). Each case drives one live run and reduces
  * the event stream to observable assertions.
  *
  * Cases (5 live sessions):
@@ -243,7 +243,6 @@ await runOne({
     entry: "index.mjs",
     files: { "index.mjs": ${JSON.stringify(indexSrc)} }
   })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-throw-" + Date.now()
 });
 `;
@@ -282,7 +281,6 @@ await runOne({
   system: "You have exactly one tool: bash. Use it to run the requested command, then reply with the exact printed line.",
   message: "Using your bash tool, run: printf '${marker}\\\\n'  — then reply with the exact line you printed and nothing else.",
   builtinTools: [BuiltinTools.bash],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-cherry-bash-" + Date.now()
 });
 `;
@@ -323,7 +321,6 @@ await runOne({
     entry: "index.mjs",
     files: { "index.mjs": ${JSON.stringify(indexSrc)} }
   })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-custom-plus-builtins-" + Date.now()
 });
 `;
@@ -363,7 +360,6 @@ await runOne({
     await Tool.fromFiles({ name: "dup_tool", description: "Alpha variant.", inputSchema: { type: "object", properties: {} }, entry: "index.mjs", files: { "index.mjs": ${JSON.stringify(srcA)} } }),
     await Tool.fromFiles({ name: "dup_tool", description: "Bravo variant.", inputSchema: { type: "object", properties: {} }, entry: "index.mjs", files: { "index.mjs": ${JSON.stringify(srcB)} } })
   ],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-dup-name-" + Date.now()
 });
 `;
@@ -405,7 +401,6 @@ await runOne({
   model: MODEL,
   message: "Reply with exactly: ${marker}. Do not add any other text.",
   builtinTools: "none",
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-empty-tools-" + Date.now()
 });
 `;

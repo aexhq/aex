@@ -103,7 +103,6 @@ describe("edge: finished consistency and session listing", () => {
         message: ${JSON.stringify(`Use bash to write exactly "finish-consistent" to /workspace/files/${marker}, then reply done.`)},
         builtinTools: "default",
         fileCapture: { allowedDirs: ["/workspace/files"] },
-        apiKeys: { [PROVIDER]: PROVIDER_KEY },
         idempotencyKey: "edge-finish-consistency-" + Date.now()
       }, { timeoutMs: 6 * 60_000 });
 
@@ -169,7 +168,6 @@ describe("edge: finished consistency and session listing", () => {
         for (let i = 0; i < 3; i++) {
           created.push(await client.sessions.create({
             model: MODEL,
-            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-pagination-" + Date.now() + "-" + i
           }));
         }

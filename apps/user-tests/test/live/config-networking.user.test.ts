@@ -55,11 +55,9 @@ printf "%s %s\\n" "$a" "$o"`;
         "Reply with ONLY the final two probe tokens separated by a single space.";
       const script = sdkRunnerScript({
         session: `{
-          provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: ${JSON.stringify(prompt)},
           environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
-          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-networking-" + Date.now()
         }`
       });

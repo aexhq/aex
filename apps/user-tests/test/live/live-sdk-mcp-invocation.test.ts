@@ -135,7 +135,6 @@ function buildScript(cell: Cell): string {
     });
 
     const sessionResult = await client.start({
-      provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
       mcpServers: [mcp],
@@ -145,14 +144,12 @@ function buildScript(cell: Cell): string {
       // the MCP — even when correctly wired — is never invoked. This
       // pins the assertion to MCP behaviour instead of model whim.
       builtinTools: "none",
-      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const run = {
       status: sessionResult.status,
       runtime: "managed",
-      provider: ${JSON.stringify(cell.provider)}
     };
 
     const session = await client.sessions.open(sessionId);

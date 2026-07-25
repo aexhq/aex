@@ -113,7 +113,6 @@ describe("live DEV — subagent + MCP failure modes", () => {
         const parent = await client.sessions.create({
           model: MODEL,
           builtinTools: "default",
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           overrides: { maxSpendUsd: 0.10, idleTtl: "3m" }
         });
         const parentSessionId = parent.id;
@@ -212,9 +211,9 @@ describe("live DEV — subagent + MCP failure modes", () => {
         let session = null;
         try {
           session = await client.sessions.create(
-            { provider: PROVIDER, model: MODEL, builtinTools: "none",
+            { model: MODEL, builtinTools: "none",
             mcpServers: [McpServer.remote({ name: "probe", url: "https://mcp.context7.com/mcp" })],
-            apiKeys: { [PROVIDER]: PROVIDER_KEY }, overrides: { maxSpendUsd: 0.05, idleTtl: "3m" } }
+            overrides: { maxSpendUsd: 0.05, idleTtl: "3m" } }
           );
           out.sessionId = session.id;
           try {

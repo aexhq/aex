@@ -138,7 +138,6 @@ describe("edge: deleting a session retires its files", () => {
           model: MODEL,
           message: "Write a file /workspace/keep.txt containing exactly this line: " + marker + " . Then reply done.",
           builtinTools: "default",
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-delete-retention-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
 

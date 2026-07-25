@@ -143,11 +143,9 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
             "After the tool returns, finish your response briefly.";
 
           const sessionResult = await client.start({
-            provider: "deepseek",
             model,
             message: prompt,
             builtinTools: "default",
-            apiKeys: { deepseek: deepseekKey },
             idempotencyKey: "edge-lineage-w1-" + Date.now()
           }, { timeoutMs: 8 * 60 * 1000 });
           parentSessionId = sessionResult.sessionId;

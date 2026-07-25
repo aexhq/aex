@@ -144,7 +144,7 @@ describe("live hosted - session webhooks edge cases", () => {
         // no-webhook session -> empty delivery ledger, not an error
         let emptyLedger;
         try {
-          const s = await client.sessions.create({ provider: PROVIDER, model, apiKeys: { [PROVIDER]: providerKey } });
+          const s = await client.sessions.create({ model });
           const ledger = await s.webhooks.list();
           emptyLedger = { ok: true, count: Array.isArray(ledger) ? ledger.length : -1 };
         } catch (e) {

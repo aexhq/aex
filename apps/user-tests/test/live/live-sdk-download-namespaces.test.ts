@@ -101,19 +101,16 @@ function buildScript(cell: Cell, marker: string): string {
     });
 
     const result = await client.start({
-      provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       message: ${JSON.stringify(prompt)},
       builtinTools: "default",
       fileCapture: { allowedDirs: ["/workspace/files/report-folder"] },
-      apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = result.sessionId;
     const run = {
       status: result.status,
       runtime: "managed",
-      provider: "deepseek"
     };
     const session = await client.sessions.open(sessionId);
 

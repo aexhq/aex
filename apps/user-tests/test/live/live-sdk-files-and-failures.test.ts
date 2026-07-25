@@ -112,12 +112,10 @@ function buildFileScript(cell: Cell, marker: string): string {
     });
 
     const sessionResult = await client.start({
-      provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
       builtinTools: "default",
       fileCapture: { allowedDirs: ["/workspace/files/report-folder"] },
-      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "files-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = sessionResult.sessionId;
@@ -125,7 +123,6 @@ function buildFileScript(cell: Cell, marker: string): string {
     const sessionInfo = {
       status: sessionResult.status,
       runtime: "managed",
-      provider: ${JSON.stringify(cell.provider)}
     };
     const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
     const files = (await session.files.list()).files;
@@ -400,7 +397,6 @@ function buildCorruptedSkillScript(): string {
             "Idempotency-Key": "fail-corrupt-skill-" + Date.now()
           },
           body: JSON.stringify({
-            provider: "deepseek",
             submission: {
               model: ${JSON.stringify(deepseekModel)},
               assets: { files: [], skills: [corruptSkillRef], tools: [], instructions: [] },
@@ -408,7 +404,6 @@ function buildCorruptedSkillScript(): string {
               mcpServers: []
             },
             retention: { idleTtl: "3m" },
-            secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } }
           })
         });
         submitStatus = res.status;
@@ -545,11 +540,9 @@ function buildIncompatibleRuntimeScript(): string {
 
     try {
       const result = await client.start({
-        provider: "deepseek",
         runtimeSize: "native",
         model: "deepseek-v4-flash",
         message: "Hello.",
-        apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" },
         idempotencyKey: "fail-incompat-runtime-" + Date.now()
       });
       void result;
@@ -609,7 +602,6 @@ function buildStdioMcpScript(): string {
           "Idempotency-Key": "fail-stdio-mcp-" + Date.now()
         },
         body: JSON.stringify({
-          provider: "deepseek",
           submission: {
             model: ${JSON.stringify(deepseekModel)},
             assets: { files: [], skills: [], tools: [], instructions: [] },
@@ -617,7 +609,6 @@ function buildStdioMcpScript(): string {
             mcpServers: [{ name: "bad-stdio", url: "stdio:///dev/null", transport: "stdio" }]
           },
           retention: { idleTtl: "3m" },
-          secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } }
         })
       });
       submitStatus = res.status;

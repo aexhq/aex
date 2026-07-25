@@ -157,7 +157,6 @@ describe("edge: public type-contract gaps", () => {
           {
             model: MODEL,
             builtinTools: "none",
-            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             message: "Reply with exactly: USAGE-PROBE-OK"
           },
           { timeoutMs: 240000 }
@@ -200,7 +199,6 @@ describe("edge: public type-contract gaps", () => {
             assets: { files: [], skills: [], tools: [], instructions: [] },
             prompt: ["x".repeat(2 * 1024 * 1024)]
           },
-          secrets: { apiKeys: { [PROVIDER]: "sk-probe-fake-key" } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;

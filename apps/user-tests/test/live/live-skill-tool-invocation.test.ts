@@ -379,13 +379,11 @@ describe("live skill invocation — model loads first-class skills and follows S
 const skill = await Skill.fromContent(${JSON.stringify(md)}, { name: ${JSON.stringify(skillName)} });
 const skillRef = await client.workspace.skills.publish(skill);
 const result = await client.start({
-  provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
   builtinTools: "none",
   assets: { skills: [skillRef] },
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-single-" + Date.now()
 }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -447,13 +445,11 @@ const blue = await Skill.fromContent(${JSON.stringify(blueMd)}, { name: ${JSON.s
 const redRef = await client.workspace.skills.publish(red);
 const blueRef = await client.workspace.skills.publish(blue);
 const result = await client.start({
-  provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
   builtinTools: "none",
   assets: { skills: [redRef, blueRef] },
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-two-" + Date.now()
 }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -523,13 +519,11 @@ const stampTool = await Tool.fromFiles({
 const skillRef = await client.workspace.skills.publish(skill);
 const toolRef = await client.workspace.tools.publish(stampTool);
 const result = await client.start({
-  provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
   builtinTools: "none",
   assets: { tools: [toolRef], skills: [skillRef] },
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-plus-custom-" + Date.now()
 }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));

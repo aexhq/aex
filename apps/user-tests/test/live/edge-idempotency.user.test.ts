@@ -143,7 +143,6 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
           model: MODEL,
           message: "Reply with the single word done. Do not use any tools.",
           builtinTools: "none",
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: KEY
         };
 

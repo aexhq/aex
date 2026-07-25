@@ -10,8 +10,8 @@
  *   2. Valid apiKey → `whoami()` resolves to a workspace-identity object.
  *   3. Nonexistent sessionId → `sessions.open/get` and the session-handle files namespace
  *      reject with a typed AexApiError 4xx (a clean 404, never a 5xx).
- *   4. Client-side malformed session config (missing model / empty message / missing
- *      apiKeys / legacy field / provider-model mismatch) fails fast with a typed
+ *   4. Client-side malformed session config (missing model / empty message / legacy
+ *      field / the REMOVED provider + apiKeys fields) fails fast with a typed
  *      `SessionConfigValidationError` (an `AexError`) BEFORE any network call.
  *   5. Unreachable baseUrl → the retry loop gives up with a bounded network error
  *      (does NOT hang), surfacing a real Error rather than swallowing it.
@@ -207,14 +207,18 @@ const missingSession = {
 };
 
 // (4) Client-side malformed session config → typed SessionConfigValidationError, no network.
-const M = "claude-haiku-4-5";
+const M = "anthropic/claude-haiku-4-5";
 const validation = {
-  emptyMessage: await capture(() => client.start({ model: M, message: "", apiKeys: { anthropic: "sk-x" } }), false),
-  missingApiKeys: await capture(() => client.sessions.create({ model: M }), false),
-  missingModel: await capture(() => client.sessions.create({ apiKeys: { anthropic: "sk-x" } }), false),
-  legacyPromptField: await capture(() => client.sessions.create({ model: M, apiKeys: { anthropic: "sk-x" }, prompt: "hi" }), false),
-  providerMismatch: await capture(() => client.sessions.create({ model: M, provider: "deepseek", apiKeys: { deepseek: "x" } }), false),
-  legacySignal: await capture(() => client.start({ model: M, message: "hi", apiKeys: { anthropic: "sk-x" }, signal: new AbortController().signal }), false)
+  emptyMessage: await capture(() => client.start({ model: M, message: "" }), false),
+  missingModel: await capture(() => client.sessions.create({}), false),
+  legacyPromptField: await capture(() => client.sessions.create({ model: M, prompt: "hi" }), false),
+  // Managed keys INVERTED these two: provider and apiKeys used to be required, and
+  // are now removed fields the SDK must reject client-side. A stale caller that still
+  // sends them should learn so before a request leaves the process.
+  // (No backticks in this block: it lives inside a String.raw template.)
+  removedProviderField: await capture(() => client.sessions.create({ model: M, provider: "deepseek" }), false),
+  removedApiKeysField: await capture(() => client.sessions.create({ model: M, apiKeys: { deepseek: "x" } }), false),
+  legacySignal: await capture(() => client.start({ model: M, message: "hi", signal: new AbortController().signal }), false)
 };
 
 // (4b) Constructor with no credential — what TYPE does it throw?

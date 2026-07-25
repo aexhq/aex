@@ -242,7 +242,6 @@ describe("edge: session-path admission gates", () => {
             const session = await client.sessions.create({
               model: MODEL,
               builtinTools: "default",
-              apiKeys: { [PROVIDER]: PROVIDER_KEY },
               idempotencyKey: "admission-holder-create-" + nonce + "-" + i
             });
             out.sessionIds.push(session.id);
@@ -266,7 +265,6 @@ describe("edge: session-path admission gates", () => {
                 {
                   model: MODEL,
                   builtinTools: "default",
-                  apiKeys: { [PROVIDER]: PROVIDER_KEY },
                   idempotencyKey: "admission-overflow-create-" + nonce,
                   message: holderMessage("overflow")
                 },
@@ -323,7 +321,6 @@ describe("edge: session-path admission gates", () => {
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },
-          secrets: { apiKeys: { [PROVIDER]: "   " } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
@@ -348,13 +345,11 @@ describe("edge: session-path admission gates", () => {
       const body = `
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
-          provider: "anthropic",
           submission: {
             model: MODEL,
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },
-          secrets: { apiKeys: { anthropic: "sk-ant-probe-invalid-000000000000" } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;

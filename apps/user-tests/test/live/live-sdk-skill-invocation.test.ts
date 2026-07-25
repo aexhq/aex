@@ -166,19 +166,16 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     const betaRef = await client.workspace.skills.publish(beta);
 
     const sessionResult = await client.start({
-      provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
       message: ${JSON.stringify(prompt)},
       assets: { skills: [alphaRef, betaRef] },
-      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const run = {
       status: sessionResult.status,
       runtime: "managed",
-      provider: ${JSON.stringify(cell.provider)}
     };
 
     const session = await client.sessions.open(sessionId);

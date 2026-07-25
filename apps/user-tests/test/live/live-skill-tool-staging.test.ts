@@ -159,12 +159,10 @@ function buildScript(cfg: ScriptConfig): string {
     const skillRef = await client.workspace.skills.publish(skill);
 
     const sessionResult = await client.start({
-      provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       system: ${JSON.stringify(cfg.system)},
       message: ${JSON.stringify(cfg.message)},
       assets: { skills: [skillRef] },
-      apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: ${JSON.stringify(cfg.idempotencyPrefix)} + "-" + Date.now()
     }, { timeoutMs: 8 * 60_000 });
 

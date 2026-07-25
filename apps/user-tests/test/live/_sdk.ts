@@ -155,8 +155,8 @@ process.stdout.write(JSON.stringify({
  * `await` (e.g. publishing `Instructions.fromContent`); `run` is the object literal /
  * expression passed to `client.start(...)` and must assign nothing — the helper
  * wraps it as `const result = await client.start(<run>, { timeoutMs });`. The
- * `run` object is the session/run surface: `message` (the first turn), `apiKeys`
- * (BYOK provider keys), plus the usual composition inputs.
+ * `run` object is the session/run surface: `message` (the first turn) plus the
+ * usual composition inputs. Model access needs no key — the managed gateway serves it.
  */
 export function sdkRunnerScript(parts: { readonly setup?: string; readonly session: string }): string {
   return `${PREAMBLE}\n${parts.setup ?? ""}\nconst result = await client.start(${parts.session}, { timeoutMs: Number(process.env.WAIT_MS || "240000") });\n${TAIL}`;

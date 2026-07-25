@@ -113,18 +113,15 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
     });
 
     const sessionResult = await client.start({
-      provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
       builtinTools: ${builtinToolsLiteral},
-      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
     }, { timeoutMs: 5 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const run = {
       status: sessionResult.status,
       runtime: "managed",
-      provider: ${JSON.stringify(cell.provider)}
     };
 
     const session = await client.sessions.open(sessionId);

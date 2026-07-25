@@ -240,7 +240,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     const rulesRef = await client.workspace.instructions.publish(rules);
 
     const submitOpts = {
-      provider: ${JSON.stringify(spec.provider)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
       message: ${JSON.stringify(promptSteps)},
@@ -253,7 +252,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       builtinTools: "default",
       environment: { variables: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.provider}" },
-      apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       runtime: { kind: process.env.AEX_USER_TEST_RUNTIME },
       idempotencyKey: "heavy-${spec.provider}-" + Date.now()
     };
@@ -267,7 +265,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const run = {
         status: result.status,
         runtime: result.session.runtime?.kind,
-        provider: ${JSON.stringify(spec.provider)}
       };
       const session = await client.sessions.open(sessionId);
 

@@ -161,7 +161,6 @@ describe("edge: runtime honored, validated, and visible", () => {
           const session = await client.sessions.create({
             model: MODEL,
             builtinTools: "none",
-            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             runtime: { size: "1cpu-6gb" }
           });
           out.created = session.id;
@@ -204,7 +203,6 @@ describe("edge: runtime honored, validated, and visible", () => {
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },
-          secrets: { apiKeys: { [PROVIDER]: PROVIDER_KEY } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;

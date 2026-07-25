@@ -165,11 +165,9 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
 
         const client = new Aex({ baseUrl, apiKey });
         const session = await client.sessions.create({
-          provider: "deepseek",
           model,
           outputMode: "stream",
           idempotencyKey: "user-test-event-stream-" + Date.now(),
-          apiKeys: { deepseek: deepseekKey },
           runtime: { kind: runtimeKind }
         });
         if (session.record.runtime?.kind !== runtimeKind) {
@@ -211,7 +209,6 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
         const run = {
           status: result.status,
           runtime: "managed",
-          provider: "deepseek"
         };
         const allSnapshotEvents = await session.events.list();
         const snapshot = allSnapshotEvents.filter((event) => event.runId === result.run.runId);

@@ -120,7 +120,6 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
           message: prompt,
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-storage-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
 

@@ -29,7 +29,6 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
     async () => {
       const script = sdkRunnerScript({
         session: `{
-          provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: [
             "Use the bash tool exactly once to run this command without installing anything:",
@@ -37,7 +36,6 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }] },
-          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-packages-deepseek-managed-a-" + Date.now()
         }`
       });
@@ -64,7 +62,6 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
       // without the agent installing.
       const script = sdkRunnerScript({
         session: `{
-          provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: [
             "Use the bash tool exactly once to run this command without installing anything:",
@@ -72,7 +69,6 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
-          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-packages-managed-runtime-" + Date.now()
         }`
       });

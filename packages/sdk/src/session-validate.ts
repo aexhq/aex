@@ -308,6 +308,8 @@ export function assertSupportedSessionFields(
     runtimeSize: "use runtime.size",
     runtimeKind: "use runtime.kind",
     secretEnv: "use environment.secrets",
+    provider: "the serving provider is the model slug's creator prefix, e.g. model: \"anthropic/claude-haiku-4-5\"",
+    apiKeys: "model access is served on the aex managed gateway; you no longer supply a provider key",
     parentSessionId: "subagent lineage is assigned by the platform",
     message: "sessions are created without a first message; use Aex.start or session.messages.send",
     prompt: "use message",

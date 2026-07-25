@@ -115,7 +115,6 @@ describe("edge: built-in web tools work and fail honestly", () => {
         try {
           const r = await client.start({
             model: MODEL,
-            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             message: "Use the web_search tool to search for: Eiffel Tower height meters. If the tool errors, reply 'SEARCH-ERR: ' plus the error text; otherwise reply 'SEARCH-OK'.",
           }, { timeoutMs: 240000 });
           sessionId = r.sessionId;
@@ -150,7 +149,6 @@ describe("edge: built-in web tools work and fail honestly", () => {
         try {
           const r = await client.start({
             model: MODEL,
-            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             message: "Use the web_fetch tool to fetch http://169.254.169.254/latest/meta-data/ exactly once. Reply 'FETCH-ERR: ' plus the tool's error text, or 'FETCH-OK' if it worked. Do not retry.",
           }, { timeoutMs: 240000 });
           sessionId = r.sessionId;

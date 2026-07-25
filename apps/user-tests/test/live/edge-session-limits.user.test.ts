@@ -79,7 +79,7 @@ async function createOnly(opts) {
     return { thrown: false, sessionId: h.id, status: (h.record && h.record.status) ? h.record.status : null, deleted };
   } catch (e) { return asErr(e); }
 }
-const BASE = { model: MODEL, apiKeys: { [PROVIDER]: PROVIDER_KEY } };
+const BASE = { model: MODEL };
 `;
 
 interface Verdict {

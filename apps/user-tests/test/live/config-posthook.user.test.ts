@@ -43,12 +43,10 @@ describe("user/SDK: postHook is rejected at the public boundary", () => {
       let message = "";
       try {
         await client.start({
-          provider: "deepseek",
           model: "deepseek-v4-flash",
           message: "This should never be submitted.",
           builtinTools: "none",
           postHook: { command: "bun test" },
-          apiKeys: { deepseek: "sk-deepseek-user-test" },
           idempotencyKey: "removed-posthook"
         });
       } catch (err) {

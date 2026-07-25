@@ -445,7 +445,6 @@ const other = await File.fromBytes({
 const sourceRef = await client.workspace.files.publish(source);
 const otherRef = await client.workspace.files.publish(other);
 const result = await client.start({
-  provider: "deepseek",
   ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
   message:${JSON.stringify(prompt)},
@@ -460,7 +459,6 @@ const result = await client.start({
     BuiltinTools.tail
   ],
   fileCapture: { allowedDirs: ["/workspace/fuzz"] },
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-files-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -512,7 +510,6 @@ process.stdout.write(JSON.stringify(await observe(result)));
       ].join("\n");
       const body = `
 const result = await client.start({
-  provider: "deepseek",
   ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
   message:${JSON.stringify(prompt)},
@@ -524,7 +521,6 @@ const result = await client.start({
     BuiltinTools.git
   ],
   fileCapture: { allowedDirs: ["/workspace/.aex"] },
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-process-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -570,12 +566,10 @@ process.stdout.write(JSON.stringify(await observe(result)));
       ].join("\n");
       const body = `
 const result = await client.start({
-  provider: "deepseek",
   ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
   message:${JSON.stringify(prompt)},
   builtinTools: [BuiltinTools.bash, BuiltinTools.bash_output, BuiltinTools.bash_kill],
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-bg-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -609,12 +603,10 @@ process.stdout.write(JSON.stringify(await observe(result)));
       ].join("\n");
       const body = `
 const result = await client.start({
-  provider: "deepseek",
   ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
   message:${JSON.stringify(prompt)},
   builtinTools: [BuiltinTools.web_fetch, BuiltinTools.web_search],
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-web-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -659,12 +651,10 @@ process.stdout.write(JSON.stringify(await observe(result)));
       ].join("\n");
       const body = `
 const result = await client.start({
-  provider: "deepseek",
   ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
   message:${JSON.stringify(prompt)},
   builtinTools: [BuiltinTools.subagent, BuiltinTools.subagent_result],
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-subagent-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
@@ -781,7 +771,6 @@ const transformRef = await client.workspace.tools.publish(transform);
 const contextRef = await client.workspace.tools.publish(context);
 const failureRef = await client.workspace.tools.publish(failure);
 const result = await client.start({
-  provider: "deepseek",
   ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
   message:${JSON.stringify(prompt)},
@@ -791,7 +780,6 @@ const result = await client.start({
     variables: { APP_MODE: ${JSON.stringify(testCase.appMode)} },
     secrets: { CUSTOM_SECRET: Secret.value(process.env.CUSTOM_SECRET) }
   },
-  apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-custom-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));

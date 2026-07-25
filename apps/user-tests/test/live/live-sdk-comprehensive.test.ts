@@ -206,7 +206,6 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
     const rulesRef = await client.workspace.instructions.publish(rules);
 
     const runOpts = {
-      provider: ${JSON.stringify(spec.provider)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
       message: ${JSON.stringify(promptText)},
@@ -216,7 +215,6 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
       },
       mcpServers: [mcpPrimary, mcpSecondary],
       fileCapture: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
-      apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
     const sessionResult = await client.start(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
@@ -226,7 +224,6 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
     const run = {
       status: sessionResult.status,
       runtime: "managed",
-      provider: ${JSON.stringify(spec.provider)}
     };
     const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
     const files = (await session.files.list()).files;

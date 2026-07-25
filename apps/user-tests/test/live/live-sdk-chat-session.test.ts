@@ -111,12 +111,10 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
 
         const session = await client.sessions.create({
-          provider: "deepseek",
           model,
           system:
             "You are in a multi-turn verification session. When the user asks what reference was remembered, answer with the exact reference only.",
           builtinTools: "none",
-          apiKeys: { deepseek: deepseekKey },
           idempotencyKey: "chat-session-create-" + Date.now(),
           overrides: { idleTtl: "1d" }
         });
@@ -251,10 +249,8 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         }
 
         const session = await client.sessions.create({
-          provider: "deepseek",
           model,
           builtinTools: "none",
-          apiKeys: { deepseek: deepseekKey },
           idempotencyKey: "chat-raw-create-" + Date.now()
         });
         const createStatus = session.record.status;

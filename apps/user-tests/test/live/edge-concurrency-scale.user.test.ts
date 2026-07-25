@@ -189,11 +189,9 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           markers.push(marker);
           tasks.push(
             client.start({
-              provider: "deepseek",
               model: MODEL,
               message: "Reply with exactly this marker and no other text: " + marker,
               idempotencyKey: "cdist-" + STAMP + "-" + i,
-              apiKeys: { deepseek: DEEPSEEK_KEY }
             }, { timeoutMs: 8 * 60_000 })
               .then((r) => ({
                 i, marker,
@@ -259,10 +257,8 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         for (let i = 0; i < SAME_N; i++) {
           sameTasks.push(
             client.sessions.create({
-              provider: "deepseek",
               model: MODEL,
               idempotencyKey: sameKey,
-              apiKeys: { deepseek: DEEPSEEK_KEY }
             })
               .then((h) => ({ i, id: h.id }))
               .catch((e) => ({ i, error: errShape(e) }))
@@ -276,10 +272,8 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         for (let i = 0; i < DIST_N; i++) {
           distTasks.push(
             client.sessions.create({
-              provider: "deepseek",
               model: MODEL,
               idempotencyKey: "cdistcreate-" + STAMP + "-" + i,
-              apiKeys: { deepseek: DEEPSEEK_KEY }
             })
               .then((h) => ({ i, id: h.id }))
               .catch((e) => ({ i, error: errShape(e) }))
@@ -326,11 +320,9 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         for (let i = 0; i < N; i++) {
           tasks.push(
             client.start({
-              provider: "deepseek",
               model: MODEL,
               message: "Reply with exactly this marker and no other text: " + marker,
               idempotencyKey: key,
-              apiKeys: { deepseek: DEEPSEEK_KEY }
             }, { timeoutMs: 8 * 60_000 })
               .then((r) => ({ i, marker, sessionId: r.sessionId, ok: r.ok === true, status: String(r.status), text: dense(r.text) }))
               .catch((e) => ({ i, marker, error: errShape(e) }))
@@ -365,10 +357,8 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
     async () => {
       const body = `
         const session = await client.sessions.create({
-          provider: "deepseek",
           model: MODEL,
           idempotencyKey: "cstorm-" + STAMP,
-          apiKeys: { deepseek: DEEPSEEK_KEY }
         });
         const SEND_TIMEOUT_MS = 5 * 60 * 1000;
         function compactEvent(event) {
@@ -474,11 +464,9 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
       const body = `
         const marker = "FAN" + STAMP;
         const runRes = await client.start({
-          provider: "deepseek",
           model: MODEL,
           message: "Reply with exactly this marker and no other text: " + marker,
           idempotencyKey: "cfan-" + STAMP,
-          apiKeys: { deepseek: DEEPSEEK_KEY }
         }, { timeoutMs: 8 * 60_000 });
         const sessionId = runRes.sessionId;
         const runOk = runRes.ok === true;
@@ -566,7 +554,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
             .then((r) => ({ label, threw: false, sessionId: r.sessionId }))
             .catch((e) => ({ label, threw: true, error: errShape(e) }));
         }
-        const base = { provider: "deepseek", model: MODEL, message: "Reply with exactly this marker and no other text: X", apiKeys: { deepseek: DEEPSEEK_KEY } };
+        const base = { model: MODEL, message: "Reply with exactly this marker and no other text: X" };
         const results = await Promise.all([
           probeReject("top_level_limits", { ...base, limits: { concurrency: 5000, maxConcurrentChildSessions: 9999 } }),
           probeReject("parent_session_id", { ...base, parentSessionId: "ses_fake_parent" }),
@@ -612,10 +600,8 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           for (let i = 0; i < 10; i++) {
             jobs.push(
               client.sessions.create({
-                provider: "deepseek",
                 model: MODEL,
                 idempotencyKey: "cpage-" + STAMP + "-" + i,
-                apiKeys: { deepseek: DEEPSEEK_KEY }
               }).then((h) => { created.push(h.id); }).catch((e) => { created.push("ERR:" + errShape(e).message); })
             );
             await new Promise((r) => setTimeout(r, 120));

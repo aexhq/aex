@@ -148,12 +148,10 @@ function validationChildScript(): string {
       let failureClass = null, errorMessage = null;
       try {
         const res = await client.start({
-          provider: process.env.PROVIDER,
           model: process.env.MODEL,
           message: "SessionFile verbatim: EDGE",
           mcpServers,
           builtinTools: "none",
-          apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
           idempotencyKey: "edge-mcp-" + label + "-" + Date.now()
         }, { timeoutMs: 120000 });
         sessionId = res && typeof res.sessionId === "string" ? res.sessionId : null;
@@ -271,11 +269,9 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
     ${finishedRunReadinessSource()}
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     const sessionResult = await client.start({
-      provider: process.env.PROVIDER,
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
       environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
-      apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-egress-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
     requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.PROVIDER_KEY]);
@@ -315,12 +311,10 @@ function mcpSecretChildScript(marker: string): string {
     // The non-secret submission entry must NOT contain the marker.
     const subEntry = JSON.stringify(mcp.toSubmissionEntry());
     const sessionResult = await client.start({
-      provider: process.env.PROVIDER,
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
       mcpServers: [mcp],
       builtinTools: "none",
-      apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-mcp-secret-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
     requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.PROVIDER_KEY, marker]);

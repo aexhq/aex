@@ -2,8 +2,8 @@
  * Live edge-case sweep for the INSTRUCTIONS + FILES/ASSETS composition surface,
  * @aex-reliability-audit: post-finish-read
  * from a real customer's seat, against the DEV plane via the installed
- * `@aexhq/sdk` on the managed runtime (gate provider DeepSeek, BYOK `apiKeys`,
- * model `deepseek-v4-flash`, tiny prompts). Each case drives one live run and
+ * `@aexhq/sdk` on the managed runtime (managed gateway, model
+ * `deepseek/deepseek-v4-flash`, tiny prompts). Each case drives one live run and
  * reduces the event stream / tool results to observable assertions.
  *
  * Cases (7 live sessions):
@@ -237,7 +237,6 @@ await runOne({
   message: "What is two plus two? Answer in one short sentence.",
   builtinTools: "none",
   instructionDrafts: [await Instructions.fromContent(${JSON.stringify(md)}, { name: "reply-rule" })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-instructions-steer-" + Date.now()
 });
 `;
@@ -269,7 +268,6 @@ await runOne({
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with only its output: " + cmd)},
   builtinTools: [BuiltinTools.bash],
   fileDrafts: [await File.fromBytes({ name: "notes.txt", bytes: new TextEncoder().encode(${JSON.stringify(content)}) })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-file-read-" + Date.now()
 });
 `;
@@ -304,7 +302,6 @@ await runOne({
   message: "According to your project handbook, what is the internal project codename? Reply with just the codename.",
   builtinTools: "none",
   instructionDrafts: [await Instructions.fromContent(${JSON.stringify(md)}, { name: "handbook" })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-instructions-large-" + Date.now()
 });
 `;
@@ -339,7 +336,6 @@ await runOne({
   message: ${JSON.stringify("Run exactly this with your bash tool, then reply with ONLY the 64-character hex digest it prints: " + cmd)},
   builtinTools: [BuiltinTools.bash],
   fileDrafts: [await File.fromBytes({ name: "blob.bin", bytes })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-file-binary-" + Date.now()
 });
 `;
@@ -384,7 +380,6 @@ await runOne({
     await File.fromBytes({ name: "notes-b.txt", bytes: new TextEncoder().encode(${JSON.stringify(contentB)}) })
   ],
   instructionDrafts: [await Instructions.fromContent(${JSON.stringify(md)}, { name: "notes" })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-compose-" + Date.now()
 });
 `;
@@ -424,7 +419,6 @@ await runOne({
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
   builtinTools: [BuiltinTools.bash],
   fileDrafts: [await File.fromBytes({ name: "escape-probe.txt", bytes: new TextEncoder().encode(${JSON.stringify(content)}), mountPath: "/etc" })],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-mountpath-escape-" + Date.now()
 });
 `;
@@ -469,7 +463,6 @@ await runOne({
     await File.fromBytes({ name: "my report.txt", bytes: new TextEncoder().encode(${JSON.stringify(contentS)}) }),
     await File.fromBytes({ name: "café.txt", bytes: new TextEncoder().encode(${JSON.stringify(contentU)}) })
   ],
-  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-filenames-" + Date.now()
 });
 `;

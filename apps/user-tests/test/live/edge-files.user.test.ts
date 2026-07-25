@@ -13,7 +13,7 @@
  *   link(selectorOrQuery) / fetch(selectorOrQuery) / download(selector?)
  *   + session.download() / session.downloadMetadata()
  *
- * Model: deepseek-v4-flash, BYOK via the gate-provider apiKeys map. Tiny prompts. Four
+ * Model: deepseek/deepseek-v4-flash on the managed gateway. Tiny prompts. Four
  * live sessions total (A rich-selector-matrix, B large-file round-trip, C
  * unicode+space filename, D no-files), each independent, each probing many
  * facets in ONE child process and emitting a JSON verdict the parent asserts on.
@@ -275,7 +275,6 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
           message: ${JSON.stringify(prompt)},
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
@@ -464,7 +463,6 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
           message: ${JSON.stringify(prompt)},
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-B-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
@@ -549,7 +547,6 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
           message: ${JSON.stringify(prompt)},
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-C-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
@@ -611,7 +608,6 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionResult = await client.start({
           model: MODEL,
           message: ${JSON.stringify(prompt)},
-          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-D-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
