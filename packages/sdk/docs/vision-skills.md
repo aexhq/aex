@@ -4,10 +4,11 @@ title: Call a vision API from a skill
 
 # Call a vision API from a skill
 
-aex has no built-in vision tool. The agent's `provider` / `model` selects the
-reasoning model for the session; if a skill needs image understanding mid-session, ship a
-skill that calls the vision provider with normal HTTP and pass that provider key
-as a runtime secret.
+aex has no built-in vision tool. The agent's `model` slug selects the reasoning
+model for the session; if a skill needs image understanding mid-session, ship a
+skill that calls the vision API with normal HTTP and pass that API's key as a
+runtime secret. (That key is yours and unrelated to model access — aex serves the
+session's own model through its managed gateway.)
 
 The runnable example lives at [`vision-skill/` in aexhq/examples](https://github.com/aexhq/examples/tree/main/vision-skill).
 It captions a frame with ByteDance Doubao Seed Vision (Ark) and returns a

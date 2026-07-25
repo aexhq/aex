@@ -52,8 +52,7 @@ its idempotency key:
 const result = await aex.start({
   model,
   message: "Write the report.",
-  idempotencyKey: "report-2026-07-10",
-  apiKeys
+  idempotencyKey: "report-2026-07-10"
 });
 ```
 

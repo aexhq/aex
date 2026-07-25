@@ -19,8 +19,7 @@ const reportWriter = await aex.workspace.skills.publish(draft);
 const result = await aex.start({
   model,
   message: "Write the report.",
-  assets: { skills: [reportWriter] },
-  apiKeys
+  assets: { skills: [reportWriter] }
 });
 ```
 

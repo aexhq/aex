@@ -119,5 +119,7 @@ anticipate `429`/`402` rejections before submitting — see
 - If you cannot reach the dashboard (or suspect workspace-level compromise),
   contact <support@aex.dev>.
 
-Provider keys (`apiKeys`) and runtime secrets are a separate, per-call surface —
-see [Credentials](credentials.md) and [Secrets](secrets.md).
+Model access needs no provider key of your own — the platform's managed gateway
+key serves every run. Runtime secrets your code and MCP servers need are a
+separate, per-call surface — see [Credentials](credentials.md) and
+[Secrets](secrets.md).

@@ -30,7 +30,7 @@ For the current provider/model set, see the generated
 | Human review | Sessions execute after submission. Cancellation is available, but aex does not pause a session for platform-mediated approval or interactive clarification. |
 | Sessions | The durable product primitive is the session record. Sessions can be resumed by id and auto-suspend after the configured idle window; persistent named agent profiles and saved agent definitions are out of scope. |
 | Hosting | The SDK and CLI connect to the hosted aex API. `baseUrl` may also target the localhost development stack; self-hosting is not supported. |
-| Provider cost | BYOK provider-token charges accrue to the selected provider account. Finished results report the cost and provider usage recorded for that run. |
+| Model cost | Model tokens are served through the platform's managed gateway and billed by aex as a usage dimension on the run. Finished results report the cost and provider usage recorded for that run. |
 
 ## Provider Policy Links
 

@@ -618,7 +618,7 @@ export function rejectStdioMcpShape(record: Record<string, unknown>): void {
  * literal is a routable public address (or not an IP literal at all — name
  * resolution is the caller's concern). This numeric-range deny-list is kept
  * in parity across the public contract parser and platform shared parser so
- * the MCP parser, BYOK proxy handlers, and `submission.parseProxyBaseUrl`
+ * the MCP parser, the egress proxy handlers, and `submission.parseProxyBaseUrl`
  * classify the same bytes.
  *
  * `host` is the already-bracket-stripped, lowercased hostname.

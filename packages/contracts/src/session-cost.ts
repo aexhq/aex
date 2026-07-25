@@ -224,8 +224,9 @@ export interface SessionCostTelemetry {
   /**
    * Customer-facing AEX cost of serving this session, USD — a REPORTED ESTIMATE,
    * not a charge (telemetry/showback only; no invoicing or credit deduction).
-   * = rawCostUsd × marginMultiplier (margin currently a global 1.0). EXCLUDES
-   * the customer's BYOK provider spend. The raw (pre-margin) figure is kept
+   * = rawCostUsd × marginMultiplier (margin currently a global 1.0). INCLUDES
+   * the run's managed-gateway model tokens, which aex serves on its own key and
+   * bills as a usage dimension. The raw (pre-margin) figure is kept
    * internal and never appears on this public-safe shape. A plain number, so it
    * passes the session-record public-safe archive scan. Absent when the session incurred
    * no priced AEX usage.

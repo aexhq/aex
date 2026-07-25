@@ -105,7 +105,7 @@ is the cheapest way to validate a credential. See
 | --- | --- |
 | `bad_request` | Missing or unparseable request body. |
 | `invalid_submission` | The submission failed shape validation; `message` names the offending field. |
-| `missing_provider_key` | The submission names a provider but carries no BYOK key for it (`apiKeys[provider]`). |
+| `invalid_model` | `model` is not a `creator/model` gateway slug (for example `anthropic/claude-haiku-4-5`). |
 | `malformed_token` | The bearer value is not a structurally valid aex token. |
 
 400s are permanent for that request — fix the input rather than retrying.

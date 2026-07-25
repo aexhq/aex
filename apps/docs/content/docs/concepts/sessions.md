@@ -11,10 +11,7 @@ The previous run verdict is available as `lastRun.outcome` and on its terminal
 RUN event.
 
 ```ts
-const session = await aex.sessions.create({
-  model,
-  apiKeys
-});
+const session = await aex.sessions.create({ model });
 
 const run = session.messages.send("Write the report and save it as a file.");
 for await (const event of run) console.log(event.type);

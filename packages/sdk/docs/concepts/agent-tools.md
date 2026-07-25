@@ -36,8 +36,7 @@ await aex.start({
   model,
   message: "Look up revenue and save the result.",
   builtinTools: [BuiltinTools.write_file],
-  assets: { tools: [lookup] },
-  apiKeys
+  assets: { tools: [lookup] }
 });
 ```
 

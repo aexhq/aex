@@ -336,8 +336,8 @@ function runBillingFromEvents(
 /**
  * The IMMEDIATE authoritative failure text — the terminal `RUN_ERROR` event's
  * `data.failureMessage`. `result.error` reads this FIRST so a failed (e.g.
- * bad-BYOK) session's error is never empty even before the session-record mirror
- * exposes `errorMessage`.
+ * unknown-model) session's error is never empty even before the session-record
+ * mirror exposes `errorMessage`.
  */
 function failureFromEvents(events: readonly AexEvent[]): string | undefined {
   for (let i = events.length - 1; i >= 0; i--) {

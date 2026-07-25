@@ -238,7 +238,7 @@ export interface TurnResult {
   readonly status: SessionRunOutcome;
   /** True only when the run completed successfully. */
   readonly ok: boolean;
-  /** AEX showback estimate (USD, >= 0). Excludes BYOK provider spend. */
+  /** AEX showback estimate (USD, >= 0). Includes managed-gateway model tokens. */
   readonly costUsd: number;
   /** Aggregate token usage, derived from `costTelemetry.providerUsage`. */
   readonly usage: UsageSummary;
