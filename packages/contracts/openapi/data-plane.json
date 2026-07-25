@@ -1,0 +1,2684 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "aex data plane",
+    "version": "0.33.0",
+    "description": "The workspace-scoped HTTP API. Authenticated with a workspace API key. Generated from packages/contracts/src/schemas/** and src/api-routes.ts — do not edit by hand."
+  },
+  "servers": [
+    {
+      "url": "https://api.aex.dev",
+      "description": "production"
+    },
+    {
+      "url": "https://dev-api.aex.dev",
+      "description": "development"
+    }
+  ],
+  "paths": {
+    "/api/admin/billing/account-type": {
+      "post": {
+        "operationId": "adminBilling.accountType",
+        "summary": "adminBilling.accountType",
+        "tags": [
+          "adminBilling"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:manage"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/billing/payment-method": {
+      "post": {
+        "operationId": "adminBilling.paymentMethod",
+        "summary": "adminBilling.paymentMethod",
+        "tags": [
+          "adminBilling"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:manage"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/billing/topup": {
+      "post": {
+        "operationId": "adminBilling.topup",
+        "summary": "adminBilling.topup",
+        "tags": [
+          "adminBilling"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:manage"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{assetId}": {
+      "delete": {
+        "operationId": "assets.delete",
+        "summary": "assets.delete",
+        "tags": [
+          "assets"
+        ],
+        "parameters": [
+          {
+            "name": "assetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "assets:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/finalize": {
+      "post": {
+        "operationId": "assets.finalize",
+        "summary": "assets.finalize",
+        "tags": [
+          "assets"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "assets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/mpu/abort": {
+      "post": {
+        "operationId": "assets.mpuAbort",
+        "summary": "assets.mpuAbort",
+        "tags": [
+          "assets"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "assets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/mpu/presign-parts": {
+      "post": {
+        "operationId": "assets.mpuPresignParts",
+        "summary": "assets.mpuPresignParts",
+        "tags": [
+          "assets"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "assets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/presign": {
+      "post": {
+        "operationId": "assets.presign",
+        "summary": "assets.presign",
+        "tags": [
+          "assets"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "assets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing": {
+      "get": {
+        "operationId": "billing.get",
+        "summary": "billing.get",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/checkout": {
+      "post": {
+        "operationId": "billing.checkout",
+        "summary": "billing.checkout",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/ledger": {
+      "get": {
+        "operationId": "billing.ledger",
+        "summary": "billing.ledger",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/portal": {
+      "post": {
+        "operationId": "billing.portal",
+        "summary": "billing.portal",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/internal/sessions/{sessionId}/archive": {
+      "get": {
+        "operationId": "sessions.archiveInternal",
+        "summary": "sessions.archiveInternal",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mcp-servers": {
+      "post": {
+        "operationId": "mcpServers.create",
+        "summary": "mcpServers.create",
+        "tags": [
+          "mcpServers"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "mcp:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "mcpServers.list",
+        "summary": "mcpServers.list",
+        "tags": [
+          "mcpServers"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "mcp:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mcp-servers/{mcpServerId}": {
+      "delete": {
+        "operationId": "mcpServers.delete",
+        "summary": "mcpServers.delete",
+        "tags": [
+          "mcpServers"
+        ],
+        "parameters": [
+          {
+            "name": "mcpServerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "mcp:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "mcpServers.get",
+        "summary": "mcpServers.get",
+        "tags": [
+          "mcpServers"
+        ],
+        "parameters": [
+          {
+            "name": "mcpServerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "mcp:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runtime/journal/commit": {
+      "post": {
+        "operationId": "runtime.journalCommit",
+        "summary": "runtime.journalCommit",
+        "tags": [
+          "runtime"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": []
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runtime/writer-authority": {
+      "get": {
+        "operationId": "runtime.writerAuthority",
+        "summary": "runtime.writerAuthority",
+        "tags": [
+          "runtime"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": []
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secrets": {
+      "post": {
+        "operationId": "secrets.create",
+        "summary": "secrets.create",
+        "tags": [
+          "secrets"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "secrets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "secrets.list",
+        "summary": "secrets.list",
+        "tags": [
+          "secrets"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "secrets:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secrets/{secretId}": {
+      "delete": {
+        "operationId": "secrets.delete",
+        "summary": "secrets.delete",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secretId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "secrets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "secrets.get",
+        "summary": "secrets.get",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secretId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "secrets:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secrets/{secretId}/rotate": {
+      "post": {
+        "operationId": "secrets.rotate",
+        "summary": "secrets.rotate",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secretId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "secrets:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions": {
+      "post": {
+        "operationId": "sessions.create",
+        "summary": "sessions.create",
+        "tags": [
+          "sessions"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "sessions.list",
+        "summary": "sessions.list",
+        "tags": [
+          "sessions"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}": {
+      "delete": {
+        "operationId": "sessions.delete",
+        "summary": "sessions.delete",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "sessions.get",
+        "summary": "sessions.get",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/approve": {
+      "post": {
+        "operationId": "sessions.approve",
+        "summary": "sessions.approve",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/cancel": {
+      "post": {
+        "operationId": "sessions.cancel",
+        "summary": "sessions.cancel",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:cancel"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/children": {
+      "get": {
+        "operationId": "sessions.listChildren",
+        "summary": "sessions.listChildren",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": []
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/deny": {
+      "post": {
+        "operationId": "sessions.deny",
+        "summary": "sessions.deny",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/events": {
+      "get": {
+        "operationId": "sessions.listEvents",
+        "summary": "sessions.listEvents",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/events/link": {
+      "post": {
+        "operationId": "sessions.eventArchiveLink",
+        "summary": "sessions.eventArchiveLink",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/events/ticket": {
+      "post": {
+        "operationId": "sessions.eventsTicket",
+        "summary": "sessions.eventsTicket",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/files": {
+      "get": {
+        "operationId": "sessions.listFiles",
+        "summary": "sessions.listFiles",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/files/{fileId}/download": {
+      "get": {
+        "operationId": "sessions.downloadFile",
+        "summary": "sessions.downloadFile",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/files/{fileId}/link": {
+      "post": {
+        "operationId": "sessions.fileLink",
+        "summary": "sessions.fileLink",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/finalize": {
+      "post": {
+        "operationId": "sessions.finalize",
+        "summary": "sessions.finalize",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/messages": {
+      "get": {
+        "operationId": "sessions.listMessages",
+        "summary": "sessions.listMessages",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "sessions.sendMessage",
+        "summary": "sessions.sendMessage",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/otel": {
+      "get": {
+        "operationId": "sessions.otel",
+        "summary": "sessions.otel",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/request-approval": {
+      "post": {
+        "operationId": "sessions.requestApproval",
+        "summary": "sessions.requestApproval",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/result": {
+      "get": {
+        "operationId": "sessions.childResult",
+        "summary": "sessions.childResult",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": []
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/resume": {
+      "post": {
+        "operationId": "sessions.resume",
+        "summary": "sessions.resume",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/suspend": {
+      "post": {
+        "operationId": "sessions.suspend",
+        "summary": "sessions.suspend",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/webhook-deliveries": {
+      "get": {
+        "operationId": "sessions.listWebhookDeliveries",
+        "summary": "sessions.listWebhookDeliveries",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/webhook-deliveries/{webhookDeliveryId}/redeliver": {
+      "post": {
+        "operationId": "sessions.redeliverWebhook",
+        "summary": "sessions.redeliverWebhook",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhookDeliveryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webhook/deliveries": {
+      "get": {
+        "operationId": "webhook.listDeliveries",
+        "summary": "webhook.listDeliveries",
+        "tags": [
+          "webhook"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webhook/signing-secret": {
+      "post": {
+        "operationId": "webhook.signingSecret",
+        "summary": "webhook.signingSecret",
+        "tags": [
+          "webhook"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/whoami": {
+      "get": {
+        "operationId": "whoami",
+        "summary": "whoami",
+        "tags": [
+          "whoami"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": []
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/files": {
+      "post": {
+        "operationId": "workspace.files.publish",
+        "summary": "workspace.files.publish",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "workspace.files.list",
+        "summary": "workspace.files.list",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/files/{fileId}": {
+      "get": {
+        "operationId": "workspace.files.get",
+        "summary": "workspace.files.get",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "workspace.files.delete",
+        "summary": "workspace.files.delete",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "files:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/instructions": {
+      "post": {
+        "operationId": "workspace.instructions.publish",
+        "summary": "workspace.instructions.publish",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "instructions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "workspace.instructions.list",
+        "summary": "workspace.instructions.list",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "instructions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/instructions/{instructionId}": {
+      "get": {
+        "operationId": "workspace.instructions.get",
+        "summary": "workspace.instructions.get",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "instructionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "instructions:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "workspace.instructions.delete",
+        "summary": "workspace.instructions.delete",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "instructionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "instructions:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/skills": {
+      "post": {
+        "operationId": "workspace.skills.publish",
+        "summary": "workspace.skills.publish",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "skills:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "workspace.skills.list",
+        "summary": "workspace.skills.list",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "skills:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/skills/{skillId}": {
+      "get": {
+        "operationId": "workspace.skills.get",
+        "summary": "workspace.skills.get",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "skills:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "workspace.skills.delete",
+        "summary": "workspace.skills.delete",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "skills:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/tools": {
+      "post": {
+        "operationId": "workspace.tools.publish",
+        "summary": "workspace.tools.publish",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "tools:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "workspace.tools.list",
+        "summary": "workspace.tools.list",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "tools:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/tools/{toolId}": {
+      "get": {
+        "operationId": "workspace.tools.get",
+        "summary": "workspace.tools.get",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "toolId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "tools:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "workspace.tools.delete",
+        "summary": "workspace.tools.delete",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "toolId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "tools:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{workspaceId}": {
+      "delete": {
+        "operationId": "workspaces.erase",
+        "summary": "workspaces.erase",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "workspaces:delete"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "workspaceApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Workspace API key, sent as `Authorization: Bearer <key>`."
+      }
+    },
+    "schemas": {
+      "ApiErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Stable machine-readable error code."
+          },
+          "message": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "additionalProperties": true
+      },
+      "InlineSecrets": {
+        "type": "object",
+        "properties": {
+          "mcpServers": {
+            "$ref": "#/components/schemas/SecretsMcpServers"
+          },
+          "envSecrets": {
+            "$ref": "#/components/schemas/SecretsEnvSecrets"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The vaulted half of a submission. Excluded from the idempotency hash and never echoed back."
+      },
+      "SecretsEnvSecrets": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {},
+        "description": "Per-session env-var secret values. Keys must be valid env var names; each pairs with a `submission.secretEnv` declaration."
+      },
+      "SecretsMcpServers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "headers": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "name",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        "description": "Per-session MCP server credentials. Server names must be unique."
+      },
+      "SessionLimits": {
+        "type": "object",
+        "properties": {
+          "maxConcurrentChildSessions": {
+            "type": "number"
+          },
+          "maxSubagentDepth": {
+            "type": "number"
+          },
+          "maxSpendUsd": {
+            "type": "number"
+          },
+          "maxTurns": {
+            "type": "number"
+          },
+          "maxStepsPerTurn": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Per-session lineage-limit override. Shape and positivity only; clamping to the workspace and platform ceilings happens server-side in resolveSessionLimits."
+      },
+      "SessionMachine": {
+        "type": "object",
+        "properties": {
+          "spot": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Capacity intent. An object with no `spot` carries no signal and is dropped; `spot: false` is preserved as an explicit request for standard capacity."
+      },
+      "SessionWebhook": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false,
+        "description": "Run-callback registration. `url` must be https with no userinfo — enforced in packages/contracts/src/schemas/session-webhook.ts, and not expressible in JSON Schema."
+      },
+      "SubmissionEnvironment": {
+        "type": "object",
+        "properties": {
+          "networking": {
+            "$ref": "#/components/schemas/SubmissionNetworking"
+          },
+          "packages": {
+            "$ref": "#/components/schemas/SubmissionPackages"
+          },
+          "envVars": {
+            "$ref": "#/components/schemas/SubmissionEnvVars"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Customer-controlled runtime environment."
+      },
+      "SubmissionEnvVars": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "SubmissionNetworking": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "limited",
+              "open"
+            ]
+          },
+          "allowedHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "description": "Egress policy. `mode` is required whenever `networking` is supplied — enforced in packages/contracts/src/schemas/submission-environment.ts."
+      },
+      "SubmissionPackage": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "description": "Package request. `name` may carry an ecosystem prefix (\"pip:pandas\"); an unprefixed name defaults to apt and an unknown prefix is rejected."
+      },
+      "SubmissionPackages": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/SubmissionPackage"
+        }
+      }
+    }
+  }
+}

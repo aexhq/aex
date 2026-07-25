@@ -31,7 +31,8 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
-    }
+    },
+    "./openapi/data-plane.json": "./openapi/data-plane.json"
   },
   "dependencies": {
     "fflate": "0.8.2",
@@ -50,5 +51,10 @@
   "devDependencies": {
     "@standard-schema/spec": "1.1.0",
     "@types/bun": "1.3.14"
-  }
+  },
+  "files": [
+    "dist",
+    "openapi",
+    "README.md"
+  ]
 }
