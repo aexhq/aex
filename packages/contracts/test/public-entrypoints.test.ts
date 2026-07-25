@@ -66,16 +66,19 @@ describe("contracts entrypoint boundary", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
-    // `./openapi/data-plane.json` is a generated data file, not a code
-    // entrypoint: it is emitted by `openapi:generate` from the schemas in this
-    // package so consumers and non-TypeScript SDKs can read the HTTP surface
-    // without us hand-maintaining a second description of it.
+    // The two `./openapi/*` entries are GENERATED ARTEFACTS, not code
+    // entrypoints — the OpenAPI document emitted from the schemas in this
+    // package, and the types emitted from that document. They are exported
+    // because an `exports` map blocks every path it does not name, so a
+    // consumer could otherwise neither read the spec nor use the types that
+    // ship beside it. Both carry no runtime; the `.d.ts` entry is types-only.
     expect(Object.keys(packageJson.exports ?? {})).toEqual([
       ".",
       "./internal",
       "./subagent-runtime",
       "./testing",
-      "./openapi/data-plane.json"
+      "./openapi/data-plane.json",
+      "./openapi/data-plane"
     ]);
   });
 

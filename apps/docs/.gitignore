@@ -8,6 +8,7 @@ src/content/
 content/docs/guides/
 content/docs/reference/sdk/
 content/docs/reference/cli.md
+content/docs/reference/api.md
 content/docs/reference/events.md
 public/llms.txt
 public/llms-full.txt

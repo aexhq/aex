@@ -6,15 +6,19 @@
  * themselves from `@aexhq/contracts` source — the same objects the server
  * validates with, so there is nothing here to keep in sync with the wire.
  *
- * `.meta({ id })` is mandatory for every reused schema: without an explicit id,
+ * An explicit id is mandatory for every reused schema: without one,
  * `reused:"ref"` invents `__schema0`, `__schema1` (measured), which are
- * unreadable and unstable across unrelated edits.
+ * unreadable and unstable across unrelated edits. Ids are attached with
+ * `.register(z.globalRegistry, …)` — **`.meta()` does not exist on `zod/mini`
+ * schemas**, and the two entrypoints share one global registry object, so a
+ * mini schema's metadata is visible to this full-zod converter.
  *
- * **Known gap, stated rather than hidden:** the members of the largest request
- * objects are still `unspecifiedField` while their field validation lives in the
- * parsers. Those objects therefore generate with untyped properties. The
- * generated document is honest about the KEYS a request may carry and silent
- * about their value shapes — a weaker-but-true document, per the plan's rule.
+ * **What the document still understates.** Some inferred field types are
+ * deliberately weaker-but-true — `prompt`, `mcpServers`, `secretEnv`,
+ * `builtinTools` and the capture lists validate through ordered `z.check()`
+ * ladders whose per-entry wording a typed union would destroy. Each carries a
+ * registered description naming the rule and its owning module. A
+ * weaker-but-true schema beats a precise-but-wrong one.
  */
 import { z } from "zod";
 import {
@@ -32,6 +36,15 @@ import {
 import { SessionWebhookSchema } from "../../packages/contracts/src/schemas/session-webhook.js";
 import { SessionLimitsSchema } from "../../packages/contracts/src/schemas/session-limits.js";
 import { SessionMachineSchema } from "../../packages/contracts/src/schemas/session-machine.js";
+import { SessionSubmissionRequestSchema } from "../../packages/contracts/src/schemas/submission-request.js";
+import {
+  ApprovalGateSchema,
+  FileCaptureSchema,
+  PlatformInjectionSchema,
+  ResponseFormatSchema,
+  SubmissionSchema
+} from "../../packages/contracts/src/schemas/submission-body.js";
+import { SubmissionAssetsSchema } from "../../packages/contracts/src/schemas/submission-assets.js";
 
 /**
  * Cross-field and bounds rules expressed as `.check()` are SILENTLY ABSENT from
@@ -85,6 +98,13 @@ register("SubmissionEnvVars", EnvVarsSchema);
 register("InlineSecrets", InlineSecretsSchema);
 register("SecretsMcpServers", McpServerSecretsSchema);
 register("SecretsEnvSecrets", EnvSecretsSchema);
+register("SessionSubmissionRequest", SessionSubmissionRequestSchema);
+register("Submission", SubmissionSchema);
+register("SubmissionAssets", SubmissionAssetsSchema);
+register("SubmissionFileCapture", FileCaptureSchema);
+register("SubmissionResponseFormat", ResponseFormatSchema);
+register("SubmissionApprovalGate", ApprovalGateSchema);
+register("SubmissionPlatformInjection", PlatformInjectionSchema);
 
 /** The registry the generator converts in one pass. */
 export const OPENAPI_SCHEMA_REGISTRY = z.globalRegistry;
@@ -92,9 +112,17 @@ export const OPENAPI_SCHEMA_REGISTRY = z.globalRegistry;
 /**
  * Operation id -> request body component name.
  *
- * Only operations whose request shape is already expressed as a schema appear
- * here. An operation missing from this map generates without a request body,
- * which is a stated gap rather than a claim that it takes none — see the
- * coverage note the generator prints.
+ * Only operations whose request shape is expressed as a schema appear here. An
+ * operation missing from this map generates without a request body, which the
+ * document states as a gap rather than as a claim that the route takes no body.
+ *
+ * `sessions.create` is the whole submission envelope, and the one that matters
+ * most — it is the largest request surface in the API. The remaining POST
+ * routes (`secrets.create`, `mcpServers.create`, `workspace.*.publish`,
+ * `billing.*`, `adminBilling.*`) take bodies that are validated server-side and
+ * have no schema in this package yet; binding a placeholder would assert a shape
+ * nobody checks.
  */
-export const OPENAPI_REQUEST_BODIES: Readonly<Record<string, string>> = {};
+export const OPENAPI_REQUEST_BODIES: Readonly<Record<string, string>> = {
+  "sessions.create": "SessionSubmissionRequest"
+};

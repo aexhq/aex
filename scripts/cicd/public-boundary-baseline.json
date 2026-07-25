@@ -18,6 +18,7 @@
   "contractsPackage": {
     "dir": "packages/contracts",
     "allowedRuntimeDependencies": [
+      "@standard-schema/spec",
       "fflate",
       "zod"
     ]
@@ -35,6 +36,7 @@
       "aex": "./dist/cli.mjs"
     },
     "allowedRuntimeDependencies": [
+      "@standard-schema/spec",
       "fflate",
       "ignore",
       "zod"
@@ -109,6 +111,16 @@
       "./schemas/models.js",
       "./schemas/numeric.js",
       "./schemas/post-hook.js",
+      "./schemas/response-assets.js",
+      "./schemas/response-billing.js",
+      "./schemas/response-common.js",
+      "./schemas/response-identity.js",
+      "./schemas/response-mcp-servers.js",
+      "./schemas/response-secrets.js",
+      "./schemas/response-sessions-internal.js",
+      "./schemas/response-sessions.js",
+      "./schemas/response-webhooks.js",
+      "./schemas/response-workspace.js",
       "./schemas/runtime-kind.js",
       "./schemas/runtime-security-profile.js",
       "./schemas/runtime-sizes.js",
@@ -145,6 +157,7 @@
       "./testing/fake-clock.js",
       "./testing/fake-object-stores.js",
       "./testing/fake-web-socket.js",
+      "./testing/response-bindings.js",
       "./testing/stub-env.js",
       "./testing/test-platform.js",
       "./testing/wait-for-condition.js",

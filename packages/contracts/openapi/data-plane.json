@@ -825,6 +825,16 @@
         "tags": [
           "sessions"
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionSubmissionRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "workspaceApiKey": [
@@ -2600,6 +2610,68 @@
         "additionalProperties": false,
         "description": "Capacity intent. An object with no `spot` carries no signal and is dropped; `spot: false` is preserved as an explicit request for standard capacity."
       },
+      "SessionSubmissionRequest": {
+        "type": "object",
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "submission": {
+            "$ref": "#/components/schemas/Submission"
+          },
+          "runtimeSize": {
+            "type": "string",
+            "enum": [
+              "0.25cpu-1gb",
+              "0.5cpu-4gb",
+              "1cpu-6gb",
+              "2cpu-8gb",
+              "4cpu-12gb"
+            ]
+          },
+          "runtimeKind": {
+            "type": "string",
+            "enum": [
+              "container",
+              "spot_container",
+              "lambda"
+            ]
+          },
+          "timeout": {
+            "type": "string"
+          },
+          "webhook": {
+            "$ref": "#/components/schemas/SessionWebhook"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SessionLimits"
+          },
+          "machine": {
+            "$ref": "#/components/schemas/SessionMachine"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InlineSecrets"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "workspaceId",
+          "idempotencyKey",
+          "submission"
+        ],
+        "additionalProperties": false
+      },
       "SessionWebhook": {
         "type": "object",
         "properties": {
@@ -2613,6 +2685,356 @@
         ],
         "additionalProperties": false,
         "description": "Run-callback registration. `url` must be https with no userinfo — enforced in packages/contracts/src/schemas/session-webhook.ts, and not expressible in JSON Schema."
+      },
+      "Submission": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "system": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/SubmissionPrompt"
+          },
+          "assets": {
+            "$ref": "#/components/schemas/SubmissionAssets"
+          },
+          "mcpServers": {
+            "$ref": "#/components/schemas/SubmissionMcpServers"
+          },
+          "secretEnv": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionSecretEnv"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/SubmissionEnvironment"
+          },
+          "securityProfile": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "strict",
+                  "standard",
+                  "developer"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "fileCapture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionFileCapture"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "builtinTools": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "default"
+                  },
+                  {
+                    "type": "string",
+                    "const": "none"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outputMode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "buffered",
+                  "stream"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "responseFormat": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionResponseFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvalGate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionApprovalGate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionPlatformInjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "model",
+          "prompt",
+          "assets"
+        ],
+        "additionalProperties": false
+      },
+      "SubmissionApprovalGate": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "tools"
+        ],
+        "additionalProperties": false
+      },
+      "SubmissionAssets": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "file"
+                },
+                "resourceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "number"
+                },
+                "assetId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contentHash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mountPath": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "resourceId",
+                "version",
+                "assetId",
+                "contentHash",
+                "name",
+                "mountPath"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "skill"
+                },
+                "resourceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "number"
+                },
+                "assetId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contentHash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "resourceId",
+                "version",
+                "assetId",
+                "contentHash",
+                "name",
+                "description"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "tool"
+                },
+                "resourceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "number"
+                },
+                "assetId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contentHash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "input_schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "entry": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "resourceId",
+                "version",
+                "assetId",
+                "contentHash",
+                "name",
+                "description",
+                "input_schema",
+                "entry"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "instructions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "instruction"
+                },
+                "resourceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "number"
+                },
+                "assetId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contentHash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "resourceId",
+                "version",
+                "assetId",
+                "contentHash",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "SubmissionEnvironment": {
         "type": "object",
@@ -2636,6 +3058,37 @@
           "type": "string"
         },
         "additionalProperties": {}
+      },
+      "SubmissionFileCapture": {
+        "type": "object",
+        "properties": {
+          "allowedDirs": {
+            "type": "array",
+            "items": {}
+          },
+          "deniedDirs": {
+            "type": "array",
+            "items": {}
+          },
+          "captureTimeoutMs": {
+            "type": "number"
+          },
+          "maxFileBytes": {
+            "type": "number"
+          },
+          "maxTotalBytes": {
+            "type": "number"
+          },
+          "maxFiles": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmissionMcpServers": {
+        "type": "array",
+        "items": {},
+        "description": "Remote MCP servers, each `{ name, url, transport? }`. Names must be unique and every URL must clear the SSRF host deny-list — enforced in packages/contracts/src/session-config.ts."
       },
       "SubmissionNetworking": {
         "type": "object",
@@ -2678,6 +3131,84 @@
         "items": {
           "$ref": "#/components/schemas/SubmissionPackage"
         }
+      },
+      "SubmissionPlatformInjection": {
+        "type": "object",
+        "properties": {
+          "systemPrompt": {
+            "type": "string",
+            "enum": [
+              "default",
+              "off"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmissionPrompt": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The run brief: one string, or an ordered list of non-empty parts. At least one part must carry non-whitespace text. A single string is normalised to a one-element list."
+      },
+      "SubmissionResponseFormat": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "text"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "json_schema"
+              },
+              "schema": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "strict": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "schema"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "SubmissionSecretEnv": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {},
+        "description": "Env-var secret bindings keyed by env name. Each value is exactly one of `{ ref }` (a workspace secret handle matching ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$) or `{ ephemeral: true }` (the value rides in `secrets.envSecrets`). Enforced in packages/contracts/src/schemas/submission-body.ts."
       }
     }
   }

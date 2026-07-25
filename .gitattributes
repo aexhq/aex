@@ -3,3 +3,4 @@
 # on Windows checkouts while the generator writes LF, and the check fails on a
 # clean tree — a gate that cries wolf is a gate people learn to skip.
 packages/contracts/openapi/*.json text eol=lf
+packages/contracts/openapi/*.d.ts text eol=lf
