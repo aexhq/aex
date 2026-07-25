@@ -71,8 +71,11 @@ last message key by default.
 
 After eligible transport attempts are exhausted, the SDK throws
 `AexRateLimitError`. Use `isRateLimited(error)` and inspect `status`,
-`attempts`, `retryAfterMs`, `source`, and `providerFault`. Error bodies and
-secrets are redacted.
+`attempts`, `retryAfterMs`, `source`, and `providerFault`. Error bodies are
+scanned for secret shapes CLIENT-SIDE, inside your own process, before an
+`AexError` carries them (`redactSecrets`, exported from the SDK). Nothing is sent
+anywhere to do it, and it does not apply to your session's content — only to the
+error objects this SDK constructs.
 
 Provider failures are machine-readable on failed detail records as
 `session.providerFault` and on terminal events as
@@ -96,8 +99,9 @@ For sessions created by older runtimes that do not have the field, the SDK has
 a temporary compatibility bridge for the exact historical
 `transient-provider` failure class and exact historical terminal templates.
 It does not scan arbitrary error prose. With `debug` enabled, each bridge use
-emits one redacted local line with code `legacy_provider_fault_fallback`; the
-line contains only the mapped kind and `source=session`.
+emits one local line with code `legacy_provider_fault_fallback`; the line
+contains only the mapped kind and `source=session` — nothing else is included, so
+there is nothing in it to mask.
 
 The bridge is eligible for removal only in a separate major release, after at
 least two minor releases and 90 days with zero observed fallback use. That

@@ -49,7 +49,7 @@ describe("asAexEventView — one type-predicate method per standardized event ty
     const errored = asAexEventView(envelope({
       type: "RUN_ERROR",
       message: "boom",
-      data: { outcome: "failed", failureClass: "internal", failureMessage: "boom" }
+      data: { outcome: "failed", failureClass: "internal_error", failureMessage: "boom" }
     }));
     expect(errored.isRunError()).toBe(true);
     expect(errored.isRunFinished()).toBe(false);

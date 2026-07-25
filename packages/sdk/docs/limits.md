@@ -16,13 +16,14 @@ For the current provider/model set, see the generated
 
 | Area | Default |
 | --- | --- |
-| Workspace storage | 500 GB per workspace for captured files and workspace artifacts. |
+| Workspace storage | Bounded by the plan's monthly storage grant (Free: 5 GB); paid plans bill beyond the allowance once overage is enabled. |
 
 ## Product Boundaries
 
 | Area | Boundary |
 | --- | --- |
-| Runtime | New submissions run on a managed runtime. `runtime.kind` selects `lambda` (the default), `spot_container`, or `container`; `runtime.size` selects a managed machine-size preset (`Sizes.*`). Both fields are optional. |
+| Runtime | New submissions run on a managed runtime. `runtime.kind` selects `spot_container` (the default), `container`, or `lambda`; `runtime.size` selects a managed machine-size preset (`Sizes.*`). Both fields are optional. Runtimes differ in capability and delivery semantics, not only in price — each publishes a profile at `whoami().runtimeCapabilities.profilesByRuntimeKind`, and a submission exceeding the selected profile is refused before execution. See [Models & runtimes](../concepts/providers-and-runtimes.md). |
+| Single effect | One atomic LLM call or tool call runs for at most 14 minutes on every runtime (`profile.limits.maxSingleEffectMs`). On `lambda` the live budget may be shorter, bounded by the remaining invocation time. An overrun fails that call with a typed error. |
 | Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
 | Secrets | Provider keys, MCP credentials, and environment secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
 | MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |

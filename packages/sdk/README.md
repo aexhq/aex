@@ -6,13 +6,15 @@ The TypeScript SDK and bundled CLI for durable aex agent sessions.
 npm i @aexhq/sdk
 ```
 
+Model access is managed: name a model by its `creator/model` gateway slug and
+the platform's key routes it. You supply no provider API key.
+
 ```ts
-import { Aex, Models } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
 const session = await aex.sessions.create({
-  model: Models.CLAUDE_HAIKU_4_5,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+  model: "anthropic/claude-haiku-4-5"
 });
 
 const result = await session.messages.send("Summarize this repository.").finished();

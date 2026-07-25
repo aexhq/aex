@@ -16,7 +16,7 @@ Open durable agent sessions, send turns, stream events, capture files, and compo
 - **Agent composition.** Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 - **Managed model access.** Name any model by its Vercel AI Gateway `creator/model` slug — the platform's managed key routes it. No provider selection, no provider API keys.
-- **Typed control surface.** Strongly typed SDK inputs, CLI parity, workspace secrets, redaction, assistant text modes, and file capture policy.
+- **Typed control surface.** Strongly typed SDK inputs, CLI parity, workspace secrets, assistant text modes, and file capture policy.
 
 ## First run
 

@@ -116,9 +116,12 @@ export const PUBLIC_RUNTIME_PARITY_SCENARIOS: readonly PublicRuntimeParityScenar
       "test/live/config-instructions.user.test.ts",
       "test/live/config-networking.user.test.ts",
       "test/live/config-packages.user.test.ts",
-      "test/live/edge-byok-secrets.user.test.ts",
       "test/live/edge-instructions-files.user.test.ts",
-      "test/live/edge-mcp-egress.user.test.ts"
+      "test/live/edge-mcp-egress.user.test.ts",
+      // Secrets reach the runtime: the BYOK-named suite was deleted with the
+      // managed-gateway pivot (2026-07-24). Workspace/env secrets are a separate,
+      // live feature, and this suite is what covers them now.
+      "test/live/live-sdk-tool-capability-fuzz.test.ts"
     ]
   },
   {

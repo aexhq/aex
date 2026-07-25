@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
+import { newId } from "./ids.js";
 import { isRecord, isStringLiteral } from "./value-guards.js";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
@@ -71,9 +72,12 @@ import type {
   NewApiKey,
   OrgMemberRecord,
   CreateOrgInviteRequest,
-  OrgInvite
+  OrgInvite,
+  RuntimeCapabilityName,
+  RuntimeCapabilityState,
+  RuntimeProfile
 } from "./runtime-types.js";
-import { SESSION_RUN_PHASES } from "./runtime-types.js";
+import { RUNTIME_CAPABILITY_NAMES, SESSION_RUN_PHASES } from "./runtime-types.js";
 import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
 import { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES } from "./status.js";
@@ -137,7 +141,7 @@ function configError(field: string, message: string): SessionConfigValidationErr
  */
 export function resolveIdempotencyKey(key?: string): string {
   if (key === undefined) {
-    return `aex-idem-${randomUUID()}`;
+    return newId("idempotency");
   }
   if (typeof key !== "string" || key.trim().length === 0) {
     throw configError("idempotencyKey", "idempotencyKey must be a non-empty, non-whitespace string");
@@ -1328,7 +1332,7 @@ const RUNTIME_SIZE_SET = new Set<string>(RUNTIME_SIZES);
 function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"] {
   const field = "whoami response runtimeCapabilities";
   if (!isRecord(value)) throw new SessionStateError(`${field} must be an object`);
-  if (value.schemaVersion !== 1) throw new SessionStateError(`${field}.schemaVersion must be 1`);
+  if (value.schemaVersion !== 2) throw new SessionStateError(`${field}.schemaVersion must be 2`);
   if (typeof value.capabilityVersion !== "string" || value.capabilityVersion.length === 0) {
     throw new SessionStateError(`${field}.capabilityVersion must be a non-empty string`);
   }
@@ -1390,12 +1394,91 @@ function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"]
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     capabilityVersion: value.capabilityVersion,
     capabilityHash: value.capabilityHash as `sha256:${string}`,
     availableRuntimeKinds,
     sizesByRuntimeKind,
-    unavailable
+    unavailable,
+    profilesByRuntimeKind: parseRuntimeProfiles(value.profilesByRuntimeKind)
+  };
+}
+
+const RUNTIME_CAPABILITY_STATES = new Set<string>(["supported", "unsupported"]);
+const TOOL_EXECUTION_DELIVERY = new Set<string>(["at-least-once", "exactly-once"]);
+const COLD_START_CLASSES = new Set<string>(["warm", "cold-seconds", "cold-tens-of-seconds"]);
+const IDLE_BILLING_CLASSES = new Set<string>(["wall-clock", "zero"]);
+const COMPUTE_BASES = new Set<string>(["wall_clock", "microvm_running"]);
+
+/**
+ * The profile set is TOTAL over runtime kinds and is not optional: a response that
+ * declares which runtimes exist but not what they do is exactly the gap the public
+ * parity claim used to paper over. A missing or partial set is a contract violation.
+ */
+function parseRuntimeProfiles(value: unknown): Record<RuntimeKind, RuntimeProfile> {
+  const field = "whoami response runtimeCapabilities.profilesByRuntimeKind";
+  if (!isRecord(value)) throw new SessionStateError(`${field} must be an object`);
+  const unknownKind = Object.keys(value).find((kind) => !RUNTIME_KIND_SET.has(kind));
+  if (unknownKind !== undefined) throw new SessionStateError(`${field} contains an unknown runtime kind`);
+  const profiles = {} as Record<RuntimeKind, RuntimeProfile>;
+  for (const runtimeKind of RUNTIME_KINDS) {
+    profiles[runtimeKind] = parseRuntimeProfile(value[runtimeKind], `${field}.${runtimeKind}`, runtimeKind);
+  }
+  return profiles;
+}
+
+function parseRuntimeProfile(value: unknown, field: string, runtimeKind: RuntimeKind): RuntimeProfile {
+  if (!isRecord(value)) throw new SessionStateError(`${field} must be an object`);
+  if (value.schemaVersion !== 1) throw new SessionStateError(`${field}.schemaVersion must be 1`);
+  if (value.runtimeKind !== runtimeKind) throw new SessionStateError(`${field}.runtimeKind must be ${runtimeKind}`);
+  if (!isRecord(value.capabilities)) throw new SessionStateError(`${field}.capabilities must be an object`);
+  const capabilities = {} as Record<RuntimeCapabilityName, RuntimeCapabilityState>;
+  for (const capability of RUNTIME_CAPABILITY_NAMES) {
+    const state = value.capabilities[capability];
+    if (typeof state !== "string" || !RUNTIME_CAPABILITY_STATES.has(state)) {
+      throw new SessionStateError(`${field}.capabilities.${capability} must be supported or unsupported`);
+    }
+    capabilities[capability] = state as RuntimeCapabilityState;
+  }
+  if (!isRecord(value.limits)) throw new SessionStateError(`${field}.limits must be an object`);
+  const limits = value.limits;
+  for (const limit of ["maxSessionMs", "maxSingleEffectMs", "maxWorkspaceBytes", "maxConcurrentToolCalls"] as const) {
+    const observed = limits[limit];
+    if (typeof observed !== "number" || !Number.isFinite(observed) || observed <= 0) {
+      throw new SessionStateError(`${field}.limits.${limit} must be a positive number`);
+    }
+  }
+  if (!isRecord(value.delivery)) throw new SessionStateError(`${field}.delivery must be an object`);
+  const delivery = value.delivery;
+  for (const [key, allowed] of [
+    ["toolExecution", TOOL_EXECUTION_DELIVERY],
+    ["coldStartClass", COLD_START_CLASSES],
+    ["idleBilling", IDLE_BILLING_CLASSES]
+  ] as const) {
+    const observed = delivery[key];
+    if (typeof observed !== "string" || !allowed.has(observed)) {
+      throw new SessionStateError(`${field}.delivery.${key} is not a recognized value`);
+    }
+  }
+  if (typeof value.computeBasis !== "string" || !COMPUTE_BASES.has(value.computeBasis)) {
+    throw new SessionStateError(`${field}.computeBasis is not a recognized value`);
+  }
+  return {
+    schemaVersion: 1,
+    runtimeKind,
+    capabilities,
+    limits: {
+      maxSessionMs: limits.maxSessionMs as number,
+      maxSingleEffectMs: limits.maxSingleEffectMs as number,
+      maxWorkspaceBytes: limits.maxWorkspaceBytes as number,
+      maxConcurrentToolCalls: limits.maxConcurrentToolCalls as number
+    },
+    delivery: {
+      toolExecution: delivery.toolExecution as RuntimeProfile["delivery"]["toolExecution"],
+      coldStartClass: delivery.coldStartClass as RuntimeProfile["delivery"]["coldStartClass"],
+      idleBilling: delivery.idleBilling as RuntimeProfile["delivery"]["idleBilling"]
+    },
+    computeBasis: value.computeBasis as RuntimeProfile["computeBasis"]
   };
 }
 

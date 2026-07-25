@@ -20,22 +20,18 @@
  *
  */
 import {
-  abortableSleep,
-  directUploadRetryDelayMs,
   directUploadNetworkError,
   directUploadResponseError,
   isRetryableUploadError,
   isRetryableUploadStatus,
   tryParseRetryAfterMs,
-  resolveAssetUploadRetryConfig,
-  withinDirectUploadRetryBudget,
   type AssetFetch,
   type AssetUploadRetryOptions,
   type AssetsHttpClient,
   type UploadedAsset
 } from "@aexhq/contracts/internal";
+import { nextHttpRetryDelayMs, resolveHttpRetryDeps, resolveHttpRetryPolicy } from "@aexhq/contracts";
 import type { ByteSink } from "./canonical-zip.js";
-import { assertArchiveCompressedSize } from "./archive-limits.js";
 
 export { uploadAsset } from "@aexhq/contracts/internal";
 export type { AssetFetch, AssetsHttpClient, UploadAssetArgs, UploadedAsset } from "@aexhq/contracts/internal";
@@ -243,9 +239,12 @@ async function hashAndSizeViaDrive(drive: ZipStreamDriver): Promise<{ hashHex: s
   const { createHash } = await import("node:crypto");
   const hash = createHash("sha256");
   let sizeBytes = 0;
+  // NO per-chunk compressed-size gate here (review-2026-07-25 plan 04): the
+  // multipart machine exists for 10,000 x 5 MiB parts, so the archive ceiling
+  // trips before part 4 and every larger upload this path was BUILT for was
+  // unreachable. Admission owns the size decision; this function hashes.
   await drive((chunk) => {
     sizeBytes += chunk.length;
-    assertArchiveCompressedSize(sizeBytes, "uploadAssetMultipart");
     hash.update(chunk);
   });
   return { hashHex: hash.digest("hex"), sizeBytes };
@@ -300,13 +299,11 @@ async function putPartWithRetry(
 ): Promise<string> {
   let currentUrl = url;
   let refreshed = false;
-  const retryConfig = resolveAssetUploadRetryConfig(retryOptions);
-  const sleep = retryOptions?.sleep ?? abortableSleep;
-  const random = retryOptions?.random ?? Math.random;
-  const now = retryOptions?.now ?? Date.now;
-  const startedAt = now();
+  const policy = resolveHttpRetryPolicy(retryOptions);
+  const deps = resolveHttpRetryDeps(retryOptions);
+  const startedAtMs = deps.now();
 
-  for (let attempt = 1; attempt <= retryConfig.maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= policy.maxAttempts; attempt++) {
     let response: Awaited<ReturnType<AssetFetch>>;
     try {
       response = await fetchImpl(currentUrl, {
@@ -315,40 +312,35 @@ async function putPartWithRetry(
         body: bytes as unknown as BodyInit
       });
     } catch (err) {
-      if (attempt < retryConfig.maxAttempts && isRetryableUploadError(err)) {
-        const delay = directUploadRetryDelayMs(retryConfig, attempt, random, undefined);
-        if (!withinDirectUploadRetryBudget(retryConfig, startedAt, delay, now)) {
-          throw directUploadNetworkError(currentUrl, err, attempt);
-        }
-        await sleep(delay);
-        continue;
-      }
-      throw directUploadNetworkError(currentUrl, err, attempt);
+      const delayMs = isRetryableUploadError(err)
+        ? nextHttpRetryDelayMs({ policy, attempt, startedAtMs, deps })
+        : undefined;
+      if (delayMs === undefined) throw directUploadNetworkError(currentUrl, err, attempt);
+      await deps.sleep(delayMs);
+      continue;
     }
     if (response.ok) {
       const etag = response.headers?.get?.("etag") ?? response.headers?.get?.("ETag") ?? "";
       return etag.replace(/"/g, "");
     }
     // A 403 mid-upload is a presign-expiry; refresh the URL once and retry.
-    if (response.status === 403 && !refreshed && attempt < retryConfig.maxAttempts) {
+    if (response.status === 403 && !refreshed && attempt < policy.maxAttempts) {
       refreshed = true;
       await response.text().catch(() => "");
       currentUrl = await refreshUrl();
       continue;
     }
-    if (attempt < retryConfig.maxAttempts && isRetryableUploadStatus(response.status)) {
-      const retryAfterMs = tryParseRetryAfterMs(response.headers?.get("retry-after"), now());
-      const delay = directUploadRetryDelayMs(retryConfig, attempt, random, retryAfterMs);
-      if (!withinDirectUploadRetryBudget(retryConfig, startedAt, delay, now)) {
-        const detail = await response.text().catch(() => "");
-        throw directUploadResponseError(currentUrl, response.status, detail, attempt);
-      }
+    const retryAfterMs = tryParseRetryAfterMs(response.headers?.get("retry-after"), deps.now());
+    const delayMs = isRetryableUploadStatus(response.status)
+      ? nextHttpRetryDelayMs({ policy, attempt, startedAtMs, deps, retryAfterMs })
+      : undefined;
+    if (delayMs !== undefined) {
       await response.text().catch(() => "");
-      await sleep(delay);
+      await deps.sleep(delayMs);
       continue;
     }
     const detail = await response.text().catch(() => "");
     throw directUploadResponseError(currentUrl, response.status, detail, attempt);
   }
-  throw directUploadResponseError(currentUrl, 0, "exhausted retries", retryConfig.maxAttempts);
+  throw directUploadResponseError(currentUrl, 0, "exhausted retries", policy.maxAttempts);
 }

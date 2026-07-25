@@ -11,7 +11,12 @@
  * ever sees inline shapes.
  */
 import { describe, expect, it } from "bun:test";
+import { newId } from "@aexhq/contracts";
 import { McpServer } from "../../src/mcp-server.js";
+
+// Minted from the id owner, never hand-written: a fixture like
+// `mcp_abcdefghijkl` passed the SDK's old local pattern and no other layer.
+const MCP_ID = newId("mcp");
 
 describe("McpServer.remote (inline)", () => {
   it("toSubmissionEntry returns the inline {name, url} wire shape", () => {
@@ -74,25 +79,33 @@ describe("McpServer.remote (inline)", () => {
 
 describe("McpServer.fromId (workspace ref)", () => {
   it("accepts a valid mcp_* id and emits the workspace-ref wire shape", () => {
-    const s = McpServer.fromId("mcp_abcdefghijkl");
+    const s = McpServer.fromId(MCP_ID);
     expect(s.kind).toBe("workspace");
-    expect(s.id).toBe("mcp_abcdefghijkl");
-    expect(s.toSubmissionEntry()).toEqual({ kind: "workspace", id: "mcp_abcdefghijkl" });
+    expect(s.id).toBe(MCP_ID);
+    expect(s.toSubmissionEntry()).toEqual({ kind: "workspace", id: MCP_ID });
   });
 
-  it("rejects ids that don't match the mcp_<base64url> pattern", () => {
+  it("rejects every id the owner does not mint", () => {
     expect(() => McpServer.fromId("not-a-valid-id")).toThrow(/must match/);
     expect(() => McpServer.fromId("mcp_short")).toThrow(/must match/);
     expect(() => McpServer.fromId("skl_wrong_prefix_1234567890")).toThrow(/must match/);
+    // These three passed the retired local pattern: a wrong-length body, a
+    // non-hex body, and uppercase hex (`newId` mints lowercase, so an
+    // uppercase id is a different string, not another encoding).
+    expect(() => McpServer.fromId("mcp_abcdefghijkl")).toThrow(/must match/);
+    expect(() => McpServer.fromId(`mcp_${"z".repeat(32)}`)).toThrow(/must match/);
+    expect(() => McpServer.fromId(MCP_ID.toUpperCase())).toThrow(/must match/);
+    // The owner's own id is accepted, and the message names the owner's shape.
+    expect(McpServer.fromId(MCP_ID).id).toBe(MCP_ID);
   });
 
   it("never carries auth — toSecretEntry is always undefined for workspace refs", () => {
-    const s = McpServer.fromId("mcp_abcdefghijkl");
+    const s = McpServer.fromId(MCP_ID);
     expect(s.toSecretEntry()).toBeUndefined();
   });
 
   it("workspace refs have empty name/url at SDK time (resolved server-side)", () => {
-    const s = McpServer.fromId("mcp_abcdefghijkl");
+    const s = McpServer.fromId(MCP_ID);
     expect(s.name).toBe("");
     expect(s.url).toBe("");
   });

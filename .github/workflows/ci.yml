@@ -215,8 +215,15 @@ jobs:
       - name: Pack publish tarball
         id: pack
         shell: bash
+        # `bun run pack:sdk` FIRST, and in the same step that produces the
+        # tarball: it builds the SDK, dry-run packs it, and runs
+        # contracts:boundary:check. Calling `bun pm pack` directly skipped the
+        # boundary check entirely, so a public-surface violation could ship to
+        # npm with every gate green. Publishing must not be reachable except
+        # through the checked path.
         run: |
           set -euo pipefail
+          bun run pack:sdk
           pack_dir="$RUNNER_TEMP/aex-pack"
           mkdir -p "$pack_dir"
           (cd packages/sdk && bun pm pack --destination "$pack_dir")

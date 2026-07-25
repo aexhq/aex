@@ -1,7 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
 import {
-  DIRECT_UPLOAD_MAX_ATTEMPTS,
-  DIRECT_UPLOAD_MAX_ELAPSED_MS,
   directUploadNetworkError,
   isRetryableUploadError,
   isRetryableUploadStatus,
@@ -11,6 +9,8 @@ import {
   type AssetUploadResponse,
   type AssetUploadRetryOptions
 } from "../src/internal.js";
+import { HTTP_RETRY_POLICY, resolveHttpRetryPolicy } from "../src/http.js";
+import { RETRYABLE_HTTP_STATUS } from "../src/retry-core.js";
 
 async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
   return promise.then(
@@ -35,28 +35,39 @@ function uploadResponse(
   };
 }
 
+/**
+ * Deterministic clock + RNG + sleep. Policy fields are only set when the caller
+ * names them, so `policyDefaults: true` exercises the ONE shared policy rather
+ * than test-local numbers.
+ */
 function deterministicRetryOptions(args: {
   readonly random?: number;
   readonly now?: number;
+  readonly policyDefaults?: boolean;
   readonly initialDelayMs?: number;
   readonly maxDelayMs?: number;
   readonly maxElapsedMs?: number;
 } = {}): { readonly options: AssetUploadRetryOptions; readonly slept: number[] } {
   let clock = args.now ?? 0;
   const slept: number[] = [];
+  const deps = {
+    random: () => args.random ?? 1,
+    now: () => clock,
+    sleep: async (ms: number) => {
+      slept.push(ms);
+      clock += ms;
+    }
+  };
   return {
     slept,
-    options: {
-      initialDelayMs: args.initialDelayMs ?? 100,
-      maxDelayMs: args.maxDelayMs ?? 1000,
-      maxElapsedMs: args.maxElapsedMs ?? 10_000,
-      random: () => args.random ?? 1,
-      now: () => clock,
-      sleep: async (ms: number) => {
-        slept.push(ms);
-        clock += ms;
-      }
-    }
+    options: args.policyDefaults
+      ? deps
+      : {
+          ...deps,
+          initialDelayMs: args.initialDelayMs ?? 100,
+          maxDelayMs: args.maxDelayMs ?? 1000,
+          maxElapsedMs: args.maxElapsedMs ?? 10_000
+        }
   };
 }
 
@@ -70,6 +81,38 @@ describe("asset upload internal helpers", () => {
     }
   });
 
+  it("widens — never narrows — the shared retryable-status set from retry-core", () => {
+    // The object-store predicate must be a strict superset of the ONE HTTP set,
+    // so a status the API transport retries can never be dropped by an upload.
+    for (const status of RETRYABLE_HTTP_STATUS) {
+      expect(isRetryableUploadStatus(status), `status ${status}`).toBe(true);
+    }
+  });
+
+  it("resolves the ONE shared retry policy — no third set of upload defaults", () => {
+    // `putDirectUploadWithRetry` resolves through `resolveHttpRetryPolicy`, so
+    // an SDK upload and a CLI upload of the same bytes agree by construction.
+    expect(resolveHttpRetryPolicy(undefined)).toBe(HTTP_RETRY_POLICY);
+    expect(HTTP_RETRY_POLICY).toEqual({
+      maxAttempts: 4,
+      initialDelayMs: 500,
+      maxDelayMs: 20_000,
+      maxElapsedMs: 120_000
+    });
+  });
+
+  it("applies the shared policy's attempt ceiling to direct uploads", async () => {
+    const uploadUrl = "https://storage.example.test/b/k?X-Amz-Signature=signature";
+    const fetch: AssetFetch = mock(async () => uploadResponse(503, {}, "unavailable"));
+    const { options, slept } = deterministicRetryOptions({ random: 0, policyDefaults: true });
+
+    const err = await rejectionOf(putDirectUploadWithRetry(fetch, uploadUrl, { method: "PUT" }, options));
+
+    expect(fetch).toHaveBeenCalledTimes(HTTP_RETRY_POLICY.maxAttempts);
+    expect(slept).toHaveLength(HTTP_RETRY_POLICY.maxAttempts - 1);
+    expect(err.message).toContain(`after ${HTTP_RETRY_POLICY.maxAttempts} attempts`);
+  });
+
   it("retries network failures except AbortError", () => {
     const aborted = new Error("aborted");
     aborted.name = "AbortError";
@@ -77,11 +120,6 @@ describe("asset upload internal helpers", () => {
     expect(isRetryableUploadError(new TypeError("fetch failed"))).toBe(true);
     expect(isRetryableUploadError(Object.assign(new TypeError("socket reset"), { code: "ECONNRESET" }))).toBe(true);
     expect(isRetryableUploadError(aborted)).toBe(false);
-  });
-
-  it("uses a burst-tolerant default retry budget for direct uploads", () => {
-    expect(DIRECT_UPLOAD_MAX_ATTEMPTS).toBe(5);
-    expect(DIRECT_UPLOAD_MAX_ELAPSED_MS).toBe(60_000);
   });
 
   it("redacts signed URLs, credential query params, and access-key-shaped text", () => {

@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "bun:test";
 import {
   PUBLIC_RUNTIME_PARITY_SCENARIOS,
@@ -6,6 +8,9 @@ import {
   validateParityVerdicts,
   type ScenarioVerdict
 } from "../_fixtures/runtime-parity-ledger.js";
+
+/** `apps/user-tests` — every ledger `sourceFiles` entry is relative to it. */
+const appRoot = resolve(import.meta.dirname, "..", "..");
 
 describe("public runtime-parity scenario ledger", () => {
   it("has stable unique scenario IDs and complete execution-runtime coverage", () => {
@@ -19,6 +24,21 @@ describe("public runtime-parity scenario ledger", () => {
       expect(scenario.layers.user.length).toBeGreaterThan(0);
       expect(scenario.sourceFiles.length).toBeGreaterThan(0);
     }
+  });
+
+  // A `length > 0` check let `edge-byok-secrets.user.test.ts` sit in the ledger for
+  // a month after the managed-gateway pivot deleted it: the ledger claimed evidence
+  // from a file that no longer existed. Assert the claim resolves to a real file.
+  it("names only source files that exist on disk", () => {
+    const missing: string[] = [];
+    for (const scenario of PUBLIC_RUNTIME_PARITY_SCENARIOS) {
+      for (const sourceFile of scenario.sourceFiles) {
+        if (!existsSync(resolve(appRoot, sourceFile))) {
+          missing.push(`${scenario.id} -> ${sourceFile}`);
+        }
+      }
+    }
+    expect(missing, "ledger scenarios claim evidence from files that do not exist").toEqual([]);
   });
 
   it("requires SDK and CLI evidence for every core customer journey", () => {

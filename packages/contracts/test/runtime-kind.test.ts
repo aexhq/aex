@@ -12,9 +12,12 @@ describe("runtime-kind constants", () => {
     expect(RUNTIME_KINDS).toEqual(["container", "spot_container", "lambda"]);
   });
 
-  it("defaults to Lambda (the product's event-driven path)", () => {
-    expect(DEFAULT_RUNTIME_KIND).toBe("lambda");
+  it("defaults to Fargate Spot — the kind that can actually execute tools today", () => {
+    expect(DEFAULT_RUNTIME_KIND).toBe("spot_container");
     expect((RUNTIME_KINDS as readonly string[]).includes(DEFAULT_RUNTIME_KIND)).toBe(true);
+    // `lambda` can finish an LLM turn but cannot execute a single tool call, so it
+    // must never be what an omitted `runtimeKind` resolves to.
+    expect(DEFAULT_RUNTIME_KIND).not.toBe("lambda");
   });
 
   it("keeps the symbol accessors in lockstep with the token set", () => {

@@ -8,6 +8,7 @@ import {
   AexApiError,
   AexError,
   AexNetworkError,
+  HTTP_RETRY_POLICY,
   HttpClient,
   extractErrorCode,
   redactSecrets,
@@ -509,11 +510,18 @@ function remedyForNetworkCode(code: string): string | undefined {
   }
 }
 
+/**
+ * Build the CLI's transport. It takes the ONE shared retry policy
+ * (`HTTP_RETRY_POLICY`) — the exact object the SDK resolves by default — so
+ * `aex sessions list` and `sdk.sessions.list()` react identically to a 429,
+ * `Retry-After`, or a dropped connection. Pinned by the SDK↔CLI parity test in
+ * `test/retry-policy-parity.test.ts`.
+ */
 export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
   return new HttpClient({
     baseUrl: flags.aexUrl,
     apiKey: flags.apiKey,
-    retryTransientGets: true,
+    retry: HTTP_RETRY_POLICY,
     fetch: io.fetchImpl,
     // `--debug`: route the transport's redacted per-request traces to stderr.
     ...(flags.debug ? { debug: (line: string) => io.stderr(`${line}\n`) } : {})

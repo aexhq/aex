@@ -327,15 +327,11 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // prompt-injection probe; an explicit REF prefix anchors the
   // model on "tracking reference, echo for audit" semantics.
   //
-  // Separators are dots, NOT hyphens. The stream-before-disk redactor
-  // the runtime redactor masks high-entropy runs of
-  // [A-Za-z0-9+/=-]{24,}. The model echoes the probes in a key=value
-  // shape ("session=<ref> ..."), and a hyphen-segmented ref glued to its
-  // `session=` label forms one 24+ char run that the redactor eats whole —
-  // the probe never survives into the managed-runtime stdout the event stream is
-  // built from. A dot is OUTSIDE that char class, so it splits the session
-  // into sub-24-char segments that survive regardless of how the model
-  // punctuates the reply.
+  // Separators are dots, NOT hyphens. This originally worked around the runtime's
+  // stream redactor, whose high-entropy catch-all ate a hyphen-segmented ref glued to
+  // its `session=` label as one 24+ char run. Plan 09 (2026-07-25) deleted that
+  // redactor, so nothing masks the probe any more — dots are kept only because the
+  // probe shape is pinned by the assertions below.
   const probes = {
     system: "REF.verify." + Math.random().toString(36).slice(2, 10),
     instructions: "REF.verify." + Math.random().toString(36).slice(2, 10),

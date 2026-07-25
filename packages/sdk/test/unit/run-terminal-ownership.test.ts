@@ -49,7 +49,7 @@ describe("SDK run-terminal ownership", () => {
     const finished = event(1, "RUN_FINISHED", { outcome: "succeeded" });
     const failed = event(2, "RUN_ERROR", {
       outcome: "failed",
-      failureClass: "provider_permanent",
+      failureClass: "provider-permanent",
       failureMessage: "provider rejected the request"
     });
     const otherRun = event(3, "RUN_FINISHED", { outcome: "succeeded" }, "run_other");
@@ -69,7 +69,7 @@ describe("SDK run-terminal ownership", () => {
     const nonTerminal = event(2, "TEXT_MESSAGE_CONTENT", { text: "still working" });
     const newest = event(3, "RUN_ERROR", {
       outcome: "failed",
-      failureClass: "provider_permanent",
+      failureClass: "provider-permanent",
       failureMessage: "failed"
     });
     const otherRun = event(4, "RUN_FINISHED", { outcome: "succeeded" }, "run_other");

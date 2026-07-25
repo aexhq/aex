@@ -9,13 +9,15 @@ available through a TypeScript SDK and CLI.
 npm i @aexhq/sdk
 ```
 
+Model access is managed: name a model by its `creator/model` gateway slug and
+the platform's key routes it. You supply no provider API key.
+
 ```ts
-import { Aex, Models } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
 const session = await aex.sessions.create({
-  model: Models.CLAUDE_HAIKU_4_5,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+  model: "anthropic/claude-haiku-4-5"
 });
 
 const result = await session.messages.send(
@@ -37,8 +39,7 @@ The package also includes the CLI:
 ```bash
 npx aex start \
   --api-key "$AEX_API_KEY" \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --model claude-haiku-4-5 \
+  --model anthropic/claude-haiku-4-5 \
   --prompt "Write a short report." \
   --follow
 ```
@@ -49,7 +50,7 @@ npx aex start \
 - [Composition](packages/sdk/docs/concepts/composition.md)
 - [Events](packages/sdk/docs/events.md)
 - [Files](packages/sdk/docs/files.md)
-- [Provider/runtime capabilities](packages/sdk/docs/provider-runtime-capabilities.md)
+- [Model access](packages/sdk/docs/provider-runtime-capabilities.md)
 
 ## Examples
 

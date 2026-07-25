@@ -1,15 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import { ASSET_ARCHIVE_LIMITS } from "@aexhq/contracts";
+import { assertArchiveExpandedSize } from "@aexhq/contracts/internal";
 import {
-  assertCliExpandedSize,
   buildCliFile,
   buildCliInstructions
 } from "../src/host/start-submit.js";
 
 describe("CLI runtime asset archive limits", () => {
+  // The CLI no longer carries its own copy of this predicate: it calls the
+  // contracts owner, so there is exactly one expanded-size rule to change.
   it("accepts the exact expanded boundary and rejects one byte above it", () => {
-    expect(() => assertCliExpandedSize(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes, "asset")).not.toThrow();
-    expect(() => assertCliExpandedSize(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes + 1, "asset"))
+    expect(() => assertArchiveExpandedSize(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes, "asset")).not.toThrow();
+    expect(() => assertArchiveExpandedSize(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes + 1, "asset"))
       .toThrow(/128 MiB expanded limit/);
   });
 

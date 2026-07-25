@@ -11,7 +11,7 @@
  *     `TypeError: Invalid URL`).
  */
 import { describe, expect, it } from "bun:test";
-import { HttpClient } from "../src/http.js";
+import { HTTP_RETRY_POLICY, HttpClient } from "../src/http.js";
 import { AexError, AexNetworkError } from "../src/sdk-errors.js";
 
 /** Rejection shaped like undici's: bare TypeError with the code on `cause`. */
@@ -78,11 +78,8 @@ describe("HttpClient network failures", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
       apiKey: "t",
-      retryTransientGets: {
-        maxAttempts: 3,
-        baseDelayMs: 0,
-        sleep: async () => {}
-      },
+      retry: { maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0 },
+      retryDeps: { sleep: async () => {} },
       debug: (line) => debug.push(line),
       fetch: async () => {
         calls += 1;
@@ -105,11 +102,8 @@ describe("HttpClient network failures", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
       apiKey: "t",
-      retryTransientGets: {
-        maxAttempts: 3,
-        baseDelayMs: 0,
-        sleep: async () => {}
-      },
+      retry: { maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0 },
+      retryDeps: { sleep: async () => {} },
       debug: (line) => debug.push(line),
       fetch: async () => {
         calls += 1;
@@ -133,11 +127,8 @@ describe("HttpClient network failures", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
       apiKey: "t",
-      retryTransientGets: {
-        maxAttempts: 3,
-        baseDelayMs: 0,
-        sleep: async () => {}
-      },
+      retry: { maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0 },
+      retryDeps: { sleep: async () => {} },
       debug: (line) => debug.push(line),
       fetch: async (_url, init) => {
         calls += 1;
@@ -167,7 +158,8 @@ describe("HttpClient network failures", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
       apiKey: "t",
-      retryTransientGets: true,
+      retry: HTTP_RETRY_POLICY,
+      retryDeps: { sleep: async () => {} },
       fetch: async () => {
         calls += 1;
         throw raw;
@@ -186,11 +178,8 @@ describe("HttpClient network failures", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
       apiKey: "t",
-      retryTransientGets: {
-        maxAttempts: 2,
-        baseDelayMs: 0,
-        sleep: async () => {}
-      },
+      retry: { maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0 },
+      retryDeps: { sleep: async () => {} },
       fetch: async () => {
         calls += 1;
         throw raw;

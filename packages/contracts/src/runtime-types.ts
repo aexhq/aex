@@ -38,9 +38,10 @@ export interface SessionRun {
 /**
  * The execution runtime a session runs on. Both fields are optional (the
  * platform applies defaults): `kind` selects the backend
- * (`lambda` (default) | `spot_container` | `container`), `size` selects the
- * managed box preset. Grouped so the SDK surface reads
- * `runtime: { kind: "lambda", size: Sizes.CPU_2_8GB }`.
+ * (`spot_container` (default — see
+ * {@link import("./runtime-kind.js").DEFAULT_RUNTIME_KIND}) | `container` |
+ * `lambda`), `size` selects the managed box preset. Grouped so the SDK surface
+ * reads `runtime: { kind: "spot_container", size: Sizes.CPU_2_8GB }`.
  */
 export interface SessionRuntime {
   readonly kind?: RuntimeKind;
@@ -555,13 +556,69 @@ export interface WhoAmI {
   };
 }
 
-export interface RuntimeCapabilities {
+/** The closed capability vocabulary a runtime profile declares. */
+export const RUNTIME_CAPABILITY_NAMES = [
+  "toolExecution",
+  "workspaceCheckpoint",
+  "workspaceFileCapture",
+  "streamingDeltas",
+  "approvalGate",
+  "postHook",
+  "mcpTools",
+  "scheduledWait",
+  "customerSecrets",
+  "containedEgress"
+] as const;
+
+export type RuntimeCapabilityName = (typeof RUNTIME_CAPABILITY_NAMES)[number];
+
+/** Two states only. There is no partial state: a runtime performs a capability or refuses it. */
+export type RuntimeCapabilityState = "supported" | "unsupported";
+
+/**
+ * What one runtime will actually do. Runtime choice is not free of behavioral
+ * consequences and this contract does not pretend otherwise: a submission that
+ * exceeds the selected profile is refused before execution, never degraded.
+ */
+export interface RuntimeProfile {
   readonly schemaVersion: 1;
+  readonly runtimeKind: RuntimeKind;
+  readonly capabilities: Readonly<Record<RuntimeCapabilityName, RuntimeCapabilityState>>;
+  readonly limits: {
+    /** Hard ceiling on one session's lifetime, in ms. */
+    readonly maxSessionMs: number;
+    /** Hard ceiling on ONE atomic LLM call or tool call, in ms. */
+    readonly maxSingleEffectMs: number;
+    /** Hard ceiling on the sandbox workspace, in bytes. */
+    readonly maxWorkspaceBytes: number;
+    readonly maxConcurrentToolCalls: number;
+  };
+  readonly delivery: {
+    /**
+     * `at-least-once` means a reclaim can replay an interrupted step, so a tool
+     * with an external side effect may run more than once.
+     */
+    readonly toolExecution: "at-least-once" | "exactly-once";
+    readonly coldStartClass: "warm" | "cold-seconds" | "cold-tens-of-seconds";
+    /** `zero` bills nothing while a session is parked or waiting. */
+    readonly idleBilling: "wall-clock" | "zero";
+  };
+  readonly computeBasis: "wall_clock" | "microvm_running";
+}
+
+export interface RuntimeCapabilities {
+  readonly schemaVersion: 2;
   readonly capabilityVersion: string;
   readonly capabilityHash: `sha256:${string}`;
   readonly availableRuntimeKinds: readonly RuntimeKind[];
   readonly sizesByRuntimeKind: Partial<Record<RuntimeKind, readonly RuntimeSize[]>>;
   readonly unavailable: Partial<Record<RuntimeKind, { readonly code: string }>>;
+  /**
+   * TOTAL over every runtime kind, including ones this workspace may not name.
+   * Availability and capability are different questions: deciding whether to ask
+   * for access to a runtime requires knowing what it would do for you.
+   */
+  readonly profilesByRuntimeKind: Record<RuntimeKind, RuntimeProfile>;
 }
 
 /**

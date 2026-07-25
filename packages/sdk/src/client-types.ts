@@ -109,13 +109,22 @@ export interface SessionCreateOptions extends IdempotencyOptions {
   /**
    * The execution runtime for the session — grouped as `{ kind, size }`.
    *
-   *   - `kind` — which backend runs it: `lambda` (default), `spot_container`
-   *     (same behavior on cheaper interruption-tolerant capacity), or `lambda` (serverless,
-   *     availability-gated). Prefer the {@link RuntimeKinds} symbol const.
+   *   - `kind` — which backend runs it: `spot_container` (default; cheapest
+   *     capacity that executes every tool, but a reclaim can replay an
+   *     interrupted step, so side-effecting tools run AT LEAST ONCE),
+   *     `container` (the same host on on-demand capacity, exactly-once), or
+   *     `lambda` (serverless: zero idle billing and seconds-not-minutes cold
+   *     start, availability-gated and currently unable to execute a tool call).
+   *     Prefer the {@link RuntimeKinds} symbol const.
    *   - `size` — the managed box preset ({@link RuntimeSize}); prefer {@link Sizes}.
    *
-   * Both optional; the platform applies defaults (`lambda`, the 1 GB tier).
-   * e.g. `runtime: { kind: "lambda", size: Sizes.CPU_2_8GB }`.
+   * Both optional; the platform applies defaults (`spot_container`, the 1 GB tier).
+   * e.g. `runtime: { kind: "container", size: Sizes.CPU_2_8GB }`.
+   *
+   * Runtimes differ in capability, not only in price. Read what a runtime will
+   * actually do from `whoami().runtimeCapabilities.profilesByRuntimeKind` before
+   * naming one; a submission that exceeds the selected profile is refused before
+   * execution rather than degraded.
    */
   readonly runtime?: SessionRuntime;
   readonly overrides?: SessionOverrides;

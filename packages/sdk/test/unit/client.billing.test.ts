@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { FetchLike } from "@aexhq/contracts";
+import { isId, type FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 interface RecordedCall {
@@ -126,7 +126,7 @@ describe("aex.billingCheckout", () => {
     await client.billingCheckout({ planKey: "team" });
 
     expect(identities).toHaveLength(2);
-    expect(identities[0]).toMatch(/^aex-idem-/);
+    expect(isId("idempotency", identities[0])).toBe(true);
     expect(identities[1]).toBe(identities[0]);
     expect(bodies).toEqual([{ planKey: "team" }, { planKey: "team" }]);
   });

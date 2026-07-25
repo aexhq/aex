@@ -10,8 +10,9 @@ carry a human `message` and the self-describing fields named below.
 ## Typed errors in the SDK
 
 The SDK maps every non-2xx response through one factory to a typed exception. All
-inherit `AexApiError`, which carries the HTTP `status`, the redacted parsed
-`body`, the server's stable `apiCode` (a machine-branchable identity distinct
+inherit `AexApiError`, which carries the HTTP `status`, the parsed `body`
+(secret-shape-scanned client-side, in your process, when the error is
+constructed), the server's stable `apiCode` (a machine-branchable identity distinct
 from the human `message`), and a `requestId` for support correlation. The
 factory dispatches to a subclass by code/status:
 

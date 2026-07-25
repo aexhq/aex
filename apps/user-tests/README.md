@@ -71,7 +71,7 @@ post-publish gates must stay pinned to the exact published version through
 `test:user:tool-fuzz` is the explicit paid tool-capability gate. It uses seeded,
 reproducible inputs and real hosted sessions to cover every builtin tool plus custom
 tool bundle upload, schema arguments, environment/secret access, result forms,
-failure propagation, and redaction. It is excluded from the default public live
+and failure propagation. It is excluded from the default public live
 sweep, but it is a hard gate in the platform deploy suite, using the supplied
 published SDK candidate when present and npm `latest` otherwise.
 
@@ -134,8 +134,8 @@ multiple file writes + read-backs), an AGENTS.md, a custom
 `fileCapture.allowedDirs` path, `builtins`, `environment.envVars` and `metadata` — and validates
 **every observable aspect** of the session: the full AG-UI event vocabulary
 (incl. `TOOL_CALL_*`, not just text), tool use, skill materialization,
-the system/AGENTS.md/prompt channel probes, the files round-trip
-pipeline, and secret redaction. (Input files / workspace assets are not
+the system/AGENTS.md/prompt channel probes, and the files round-trip
+pipeline. (Input files / workspace assets are not
 exercised — that feature was dropped in the MVP.) Its purpose is to
 prove the **app** behaves as expected under a
 maximal submission, not to test model capability.
@@ -168,7 +168,7 @@ background bash, web fetch/search, the subagent/subagent_result protocol, and
 custom tool bundle upload/execution.
 
 It also covers custom tool schemas, structured arguments, environment and secret
-access, result forms, expected tool failures, and redaction. It is **excluded**
+access, result forms, and expected tool failures. It is **excluded**
 from the default `test:user` sweep, runs in the platform deploy suite via
 `platform/.github/workflows/aws-suite.yml`, and remains directly invokable
 for reproduction:

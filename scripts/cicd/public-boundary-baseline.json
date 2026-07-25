@@ -83,6 +83,7 @@
       "./event-envelope.js",
       "./event-stream-client.js",
       "./event-view.js",
+      "./failure-class.js",
       "./http.js",
       "./index.js",
       "./internal.js",
@@ -93,7 +94,6 @@
       "./otlp-projection.js",
       "./post-hook.js",
       "./provider-fault.js",
-      "./provider-support.js",
       "./session-artifacts.js",
       "./session-archive.js",
       "./session-cost.js",
@@ -130,7 +130,6 @@
       "value-guards.js": 2048
     },
     "contractsBarrelExportSpecifiers": [
-      "./provider-support.js",
       "./provider-fault.js",
       "./models.js",
       "./contract-parse-error.js",
@@ -139,6 +138,7 @@
       "./runtime-sizes.js",
       "./runtime-kind.js",
       "./runner-event.js",
+      "./failure-class.js",
       "./event-envelope.js",
       "./otlp-projection.js",
       "./event-view.js",
@@ -162,6 +162,7 @@
       "./error-codes.js",
       "./error-factory.js",
       "./suggest.js",
+      "./ids.js",
       "./api-key.js"
     ]
   }

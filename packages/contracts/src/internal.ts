@@ -37,26 +37,18 @@ export * from "./workflow-status.js";
 export { hasRunTerminalType } from "./event-stream-client.js";
 export type { RunTerminalTypeEvent } from "./event-stream-client.js";
 export {
-  DIRECT_UPLOAD_MAX_ATTEMPTS,
-  DIRECT_UPLOAD_INITIAL_DELAY_MS,
-  DIRECT_UPLOAD_MAX_DELAY_MS,
-  DIRECT_UPLOAD_MAX_ELAPSED_MS,
-  directUploadRetryDelayMs,
   directUploadNetworkError,
   directUploadResponseError,
   isRetryableUploadError,
   isRetryableUploadStatus,
   putDirectUploadWithRetry,
-  resolveAssetUploadRetryConfig,
-  withinDirectUploadRetryBudget,
   sanitizeUploadText
 } from "./asset-upload-helper.js";
 export type {
   AssetFetch,
   AssetUploadResponse,
   AssetUploadRetryOptions,
-  AssetUploadSleep,
-  ResolvedAssetUploadRetryConfig
+  AssetUploadSleep
 } from "./asset-upload-helper.js";
 
 /**

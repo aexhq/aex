@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { newId } from "@aexhq/contracts";
 import {
   SessionConfigValidationError,
   SessionStateError,
@@ -26,6 +27,9 @@ import {
   sessionRetentionForWire
 } from "../../src/submission-wire.js";
 import { McpServer } from "../../src/mcp-server.js";
+
+/** Minted from the id owner; the SDK guard now accepts only that shape. */
+const WORKSPACE_MCP_ID = newId("mcp");
 
 function event(
   sequence: number,
@@ -138,10 +142,10 @@ describe("SDK client private leaves", () => {
       url: "https://docs.example.test/mcp",
       headers: { Authorization: "Bearer placeholder" }
     });
-    const second = McpServer.fromId("mcp_workspace_1234");
+    const second = McpServer.fromId(WORKSPACE_MCP_ID);
     expect(mergeMcpServers([first, second], []).submissionMcpServers).toEqual([
       { name: "docs", url: "https://docs.example.test/mcp" },
-      { kind: "workspace", id: "mcp_workspace_1234" }
+      { kind: "workspace", id: WORKSPACE_MCP_ID }
     ]);
     expect(() => mergeMcpServers([
       first,

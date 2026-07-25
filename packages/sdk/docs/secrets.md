@@ -110,16 +110,32 @@ await aex.workspace.secrets.delete("serper-api-key");
 The CLI supports per-session runtime and MCP credentials. Workspace secret
 administration is exposed through the SDK.
 
-## Redaction Scope And Session Files
+## What Happens To A Secret Value In Your Session
 
-Registered secret values are redacted from the session's **event stream** (both tool
-output and model-authored surfaces) — a value you inject via `environment.secrets`
-is masked regardless of its shape. Two surfaces are intentionally *not* scrubbed:
+aex does **not** scan, mask, or drop your session's content. A registered secret value
+that the agent prints, writes, or echoes appears **verbatim** in every surface you can
+read:
 
-- **Captured session files** (`session.files.download()` / `.read()` / the `aex download`
-  zip) are returned **verbatim**. They are your session's own artifacts, so the platform
-  does not rewrite their bytes — if the agent writes a secret into a deliverable file,
-  that file contains it. Treat downloaded files as unredacted.
-- An **unregistered** secret (a credential the session produces itself and never declared
-  via `environment.secrets`) can only be masked heuristically by shape; register the
-  values you care about so they are masked by value.
+- the **event stream** (tool output and model-authored text),
+- the **session journal** and `session.events` / the event archive,
+- **captured session files** (`session.files.download()` / `.read()` / the `aex download`
+  zip),
+- the container's own stdout/stderr archive.
+
+All four are byte-identical, so nothing you read is a rewritten version of something
+else. That is deliberate: your session's data is yours, and a platform that silently
+rewrote your bytes would give you an artifact you cannot trust and a value we might have
+corrupted (a "secret-shaped" build hash or file path is indistinguishable from a
+credential to any scanner).
+
+What registering a secret via `environment.secrets` **does** give you:
+
+- the value is stored encrypted and injected into the session env at run time — it is
+  never part of your submitted request body, and it is not written to your session
+  config;
+- it is scoped to the session, and only the session's own process can fetch it;
+- it never reaches a customer-controlled subprocess it was not declared for.
+
+If a value must not appear in a transcript you keep or share, do not let the agent print
+it: prefer a tool that consumes the credential internally over one that echoes it, and
+review a session's output before forwarding it.

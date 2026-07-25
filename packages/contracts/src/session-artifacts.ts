@@ -255,14 +255,54 @@ function matchesRelPrefix(rel: string, prefix: string): boolean {
   return rel === prefix || rel.startsWith(`${prefix}/`);
 }
 
+/** The `asset_` id form the API emits for a workspace asset. */
+export const WORKSPACE_ASSET_ID_PREFIX = "asset_" as const;
+
+/** The `sha256:` content-hash URI form carried on pinned resource versions. */
+export const WORKSPACE_ASSET_HASH_URI_PREFIX = "sha256:" as const;
+
+/** A workspace asset is addressed by a bare lowercase SHA-256 hex digest; nothing else. */
+const WORKSPACE_ASSET_HASH_HEX = /^[0-9a-f]{64}$/u;
+
 /**
- * Storage key for a session's snapshotted asset, addressed by its content hash.
- * This is used only for pre-checkpoint reusable workspace assets. Session boot
- * should materialize those assets into an initial checkpoint before execution.
+ * Either the canonical key for a valid asset id, or an explicit rejection. There
+ * is no third outcome and no permissive variant: an id the API answers 400 for
+ * must not silently become a readable object key on the client side.
  */
-export function workspaceAssetKey(workspaceId: string, hash: string): string {
-  const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
-  return `${WORKSPACES_PREFIX}/${workspaceId}/assets/content/${hex}`;
+export type WorkspaceAssetKeyResult =
+  | { readonly ok: true; readonly key: string; readonly assetId: string }
+  | { readonly ok: false };
+
+/**
+ * Storage key for a workspace's snapshotted asset, addressed by its content hash.
+ * Used only for pre-checkpoint reusable workspace assets; session boot
+ * materializes those assets into an initial checkpoint before execution.
+ *
+ * Accepts `asset_<hex>`, `sha256:<hex>`, and the bare hex, and rejects everything
+ * else. This repo cannot import the platform's owner module, so this is a
+ * DELIBERATE MIRROR held byte-identical by a cross-repo parity test
+ * (`platform/scripts/validate/object-store-key-public-parity.test.ts`). Change
+ * one side and that test fails; do not change one side alone.
+ */
+export function workspaceAssetKey(workspaceId: string, rawAssetId: string): WorkspaceAssetKeyResult {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawAssetId).trim();
+  } catch {
+    // A malformed percent-escape is an invalid asset id, not an internal error.
+    return { ok: false };
+  }
+  const hex = decoded.startsWith(WORKSPACE_ASSET_ID_PREFIX)
+    ? decoded.slice(WORKSPACE_ASSET_ID_PREFIX.length)
+    : decoded.startsWith(WORKSPACE_ASSET_HASH_URI_PREFIX)
+      ? decoded.slice(WORKSPACE_ASSET_HASH_URI_PREFIX.length)
+      : decoded;
+  if (!WORKSPACE_ASSET_HASH_HEX.test(hex)) return { ok: false };
+  return {
+    ok: true,
+    key: `${WORKSPACES_PREFIX}/${workspaceId}/assets/content/${hex}`,
+    assetId: `${WORKSPACE_ASSET_ID_PREFIX}${hex}`
+  };
 }
 
 /**

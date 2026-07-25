@@ -1,5 +1,6 @@
 import { redactSecrets } from "./sdk-secrets.js";
 import { isAexApiErrorCode, type AexApiErrorCode } from "./error-codes.js";
+import type { ProviderFault } from "./provider-fault.js";
 
 export type AexErrorCode =
   | "SESSION_CONFIG_INVALID"
@@ -176,18 +177,74 @@ export class AexNotFoundError extends AexApiError {
   }
 }
 
-/** 429 — the workspace hit a rate/concurrency limit; retry after a backoff. */
+/** Construction shape for {@link AexRateLimitError}. */
+export type AexRateLimitErrorInit = Omit<AexApiErrorInit, "message" | "body"> & {
+  /** Omitted when the retry policy builds the error: a fixed, non-leaky summary is generated. */
+  readonly message?: string;
+  readonly body?: unknown;
+  /** Suggested backoff (ms), when the server advertised one (Retry-After). */
+  readonly retryAfterMs?: number | undefined;
+  /** How many transport attempts were made before giving up. Defaults to `1`. */
+  readonly attempts?: number;
+  /** Whether the throttle came from the aex API plane or the upstream provider. */
+  readonly source?: "api" | "provider";
+  /** The upstream provider fault, when the throttle originated there. */
+  readonly providerFault?: ProviderFault;
+};
+
+/**
+ * 429 / 503 / 529 — the workspace hit a rate/concurrency limit, or an upstream
+ * provider said "slow down"; retry after a backoff.
+ *
+ * ONE class for both producers: the wire→exception factory
+ * (`apiErrorFromResponse`) and the shared HTTP retry policy, so `isRateLimited`
+ * recognises both with no split-brain. When the retry policy raises it, `message`
+ * is a fixed non-leaky summary (never an echo of the raw body, which is still
+ * available redacted on `.body`) and `attempts` / `source` / `providerFault`
+ * carry the retry-layer detail.
+ */
 export class AexRateLimitError extends AexApiError {
   /** Suggested backoff (ms), when the server advertised one (Retry-After). */
   readonly retryAfterMs: number | undefined;
-  constructor(init: AexApiErrorInit & { readonly retryAfterMs?: number | undefined }) {
-    super(init.status, init.message, init.body, {
-      apiCode: init.apiCode,
-      requestId: init.requestId,
-      cause: init.cause
-    });
+  /** How many attempts were made before giving up; `1` for a single-shot rejection. */
+  readonly attempts: number;
+  /** Whether the throttle came from the aex API plane or the upstream provider. */
+  readonly source: "api" | "provider";
+  /** The upstream provider fault, when the throttle originated there. */
+  readonly providerFault?: ProviderFault;
+
+  constructor(init: AexRateLimitErrorInit) {
+    const attempts = init.attempts ?? 1;
+    const source = init.source ?? "api";
+    super(
+      init.status,
+      init.message ?? throttleSummary(init.status, attempts, source, init.retryAfterMs),
+      init.body,
+      {
+        apiCode: init.apiCode,
+        requestId: init.requestId,
+        cause: init.cause
+      }
+    );
     this.retryAfterMs = init.retryAfterMs;
+    this.attempts = attempts;
+    this.source = source;
+    if (init.providerFault !== undefined) this.providerFault = init.providerFault;
   }
+}
+
+/** Fixed, non-leaky throttle summary — never echoes the server's error body. */
+function throttleSummary(
+  status: number,
+  attempts: number,
+  source: "api" | "provider",
+  retryAfterMs: number | undefined
+): string {
+  const who = source === "provider" ? "upstream provider" : "aex API";
+  const label = status === 529 ? "overloaded" : "rate limit reached";
+  const attemptsLabel = `${attempts} attempt${attempts === 1 ? "" : "s"}`;
+  const wait = retryAfterMs !== undefined ? `; retry after ~${Math.ceil(retryAfterMs / 1000)}s` : "";
+  return `${who} ${label} (HTTP ${status}) after ${attemptsLabel}${wait}`;
 }
 
 /**

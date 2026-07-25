@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   AEX_EVENT_SPECVERSION,
-  MAX_SQLITE_ROW_BYTES,
+  EVENT_ROW_MAX_BYTES,
   channelOf,
   customName,
   exceedsRowBudget,
@@ -149,9 +149,9 @@ describe("toAGUI — strict AG-UI projection", () => {
       ...map(ev(3, "stream_error", {})),
       type: "RUN_ERROR",
       message: "boom",
-      data: { outcome: "failed", failureClass: "session_failed", failureMessage: "boom" }
+      data: { outcome: "failed", failureClass: "step_failed", failureMessage: "boom" }
     });
-    expect(out).toEqual({ type: "RUN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "session_failed" });
+    expect(out).toEqual({ type: "RUN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "step_failed" });
   });
 
   it("CUSTOM round-trips name + value", () => {
@@ -187,13 +187,13 @@ describe("cross-runtime parity (same logical event ⇒ same envelope shape)", ()
 describe("oversized-payload rule (2 MB SQLite row cap)", () => {
   it("a small event is well under the budget", () => {
     const out = map(ev(0, "assistant_text", { text: "hi" }));
-    expect(serializedEventBytes(out)).toBeLessThan(MAX_SQLITE_ROW_BYTES);
+    expect(serializedEventBytes(out)).toBeLessThan(EVENT_ROW_MAX_BYTES);
     expect(exceedsRowBudget(out)).toBe(false);
   });
 
   it("flags an event whose serialized form exceeds the budget", () => {
-    const big = map(ev(0, "assistant_text", { text: "x".repeat(MAX_SQLITE_ROW_BYTES + 10) }));
-    expect(serializedEventBytes(big)).toBeGreaterThan(MAX_SQLITE_ROW_BYTES);
+    const big = map(ev(0, "assistant_text", { text: "x".repeat(EVENT_ROW_MAX_BYTES + 10) }));
+    expect(serializedEventBytes(big)).toBeGreaterThan(EVENT_ROW_MAX_BYTES);
     expect(exceedsRowBudget(big)).toBe(true);
   });
 });

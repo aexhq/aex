@@ -363,9 +363,41 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     expect(limits).toContain("runtime.size");
     expect(capabilities).toContain("runtime.kind");
     expect(capabilities).toContain("runtime.size");
-    expect(docs).toContain(DEFAULT_RUNTIME_KIND);
     for (const kind of RUNTIME_KINDS) {
       expect(docs).toContain(kind);
     }
+
+    // `toContain(DEFAULT_RUNTIME_KIND)` alone passed while the docs named a DIFFERENT
+    // kind as the default and merely mentioned this one — which is how "default lambda"
+    // survived the flip to spot_container. Assert the default CLAIM, not the presence
+    // of the token, and assert no other kind is claimed as the default.
+    expect(providers).toContain(`the default, \`"${DEFAULT_RUNTIME_KIND}"\``);
+    expect(providers).toContain(`Omit either field to use its default (\`${DEFAULT_RUNTIME_KIND}\` for \`kind\``);
+    expect(limits).toContain(`\`${DEFAULT_RUNTIME_KIND}\` (the default)`);
+    for (const kind of RUNTIME_KINDS.filter((candidate) => candidate !== DEFAULT_RUNTIME_KIND)) {
+      expect(docs).not.toContain(`\`${kind}\` (the default)`);
+      expect(docs).not.toMatch(new RegExp(`default ${kind}\\b`));
+    }
+  });
+
+  /**
+   * The parity claim this file exists to keep honest. `providers-and-runtimes.md` used
+   * to assert that runtime choice does not change "tools … controls, lifecycle, or
+   * stable error contract" while `lambda` could not execute a single tool call.
+   */
+  it("publishes the runtime profiles instead of claiming behavioral parity", () => {
+    const providers = readDoc("packages/sdk/docs/concepts/providers-and-runtimes.md");
+
+    expect(providers).not.toMatch(
+      /not the LLM request, tools, files, controls, lifecycle, or stable error\s+contract/,
+    );
+    expect(providers).toContain("profilesByRuntimeKind");
+    // The four differences that genuinely cannot be equalized.
+    expect(providers).toContain("profile.delivery.idleBilling");
+    expect(providers).toContain("profile.delivery.toolExecution");
+    expect(providers).toContain("profile.limits.maxWorkspaceBytes");
+    expect(providers).toContain("profile.limits.maxSingleEffectMs");
+    // D2: subagent topology is uniform and must be STATED, not left to inference.
+    expect(providers).toContain("a subagent shares its parent's");
   });
 });

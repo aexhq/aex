@@ -133,7 +133,7 @@ const link = await session.events.archiveLink({ expiresIn: "1h" });
 const archive = await session.events.download();
 ```
 
-The event archive uses the same redacted public events returned by the SDK.
+The event archive contains the same public events the SDK returns, byte-identical.
 `archiveLink()` is a bounded convenience export. A session that exceeds the
 bulk-export limits returns a typed `413` API error; an export that cannot finish
 inside the server's request budget returns a typed `503` API error. The SDK does

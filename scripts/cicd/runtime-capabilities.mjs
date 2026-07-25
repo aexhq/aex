@@ -26,7 +26,7 @@ export function parseRuntimeCapabilities(value) {
     throw new Error(`invalid runtimeCapabilities: ${message}`);
   };
   if (!isRecord(value)) fail("expected an object");
-  if (value.schemaVersion !== 1) fail("schemaVersion must be 1");
+  if (value.schemaVersion !== 2) fail("schemaVersion must be 2");
   if (!isNonEmptyString(value.capabilityVersion)) fail("capabilityVersion must be a non-empty string");
   if (typeof value.capabilityHash !== "string" || !CANONICAL_SHA256_DIGEST_PATTERN.test(value.capabilityHash)) {
     fail("capabilityHash must be a lowercase sha256 digest");
@@ -68,13 +68,32 @@ export function parseRuntimeCapabilities(value) {
     unavailable[runtime] = { code: detail.code };
   }
 
+  // TOTAL over runtime kinds, including ones this workspace may not name: a projection
+  // that says which runtimes exist but not what they do is the gap the retired public
+  // parity claim papered over, and CI must not accept it.
+  if (!isRecord(value.profilesByRuntimeKind)) fail("profilesByRuntimeKind must be an object");
+  const profilesByRuntimeKind = {};
+  for (const runtime of RUNTIME_KINDS) {
+    const profile = value.profilesByRuntimeKind[runtime];
+    if (!isRecord(profile)) fail(`profilesByRuntimeKind.${runtime} must be an object`);
+    if (profile.runtimeKind !== runtime) fail(`profilesByRuntimeKind.${runtime}.runtimeKind must be ${runtime}`);
+    if (!isRecord(profile.capabilities)) fail(`profilesByRuntimeKind.${runtime}.capabilities must be an object`);
+    if (!isRecord(profile.limits)) fail(`profilesByRuntimeKind.${runtime}.limits must be an object`);
+    if (!isRecord(profile.delivery)) fail(`profilesByRuntimeKind.${runtime}.delivery must be an object`);
+    profilesByRuntimeKind[runtime] = Object.freeze(profile);
+  }
+  for (const runtime of Object.keys(value.profilesByRuntimeKind)) {
+    if (!RUNTIME_KINDS.includes(runtime)) fail(`profilesByRuntimeKind contains unknown runtime ${runtime}`);
+  }
+
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     capabilityVersion: value.capabilityVersion,
     capabilityHash: value.capabilityHash,
     availableRuntimeKinds: Object.freeze([...availableRuntimeKinds]),
     sizesByRuntimeKind: Object.freeze(sizesByRuntimeKind),
-    unavailable: Object.freeze(unavailable)
+    unavailable: Object.freeze(unavailable),
+    profilesByRuntimeKind: Object.freeze(profilesByRuntimeKind)
   });
 }
 

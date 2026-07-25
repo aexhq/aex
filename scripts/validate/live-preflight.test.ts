@@ -14,8 +14,24 @@ const baseEnv = {
   LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS: "1"
 };
 
+/** One well-formed profile per kind; the preflight parser checks shape, not values. */
+function runtimeProfile(runtimeKind: string): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    runtimeKind,
+    capabilities: { toolExecution: runtimeKind === "lambda" ? "unsupported" : "supported" },
+    limits: { maxSessionMs: 28_800_000, maxSingleEffectMs: 840_000, maxWorkspaceBytes: 1, maxConcurrentToolCalls: 1 },
+    delivery: {
+      toolExecution: runtimeKind === "spot_container" ? "at-least-once" : "exactly-once",
+      coldStartClass: "cold-seconds",
+      idleBilling: runtimeKind === "lambda" ? "zero" : "wall-clock"
+    },
+    computeBasis: runtimeKind === "lambda" ? "microvm_running" : "wall_clock"
+  };
+}
+
 const runtimeCapabilities = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   capabilityVersion: "dev-2026-07-20",
   capabilityHash: `sha256:${"a".repeat(64)}`,
   availableRuntimeKinds: ["container", "spot_container", "lambda"],
@@ -24,7 +40,12 @@ const runtimeCapabilities = {
     spot_container: ["0.25cpu-1gb"],
     lambda: ["0.25cpu-1gb"]
   },
-  unavailable: {}
+  unavailable: {},
+  profilesByRuntimeKind: {
+    container: runtimeProfile("container"),
+    spot_container: runtimeProfile("spot_container"),
+    lambda: runtimeProfile("lambda")
+  }
 };
 const legacyRuntimeCapabilities = {
   ...runtimeCapabilities,

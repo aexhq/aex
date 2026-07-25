@@ -1,5 +1,6 @@
 import type { ToolInputSchema } from "./session-config.js";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
+import { isId } from "./ids.js";
 
 /**
  * Persisted workspace file resource names accepted by the public wire boundary.
@@ -132,7 +133,7 @@ export function assertPinnedWorkspaceResource(
   value: WorkspaceResourceRef,
   path: string
 ): void {
-  if (typeof value.resourceId !== "string" || !/^wres_[0-9a-f]{32}$/.test(value.resourceId)) {
+  if (!isId("resource", value.resourceId)) {
     throw new Error(`${path}.resourceId must match wres_<32 lowercase hex>`);
   }
   if (!Number.isSafeInteger(value.version) || value.version < 1) {

@@ -1,12 +1,17 @@
 /**
  * Built-in transport resilience for the aex SDK.
  *
- * Every BFF-bound request the SDK makes goes through one {@link FetchLike}. This
- * module retries eligible requests after a transient failure — an HTTP 429 (rate limited),
- * a 500/502/503/504 (server hiccup), a 529 (upstream overloaded), or a network
- * error — is retried with BOUNDED exponential backoff + full jitter, honoring
- * the server's `Retry-After` header when present. Non-retryable 4xx responses
- * (400/401/403/404/…) fail fast — retrying them only wastes the caller's time.
+ * There is ONE retry policy in this repo and it lives in `@aexhq/contracts`
+ * (`HTTP_RETRY_POLICY` / `withHttpRetry` in `http.ts`), shared verbatim by the
+ * SDK, the `aex` CLI, and the direct-to-storage asset uploader. This module is
+ * the SDK's naming of that policy plus the provider-fault decoding that has no
+ * home in the transport.
+ *
+ * The policy: an eligible request that fails with an HTTP 429 (rate limited), a
+ * 500/502/503/504 (server hiccup), a 529 (upstream overloaded), or a network
+ * error is retried with BOUNDED exponential backoff + full jitter, honoring the
+ * server's `Retry-After` header when present, inside a wall-clock budget.
+ * Non-retryable 4xx responses (400/401/403/404/…) fail fast.
  *
  * Safe reads (GET/HEAD/OPTIONS) are eligible directly. Any mutation is eligible
  * only when it carries a stable `Idempotency-Key`; all other mutations get
@@ -20,133 +25,63 @@
  */
 
 import {
-  AexNetworkError,
-  AexRateLimitError as AexRateLimitErrorBase,
   isRateLimited,
   parseProviderFault as parseCanonicalProviderFault,
-  type ProviderFault,
+  resolveHttpRetryPolicy,
+  withHttpRetry,
   type KnownProviderFaultKind,
-  type FetchLike
+  type ProviderFault
 } from "@aexhq/contracts";
-import {
-  abortableSleep,
-  computeRetryBackoffDelayMs,
-  computeRetryDelayMs,
-  isRateLimitHttpStatus,
-  isRetryableHttpStatus,
-  tryParseRetryAfterMs as parseRetryAfterHeaderMs,
-  RATE_LIMIT_HTTP_STATUS,
-  RETRYABLE_HTTP_STATUS
-} from "@aexhq/contracts/internal";
 
-// The rate-limit guard is SINGLE-SOURCED in `@aexhq/contracts` (Wave 0 moved it
-// there), so the wire→exception factory (`apiErrorFromResponse`) and this
-// retry-layer error are recognised by the SAME `isRateLimited` — no split-brain.
+// The rate-limit guard AND the rate-limit error are SINGLE-SOURCED in
+// `@aexhq/contracts`, so the wire→exception factory (`apiErrorFromResponse`) and
+// the retry policy raise the SAME class recognised by the SAME `isRateLimited` —
+// no split-brain, no subclass mirror.
 export { isRateLimited };
+export { AexRateLimitError } from "@aexhq/contracts";
 export type { ProviderFault } from "@aexhq/contracts";
 
 /**
- * HTTP statuses that are transient and worth retrying for an eligible request.
+ * `RETRYABLE_STATUS` — statuses that are transient and worth retrying for an
+ * eligible request. `RATE_LIMIT_STATUS` — the subset the platform / upstream
+ * provider uses to say "slow down" (429 rate-limit, 503 unavailable, 529
+ * overloaded); when retries for one of these run out the wrapper raises an
+ * `AexRateLimitError`. Both are `retry-core.ts`'s sets under the SDK's names.
  */
-export const RETRYABLE_STATUS: readonly number[] = RETRYABLE_HTTP_STATUS;
-
-/**
- * The subset of {@link RETRYABLE_STATUS} the platform / upstream provider uses to
- * say "slow down": 429 rate-limit, 503 unavailable, 529 overloaded. When retries
- * for one of these run out, the wrapper raises an {@link AexRateLimitError}.
- */
-export const RATE_LIMIT_STATUS: readonly number[] = RATE_LIMIT_HTTP_STATUS;
+export {
+  RATE_LIMIT_HTTP_STATUS as RATE_LIMIT_STATUS,
+  RETRYABLE_HTTP_STATUS as RETRYABLE_STATUS
+} from "@aexhq/contracts/internal";
 
 /**
  * Tunes the built-in retry loop. All fields are optional; omit the whole
  * `retry` option (or pass `retry: false` on the client) to accept the defaults
- * or turn the loop off entirely.
+ * or turn the loop off entirely. The SDK's name for the repo-wide
+ * `HttpRetryOptions`.
  */
-export interface RetryOptions {
-  /**
-   * Maximum attempts INCLUDING the first try. Default `4` (one try + three
-   * retries). `1` performs a single attempt with no retries (but still maps a
-   * final rate-limit status to {@link AexRateLimitError}).
-   */
-  readonly maxAttempts?: number;
-  /**
-   * Base delay (ms) for the exponential backoff — the nominal wait before the
-   * first retry, doubling each subsequent retry. Default `500`.
-   */
-  readonly initialDelayMs?: number;
-  /** Upper bound (ms) on any single backoff wait. Default `20_000`. */
-  readonly maxDelayMs?: number;
-  /**
-   * Overall wall-clock budget (ms) across all attempts. Once the next backoff
-   * would push past this, the loop stops and surfaces the last error. Default
-   * `120_000`.
-   */
-  readonly maxElapsedMs?: number;
-}
+export type { HttpRetryOptions as RetryOptions } from "@aexhq/contracts";
 
-interface ResolvedRetryConfig {
-  readonly maxAttempts: number;
-  readonly initialDelayMs: number;
-  readonly maxDelayMs: number;
-  readonly maxElapsedMs: number;
-}
-
-const DEFAULT_RETRY: ResolvedRetryConfig = {
-  maxAttempts: 4,
-  initialDelayMs: 500,
-  maxDelayMs: 20_000,
-  maxElapsedMs: 120_000
-};
-
-/** Resolve caller options over the defaults, clamping to sane bounds. */
-export function resolveRetryConfig(options: RetryOptions | undefined): ResolvedRetryConfig {
-  const maxAttempts = Math.max(1, Math.floor(options?.maxAttempts ?? DEFAULT_RETRY.maxAttempts));
-  const initialDelayMs = Math.max(0, options?.initialDelayMs ?? DEFAULT_RETRY.initialDelayMs);
-  const maxDelayMs = Math.max(initialDelayMs, options?.maxDelayMs ?? DEFAULT_RETRY.maxDelayMs);
-  const maxElapsedMs = Math.max(0, options?.maxElapsedMs ?? DEFAULT_RETRY.maxElapsedMs);
-  return { maxAttempts, initialDelayMs, maxDelayMs, maxElapsedMs };
-}
-
-export function isRetryableStatus(status: number): boolean {
-  return isRetryableHttpStatus(status);
-}
-
-export function isRateLimitStatus(status: number): boolean {
-  return isRateLimitHttpStatus(status);
-}
+/** Resolve caller options over the one shared policy, clamping to sane bounds. */
+export const resolveRetryConfig = resolveHttpRetryPolicy;
 
 /**
- * Parse an HTTP `Retry-After` header into milliseconds. Per RFC 7231 the value
- * is either a non-negative integer number of seconds or an HTTP-date; both are
- * handled. Returns `undefined` for a missing or unparseable value.
+ * Wrap a `FetchLike` with the one shared bounded-retry loop. `retry === false`
+ * disables the layer entirely.
  */
-export function parseRetryAfterMs(headerValue: string | null | undefined, now: number = Date.now()): number | undefined {
-  return parseRetryAfterHeaderMs(headerValue, now);
-}
+export const withRetry = withHttpRetry;
 
-/**
- * Full-jitter exponential backoff (AWS-style): the nominal wait doubles per
- * retry up to `maxDelayMs`, and the actual wait is a uniform sample in
- * `[0, nominal]` to de-correlate concurrent clients. `attemptNumber` is the
- * 1-based number of the attempt that just failed.
- */
-export function computeBackoffDelayMs(
-  config: ResolvedRetryConfig,
-  attemptNumber: number,
-  random: () => number
-): number {
-  return computeRetryBackoffDelayMs(config, attemptNumber, random);
-}
+export type { HttpRetryDeps as RetryDeps } from "@aexhq/contracts";
 
-/** Combine the server's `Retry-After` (a floor) with our jittered backoff. */
-function nextDelayMs(
-  config: ResolvedRetryConfig,
-  attemptNumber: number,
-  random: () => number,
-  retryAfterMs: number | undefined
-): number {
-  return computeRetryDelayMs(config, attemptNumber, random, retryAfterMs);
-}
+// The retryable/rate-limit status predicates, the RFC 7231 `Retry-After` parse
+// (integer seconds OR HTTP-date), and the AWS-style full-jitter exponential
+// backoff are all `retry-core.ts`'s. Re-exported under the SDK's names — never
+// re-implemented, which is how the CLI and the SDK drifted in the first place.
+export {
+  computeRetryBackoffDelayMs as computeBackoffDelayMs,
+  isRateLimitHttpStatus as isRateLimitStatus,
+  isRetryableHttpStatus as isRetryableStatus,
+  tryParseRetryAfterMs as parseRetryAfterMs
+} from "@aexhq/contracts/internal";
 
 const THROTTLE_KINDS: ReadonlySet<string> = new Set([
   "rate_limit",
@@ -158,59 +93,6 @@ const THROTTLE_KINDS: ReadonlySet<string> = new Set([
 /** True when a {@link ProviderFault} represents a "back off and retry" signal. */
 export function isThrottleFault(fault: ProviderFault): boolean {
   return THROTTLE_KINDS.has(fault.kind);
-}
-
-/**
- * Structured throttle error. Extends the contracts {@link AexRateLimitErrorBase}
- * (the SINGLE rate-limit class the wire→exception factory also throws, so
- * `isRateLimited` recognises BOTH — no split-brain) and enriches it with the
- * retry-layer detail: `attempts`, `source`, and an upstream `providerFault`.
- * `retryAfterMs` is inherited. The `message` is a fixed, non-leaky summary — it
- * never echoes the raw error body (which is still available, redacted, on `.body`).
- */
-export class AexRateLimitError extends AexRateLimitErrorBase {
-  /** How many attempts were made before giving up. */
-  readonly attempts: number;
-  /** Whether the throttle came from the aex API plane or the upstream provider. */
-  readonly source: "api" | "provider";
-  /** The upstream provider fault, when the throttle originated there. */
-  readonly providerFault?: ProviderFault;
-
-  constructor(args: {
-    readonly status: number;
-    readonly attempts: number;
-    readonly retryAfterMs?: number;
-    readonly source?: "api" | "provider";
-    readonly providerFault?: ProviderFault;
-    readonly body?: unknown;
-    readonly message?: string;
-  }) {
-    super({
-      status: args.status,
-      message: args.message ?? defaultThrottleMessage(args),
-      body: args.body,
-      ...(args.retryAfterMs !== undefined ? { retryAfterMs: args.retryAfterMs } : {})
-    });
-    this.attempts = args.attempts;
-    this.source = args.source ?? "api";
-    if (args.providerFault !== undefined) this.providerFault = args.providerFault;
-  }
-}
-
-function defaultThrottleMessage(args: {
-  readonly status: number;
-  readonly attempts: number;
-  readonly retryAfterMs?: number;
-  readonly source?: "api" | "provider";
-}): string {
-  const who = args.source === "provider" ? "upstream provider" : "aex API";
-  const label = args.status === 529 ? "overloaded" : "rate limit reached";
-  const attempts = `${args.attempts} attempt${args.attempts === 1 ? "" : "s"}`;
-  const wait =
-    args.retryAfterMs !== undefined
-      ? `; retry after ~${Math.ceil(args.retryAfterMs / 1000)}s`
-      : "";
-  return `${who} ${label} (HTTP ${args.status}) after ${attempts}${wait}`;
 }
 
 /**
@@ -308,194 +190,3 @@ function coerceRetryDelay(raw: unknown, multiplier: 1 | 1000): number | undefine
   return Number.isSafeInteger(milliseconds) ? milliseconds : undefined;
 }
 
-/**
- * Wrap the last network-error rejection once retries are exhausted, so the
- * surfaced error states how many attempts were made over how many ms and
- * preserves the raw rejection on `cause` (mirrors the {@link AexRateLimitError}
- * path for exhausted throttle statuses). An {@link AexNetworkError} from the
- * transport is annotated — rebuilt with the same request context and its
- * original cause — rather than double-wrapped.
- */
-function networkRetryExhausted(
-  err: unknown,
-  input: string | URL | Request,
-  init: RequestInit | undefined,
-  attempts: number,
-  elapsedMs: number
-): AexNetworkError {
-  if (err instanceof AexNetworkError) {
-    return new AexNetworkError({
-      method: err.method,
-      host: err.host,
-      path: err.path,
-      cause: err.cause ?? err,
-      attempts,
-      elapsedMs
-    });
-  }
-  const url = requestUrl(input);
-  const method = init?.method ?? (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET");
-  return new AexNetworkError({
-    method: method.toUpperCase(),
-    host: url?.host ?? "",
-    path: url?.pathname ?? "",
-    cause: err,
-    attempts,
-    elapsedMs
-  });
-}
-
-function requestUrl(input: string | URL | Request): URL | undefined {
-  try {
-    if (input instanceof URL) return input;
-    return new URL(typeof input === "string" ? input : input.url);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Hooks the retry loop needs, injectable so tests run without real timers. */
-export interface RetryDeps {
-  readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  readonly random?: () => number;
-  readonly now?: () => number;
-}
-
-const defaultSleep = abortableSleep;
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
-
-async function drain(response: Response): Promise<void> {
-  try {
-    if (response.body && typeof (response.body as ReadableStream).cancel === "function") {
-      await (response.body as ReadableStream).cancel();
-      return;
-    }
-    await response.text();
-  } catch {
-    // Draining is best-effort; a discarded retryable response never surfaces.
-  }
-}
-
-async function readBodyForError(response: Response): Promise<unknown> {
-  try {
-    const text = await response.text();
-    if (text.length === 0) return {};
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      return { raw: text };
-    }
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Wrap a {@link FetchLike} with the bounded-retry loop. `retry === false`
- * disables the layer entirely (the input fetch is returned unchanged). Otherwise
- * the returned fetch retries transient failures per {@link RetryOptions} and, on
- * an exhausted rate-limit/overloaded status, throws {@link AexRateLimitError}.
- */
-export function withRetry(
-  fetchImpl: FetchLike,
-  retry: RetryOptions | false | undefined,
-  deps: RetryDeps = {}
-): FetchLike {
-  if (retry === false) return fetchImpl;
-  const config = resolveRetryConfig(retry);
-  const sleep = deps.sleep ?? defaultSleep;
-  const random = deps.random ?? Math.random;
-  const now = deps.now ?? Date.now;
-
-  return async (input, init) => {
-    if (!isRetryEligibleRequest(input, init)) {
-      return fetchImpl(input, init);
-    }
-    const startedAt = now();
-    const signal = init?.signal ?? undefined;
-    let attempt = 0;
-
-    for (;;) {
-      attempt += 1;
-
-      let response: Response | undefined;
-      try {
-        response = await fetchImpl(input, init);
-      } catch (err) {
-        // A caller-initiated abort is terminal, never transient.
-        if (isAbortError(err)) throw err;
-        if (attempt >= config.maxAttempts) {
-          throw networkRetryExhausted(err, input, init, attempt, now() - startedAt);
-        }
-        const delay = nextDelayMs(config, attempt, random, undefined);
-        if (now() - startedAt + delay > config.maxElapsedMs) {
-          throw networkRetryExhausted(err, input, init, attempt, now() - startedAt);
-        }
-        await sleep(delay, signal ?? undefined);
-        continue;
-      }
-
-      // Success or a definitive (non-retryable) response — hand straight back so
-      // the transport reads/throws exactly as it does without the retry layer.
-      if (!isRetryableStatus(response.status)) {
-        return response;
-      }
-
-      const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"), now());
-      const delay = attempt < config.maxAttempts ? nextDelayMs(config, attempt, random, retryAfterMs) : undefined;
-      const willRetry = delay !== undefined && now() - startedAt + delay <= config.maxElapsedMs;
-
-      if (willRetry) {
-        await drain(response);
-        await sleep(delay, signal ?? undefined);
-        continue;
-      }
-
-      // Retries exhausted (or budget spent). A rate-limit/overloaded status
-      // becomes a structured throttle error; any other transient status falls
-      // through to the transport's normal AexApiError.
-      if (isRateLimitStatus(response.status)) {
-        const body = await readBodyForError(response);
-        const errorBody = withResponseRequestId(body, response.headers);
-        throw new AexRateLimitError({
-          status: response.status,
-          attempts: attempt,
-          source: "api",
-          ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-          body: errorBody
-        });
-      }
-      return response;
-    }
-  };
-}
-
-const SAFE_READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-
-function isRetryEligibleRequest(input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]): boolean {
-  const request = typeof Request !== "undefined" && input instanceof Request ? input : undefined;
-  const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
-  if (SAFE_READ_METHODS.has(method)) return true;
-  const headers = new Headers(init?.headers ?? request?.headers);
-  const idempotencyKey = headers.get("idempotency-key");
-  return typeof idempotencyKey === "string" && idempotencyKey.trim().length > 0;
-}
-
-function withResponseRequestId(body: unknown, headers: Headers): unknown {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-  const record = body as Record<string, unknown>;
-  if (typeof record.requestId === "string" && record.requestId.trim()) return body;
-  const requestId = responseRequestId(headers);
-  return requestId ? { ...record, requestId } : body;
-}
-
-function responseRequestId(headers: Headers): string | undefined {
-  for (const name of ["x-request-id", "request-id"]) {
-    const value = headers.get(name)?.trim();
-    if (value) return value;
-  }
-  return undefined;
-}

@@ -139,7 +139,7 @@ const guards = [
 const malformedSamples = [
   event("RUN_STARTED", { turnSeq: -1 }),
   event("RUN_FINISHED", {}),
-  event("RUN_ERROR", { outcome: "failed", failureClass: "provider_permanent" }),
+  event("RUN_ERROR", { outcome: "failed", failureClass: "provider-permanent" }),
   event("TEXT_MESSAGE_CONTENT", { text: 42 }),
   event("TOOL_CALL_START", { id: "call_1" }),
   event("TOOL_CALL_RESULT", { id: "call_1" }),
@@ -150,7 +150,7 @@ const malformedSamples = [
 const samples = [
   event("RUN_STARTED", { source: "session" }),
   event("RUN_FINISHED", { outcome: "succeeded" }),
-  event("RUN_ERROR", { outcome: "failed", failureClass: "provider_permanent", failureMessage: "failed" }),
+  event("RUN_ERROR", { outcome: "failed", failureClass: "provider-permanent", failureMessage: "failed" }),
   event("TEXT_MESSAGE_CONTENT", { text: "hello" }),
   event("TOOL_CALL_START", { id: "call_1", name: "read_file" }),
   event("TOOL_CALL_RESULT", { id: "call_1", content: null }),

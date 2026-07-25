@@ -49,6 +49,14 @@ const RUNNER_ONLY_CONTRACT_MODULES = new Set([
   "subagent-runtime.d.ts",
   "subagent-runtime.js"
 ]);
+// `@aexhq/contracts/testing` is the cross-package test kit (FakeWebSocket,
+// test-platform, stub-env, fake clocks). NO SDK source path imports it — only
+// test files do — so copying it in shipped the fakes to customers as dead
+// weight and silently widened the published surface. Excluded for the same
+// reason as RUNNER_ONLY_CONTRACT_MODULES above: not reachable from the
+// package's own entry points. Tests still import it from the workspace
+// package, which is unaffected by what the SDK packs.
+const TEST_ONLY_CONTRACT_MODULE_PREFIX = "testing";
 
 async function fileExists(path) {
   try {
@@ -77,6 +85,12 @@ await cp(contractsDistDir, inlinedDir, {
     const rel = relative(contractsDistDir, src).replaceAll("\\", "/");
     if (rel === "") return true;
     if (RUNNER_ONLY_CONTRACT_MODULES.has(rel)) return false;
+    if (rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}` || rel.startsWith(`${TEST_ONLY_CONTRACT_MODULE_PREFIX}/`)) {
+      return false;
+    }
+    if (rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}.js` || rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}.d.ts`) {
+      return false;
+    }
     if (src.endsWith(".js.map") || src.endsWith(".d.ts.map") || src.endsWith(".tsbuildinfo")) {
       return false;
     }

@@ -33,8 +33,14 @@ export const AEX_API_ERROR_CODES = [
   "workspace_concurrency_exceeded",
   "workspace_submit_rate_exceeded",
   "workspace_spend_cap_exceeded",
+  "workspace_cap_exceeded",
   "insufficient_balance",
+  "subscription_past_due",
+  "quota_exhausted",
+  "depth_exceeded",
   "rate_limited",
+  "out_of_memory",
+  "disk_full",
   "content_deleted",
   "upstream_error",
   "internal_error"
@@ -69,8 +75,15 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   workspace_concurrency_exceeded: "The workspace has reached its concurrent-run limit.",
   workspace_submit_rate_exceeded: "The workspace submit-rate limit was exceeded.",
   workspace_spend_cap_exceeded: "The workspace monthly spend cap was reached.",
+  workspace_cap_exceeded: "The organization has reached its workspace limit.",
   insufficient_balance: "The workspace prepaid balance is insufficient to submit this session.",
+  subscription_past_due: "The organization's subscription is past due and its grace period has ended.",
+  quota_exhausted:
+    "The request exceeds the workspace's remaining usage grant and there is no billable path for the overage.",
+  depth_exceeded: "The request would create a subagent deeper than the lineage depth ceiling.",
   rate_limited: "Too many requests — retry after a short backoff.",
+  out_of_memory: "The runtime was killed for exceeding its memory allocation.",
+  disk_full: "A write failed because the runtime's filesystem was full.",
   content_deleted: "The session's content was deleted after its retention window; only metadata remains.",
   upstream_error: "An upstream provider returned an error.",
   internal_error: "The aex API encountered an internal error."
@@ -93,6 +106,13 @@ export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = 
   insufficient_balance: "Top up the workspace balance or add a payment method.",
   workspace_concurrency_exceeded: "Wait for in-flight sessions to finish or raise the concurrency limit.",
   workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit.",
+  workspace_cap_exceeded: "Delete an unused workspace, or upgrade the organization's plan for a higher workspace limit.",
+  subscription_past_due: "Settle the outstanding invoice, or update the payment method on the billing page.",
+  quota_exhausted:
+    "Upgrade to a paid plan, or — if you are already on one — add a payment method and enable overage to be billed for usage beyond the grant.",
+  depth_exceeded: "Spawn the subagent from a shallower session, or flatten the lineage.",
+  out_of_memory: "Re-run on a larger runtimeSize, or reduce the memory the session holds at once.",
+  disk_full: "Re-run on a larger runtimeSize, or write fewer/smaller files inside the session.",
   content_deleted:
     "The session content is gone after its retention window; read the session record's metadata, or start a new session."
 };

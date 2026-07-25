@@ -91,7 +91,6 @@ import {
   AexRateLimitError,
   isThrottleFault,
   resolveRetryConfig,
-  withRetry,
   type ProviderFault,
   type RetryOptions
 } from "./retry.js";
@@ -1226,13 +1225,13 @@ export class Aex {
     // round-trip. A non-self-describing key (no `aex_` shape) skips this and keeps
     // the HttpClient default.
     const baseUrl = resolveBaseUrlForKey(apiKey, resolved.baseUrl);
-    // Wrap the transport fetch (the caller's override, or global `fetch`) with
-    // the bounded-retry layer so every BFF request gets default resilience.
-    // The raw `#fetch` below stays unwrapped for object-storage traffic. Asset
-    // uploads apply the resolved client policy in their transfer helper;
+    // The transport applies the ONE shared retry policy — `HTTP_RETRY_POLICY`
+    // from `@aexhq/contracts`, the same object the `aex` CLI hands its own
+    // HttpClient — so an `aex` command and an SDK call react identically to a
+    // 429. The raw `#fetch` below stays unwrapped for object-storage traffic.
+    // Asset uploads apply the same resolved policy in their transfer helper;
     // `session.files.fetch()` intentionally returns the raw one-shot response.
     const baseFetch: FetchLike = resolved.fetch ?? ((input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]) => fetch(input, init));
-    const retryingFetch = withRetry(baseFetch, resolved.retry);
     this.#debug = resolved.debug
       ? typeof resolved.debug === "function"
         ? resolved.debug
@@ -1244,7 +1243,8 @@ export class Aex {
     this.#http = new HttpClient({
       ...(baseUrl ? { baseUrl } : {}),
       apiKey,
-      fetch: retryingFetch,
+      fetch: baseFetch,
+      retry: resolved.retry === false ? false : resolveRetryConfig(resolved.retry),
       // Opt-in local diagnostics: emit a redacted per-request trace to
       // stderr. Uploads nothing. A caller wanting a custom sink can pass
       // a function instead of `true`.

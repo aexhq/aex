@@ -5,17 +5,42 @@ import { parseRuntimeCapabilities } from "../cicd/runtime-capabilities.mjs";
 
 const VALID_HASH = `sha256:${"a".repeat(64)}`;
 
-function projection(capabilityHash: unknown = VALID_HASH): Record<string, unknown> {
+/** One well-formed profile per kind. This parser checks shape, not published values. */
+function profile(runtimeKind: string): Record<string, unknown> {
   return {
     schemaVersion: 1,
-    capabilityVersion: "runtime-capabilities-v1",
+    runtimeKind,
+    capabilities: { toolExecution: runtimeKind === "lambda" ? "unsupported" : "supported" },
+    limits: { maxSessionMs: 28_800_000, maxSingleEffectMs: 840_000, maxWorkspaceBytes: 1, maxConcurrentToolCalls: 1 },
+    delivery: {
+      toolExecution: runtimeKind === "spot_container" ? "at-least-once" : "exactly-once",
+      coldStartClass: "cold-seconds",
+      idleBilling: runtimeKind === "lambda" ? "zero" : "wall-clock"
+    },
+    computeBasis: runtimeKind === "lambda" ? "microvm_running" : "wall_clock"
+  };
+}
+
+function profiles(): Record<string, unknown> {
+  return {
+    container: profile("container"),
+    spot_container: profile("spot_container"),
+    lambda: profile("lambda")
+  };
+}
+
+function projection(capabilityHash: unknown = VALID_HASH): Record<string, unknown> {
+  return {
+    schemaVersion: 2,
+    capabilityVersion: "runtime-capabilities.v2",
     capabilityHash,
     availableRuntimeKinds: ["container", "spot_container"],
     sizesByRuntimeKind: {
       container: ["0.25cpu-1gb"],
       spot_container: ["shared-0.5x-4gb"]
     },
-    unavailable: { lambda: { code: "not_enabled" } }
+    unavailable: { lambda: { code: "not_enabled" } },
+    profilesByRuntimeKind: profiles()
   };
 }
 
@@ -23,15 +48,16 @@ describe("authenticated runtime-capability parser", () => {
   it("preserves the complete validated frozen projection", () => {
     const parsed = parseRuntimeCapabilities(projection());
     expect(parsed).toEqual({
-      schemaVersion: 1,
-      capabilityVersion: "runtime-capabilities-v1",
+      schemaVersion: 2,
+      capabilityVersion: "runtime-capabilities.v2",
       capabilityHash: VALID_HASH,
       availableRuntimeKinds: ["container", "spot_container"],
       sizesByRuntimeKind: {
         container: ["0.25cpu-1gb"],
         spot_container: ["0.5cpu-4gb"]
       },
-      unavailable: { lambda: { code: "not_enabled" } }
+      unavailable: { lambda: { code: "not_enabled" } },
+      profilesByRuntimeKind: profiles()
     });
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed.availableRuntimeKinds)).toBe(true);
@@ -75,11 +101,28 @@ describe("authenticated runtime-capability parser", () => {
   });
 
   it("keeps field validation ordered before capabilityHash", () => {
-    expect(() => parseRuntimeCapabilities({ ...projection("bad"), schemaVersion: 2 })).toThrowError(
-      "invalid runtimeCapabilities: schemaVersion must be 1"
+    expect(() => parseRuntimeCapabilities({ ...projection("bad"), schemaVersion: 1 })).toThrowError(
+      "invalid runtimeCapabilities: schemaVersion must be 2"
     );
     expect(() => parseRuntimeCapabilities({ ...projection("bad"), capabilityVersion: "" })).toThrowError(
       "invalid runtimeCapabilities: capabilityVersion must be a non-empty string"
     );
+  });
+
+  it("refuses a projection that lists runtimes without saying what they do", () => {
+    // A capability document that declares availability but not capability is exactly
+    // the gap the retired public parity claim papered over; CI must stop on it.
+    const { profilesByRuntimeKind: _omitted, ...withoutProfiles } = projection();
+    expect(() => parseRuntimeCapabilities(withoutProfiles)).toThrowError(
+      "invalid runtimeCapabilities: profilesByRuntimeKind must be an object"
+    );
+    expect(() => parseRuntimeCapabilities({
+      ...projection(),
+      profilesByRuntimeKind: { container: profile("container") }
+    })).toThrowError("invalid runtimeCapabilities: profilesByRuntimeKind.spot_container must be an object");
+    expect(() => parseRuntimeCapabilities({
+      ...projection(),
+      profilesByRuntimeKind: { ...profiles(), native: profile("native") }
+    })).toThrowError("invalid runtimeCapabilities: profilesByRuntimeKind contains unknown runtime native");
   });
 });

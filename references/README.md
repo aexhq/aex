@@ -8,6 +8,12 @@ keywords:
   - internal documentation
 audience: implementation agents and maintainers
 status: accepted
+related:
+  - references/rules.md
+  - references/repo.md
+  - references/develop.md
+  - references/contributing.md
+  - references/repository-hygiene.md
 ---
 
 # Public repository references

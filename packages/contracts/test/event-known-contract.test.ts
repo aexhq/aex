@@ -73,7 +73,7 @@ describe("known AexEvent payload contracts", () => {
 
     const failed = event("RUN_ERROR", {
       outcome: "failed",
-      failureClass: "provider_permanent",
+      failureClass: "provider-permanent",
       failureMessage: "provider refused the request",
       providerFault: { kind: "provider_error", status: 400 }
     });
@@ -145,7 +145,7 @@ describe("malformed known AexEvent handling", () => {
   it.each([
     ["RUN_STARTED", { turnSeq: -1 }, "data.turnSeq"],
     ["RUN_FINISHED", {}, "data.outcome"],
-    ["RUN_ERROR", { outcome: "failed", failureClass: "provider_permanent" }, "data.failureMessage"],
+    ["RUN_ERROR", { outcome: "failed", failureClass: "provider-permanent" }, "data.failureMessage"],
     ["RUN_ERROR", {
       outcome: "failed",
       failureClass: "transient-provider",

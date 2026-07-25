@@ -15,6 +15,8 @@ coverage/
 *.tgz
 .tmp/
 .release-diagnostics/
+.tmp-release-diagnostics/
+.release-debug-*
 .release-worktrees/
 .suite-diagnostics/
 .suite-diagnostics-*/

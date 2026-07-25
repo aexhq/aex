@@ -1,7 +1,16 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { idPatternSource } from "@aexhq/contracts";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+
+/**
+ * The resource-id shape comes from the id owner, not from a copy in this file.
+ * The embedded script runs against the INSTALLED SDK, whose curated public
+ * surface does not re-export the id helpers, so the owner's pattern source is
+ * interpolated into it rather than restated.
+ */
+const RESOURCE_ID_PATTERN_SOURCE = idPatternSource("resource");
 
 const SCRIPT = String.raw`
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
@@ -73,8 +82,9 @@ const skillRef = await client.workspace.skills.publish(skill);
 const toolRef = await client.workspace.tools.publish(tool);
 strictEqual(skillRef.kind, "skill");
 strictEqual(toolRef.kind, "tool");
-match(skillRef.resourceId, /^wres_[0-9a-f]{32}$/);
-match(toolRef.resourceId, /^wres_[0-9a-f]{32}$/);
+const RESOURCE_ID = new RegExp(${JSON.stringify(RESOURCE_ID_PATTERN_SOURCE)});
+match(skillRef.resourceId, RESOURCE_ID);
+match(toolRef.resourceId, RESOURCE_ID);
 strictEqual(skillRef.assetId, "asset_" + skillRef.contentHash.slice("sha256:".length));
 strictEqual(toolRef.assetId, "asset_" + toolRef.contentHash.slice("sha256:".length));
 
@@ -137,7 +147,7 @@ describe("installed SDK workspace skill/tool publication", () => {
     }
     const result = JSON.parse(child.stdout) as Record<string, unknown>;
     expect(result).toMatchObject({ secondSkillVersion: 3, objectPuts: 2 });
-    expect(result.skillResourceId).toMatch(/^wres_[0-9a-f]{32}$/);
-    expect(result.toolResourceId).toMatch(/^wres_[0-9a-f]{32}$/);
+    expect(result.skillResourceId).toMatch(new RegExp(RESOURCE_ID_PATTERN_SOURCE));
+    expect(result.toolResourceId).toMatch(new RegExp(RESOURCE_ID_PATTERN_SOURCE));
   });
 });

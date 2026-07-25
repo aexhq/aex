@@ -17,7 +17,7 @@ describe("runtime asset archive limits", () => {
 
   it("rejects one byte beyond either boundary with stable units", () => {
     expect(() => assertArchiveCompressedSize(ASSET_ARCHIVE_LIMITS.maxCompressedBytes + 1, "asset"))
-      .toThrow(/64 MiB compressed limit/);
+      .toThrow(/16 MiB compressed limit/);
     expect(() => assertArchiveExpandedSize(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes + 1, "asset"))
       .toThrow(/128 MiB expanded limit/);
     expect(() => assertArchiveEntryCount(ASSET_ARCHIVE_LIMITS.maxEntries + 1, "asset"))

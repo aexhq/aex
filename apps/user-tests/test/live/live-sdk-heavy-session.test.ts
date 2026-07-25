@@ -8,7 +8,7 @@
  * and validates EVERY observable aspect of the session. The goal is not to
  * test the model's capability — it is to prove the aex app
  * (materialization, BYOK proxy, event log, files pipeline, secret
- * redaction) behaves as expected under a maximal submission.
+ * caps) behaves as expected under a maximal submission.
  *
  * Sessions as an explicit gate AFTER the rest of the live user-tests pass
  * (own Bun script `test:user:heavy`, its own dedicated lane), so it is
@@ -427,16 +427,11 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
 
 async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> {
   const rand = (): string => Math.random().toString(36).slice(2, 10);
-  // Channel-probe separators are dots, NOT hyphens. The stream-before-disk
-  // runtime redactor masks high-entropy
-  // runs of [A-Za-z0-9+/=-]{24,}. The model echoes these probes in a
-  // key=value shape ("session=<ref> project=<ref> request=<ref>"), and a
-  // hyphen-segmented ref glued to its `session=` label forms one 24+ char
-  // run that the redactor eats whole — the probe never survives into the
-  // managed-runtime stdout the event stream is built from. A dot is OUTSIDE that
-  // char class, so it splits the session into sub-24-char segments that
-  // survive regardless of how the model punctuates the reply. REF-out tokens
-  // go to session files, not the redacted stdout stream, so they keep hyphens.
+  // Channel-probe separators are dots, NOT hyphens. This originally worked around the
+  // runtime's stream redactor, whose high-entropy catch-all ate a hyphen-segmented ref
+  // glued to its `session=` label as one 24+ char run. Plan 09 (2026-07-25) deleted
+  // that redactor, so nothing masks the probes any more — dots are kept only because
+  // the probe shape is pinned by the assertions below.
   const probes: Probes = {
     system: "REF.verify." + rand(),
     instructions: "REF.verify." + rand(),

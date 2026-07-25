@@ -1,20 +1,19 @@
 ---
 title: "Integrations"
-description: "Public integration points for providers, MCP servers, skills, files, and webhooks."
+description: "Public integration points for models, MCP servers, skills, files, and webhooks."
 ---
 
 # Integrations
 
 aex keeps integrations explicit in the SDK call site so sessions are reproducible and auditable.
 
-## Providers
+## Models
 
-Pass BYOK provider keys per session. Supported provider/model combinations are listed in the [provider/runtime matrix](/docs/reference/provider-runtime-capabilities/).
+Model access is managed. Name a model by its `creator/model` gateway slug and the platform's key routes it — you supply no provider API key. Slug shape and runtime pairings are described in [Model access](/docs/reference/provider-runtime-capabilities/).
 
 ```ts
 await aex.start({
-  model: "claude-haiku-4-5",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
+  model: "anthropic/claude-haiku-4-5",
   message: "Summarize the latest local benchmark output."
 });
 ```

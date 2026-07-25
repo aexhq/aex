@@ -31,7 +31,7 @@ describe("renderEnvelope run terminals", () => {
   it("renders RUN_ERROR with its public failure message", () => {
     expect(renderEnvelope(event(
       "RUN_ERROR",
-      { outcome: "failed", failureClass: "provider_error", failureMessage: "provider unavailable" },
+      { outcome: "failed", failureClass: "provider-permanent", failureMessage: "provider unavailable" },
       "provider unavailable"
     ))).toBe(
       "✗ run error: provider unavailable"

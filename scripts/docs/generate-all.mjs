@@ -52,7 +52,6 @@ const appDocRoutes = new Map([
   ...conceptSources.map(([file, slug]) => [file, `/docs/concepts/${slug}/`]),
   ...guideSources.map(([file, slug]) => [file, `/docs/guides/${slug}/`]),
   ["product-boundaries.md", "/docs/guides/limits/"],
-  ["secrets-byok.md", "/docs/guides/secrets/"],
   ["provider-runtime-capabilities.md", "/docs/reference/provider-runtime-capabilities/"]
 ]);
 

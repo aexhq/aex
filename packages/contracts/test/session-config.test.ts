@@ -36,8 +36,11 @@ const baseSubmission = {
 
 describe("asset archive limits", () => {
   it("pins public authoring to the runtime materialization envelope", () => {
+    // 16 MiB compressed: sized to the SHARED api Lambda (512 MB) that
+    // GetObjects and DEFLATE-decompresses every pinned archive on every
+    // submit — not to the single-tenant sandbox that materializes it.
     expect(ASSET_ARCHIVE_LIMITS).toEqual({
-      maxCompressedBytes: 64 * 1024 * 1024,
+      maxCompressedBytes: 16 * 1024 * 1024,
       maxDecompressedBytes: 128 * 1024 * 1024,
       maxEntries: 1_000,
       maxMetadataBytes: 8 * 1024 * 1024
@@ -46,6 +49,11 @@ describe("asset archive limits", () => {
     expect(SKILL_BUNDLE_LIMITS.maxDecompressedBytes).toBe(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes);
     expect(SKILL_BUNDLE_LIMITS.maxFiles).toBe(ASSET_ARCHIVE_LIMITS.maxEntries);
     expect("maxBytes" in SKILL_BUNDLE_LIMITS).toBe(false);
+    // The invented nesting-depth cap is gone: traversal is killed
+    // structurally by the path validator, so depth bounded nothing.
+    expect("maxDepth" in SKILL_BUNDLE_LIMITS).toBe(false);
+    // PATH_MAX, the only real ceiling.
+    expect(SKILL_BUNDLE_LIMITS.maxPathLength).toBe(4096);
   });
 });
 
@@ -175,9 +183,16 @@ describe("session-config — normaliseSkillBundlePath", () => {
     expect(() => normaliseSkillBundlePath("foo\u0000bar")).toThrow(SkillBundleValidationError);
   });
 
-  it("rejects depth greater than the cap", () => {
-    const tooDeep = Array.from({ length: SKILL_BUNDLE_LIMITS.maxDepth + 1 }, (_, i) => `d${i}`).join("/") + "/SKILL.md";
-    expect(() => normaliseSkillBundlePath(tooDeep)).toThrow(SkillBundleValidationError);
+  it("accepts a deeply nested path — there is no nesting cap (review-2026-07-25 plan 04)", () => {
+    // `maxDepth` is deleted, not relaxed. Traversal is killed STRUCTURALLY above (`..`,
+    // `.`, empty, absolute, drive-letter and backslash segments all throw), so a depth
+    // cap protected nothing and only refused legitimate layouts. `maxPathLength` (now
+    // PATH_MAX, 4096) is the real bound and is asserted below.
+    const deep = Array.from({ length: 40 }, (_, i) => `d${i}`).join("/") + "/SKILL.md";
+    expect(deep.length).toBeLessThanOrEqual(SKILL_BUNDLE_LIMITS.maxPathLength);
+    expect(normaliseSkillBundlePath(deep)).toBe(deep);
+    // ...but a traversal segment at any depth is still refused.
+    expect(() => normaliseSkillBundlePath(`${deep}/../escape.md`)).toThrow(SkillBundleValidationError);
   });
 
   it("rejects paths longer than the cap", () => {

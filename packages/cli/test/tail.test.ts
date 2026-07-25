@@ -18,7 +18,7 @@ const evt = (
   const terminalData = type === "RUN_FINISHED"
     ? { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } }
     : type === "RUN_ERROR"
-      ? { outcome: "failed", failureClass: "internal", failureMessage: "run failed", costUsd: 0, providerUsage: [] }
+      ? { outcome: "failed", failureClass: "internal_error", failureMessage: "run failed", costUsd: 0, providerUsage: [] }
       : type === "TOOL_CALL_START"
         ? { id: `call-${sequence}` }
         : type === "TOOL_CALL_RESULT"
@@ -267,7 +267,7 @@ describe("aex tail", () => {
     const cap = makeIo({ argv: ["tail", "session-x", ...COMMON], sessionStatus: "error" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "RUN_ERROR", { failureMessage: "boom", failureClass: "provider_error" }));
+    ws.message(evt(0, "RUN_ERROR", { failureMessage: "boom", failureClass: "provider-permanent" }));
     await done;
     expect(cap.exit()).toBe(1);
     // jump-to-failure line on stderr
@@ -557,7 +557,7 @@ describe("aex inspect", () => {
     const cap = makeIo({ argv: ["inspect", "session-x", ...COMMON], sessionStatus: "error" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "RUN_ERROR", { failureMessage: "kaboom", failureClass: "timeout" }));
+    ws.message(evt(0, "RUN_ERROR", { failureMessage: "kaboom", failureClass: "wall_clock_exceeded" }));
     await done;
     expect(cap.exit()).toBe(1);
     expect(cap.out()).toContain("✗ kaboom");

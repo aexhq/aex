@@ -33,6 +33,10 @@ capture summary.
 | Bytes per captured file | 500 GB (decimal) maximum |
 | Total captured bytes | 500 GB (decimal) maximum |
 
+These two bound a single session's capture. They are not a workspace storage
+cap — see [Workspace scope](#workspace-scope) for what actually bounds stored
+bytes.
+
 ### Tool output
 
 | Limit | Value | Adjustable? |
@@ -79,9 +83,16 @@ time. Contact support before relying on unusually large fan-out.
 
 ## Workspace scope
 
-Workspace storage defaults to 500 GB (decimal). Use `aex.whoami()` to read the
-effective concurrency and submission limits attached to the current workspace.
-Stable admission errors include `workspace_concurrency_exceeded` and
+Stored bytes are bounded by your plan's monthly storage grant, not by a fixed
+per-workspace number. The Free plan includes 5 GB. An upload that cannot be
+paid for is refused at admission with `quota_exhausted` (HTTP 409) and a
+remedy telling you which of the two options applies: upgrade the plan, or add
+a payment method and enable overage. Paid plans with overage enabled are not
+refused; the usage is billed.
+
+Use `aex.whoami()` to read the effective concurrency and submission limits
+attached to the current workspace. Stable admission errors include
+`quota_exhausted`, `workspace_concurrency_exceeded` and
 `workspace_submit_rate_exceeded`.
 
 | Limit | Value | Adjustable? |

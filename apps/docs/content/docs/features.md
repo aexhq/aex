@@ -29,6 +29,6 @@ Name any model by its Vercel AI Gateway `creator/model` slug — the platform's 
 
 ## Typed control surface
 
-Strongly typed SDK inputs, CLI parity, workspace secrets, redaction, assistant text modes, and file capture policy.
+Strongly typed SDK inputs, CLI parity, workspace secrets, assistant text modes, and file capture policy.
 
 For product boundaries and unsupported claims, see [Limits](/docs/guides/limits/).

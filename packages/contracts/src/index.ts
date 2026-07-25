@@ -65,6 +65,7 @@ export type {
 export * from "./runtime-sizes.js";
 export * from "./runtime-kind.js";
 export * from "./runner-event.js";
+export * from "./failure-class.js";
 export * from "./event-envelope.js";
 export * from "./otlp-projection.js";
 export * from "./event-view.js";
@@ -117,6 +118,7 @@ export * from "./sse.js";
 export * from "./error-codes.js";
 export * from "./error-factory.js";
 export * from "./suggest.js";
+export * from "./ids.js";
 export * from "./api-key.js";
 export {
   CONTRACT_PARSE_ERROR,

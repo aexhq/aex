@@ -204,7 +204,13 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "unknown_workspace":
         case "workspace_inactive":
         case "workspace_spend_cap_exceeded":
+        case "workspace_cap_exceeded":
         case "insufficient_balance":
+        case "subscription_past_due":
+        case "quota_exhausted":
+        case "depth_exceeded":
+        case "out_of_memory":
+        case "disk_full":
         case "upstream_error":
         case "internal_error":
           return "generic";

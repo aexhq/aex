@@ -25,7 +25,7 @@ describe("submission parser - runtimeKind", () => {
     }
   });
 
-  it("omits runtimeKind when absent (downstream applies the Lambda default)", () => {
+  it("omits runtimeKind when absent (downstream applies the spot_container default)", () => {
     expect(parseSessionSubmissionRequest(baseRequest()).runtimeKind).toBeUndefined();
   });
 

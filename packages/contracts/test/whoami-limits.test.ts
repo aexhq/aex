@@ -4,6 +4,7 @@ import { HttpClient } from "../src/http.js";
 import { whoami } from "../src/operations.js";
 import { RUNTIME_SIZES } from "../src/runtime-sizes.js";
 import type { WhoAmI } from "../src/runtime-types.js";
+import { runtimeProfileFixture, runtimeProfilesFixture } from "./runtime-profile-fixture.js";
 
 function clientReturning(body: unknown): HttpClient {
   return new HttpClient({
@@ -33,15 +34,16 @@ const LIMITS: WhoAmI["limits"] = {
 };
 
 const RUNTIME_CAPABILITIES: WhoAmI["runtimeCapabilities"] = {
-  schemaVersion: 1,
-  capabilityVersion: "runtime-capabilities.v1",
+  schemaVersion: 2,
+  capabilityVersion: "runtime-capabilities.v2",
   capabilityHash: `sha256:${"a".repeat(64)}`,
   availableRuntimeKinds: ["container", "spot_container"],
   sizesByRuntimeKind: {
     container: [RUNTIME_SIZES[0]!],
     spot_container: [RUNTIME_SIZES[0]!]
   },
-  unavailable: { lambda: { code: "runtime_unavailable" } }
+  unavailable: { lambda: { code: "runtime_unavailable" } },
+  profilesByRuntimeKind: runtimeProfilesFixture()
 };
 
 describe("whoami limits typing", () => {
@@ -101,7 +103,8 @@ describe("whoami limits typing", () => {
   });
 
   it.each([
-    { ...RUNTIME_CAPABILITIES, schemaVersion: 2 },
+    { ...RUNTIME_CAPABILITIES, schemaVersion: 1 },
+    { ...RUNTIME_CAPABILITIES, schemaVersion: 3 },
     { ...RUNTIME_CAPABILITIES, capabilityHash: "sha256:not-a-digest" },
     { ...RUNTIME_CAPABILITIES, availableRuntimeKinds: ["container", "container"] },
     { ...RUNTIME_CAPABILITIES, availableRuntimeKinds: ["container", "native"] },
@@ -111,6 +114,24 @@ describe("whoami limits typing", () => {
       availableRuntimeKinds: ["container", "lambda"],
       sizesByRuntimeKind: { container: [RUNTIME_SIZES[0]!] },
       unavailable: { lambda: { code: "runtime_unavailable" }, spot_container: { code: "runtime_unavailable" } }
+    },
+    // A response that says WHICH runtimes exist but not what they DO is exactly the
+    // gap the old public parity claim papered over. It is a contract violation.
+    { ...RUNTIME_CAPABILITIES, profilesByRuntimeKind: undefined },
+    { ...RUNTIME_CAPABILITIES, profilesByRuntimeKind: { container: runtimeProfileFixture("container") } },
+    {
+      ...RUNTIME_CAPABILITIES,
+      profilesByRuntimeKind: {
+        ...runtimeProfilesFixture(),
+        lambda: { ...runtimeProfileFixture("lambda"), capabilities: { toolExecution: "partial" } }
+      }
+    },
+    {
+      ...RUNTIME_CAPABILITIES,
+      profilesByRuntimeKind: {
+        ...runtimeProfilesFixture(),
+        container: { ...runtimeProfileFixture("container"), delivery: { toolExecution: "maybe-once" } }
+      }
     }
   ])("rejects malformed or contradictory runtime capabilities", async (runtimeCapabilities) => {
     await expect(whoami(clientReturning({

@@ -7,19 +7,21 @@ import {
 import { HttpClient } from "../src/http.js";
 import { whoami } from "../src/operations.js";
 import { RUNTIME_SIZES } from "../src/runtime-sizes.js";
+import { runtimeProfilesFixture } from "./runtime-profile-fixture.js";
 
 const canonicalDigest = `sha256:${"0123456789abcdef".repeat(4)}`;
 
 const runtimeCapabilities = {
-  schemaVersion: 1,
-  capabilityVersion: "runtime-capabilities.v1",
+  schemaVersion: 2,
+  capabilityVersion: "runtime-capabilities.v2",
   capabilityHash: canonicalDigest,
   availableRuntimeKinds: ["container"],
   sizesByRuntimeKind: { container: [RUNTIME_SIZES[0]!] },
   unavailable: {
     spot_container: { code: "runtime_unavailable" },
     lambda: { code: "runtime_unavailable" }
-  }
+  },
+  profilesByRuntimeKind: runtimeProfilesFixture()
 } as const;
 
 const limits = {

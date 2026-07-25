@@ -83,7 +83,12 @@ export const SKILL_RESERVED_NAMES: ReadonlySet<string> = new Set(["skills", "ski
  * have a different quota; these limits describe usable runtime inputs.
  */
 export const ASSET_ARCHIVE_LIMITS = {
-  maxCompressedBytes: 64 * 1024 * 1024,
+  /**
+   * 16 MiB. Sized to the SHARED api Lambda (512 MB) that `GetObject`s and
+   * DEFLATE-decompresses every pinned archive on every submit, NOT to the
+   * single-tenant sandbox. Raisable once that preflight moves off shared infra.
+   */
+  maxCompressedBytes: 16 * 1024 * 1024,
   maxDecompressedBytes: 128 * 1024 * 1024,
   maxEntries: 1_000,
   maxMetadataBytes: 8 * 1024 * 1024
@@ -97,10 +102,8 @@ export const SKILL_BUNDLE_LIMITS = {
   maxDecompressedBytes: ASSET_ARCHIVE_LIMITS.maxDecompressedBytes,
   /** Number of regular file entries (directories don't count). */
   maxFiles: ASSET_ARCHIVE_LIMITS.maxEntries,
-  /** Maximum directory nesting depth — `a/b/c/d` has depth 4. */
-  maxDepth: 16,
-  /** Single-entry path length cap. */
-  maxPathLength: 512,
+  /** Single-entry path length cap: `PATH_MAX`, the only real ceiling. */
+  maxPathLength: 4096,
   /** Stored file mode for ordinary files. */
   defaultFileMode: 0o644,
   /** Stored directory mode. */
@@ -298,9 +301,12 @@ export class SkillBundleValidationError extends Error {
  *   - backslash separators (Windows)
  *   - `..` segments anywhere in the path
  *   - `.` segments anywhere except a leading bare `.`
- *   - paths whose length exceeds `SKILL_BUNDLE_LIMITS.maxPathLength`
- *   - paths whose depth exceeds `SKILL_BUNDLE_LIMITS.maxDepth`
+ *   - paths whose length exceeds `SKILL_BUNDLE_LIMITS.maxPathLength` (PATH_MAX, 4096)
  *   - NUL bytes
+ *
+ * There is deliberately NO nesting-depth cap (review-2026-07-25 plan 04): traversal is
+ * already dead structurally via the segment rules above, so a depth limit refused
+ * legitimate layouts while protecting nothing.
  */
 export function normaliseSkillBundlePath(input: string): string {
   if (typeof input !== "string") {
@@ -342,11 +348,10 @@ export function normaliseSkillBundlePath(input: string): string {
       throw new SkillBundleValidationError(`bundle entry path contains empty or '.' segment: ${input}`);
     }
   }
-  if (segments.length > SKILL_BUNDLE_LIMITS.maxDepth) {
-    throw new SkillBundleValidationError(
-      `bundle entry path exceeds maxDepth (${SKILL_BUNDLE_LIMITS.maxDepth}): ${input}`
-    );
-  }
+  // NO nesting-depth cap (review-2026-07-25 plan 04). Traversal is already dead
+  // STRUCTURALLY above — `..`, `.`, empty, absolute, drive-letter and backslash
+  // segments are each rejected outright — so a depth bound protected nothing and
+  // only refused legitimately deep trees.
   return input;
 }
 
@@ -614,6 +619,102 @@ export function rejectStdioMcpShape(record: Record<string, unknown>): void {
 }
 
 /**
+ * One entry in {@link EGRESS_DENIED_RANGES}.
+ *
+ * `cidr` is the canonical wire form. IPv4 entries are matched numerically FROM
+ * `cidr` — there is no second hand-written octet test. The IPv6 special forms
+ * keep an explicit `match` predicate because they are textual shapes (`::`,
+ * `::1`) or prefix families whose full IPv6 parse would add no precision here.
+ *
+ * MIRROR of `EGRESS_DENIED_RANGES` in the platform repo's
+ * `packages/shared/src/blueprint.ts`, which OWNS this set. This package cannot
+ * import from the platform tree, so the table is duplicated and held in parity
+ * by the platform's `scripts/validate/egress-cidr-ssot.test.ts` (which reads
+ * this file) plus `scripts/cicd/check-contract-parity.mjs`. Do not edit one
+ * side alone.
+ */
+interface EgressDeniedRange {
+  readonly cidr: string;
+  readonly family: 4 | 6;
+  readonly reason: string;
+  readonly match?: (host: string) => boolean;
+}
+
+/**
+ * The canonical private/unroutable address set — the union resolved once so the
+ * SDK, the CLI, and the platform admission path refuse the same bytes.
+ */
+const EGRESS_DENIED_RANGES: readonly EgressDeniedRange[] = [
+  { cidr: "0.0.0.0/8", family: 4, reason: "must not target unroutable IPv4 (0.0.0.0/8)" },
+  { cidr: "10.0.0.0/8", family: 4, reason: "must not target RFC1918 IPv4 (10.0.0.0/8)" },
+  { cidr: "127.0.0.0/8", family: 4, reason: "must not target loopback IPv4 (127.0.0.0/8)" },
+  {
+    cidr: "169.254.0.0/16",
+    family: 4,
+    reason: "must not target link-local IPv4 (169.254.0.0/16) — cloud metadata range"
+  },
+  { cidr: "100.64.0.0/10", family: 4, reason: "must not target CGNAT IPv4 (100.64.0.0/10)" },
+  { cidr: "198.18.0.0/15", family: 4, reason: "must not target benchmark IPv4 (198.18.0.0/15)" },
+  { cidr: "172.16.0.0/12", family: 4, reason: "must not target RFC1918 IPv4 (172.16.0.0/12)" },
+  { cidr: "192.168.0.0/16", family: 4, reason: "must not target RFC1918 IPv4 (192.168.0.0/16)" },
+  { cidr: "224.0.0.0/3", family: 4, reason: "must not target multicast/reserved IPv4 (224.0.0.0/3)" },
+  {
+    cidr: "::/128",
+    family: 6,
+    reason: "must not target unspecified IPv6 (::)",
+    match: (host) => host === "::"
+  },
+  {
+    cidr: "::1/128",
+    family: 6,
+    reason: "must not target loopback IPv6 (::1)",
+    match: (host) => host === "::1" || host === "0:0:0:0:0:0:0:1"
+  },
+  {
+    cidr: "fe80::/10",
+    family: 6,
+    reason: "must not target link-local IPv6 (fe80::/10)",
+    match: (host) => /^fe[89ab][0-9a-f]?:/.test(host)
+  },
+  {
+    cidr: "fc00::/7",
+    family: 6,
+    reason: "must not target unique-local IPv6 (fc00::/7)",
+    match: (host) => /^f[cd][0-9a-f]{0,2}:/.test(host)
+  },
+  {
+    cidr: "64:ff9b::/96",
+    family: 6,
+    reason: "must not target IPv6 NAT64 prefix (64:ff9b::/96)",
+    match: (host) => host.startsWith("64:ff9b::")
+  }
+];
+
+// NOTE — `::ffff:0:0/96` is deliberately ABSENT from the table above. Go's
+// `net.IPNet.Contains` degrades an IPv4-mapped `/96` to IPv4 `0.0.0.0/0`, so
+// adding it to the egress proxy's deny_ranges would block ALL IPv4. It is also
+// unnecessary: IPv4-mapped literals are folded to IPv4 and classified by the
+// IPv4 rules above (see the `::ffff:` branch in the IP-literal classifier).
+
+/** IPv4 dotted-quad → uint32, or null when `host` is not a dotted-quad. */
+function ipv4ToUint32(host: string): number | null {
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return null;
+  const octets = host.split(".").map((o) => Number.parseInt(o, 10));
+  if (octets.some((o) => o > 255)) return null;
+  return ((octets[0]! << 24) | (octets[1]! << 16) | (octets[2]! << 8) | octets[3]!) >>> 0;
+}
+
+/** Whether `value` (uint32) falls inside the IPv4 `cidr`. */
+function ipv4InCidr(value: number, cidr: string): boolean {
+  const [network, prefixText] = cidr.split("/") as [string, string];
+  const base = ipv4ToUint32(network);
+  if (base === null) return false;
+  const prefix = Number.parseInt(prefixText, 10);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (value & mask) === (base & mask);
+}
+
+/**
  * Reasons an IP-literal host should be refused. Returns null when the
  * literal is a routable public address (or not an IP literal at all — name
  * resolution is the caller's concern). This numeric-range deny-list is kept
@@ -649,59 +750,24 @@ function denyReasonForHostIp(host: string): string | null {
   }
   const v4 = denyReasonForV4(host);
   if (v4) return v4;
-  // Unspecified IPv6 cannot identify a routable remote endpoint.
-  if (host === "::") {
-    return "must not target unspecified IPv6 (::)";
-  }
-  // Loopback IPv6 (::1 in any acceptable form)
-  if (host === "::1" || host === "0:0:0:0:0:0:0:1") {
-    return "must not target loopback IPv6 (::1)";
-  }
-  // Link-local IPv6 (fe80::/10 — fe80:: through febf::)
-  if (/^fe[89ab][0-9a-f]?:/.test(host)) {
-    return "must not target link-local IPv6 (fe80::/10)";
-  }
-  // Unique-local IPv6 (fc00::/7 — fc00:: through fdff::), the IPv6
-  // equivalent of RFC1918 private space.
-  if (/^f[cd][0-9a-f]{0,2}:/.test(host)) {
-    return "must not target unique-local IPv6 (fc00::/7)";
+  for (const range of EGRESS_DENIED_RANGES) {
+    if (range.family === 6 && range.match?.(host) === true) return range.reason;
   }
   return null;
 }
 
 /**
- * IPv4-literal deny-list. Returns null when `host` is not a dotted-quad or
+ * IPv4-literal deny-list, derived from {@link EGRESS_DENIED_RANGES}. Returns
+ * null when `host` is not a dotted-quad or
  * is a routable public IPv4. Split out of {@link denyReasonForHostIp} so the
  * IPv4-mapped IPv6 branch reuses the exact same ranges.
  */
 function denyReasonForV4(host: string): string | null {
-  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return null;
-  const octets = host.split(".").map((o) => Number.parseInt(o, 10));
-  if (octets.some((o) => o > 255)) return null;
-  const [a, b] = octets as [number, number, number, number];
-  // Unspecified / current-network IPv4 is not a routable remote target.
-  if (a === 0) return "must not target unroutable IPv4 (0.0.0.0/8)";
-  // Loopback IPv4 (127.0.0.0/8)
-  if (a === 127) return "must not target loopback IPv4 (127.0.0.0/8)";
-  // Link-local / metadata IPv4 (169.254.0.0/16 — includes 169.254.169.254)
-  if (a === 169 && b === 254) {
-    return "must not target link-local IPv4 (169.254.0.0/16) — cloud metadata range";
+  const value = ipv4ToUint32(host);
+  if (value === null) return null;
+  for (const range of EGRESS_DENIED_RANGES) {
+    if (range.family === 4 && ipv4InCidr(value, range.cidr)) return range.reason;
   }
-  // CGNAT shared address space (100.64.0.0/10) — runners NAT through it, so
-  // an upstream there can reach sibling tenants / the runner host.
-  if (a === 100 && b >= 64 && b <= 127) {
-    return "must not target CGNAT IPv4 (100.64.0.0/10)";
-  }
-  // Benchmarking range (198.18.0.0/15) is reserved for inter-network tests.
-  if (a === 198 && (b === 18 || b === 19)) {
-    return "must not target benchmark IPv4 (198.18.0.0/15)";
-  }
-  // RFC1918 private ranges (10/8, 172.16/12, 192.168/16) — defense in depth.
-  if (a === 10) return "must not target RFC1918 IPv4 (10.0.0.0/8)";
-  if (a === 172 && b >= 16 && b <= 31) return "must not target RFC1918 IPv4 (172.16.0.0/12)";
-  if (a === 192 && b === 168) return "must not target RFC1918 IPv4 (192.168.0.0/16)";
-  // Multicast, reserved, and limited-broadcast space is never a public HTTP target.
-  if (a >= 224) return "must not target multicast/reserved IPv4 (224.0.0.0/3)";
   return null;
 }
 

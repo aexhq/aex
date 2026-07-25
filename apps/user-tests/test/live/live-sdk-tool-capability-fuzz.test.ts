@@ -677,7 +677,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
   );
 
   it.each([...CUSTOM_CASES])(
-    "seeded custom-tool case $id covers schemas, context, result forms, errors, and redaction",
+    "seeded custom-tool case $id covers schemas, context, result forms, and errors",
     async (testCase) => {
       const customSecret = `custom-secret-${testCase.id}-${testCase.text}-${testCase.count}`;
       const secretDigest = sha256(customSecret);
@@ -698,7 +698,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
         `1. custom_transform with ${JSON.stringify(transformInput)}.`,
         "2. custom_context with an empty object.",
         `3. custom_failure with {"reason":"expected_${testCase.text}"}. This failure is expected; continue.`,
-        `Reply with CUSTOM_FUZZ_OK ${expectedTransform} ${testCase.appMode} redacted-secret.`
+        `Reply with CUSTOM_FUZZ_OK ${expectedTransform} ${testCase.appMode} secret-read.`
       ].join("\n");
       const body = `
 const transform = await Tool.fromFiles({
@@ -726,7 +726,7 @@ const transform = await Tool.fromFiles({
 });
 const context = await Tool.fromFiles({
   name: "custom_context",
-  description: "Reads customer environment and secret context with redaction.",
+  description: "Reads customer environment and secret context.",
   inputSchema: {
     type: "object",
     properties: {},
@@ -811,16 +811,17 @@ process.stdout.write(JSON.stringify(await observe(result)));
       );
       expect(contextResult?.isError, dump).toBe(false);
       expect(contextResult?.text, dump).toContain(`mode=${testCase.appMode}`);
-      expect(contextResult?.text.includes(customSecret), dump).toBe(false);
-      expect(contextResult?.text.includes(secretDigest), dump).toBe(false);
-      expect(/REDACTED|\*{3}/.test(contextResult?.text ?? ""), dump).toBe(true);
+      // Plan 09 (2026-07-25): the platform does NOT mask the customer's own registered
+      // secret out of the customer's own tool result. The tool read it, so it comes back.
+      expect(contextResult?.text.includes(customSecret), dump).toBe(true);
+      expect(/REDACTED|\*{3}/.test(contextResult?.text ?? ""), dump).toBe(false);
       const failureResult = observation.toolResults.find(
         (result) => result.name === "custom_failure"
       );
       expect(failureResult?.isError, dump).toBe(true);
       expect(failureResult?.text, dump).toContain(`expected_${testCase.text}`);
-      expect(failureResult?.text.includes(customSecret), dump).toBe(false);
-      expect(/REDACTED|\*{3}/.test(failureResult?.text ?? ""), dump).toBe(true);
+      // Same: a tool's own throw message reaches the agent honestly and unmasked.
+      expect(/REDACTED|\*{3}/.test(failureResult?.text ?? ""), dump).toBe(false);
     },
     16 * 60_000
   );

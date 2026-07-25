@@ -7,7 +7,7 @@
  *   - presign errors fail without a buffered `/api/assets` retry
  */
 import { describe, expect, it, mock } from "bun:test";
-import { ASSET_ARCHIVE_LIMITS, HttpClient } from "@aexhq/contracts";
+import { ASSET_ARCHIVE_LIMITS, HTTP_RETRY_POLICY, HttpClient } from "@aexhq/contracts";
 import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/asset-upload.js";
 import { AexApiError, AexNetworkError } from "../../src/index.js";
 
@@ -239,12 +239,14 @@ describe("uploadAsset (direct-to-storage)", () => {
     }
 
     expect(thrown).toBeInstanceOf(Error);
-    expect(fetch).toHaveBeenCalledTimes(5);
+    // The attempt ceiling is the ONE shared policy's, not an upload-local number:
+    // the CLI and the SDK now upload the same bytes under the same budget.
+    expect(fetch).toHaveBeenCalledTimes(HTTP_RETRY_POLICY.maxAttempts);
     expect(String((thrown as Error).message)).toContain(
       `https://[redacted]@acct.object-storage.example.test/b/${hex}?[redacted]`
     );
     expect(String((thrown as Error).message)).toContain("ECONNRESET");
-    expect(String((thrown as Error).message)).toContain("after 5 attempts");
+    expect(String((thrown as Error).message)).toContain(`after ${HTTP_RETRY_POLICY.maxAttempts} attempts`);
     expect(String((thrown as Error).message)).not.toMatch(/X-Amz|Credential=credential|Security-Token|Signature|AKIA_TEST|secret|token/);
   });
 

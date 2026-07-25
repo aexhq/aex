@@ -1,11 +1,11 @@
 import {
+  idPatternSource,
+  isId,
   rejectStdioMcpShape,
   type McpServerRef,
   type PlatformMcpServerSecret,
   type RemoteMcpTransport
 } from "@aexhq/contracts";
-
-const WORKSPACE_MCP_ID_PATTERN = /^mcp_[A-Za-z0-9_-]{8,128}$/;
 
 /**
  * Wire shape for a workspace MCP server ref in `submission.mcpServers[]`.
@@ -65,8 +65,12 @@ export class McpServer {
     // shapes) is rejected with the canonical error.
     rejectStdioMcpShape(args as unknown as Record<string, unknown>);
     if (args.kind === "workspace") {
-      if (typeof args.id !== "string" || !WORKSPACE_MCP_ID_PATTERN.test(args.id)) {
-        throw new Error(`McpServer.fromId: id must match ${WORKSPACE_MCP_ID_PATTERN.source}`);
+      // The shape comes from the id owner (`@aexhq/contracts/ids`), never from
+      // a local copy: the hand-written pattern this replaced admitted
+      // `mcp_<8..128 of [A-Za-z0-9_-]>`, which is wider than anything the
+      // platform can mint, so a typo'd id reached the BFF instead of the user.
+      if (!isId("mcp", args.id)) {
+        throw new Error(`McpServer.fromId: id must match ${idPatternSource("mcp")}`);
       }
       this.kind = "workspace";
       this.id = args.id;

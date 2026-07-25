@@ -43,7 +43,9 @@ contact support before relying on unusually large workloads.
 
 ## Workspace
 
-Workspace storage defaults to 500 GB (decimal). Admission, concurrency, and
-other adjustable workspace limits are returned by `aex.whoami()` (CLI:
-`aex whoami`); contact support when the effective value does not fit your
-workload.
+Workspace storage is bounded by your plan's monthly storage grant, not by a
+fixed per-workspace number. The Free plan includes 5 GB; paid plans have no
+per-dimension storage quota and bill usage beyond the included allowance once
+you add a payment method and enable overage. Admission, concurrency, and other
+adjustable workspace limits are returned by `aex.whoami()` (CLI: `aex whoami`);
+contact support when the effective value does not fit your workload.

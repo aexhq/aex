@@ -1,5 +1,4 @@
 import {
-  ASSET_ARCHIVE_LIMITS,
   BUILTIN_TOOL_NAMES,
   DEFAULT_FILE_MOUNT_PATH,
   assertWorkspaceInstructionResourceName,
@@ -30,6 +29,7 @@ import {
   type WorkspaceToolRef
 } from "@aexhq/contracts";
 import {
+  assertArchiveExpandedSize,
   bundleSingleFile,
   bundleSkillFiles,
   bundleToolFiles,
@@ -187,7 +187,7 @@ export async function buildCliFile(
   if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) {
     throw new Error(`${source}: bytes must be a non-empty Uint8Array`);
   }
-  assertCliExpandedSize(bytes.byteLength, source);
+  assertArchiveExpandedSize(bytes.byteLength, source);
   const zip = bundleSingleFile(filename, bytes, source, false);
   return {
     name: slugFromFilename(filename),
@@ -195,12 +195,6 @@ export async function buildCliFile(
     mountPath: DEFAULT_FILE_MOUNT_PATH,
     bytes: zip
   };
-}
-
-export function assertCliExpandedSize(size: number, source: string): void {
-  if (!Number.isSafeInteger(size) || size < 0 || size > ASSET_ARCHIVE_LIMITS.maxDecompressedBytes) {
-    throw new Error(`${source} exceeds the 128 MiB expanded limit (got ${size})`);
-  }
 }
 
 export function toCliSessionEnvironment(env: PlatformEnvironment | undefined): CliSessionEnvironmentOptions | undefined {

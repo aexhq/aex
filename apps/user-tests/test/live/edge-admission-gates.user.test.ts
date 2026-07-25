@@ -7,17 +7,18 @@
  *   1. Concurrency: `whoami().limits.maxConcurrentSessions` is enforced for
  *      `client.start(...)` / session turns with a public 429
  *      `workspace_concurrency_exceeded` once the cap is saturated.
- *   2. A whitespace-only provider key is rejected at session create.
- *   3. A provider/model mismatch is rejected at session create, before any
- *      billable turn launches.
+ *   2. A retired `secrets.apiKeys` provider key is rejected at session create
+ *      with 400 `invalid_submission` (managed AI Gateway; no customer key).
+ *   3. A non-slug model is rejected at session create, before any billable turn
+ *      launches.
  *
- * Billing: probes 2 and 3 create born-empty idle sessions and delete them
- * without a turn (zero billable). Probe 1 sends cap+1 tiny turns (~$0.003
- * at deepseek rates) — it cannot observe concurrent running states without
- * running concurrently.
+ * Billing: probes 2 and 3 are refused at admission and never create a session
+ * (zero billable). Probe 1 sends cap+1 tiny turns (~$0.003 at gateway rates) —
+ * it cannot observe concurrent running states without running concurrently.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
- * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
+ * Required env: AEX_API_URL, AEX_API_KEY, + AEX_USER_TEST_TARBALL/VERSION
+ * (wired by the shared runner). No provider key: the platform's managed gateway
+ * key serves every model call.
  *
  * Optional env: AEX_ADMISSION_GATES_MAX_SAFE_CAP limits the concurrency probe
  * to low-cap isolated workspaces (default 10). The test fails before launching
@@ -72,7 +73,6 @@ const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
   const noRetryClient = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY, retry: false });
-  const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const MAX_SAFE_CAP = Number(process.env.AEX_ADMISSION_GATES_MAX_SAFE_CAP ?? "10");
   const HOLD_SECONDS = Number(process.env.AEX_ADMISSION_GATES_HOLD_SECONDS ?? "45");
@@ -311,19 +311,28 @@ describe("edge: session-path admission gates", () => {
   );
 
   it(
-    "a whitespace-only provider key is rejected at session create",
+    "a retired provider-key secret is rejected at session create",
     async () => {
+      // Managed AI Gateway: a customer provider key is no longer part of the
+      // contract, so the OLD `missing_provider_key` gate is gone. The live gate
+      // now runs the other way — a stale client that still sends
+      // `secrets.apiKeys` is refused by the submission-shape check
+      // (platform api.ts: `secrets.apiKeys is not supported (managed AI Gateway;
+      // no customer provider key)`), which surfaces as 400 `invalid_submission`.
+      // Posted raw so the SDK's own field guard does not short-circuit the probe.
       const body = `
-        const out = { status: null, error: null, admittedId: null };
+        const out = { status: null, error: null, message: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           submission: {
             model: MODEL,
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },
+          secrets: { apiKeys: { anthropic: "sk-ant-retired-field-probe" } },
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
+        out.message = r.body && typeof r.body.message === "string" ? r.body.message : null;
         const admitted = r.body && r.body.session && typeof r.body.session.id === "string" ? r.body.session.id : null;
         if (admitted) {
           out.admittedId = admitted;
@@ -331,22 +340,28 @@ describe("edge: session-path admission gates", () => {
         }
         console.log(JSON.stringify(out));
       `;
-      const result = await runChild(install, "admission-whitespace-key.mjs", body);
-      console.info("edge-admission-gates whitespace-key result", JSON.stringify(result));
+      const result = await runChild(install, "admission-retired-provider-key.mjs", body);
+      console.info("edge-admission-gates retired-provider-key result", JSON.stringify(result));
       expect(result.status).toBe(400);
-      expect(result.error).toBe("missing_provider_key");
+      expect(result.error).toBe("invalid_submission");
+      expect(String(result.message)).toContain("secrets.apiKeys is not supported");
+      expect(result.admittedId).toBeNull();
     },
     5 * 60_000
   );
 
   it(
-    "a provider/model mismatch is rejected at session create, not at the first billable turn",
+    "a non-slug model is rejected at session create, not at the first billable turn",
     async () => {
+      // The serving provider is derived from the slug's creator prefix, so there
+      // is no provider/model pair left to mismatch. What remains gated at create
+      // is the slug SHAPE: a bare model name (the pre-pivot spelling) must 400
+      // before a container launches, not ~45s later at the first billable turn.
       const body = `
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           submission: {
-            model: MODEL,
+            model: "claude-haiku-4-5",
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },
@@ -360,10 +375,11 @@ describe("edge: session-path admission gates", () => {
         }
         console.log(JSON.stringify(out));
       `;
-      const result = await runChild(install, "admission-provider-mismatch.mjs", body);
-      console.info("edge-admission-gates provider-mismatch result", JSON.stringify(result));
+      const result = await runChild(install, "admission-non-slug-model.mjs", body);
+      console.info("edge-admission-gates non-slug-model result", JSON.stringify(result));
       expect(result.status).toBe(400);
       expect(result.error).toBe("invalid_model");
+      expect(result.admittedId).toBeNull();
     },
     5 * 60_000
   );

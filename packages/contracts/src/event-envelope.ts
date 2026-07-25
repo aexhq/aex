@@ -40,6 +40,7 @@
 import type { JsonValue } from "./submission.js";
 import { SESSION_TERMINAL_OUTCOMES, type SessionTerminalOutcome } from "./status.js";
 import type { RunnerEvent } from "./runner-event.js";
+import { AEX_FAILURE_CLASSES, isAexFailureClass, type AexFailureClass } from "./failure-class.js";
 import { parseProviderFault, type ProviderFault } from "./provider-fault.js";
 
 /** CloudEvents `specversion` the envelope conforms to. */
@@ -235,7 +236,8 @@ export type AexRunFinishedData = Readonly<Record<string, JsonValue>> & {
 /** Payload carried by a valid public `RUN_ERROR` event. */
 export type AexRunErrorData = Readonly<Record<string, JsonValue>> & {
   readonly outcome: SessionTerminalOutcome;
-  readonly failureClass: string;
+  /** CLOSED taxonomy ({@link AEX_FAILURE_CLASSES}) — branchable, never an open string. */
+  readonly failureClass: AexFailureClass;
   readonly failureMessage: string;
   readonly providerFault?: ProviderFault;
 };
@@ -264,6 +266,8 @@ export type AexToolCallResultData = Readonly<Record<string, JsonValue>> & {
   readonly content: JsonValue;
   readonly isError?: boolean;
   readonly messageId?: string;
+  /** True when `content` was CLIPPED to fit the event budget — not the whole result. */
+  readonly truncated?: boolean;
 };
 
 /** Payload carried by AG-UI's CUSTOM carrier. */
@@ -277,6 +281,8 @@ export type AexLogData = Readonly<Record<string, JsonValue>> & {
   readonly level: AexLogLevel;
   readonly message: string;
   readonly fields?: Readonly<Record<string, JsonValue>>;
+  /** True when a dominant field was CLIPPED to fit the event budget. */
+  readonly truncated?: boolean;
 };
 
 export type AexRunStartedEvent = AexEventBase & {
@@ -592,9 +598,7 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       if (typeof d.outcome !== "string" || !TERMINAL_OUTCOMES.has(d.outcome)) {
         return malformed("RUN_ERROR", "data.outcome", `one of ${SESSION_TERMINAL_OUTCOMES.join(", ")}`);
       }
-      if (typeof d.failureClass !== "string" || d.failureClass.length === 0) {
-        return malformed("RUN_ERROR", "data.failureClass", "a non-empty string");
-      }
+      if (!isAexFailureClass(d.failureClass)) return malformed("RUN_ERROR", "data.failureClass", `one of ${AEX_FAILURE_CLASSES.join(", ")}`);
       if (typeof d.failureMessage !== "string" || d.failureMessage.length === 0) {
         return malformed("RUN_ERROR", "data.failureMessage", "a non-empty string");
       }
@@ -616,9 +620,7 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       if (!optionalString(d, "eventId")) {
         return malformed("TEXT_MESSAGE_CONTENT", "data.eventId", "a string when present");
       }
-      if (!optionalBoolean(d, "delta")) {
-        return malformed("TEXT_MESSAGE_CONTENT", "data.delta", "a boolean when present");
-      }
+      if (!optionalBoolean(d, "delta")) return malformed("TEXT_MESSAGE_CONTENT", "data.delta", "a boolean when present");
       return optionalBoolean(d, "truncated")
         ? undefined
         : malformed("TEXT_MESSAGE_CONTENT", "data.truncated", "a boolean when present");
@@ -645,9 +647,8 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       if (!optionalBoolean(d, "isError")) {
         return malformed("TOOL_CALL_RESULT", "data.isError", "a boolean when present");
       }
-      return optionalString(d, "messageId")
-        ? undefined
-        : malformed("TOOL_CALL_RESULT", "data.messageId", "a string when present");
+      if (!optionalString(d, "messageId")) return malformed("TOOL_CALL_RESULT", "data.messageId", "a string when present");
+      return optionalBoolean(d, "truncated") ? undefined : malformed("TOOL_CALL_RESULT", "data.truncated", "a boolean when present");
     case "CUSTOM":
       if (typeof d.name !== "string" || d.name.length === 0) {
         return malformed("CUSTOM", "data.name", "a non-empty string");
@@ -662,9 +663,8 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       }
       if (d.level !== e.level) return malformed("LOG", "data.level", "the first-class event level");
       if (typeof d.message !== "string") return malformed("LOG", "data.message", "a string");
-      return d.fields === undefined || isJsonObjectShape(d.fields)
-        ? undefined
-        : malformed("LOG", "data.fields", "a JSON object when present");
+      if (d.fields !== undefined && !isJsonObjectShape(d.fields)) return malformed("LOG", "data.fields", "a JSON object when present");
+      return optionalBoolean(d, "truncated") ? undefined : malformed("LOG", "data.truncated", "a boolean when present");
     default:
       return null;
   }
@@ -768,7 +768,7 @@ export function isEventChannel(e: AexEventBase): boolean {
  * same bound. A conservative margin under the hard 2 MiB leaves room for row
  * overhead and column framing.
  */
-export const MAX_SQLITE_ROW_BYTES = 2_000_000 as const;
+export const EVENT_ROW_MAX_BYTES = 2_000_000 as const;
 
 /** Serialized UTF-8 byte length of an event (the size the row must hold). */
 export function serializedEventBytes(e: AexEvent): number {
@@ -776,7 +776,7 @@ export function serializedEventBytes(e: AexEvent): number {
 }
 
 /** True when an event's serialized form exceeds the row budget and must be split. */
-export function exceedsRowBudget(e: AexEvent, max: number = MAX_SQLITE_ROW_BYTES): boolean {
+export function exceedsRowBudget(e: AexEvent, max: number = EVENT_ROW_MAX_BYTES): boolean {
   return serializedEventBytes(e) > max;
 }
 

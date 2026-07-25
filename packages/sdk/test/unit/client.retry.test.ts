@@ -9,7 +9,7 @@
  * deterministically without a live backend.
  */
 import { describe, expect, it } from "bun:test";
-import type { FetchLike } from "@aexhq/contracts";
+import { HTTP_RETRY_POLICY, type FetchLike } from "@aexhq/contracts";
 import { Aex, isRateLimited, AexRateLimitError, SessionStateError } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
 import { FakeWebSocket } from "@aexhq/contracts/testing";
@@ -288,9 +288,11 @@ describe("Aex built-in transport retry", () => {
     const err = await promise.catch((e: unknown) => e);
     expect(isRateLimited(err)).toBe(true);
     expect((err as AexRateLimitError).status).toBe(429);
-    expect((err as AexRateLimitError).attempts).toBe(4);
-    // Four create attempts, one shared key, and NO WebSocket ever opened.
-    expect(h.idempotencyKeys("/api/sessions")).toHaveLength(4);
+    // The attempt budget is the ONE shared policy's — the same object the `aex`
+    // CLI hands its transport (see cli/test/retry-policy-parity.test.ts).
+    expect((err as AexRateLimitError).attempts).toBe(HTTP_RETRY_POLICY.maxAttempts);
+    // One create attempt per budgeted try, one shared key, NO WebSocket opened.
+    expect(h.idempotencyKeys("/api/sessions")).toHaveLength(HTTP_RETRY_POLICY.maxAttempts);
     expect(h.sockets).toHaveLength(0);
   });
 });

@@ -1,9 +1,14 @@
 import { ASSET_ARCHIVE_LIMITS } from "./session-config.js";
 
+/** Render a byte ceiling the way the message quotes it, so the two cannot drift. */
+function mib(bytes: number): string {
+  return `${bytes / (1024 * 1024)} MiB`;
+}
+
 export function assertArchiveCompressedSize(size: number, source: string): void {
   if (!Number.isSafeInteger(size) || size < 0 || size > ASSET_ARCHIVE_LIMITS.maxCompressedBytes) {
     throw new Error(
-      `${source} exceeds the 64 MiB compressed limit ` +
+      `${source} exceeds the ${mib(ASSET_ARCHIVE_LIMITS.maxCompressedBytes)} compressed limit ` +
         `(got ${Number.isFinite(size) ? size : "an invalid byte count"})`
     );
   }
@@ -12,7 +17,7 @@ export function assertArchiveCompressedSize(size: number, source: string): void 
 export function assertArchiveExpandedSize(size: number, source: string): void {
   if (!Number.isSafeInteger(size) || size < 0 || size > ASSET_ARCHIVE_LIMITS.maxDecompressedBytes) {
     throw new Error(
-      `${source} exceeds the 128 MiB expanded limit ` +
+      `${source} exceeds the ${mib(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes)} expanded limit ` +
         `(got ${Number.isFinite(size) ? size : "an invalid byte count"})`
     );
   }

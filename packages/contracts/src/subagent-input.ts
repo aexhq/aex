@@ -1,4 +1,5 @@
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
+import { idPatternSource } from "./ids.js";
 import {
   MOUNT_PATH_MAX_LENGTH,
   MOUNT_PATH_PATTERN,
@@ -45,7 +46,7 @@ type ResourceDescriptorMap = {
 };
 
 const COMMON_PROPERTIES = {
-  resourceId: { type: "string", pattern: "^wres_[0-9a-f]{32}$" },
+  resourceId: { type: "string", pattern: idPatternSource("resource") },
   version: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
   assetId: { type: "string", pattern: "^asset_[0-9a-f]{64}$" },
   contentHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }

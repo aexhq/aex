@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "bun:test";
+import { idPatternSource } from "../src/index.js";
 import {
   BUILTIN_TOOL_NAMES,
   buildSubagentAssetsInputSchema,
@@ -184,7 +185,9 @@ describe("subagent nested input contract", () => {
       required: ["kind", "resourceId", "version", "assetId", "contentHash", "name", "mountPath"],
       additionalProperties: false
     });
-    expect(properties.files.items.properties.resourceId.pattern).toBe("^wres_[0-9a-f]{32}$");
+    // The JSON-Schema `pattern` is the id owner's source string, not a copy:
+    // a subagent asset ref is the same id as everywhere else.
+    expect(properties.files.items.properties.resourceId.pattern).toBe(idPatternSource("resource"));
     expect(properties.tools.items.properties.input_schema).toMatchObject({
       type: "object",
       required: ["type"]

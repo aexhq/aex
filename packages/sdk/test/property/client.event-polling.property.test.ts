@@ -29,7 +29,7 @@ function eventFromSpec(spec: EventSpec, sessionId: string): AexEvent {
     : spec.kind === "RUN_ERROR"
       ? {
           outcome: "failed",
-          failureClass: "provider_permanent",
+          failureClass: "provider-permanent",
           failureMessage: "property failure",
           costUsd: 0,
           providerUsage: []
