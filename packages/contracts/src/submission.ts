@@ -34,6 +34,8 @@ import { UnknownFieldError } from "./unknown-field-error.js";
 import { withContractParseError } from "./contract-parse-error.js";
 import { parseWire } from "./schemas/wire.js";
 import { SessionWebhookSchema } from "./schemas/session-webhook.js";
+import { SessionLimitsSchema, normalizeSessionLimits } from "./schemas/session-limits.js";
+import { SessionMachineSchema, normalizeSessionMachine } from "./schemas/session-machine.js";
 import {
   isJsonValue,
   isRecord,
@@ -1008,55 +1010,10 @@ export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefi
  */
 export function parseSessionLimits(input: unknown): SessionLimits | undefined {
   return withContractParseError("parseSessionLimits", () => {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "limits");
-  const allowed = defineAllowedKeys<SessionLimits>()(
-    "maxConcurrentChildSessions",
-    "maxSubagentDepth",
-    "maxSpendUsd",
-    "maxTurns",
-    "maxStepsPerTurn"
-  );
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`limits.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  const maxConcurrentChildSessions = optionalPositiveInt(
-    value.maxConcurrentChildSessions,
-    "limits.maxConcurrentChildSessions"
-  );
-  const maxSubagentDepth = optionalPositiveInt(value.maxSubagentDepth, "limits.maxSubagentDepth");
-  // maxSpendUsd is a USD amount (may be fractional, e.g. $2.50) so it is a positive
-  // NUMBER, not a positive int. Clamping to the workspace/platform ceiling is the
-  // resolver's job; here we only enforce shape + positivity.
-  const maxSpendUsd = optionalPositiveNumber(value.maxSpendUsd, "limits.maxSpendUsd");
-  // maxTurns is an ITERATION count — a positive safe integer. Clamp to the ceiling
-  // is the resolver's job; here we enforce shape + positivity only.
-  const maxTurns = optionalPositiveInt(value.maxTurns, "limits.maxTurns");
-  // maxStepsPerTurn is a per-turn STEP count — a positive safe integer (the
-  // runaway-loop backstop one level below maxTurns). Same shape/positivity gate;
-  // the resolver clamps to the ceiling.
-  const maxStepsPerTurn = optionalPositiveInt(value.maxStepsPerTurn, "limits.maxStepsPerTurn");
-  // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
-  // lands an empty object on the request — matches sibling parsers (parseSessionWebhook,
-  // parseEnvironment). The resolver supplies platform defaults for absent fields.
-  if (
-    maxConcurrentChildSessions === undefined &&
-    maxSubagentDepth === undefined &&
-    maxSpendUsd === undefined &&
-    maxTurns === undefined &&
-    maxStepsPerTurn === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    ...(maxConcurrentChildSessions !== undefined ? { maxConcurrentChildSessions } : {}),
-    ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
-    ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {}),
-    ...(maxTurns !== undefined ? { maxTurns } : {}),
-    ...(maxStepsPerTurn !== undefined ? { maxStepsPerTurn } : {})
-  };
+    if (input === undefined) {
+      return undefined;
+    }
+    return normalizeSessionLimits(parseWire(SessionLimitsSchema, input));
   });
 }
 
@@ -1091,21 +1048,10 @@ export function sessionBudgetLimits(limits: SessionLimits | undefined): { budget
  */
 export function parseSessionMachine(input: unknown): SessionMachine | undefined {
   return withContractParseError("parseSessionMachine", () => {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "machine");
-  const allowed = defineAllowedKeys<SessionMachine>()("spot");
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`machine.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  if (value.spot !== undefined && typeof value.spot !== "boolean") {
-    throw new Error("machine.spot must be a boolean");
-  }
-  if (value.spot === undefined) {
-    return undefined;
-  }
-  return { spot: value.spot };
+    if (input === undefined) {
+      return undefined;
+    }
+    return normalizeSessionMachine(parseWire(SessionMachineSchema, input));
   });
 }
 

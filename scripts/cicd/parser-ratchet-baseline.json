@@ -7,7 +7,7 @@
     "packages/contracts/src/side-effect-audit.ts"
   ],
   "maxCallSites": {
-    "defineAllowedKeys": 28,
-    "assertAllowedKeys": 24
+    "defineAllowedKeys": 26,
+    "assertAllowedKeys": 22
   }
 }

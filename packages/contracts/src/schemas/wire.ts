@@ -95,6 +95,19 @@ export function errorFromZod(error: z.core.$ZodError): Error {
   return new Error(primaryIssue(error.issues)?.message ?? "invalid input");
 }
 
+/**
+ * Drop explicit `undefined` from optional properties.
+ *
+ * `z.infer` of an optional field yields `field?: T | undefined`, which under
+ * `exactOptionalPropertyTypes` is NOT assignable to the package's `field?: T`
+ * interfaces — an inferred value may carry the key with an `undefined` value,
+ * and those interfaces promise it is either absent or a `T`.
+ *
+ * A `normalize*()` function is where that promise is actually kept, since it is
+ * the step that drops absent fields, so it is where this type belongs.
+ */
+export type Present<T> = { [K in keyof T]?: Exclude<T[K], undefined> };
+
 /** Parse `input` against `schema`, throwing the family's own error text on failure. */
 export function parseWire<Schema extends z.core.$ZodType>(
   schema: Schema,
