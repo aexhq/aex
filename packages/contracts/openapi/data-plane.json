@@ -305,37 +305,6 @@
         }
       }
     },
-    "/api/billing/checkout": {
-      "post": {
-        "operationId": "billing.checkout",
-        "summary": "billing.checkout",
-        "tags": [
-          "billing"
-        ],
-        "security": [
-          {
-            "workspaceApiKey": [
-              "billing:read"
-            ]
-          }
-        ],
-        "responses": {
-          "2XX": {
-            "description": "Success."
-          },
-          "default": {
-            "description": "Error envelope.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/billing/ledger": {
       "get": {
         "operationId": "billing.ledger",

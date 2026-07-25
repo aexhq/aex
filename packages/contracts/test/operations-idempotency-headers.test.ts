@@ -111,7 +111,6 @@ describe("lifecycle controls are not advertised as idempotent", () => {
 
 describe("billing mutation identities", () => {
   it.each([
-    ["checkout", operations.createBillingCheckout, { planKey: "pro" }],
     ["portal", operations.createBillingPortal, { returnUrl: "https://aex.dev/billing" }]
   ] as const)("%s sends identity only as a header", async (_name, operation, request) => {
     let seenHeader: string | null = null;
@@ -150,10 +149,10 @@ describe("billing mutation identities", () => {
       }
     });
 
-    await operations.createBillingCheckout(capture, { planKey: "team" });
+    await operations.createBillingPortal(capture, { returnUrl: "https://aex.dev/billing" });
     expect(seenHeader).toMatch(/^aex-idem-/);
     await expect(
-      operations.createBillingCheckout(capture, { planKey: "pro", idempotencyKey: "legacy" } as never)
+      operations.createBillingPortal(capture, { returnUrl: "https://aex.dev/b", idempotencyKey: "legacy" } as never)
     ).rejects.toBeInstanceOf(SessionConfigValidationError);
     await expect(
       operations.createBillingPortal(capture, {}, { idempotencyKey: "x".repeat(256) })

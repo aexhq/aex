@@ -97,29 +97,11 @@ describe("aex.billing", () => {
   });
 });
 
-describe("aex.billingCheckout", () => {
-  it("POSTs /api/billing/checkout and returns the hosted URL", async () => {
-    const { client, calls } = billingClient({ url: "https://checkout.stripe.test/session" });
-
-    const result = await client.billingCheckout({
-      planKey: "pro",
-      successUrl: "https://aex.dev/billing?checkout=success",
-      cancelUrl: "https://aex.dev/billing?checkout=cancel"
-    }, { idempotencyKey: "checkout-key" });
-
-    expect(result).toEqual({ url: "https://checkout.stripe.test/session" });
-    expect(calls).toHaveLength(1);
-    const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe("/api/billing/checkout");
-    expect(calls[0]!.method).toBe("POST");
-    expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({
-      planKey: "pro",
-      successUrl: "https://aex.dev/billing?checkout=success",
-      cancelUrl: "https://aex.dev/billing?checkout=cancel"
-    });
-    expect(calls[0]!.headers.get("idempotency-key")).toBe("checkout-key");
-  });
-
+// `aex.billingCheckout` is gone with POST /api/billing/checkout, which the
+// plan-catalog demolition removed server-side. The retry-identity behaviour it
+// used to cover is real and still worth pinning, so it moves to the sibling
+// billing mutation that survives rather than being deleted with the route.
+describe("aex.billingPortal retry identity", () => {
   it("reuses one generated identity across transport retries", async () => {
     const identities: string[] = [];
     const bodies: unknown[] = [];
@@ -138,16 +120,19 @@ describe("aex.billingCheckout", () => {
             headers: { "content-type": "application/json", "retry-after": "0" }
           });
         }
-        return json({ url: "https://checkout.stripe.test/session" });
+        return json({ url: "https://billing.stripe.test/session" });
       }
     });
 
-    await client.billingCheckout({ planKey: "team" });
+    await client.billingPortal({ returnUrl: "https://aex.dev/billing" });
 
     expect(identities).toHaveLength(2);
     expect(identities[0]).toMatch(/^aex-idem-/);
     expect(identities[1]).toBe(identities[0]);
-    expect(bodies).toEqual([{ planKey: "team" }, { planKey: "team" }]);
+    expect(bodies).toEqual([
+      { returnUrl: "https://aex.dev/billing" },
+      { returnUrl: "https://aex.dev/billing" }
+    ]);
   });
 });
 

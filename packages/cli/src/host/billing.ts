@@ -6,8 +6,12 @@
  * `aex billing ledger [--limit N]` — GET /api/billing/ledger. Prints the recent
  * credit-ledger rows (newest first) as JSON, matching the other read verbs.
  *
- * `aex billing upgrade pro|team` / `aex billing portal` create hosted billing
- * sessions and print the URL (or JSON with `--json`).
+ * `aex billing portal` creates a hosted billing-portal session and prints the
+ * URL (or JSON with `--json`).
+ *
+ * `aex billing upgrade` is GONE: it drove POST /api/billing/checkout, a route the
+ * plan-catalog demolition removed server-side. A verb that can only 404 is not a
+ * surface worth keeping.
  */
 import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
@@ -26,20 +30,12 @@ import { parsePositiveLimit } from "./command-primitives.js";
 function usd(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : "-";
 }
-
-function isPaidPlanKey(value: unknown): value is "pro" | "team" {
-  return value === "pro" || value === "team";
-}
-
 export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   const common = await prepareHostCommand(io, argv, { verb: "billing", auth: "data" });
   if (!common.ok) return common.exit;
 
   if (common.rest[0] === "ledger") {
     return runBillingLedger(io, common.rest.slice(1), common.flags);
-  }
-  if (common.rest[0] === "upgrade") {
-    return runBillingUpgrade(io, common.rest.slice(1), common.flags);
   }
   if (common.rest[0] === "portal") {
     return runBillingPortal(io, common.rest.slice(1), common.flags);
@@ -49,7 +45,7 @@ export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Pro
   const json = common.flags.json;
   if (common.rest.length > 0) {
     io.stderr(`unexpected arguments: ${common.rest.join(" ")}\n`);
-    io.stderr("usage: aex billing [--json] | aex billing ledger [--limit N] | aex billing upgrade pro|team | aex billing portal [common flags]\n");
+    io.stderr("usage: aex billing [--json] | aex billing ledger [--limit N] | aex billing portal [common flags]\n");
     return USAGE_ERR;
   }
 
@@ -69,41 +65,6 @@ export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Pro
     return emitApiError(io, "billing_failed", err);
   }
 }
-
-async function runBillingUpgrade(
-  io: CliIO,
-  argv: readonly string[],
-  flags: CommonHostFlags
-): Promise<CliExitCode> {
-  const json = flags.json;
-  const successFlag = takeOptionFlag(argv, "--success-url");
-  const cancelFlag = takeOptionFlag(successFlag.remaining, "--cancel-url");
-  const idempotencyFlag = takeOptionFlag(cancelFlag.remaining, "--idempotency-key");
-  const optionError = successFlag.error ?? cancelFlag.error ?? idempotencyFlag.error;
-  if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
-  const { value: successUrl } = successFlag;
-  const { value: cancelUrl } = cancelFlag;
-  const { value: idempotencyKey, remaining } = idempotencyFlag;
-  const planKey = remaining[0];
-  if (!isPaidPlanKey(planKey) || remaining.length !== 1) {
-    io.stderr("usage: aex billing upgrade pro|team [--success-url URL] [--cancel-url URL] [--idempotency-key KEY] [--json] [common flags]\n");
-    return USAGE_ERR;
-  }
-
-  const http = makeHttpClient(io, flags);
-  try {
-    const session = await operations.createBillingCheckout(http, {
-      planKey,
-      ...(successUrl !== undefined ? { successUrl } : {}),
-      ...(cancelUrl !== undefined ? { cancelUrl } : {}),
-    }, idempotencyKey !== undefined ? { idempotencyKey } : undefined);
-    io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
-    return SUCCESS;
-  } catch (err) {
-    return emitApiError(io, "billing_checkout_failed", err);
-  }
-}
-
 async function runBillingPortal(
   io: CliIO,
   argv: readonly string[],

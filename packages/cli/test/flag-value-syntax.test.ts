@@ -34,8 +34,6 @@ const SINGLE_VALUE_FLAGS = [
   "--from",
   "--limit",
   "--since",
-  "--success-url",
-  "--cancel-url",
   "--return-url",
   "--email",
   "--role",

@@ -1514,24 +1514,6 @@ function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOpt
   const idempotencyKey = resolveIdempotencyKey(options?.idempotencyKey);
   return idempotencyKey;
 }
-
-/**
- * Create a hosted checkout session for a paid plan. Returns only the hosted
- * URL; plan activation happens after checkout completes.
- */
-export async function createBillingCheckout(
-  http: HttpClient,
-  request: BillingCheckoutRequest,
-  options?: IdempotencyOptions
-): Promise<BillingHostedSession> {
-  const idempotencyKey = resolveBillingIdempotencyKey(request, options);
-  return http.request<BillingHostedSession>("/api/billing/checkout", {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify(request)
-  });
-}
-
 /**
  * Create a hosted billing-portal session for the workspace customer.
  * Returns only the hosted URL.

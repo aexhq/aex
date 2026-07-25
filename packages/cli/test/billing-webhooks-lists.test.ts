@@ -178,61 +178,6 @@ describe("aex billing ledger", () => {
   });
 });
 
-describe("aex billing upgrade", () => {
-  it("POSTs /api/billing/checkout and prints the hosted URL", async () => {
-    const cap = makeHostIo({
-      argv: [
-        "billing",
-        "upgrade",
-        "pro",
-        "--success-url",
-        "https://aex.dev/billing?checkout=success",
-        "--cancel-url",
-        "https://aex.dev/billing?checkout=cancel",
-        "--idempotency-key",
-        "checkout-key",
-        ...COMMON,
-      ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
-    });
-    await executeCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toBe("https://checkout.stripe.test/session\n");
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/checkout");
-    expect(cap.calls[0]!.init.method).toBe("POST");
-    expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({
-      planKey: "pro",
-      successUrl: "https://aex.dev/billing?checkout=success",
-      cancelUrl: "https://aex.dev/billing?checkout=cancel"
-    });
-    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toBe("checkout-key");
-  });
-
-  it("supports --json and rejects free/unknown plans before network", async () => {
-    const ok = makeHostIo({
-      argv: ["billing", "upgrade", "team", "--json", ...COMMON],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ url: "https://checkout.stripe.test/team" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
-    });
-    await executeCli(ok.io);
-    expect(ok.exitCode).toBe(0);
-    expect(JSON.parse(ok.stdout)).toEqual({ url: "https://checkout.stripe.test/team" });
-
-    const bad = makeHostIo({ argv: ["billing", "upgrade", "free", ...COMMON] });
-    await executeCli(bad.io);
-    expect(bad.exitCode).toBe(2);
-    expect(bad.stderr).toContain("billing upgrade pro|team");
-    expect(bad.calls).toHaveLength(0);
-  });
-});
-
 describe("aex billing portal", () => {
   it("POSTs /api/billing/portal and prints the hosted URL", async () => {
     const cap = makeHostIo({

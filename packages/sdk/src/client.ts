@@ -1594,15 +1594,6 @@ export class Aex {
   }
 
   /**
-   * Create a hosted checkout session for a paid plan (`pro` or `team`).
-   * Open the returned `url` in a browser. Plan activation happens after
-   * checkout completes.
-   */
-  billingCheckout(request: BillingCheckoutRequest, options?: IdempotencyOptions): Promise<BillingHostedSession> {
-    return operations.createBillingCheckout(this.#http, request, options);
-  }
-
-  /**
    * Create a hosted billing-portal session for the workspace customer.
    * Open the returned `url` in a browser.
    */

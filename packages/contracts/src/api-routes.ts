@@ -108,7 +108,6 @@ export const AUTHENTICATED_API_ROUTE_DESCRIPTORS: readonly AuthenticatedApiRoute
   // Billing (customer read + operator manage).
   route("billing.get", "GET", /^\/billing$/, "/billing", "billing:read"),
   route("billing.ledger", "GET", /^\/billing\/ledger$/, "/billing/ledger", "billing:read"),
-  route("billing.checkout", "POST", /^\/billing\/checkout$/, "/billing/checkout", "billing:read"),
   route("billing.portal", "POST", /^\/billing\/portal$/, "/billing/portal", "billing:read"),
   route("adminBilling.topup", "POST", /^\/admin\/billing\/topup$/, "/admin/billing/topup", "billing:manage"),
   route("adminBilling.paymentMethod", "POST", /^\/admin\/billing\/payment-method$/, "/admin/billing/payment-method", "billing:manage"),
