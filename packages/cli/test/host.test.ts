@@ -504,8 +504,12 @@ describe("aex cancel + delete", () => {
   it("delete DELETEs and prints the result", async () => {
     const cap = makeHostIo({
       argv: ["delete", "session-x", ...COMMON],
+      // The delete route answers with both counters on every call; a stub that
+      // omits them models a response the server does not send.
       fetchHandler: () => new Response(JSON.stringify({
-        session: { id: "session-x", status: "deleted", acceptsMessages: false }
+        session: { id: "session-x", status: "deleted", acceptsMessages: false },
+        purgedSessionFileObjects: 0,
+        cleanupComplete: true
       }), { status: 200, headers: { "content-type": "application/json" } })
     });
     await executeCli(cap.io);

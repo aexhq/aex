@@ -495,7 +495,8 @@ async function collectRun(events: readonly FuzzEvent[], firstSeq: number): Promi
 const idString = fc.string({ minLength: 1, maxLength: 16 }).filter((value) => value.trim().length > 0);
 const smallText = fc.string({ maxLength: 24 });
 const isoString = fc.integer({ min: 0, max: 4_102_444_800_000 }).map(isoAt);
-const sender = fc.constantFrom<SessionMessageSender>("user", "assistant", "system", "tool");
+// The projection emits only these two; the wire schema is strict about it.
+const sender = fc.constantFrom<SessionMessageSender>("user", "assistant");
 const jsonScalar: Arbitrary<JsonValue> = fc.oneof(
   fc.string({ maxLength: 16 }),
   fc.integer(),
@@ -513,20 +514,22 @@ const sessionMessage = fc.record({
   id: idString,
   sender,
   text: smallText,
-  timestamp: fc.option(isoString, { nil: undefined }),
+  // Required on the wire: the projection emits all three on every message.
+  // Generating them as absent modelled a response the server does not produce.
+  timestamp: isoString,
+  sequence: fc.integer({ min: 0, max: 1_000_000 }),
+  content: fc.array(jsonValue, { maxLength: 3 }),
   turnSeq: fc.option(fc.integer({ min: 0, max: 200 }), { nil: undefined }),
-  sequence: fc.option(fc.integer({ min: 0, max: 1_000_000 }), { nil: undefined }),
-  messageId: fc.option(idString, { nil: undefined }),
-  content: fc.option(jsonValue, { nil: undefined })
+  messageId: fc.option(idString, { nil: undefined })
 }).map((raw): SessionMessage => ({
   id: raw.id,
   sender: raw.sender,
   text: raw.text,
-  ...(raw.timestamp !== undefined ? { timestamp: raw.timestamp } : {}),
+  timestamp: raw.timestamp,
+  sequence: raw.sequence,
+  content: raw.content,
   ...(raw.turnSeq !== undefined ? { turnSeq: raw.turnSeq } : {}),
-  ...(raw.sequence !== undefined ? { sequence: raw.sequence } : {}),
-  ...(raw.messageId !== undefined ? { messageId: raw.messageId } : {}),
-  ...(raw.content !== undefined ? { content: raw.content } : {})
+  ...(raw.messageId !== undefined ? { messageId: raw.messageId } : {})
 }));
 
 const messageId = fc.constantFrom("msg_0", "msg_1", "msg_2", "msg_3");

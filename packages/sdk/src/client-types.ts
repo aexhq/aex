@@ -22,7 +22,29 @@ import type {
 import type { McpServer } from "./mcp-server.js";
 import type { Secret } from "./secret.js";
 
-export type Message = SessionMessage;
+/**
+ * A transcript message as the SDK hands it to a caller.
+ *
+ * Deliberately NOT an alias of {@link SessionMessage}, which is the WIRE shape
+ * returned by `GET /sessions/{id}/messages` and always carries `timestamp`,
+ * `sequence` and `content`. A `Message` may also be PROJECTED from the event
+ * stream by `projectAssistantMessages`, which is building one as the tokens
+ * arrive and legitimately has no sequence or timestamp yet, and never has the
+ * wire's `content` array.
+ *
+ * Same distinction as `Session` against `SessionWire`: one shape is what the
+ * server sent, the other is what the client assembled. Conflating them made the
+ * wire type's guarantees look optional and the projection's gaps look like
+ * server behaviour.
+ */
+export interface Message {
+  readonly id: string;
+  readonly sender: SessionMessage["sender"];
+  readonly text: string;
+  readonly timestamp?: string;
+  readonly turnSeq?: number;
+  readonly sequence?: number;
+}
 
 export type SessionInput = string | readonly string[];
 

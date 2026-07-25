@@ -347,8 +347,8 @@ const cases: readonly Case[] = [
       expiresAtMs: 1_800_000_000_000,
       region: "eu-west-1"
     },
-    // The declared `CoordinatorTicket` interface stops at these three keys; the
-    // server sends five. Dropping `region` would be a real change.
+    // `CoordinatorTicket` used to stop at these three keys while the server sent
+    // five; it now declares all five. Dropping `region` would be a real change.
     rejects: { wsUrl: "wss://x/y", ticket: "abc.def", expiresAtMs: 1_800_000_000_000 },
     because: "ok"
   },

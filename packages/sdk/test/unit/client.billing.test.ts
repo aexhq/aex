@@ -37,13 +37,20 @@ function billingClient(body: unknown): { readonly client: Aex; readonly calls: R
 
 describe("aex.billing", () => {
   it("GETs /api/billing and returns the typed summary", async () => {
+    // Every key the handler sends, unconditionally. `accountType` and
+    // `pastDueAt` were absent from this fixture AND from `BillingSummary` while
+    // the server sent both on every call — the index signature that used to sit
+    // on that interface is what made the omission invisible.
     const summary = {
       balanceUsd: 12.5,
       monthSpendUsd: 0.42,
       spendCapUsd: 50,
       planKey: "free",
-      subscriptionStatus: "none"
-    };
+      subscriptionStatus: "none",
+      paymentMethodStatus: "none",
+      accountType: "standard",
+      pastDueAt: null
+    } as const;
     const { client, calls } = billingClient(summary);
 
     const result = await client.billing();
@@ -56,7 +63,13 @@ describe("aex.billing", () => {
     expect(calls[0]!.method).toBe("GET");
   });
 
-  it("tolerates additive server fields on the summary (no strict-reject)", async () => {
+  it("passes an undeclared server field through the read without rejecting it", async () => {
+    // `getBilling` does not parse; it hands the decoded body back. So an
+    // undeclared key still arrives at RUN TIME — what changed is that
+    // `BillingSummary` no longer DECLARES that it will, because
+    // `[key: string]: unknown` made every undeclared field structurally legal
+    // and so made `accountType` / `pastDueAt` impossible to notice missing.
+    // Reaching one now requires an explicit widening, which is the point.
     const summary = {
       balanceUsd: 1,
       monthSpendUsd: 0,
@@ -64,17 +77,23 @@ describe("aex.billing", () => {
       planKey: "free",
       subscriptionStatus: "none",
       paymentMethodStatus: "active",
-      accountType: "team",
+      accountType: "internal",
+      pastDueAt: "2026-07-01 12:00:00",
       plan: { name: "future-field" }
-    };
+    } as const;
     const { client } = billingClient(summary);
 
     const result = await client.billing();
 
-    // Unknown additive keys pass through untouched.
     expect(result).toEqual(summary);
     expect(result.paymentMethodStatus).toBe("active");
-    expect(result["accountType"]).toBe("team");
+    expect(result.accountType).toBe("internal");
+    // The raw Data-API rendering, NOT ISO-8601 — the same concept on
+    // `whoami.limits.pastDueAt` carries a `T` and a `Z`.
+    expect(result.pastDueAt).toBe("2026-07-01 12:00:00");
+    // The double cast IS the proof: with the index signature gone, reaching an
+    // undeclared key is no longer something the type quietly allows.
+    expect((result as unknown as Record<string, unknown>)["plan"]).toEqual({ name: "future-field" });
   });
 });
 
@@ -160,9 +179,13 @@ describe("aex.billingLedger", () => {
           amountUsd: 10,
           currency: "USD",
           sessionId: null,
+          // The WS2 cost-attribution tag: sent on every row, `null` for
+          // org-level entries like this top-up. Previously undeclared.
+          workspaceId: null,
           description: "admin top-up",
           createdBy: "admin:ops@example.test",
-          createdAt: "2026-07-01T00:00:00Z"
+          // Raw Data-API text, NOT ISO-8601 — this column is selected unformatted.
+          createdAt: "2026-07-01 00:00:00"
         }
       ]
     };

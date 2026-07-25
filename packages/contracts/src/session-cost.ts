@@ -207,6 +207,26 @@ export interface SessionCostBasis {
   readonly status: SessionCostBasisStatus;
 }
 
+/**
+ * How a `billedCostUsd` was arrived at — the settle-basis TYPE label, NOT the
+ * runtime (the runtime is {@link SessionCostTelemetry.runtimeKind}). `settle.ts`
+ * writes `"session_turn"` on the per-turn session path and `"container"` on the
+ * in-process child path.
+ *
+ * Deliberately an open string rather than a union of those two: it is a server
+ * vocabulary this package does not own, and narrowing it would make a new basis
+ * label a breaking change in a consumer rather than an unrecognised value.
+ */
+export type SessionCostBasisLabel = string;
+
+/**
+ * Cost and usage telemetry for a settled session or turn.
+ *
+ * The eleven fields below `proxy` — `basis` through `childProviderUsage` — are
+ * written by `settle.ts` on every settle and were undeclared here, which made
+ * `costTelemetry.usage` (the token counts) unreachable without a cast even
+ * though it is the ONLY place the server reports them.
+ */
 export interface SessionCostTelemetry {
   readonly schemaVersion: typeof SESSION_COST_TELEMETRY_SCHEMA_VERSION;
   readonly sessionId?: string;
@@ -221,6 +241,47 @@ export interface SessionCostTelemetry {
   readonly providerUsage?: readonly SessionCostProviderUsage[];
   readonly storage?: SessionCostStorageTelemetry;
   readonly proxy?: SessionCostProxyTelemetry;
+  /** Which settle path produced this figure. See {@link SessionCostBasisLabel}. */
+  readonly basis?: SessionCostBasisLabel;
+  /** Billed compute duration for the turn, ms. */
+  readonly durationMs?: number;
+  /** The turn this telemetry settles. Also the per-turn fence on the Aurora upsert. */
+  readonly turnSeq?: number;
+  /**
+   * The last event sequence the settled runner manifest covered.
+   *
+   * `telemetryFromManifest` writes it whenever the manifest carries one, and
+   * `finalizeChildSession` puts that object on the child session read. Declared
+   * here so this type and `CostTelemetrySchema` stay one statement of the shape.
+   */
+  readonly throughSeq?: number;
+  /** The managed box preset the turn ran on. */
+  readonly runtimeSize?: string;
+  /** The execution backend the turn ran on (`container` | `spot_container` | `lambda`). */
+  readonly runtimeKind?: string;
+  /** The model the turn ran, when the session record carries one. */
+  readonly model?: string;
+  /**
+   * The settle manifest's RAW usage counters, verbatim.
+   *
+   * Deliberately untyped. Its members are assembled from provider manifests and
+   * have never been verified against a real response, and asserting a shape
+   * nobody has observed would be worse than saying so. The response schema stops
+   * at "is an object" for the same reason. Read {@link providerUsage} for the
+   * token counts this package DOES declare.
+   */
+  readonly usage?: Readonly<Record<string, unknown>>;
+  /**
+   * Operational byte counters from the settle manifest (journal / backup / file
+   * bytes). Untyped for the same reason as {@link usage}.
+   */
+  readonly byteCounts?: Readonly<Record<string, unknown>>;
+  /** Rolled-up cost of this session's subagent children, USD. */
+  readonly childCostUsd?: number;
+  /** How many subagent children the rollup covered. */
+  readonly childSessionCount?: number;
+  /** Per-provider token usage rolled up from the subagent children. */
+  readonly childProviderUsage?: readonly SessionCostProviderUsage[];
   /**
    * Customer-facing AEX cost of serving this session, USD — a REPORTED ESTIMATE,
    * not a charge (telemetry/showback only; no invoicing or credit deduction).
@@ -306,7 +367,27 @@ export function buildSessionCostTelemetry(input: SessionCostTelemetryInput): Ses
     ...(input.storage ? { storage: normalizeStorage(input.storage) } : {}),
     ...(input.proxy ? { proxy: normalizeProxy(input.proxy) } : {}),
     ...(input.billedCostUsd !== undefined ? { billedCostUsd: nonNegativeFinite(input.billedCostUsd, "billedCostUsd") } : {}),
-    ...(input.costBasis ? { costBasis: normalizeCostBasis(input.costBasis) } : {})
+    ...(input.costBasis ? { costBasis: normalizeCostBasis(input.costBasis) } : {}),
+    // The settle-written half. Carried through rather than dropped: a declared
+    // field this builder silently discards is worse than an undeclared one,
+    // because the loss is invisible at the call site.
+    ...(input.basis ? { basis: nonEmptyString(input.basis, "basis") } : {}),
+    ...(input.durationMs !== undefined ? { durationMs: nonNegativeFinite(input.durationMs, "durationMs") } : {}),
+    ...(input.turnSeq !== undefined ? { turnSeq: nonNegativeFinite(input.turnSeq, "turnSeq") } : {}),
+    ...(input.runtimeSize ? { runtimeSize: nonEmptyString(input.runtimeSize, "runtimeSize") } : {}),
+    ...(input.runtimeKind ? { runtimeKind: nonEmptyString(input.runtimeKind, "runtimeKind") } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.usage ? { usage: Object.freeze({ ...input.usage }) } : {}),
+    ...(input.byteCounts ? { byteCounts: Object.freeze({ ...input.byteCounts }) } : {}),
+    ...(input.childCostUsd !== undefined
+      ? { childCostUsd: nonNegativeFinite(input.childCostUsd, "childCostUsd") }
+      : {}),
+    ...(input.childSessionCount !== undefined
+      ? { childSessionCount: nonNegativeFinite(input.childSessionCount, "childSessionCount") }
+      : {}),
+    ...(input.childProviderUsage
+      ? { childProviderUsage: input.childProviderUsage.map(normalizeProviderUsage) }
+      : {})
   });
 }
 
@@ -474,6 +555,21 @@ export function mergeSessionCostTelemetry(
   // not additive metrics.
   const billedCostUsd = patch.billedCostUsd ?? base.billedCostUsd;
   const costBasis = patch.costBasis ?? base.costBasis;
+  // The settle-written half is DESCRIPTIVE of one settle (which basis, which
+  // turn, which box, what the manifest counted), not additive across turns, so
+  // it is last-writer-wins like the derived cost fields above. `childCostUsd` /
+  // `childSessionCount` are already rollups over the whole child set.
+  const basis = patch.basis ?? base.basis;
+  const durationMs = patch.durationMs ?? base.durationMs;
+  const turnSeq = patch.turnSeq ?? base.turnSeq;
+  const runtimeSize = patch.runtimeSize ?? base.runtimeSize;
+  const runtimeKind = patch.runtimeKind ?? base.runtimeKind;
+  const model = patch.model ?? base.model;
+  const usage = patch.usage ?? base.usage;
+  const byteCounts = patch.byteCounts ?? base.byteCounts;
+  const childCostUsd = patch.childCostUsd ?? base.childCostUsd;
+  const childSessionCount = patch.childSessionCount ?? base.childSessionCount;
+  const childProviderUsage = [...(base.childProviderUsage ?? []), ...(patch.childProviderUsage ?? [])];
   if (sessionId) merged.sessionId = sessionId;
   if (provider) merged.provider = provider;
   if (recordedAt) merged.recordedAt = recordedAt;
@@ -488,6 +584,17 @@ export function mergeSessionCostTelemetry(
   if (proxy) merged.proxy = proxy;
   if (billedCostUsd !== undefined) merged.billedCostUsd = billedCostUsd;
   if (costBasis) merged.costBasis = costBasis;
+  if (basis) merged.basis = basis;
+  if (durationMs !== undefined) merged.durationMs = durationMs;
+  if (turnSeq !== undefined) merged.turnSeq = turnSeq;
+  if (runtimeSize) merged.runtimeSize = runtimeSize;
+  if (runtimeKind) merged.runtimeKind = runtimeKind;
+  if (model) merged.model = model;
+  if (usage) merged.usage = usage;
+  if (byteCounts) merged.byteCounts = byteCounts;
+  if (childCostUsd !== undefined) merged.childCostUsd = childCostUsd;
+  if (childSessionCount !== undefined) merged.childSessionCount = childSessionCount;
+  if (childProviderUsage.length > 0) merged.childProviderUsage = childProviderUsage;
   return buildSessionCostTelemetry(merged);
 }
 

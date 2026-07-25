@@ -8,7 +8,13 @@
  * Human view: header → timeline → footer. `--json` emits one machine document
  * `{ session, events }`. Exit is 0 for a succeeded run, 1 otherwise, or 3 on timeout.
  */
-import { isReplayableEvent, type AexEvent, type AexStreamEvent, type Session } from "@aexhq/contracts";
+import {
+  isReplayableEvent,
+  usageFromProviderUsage,
+  type AexEvent,
+  type AexStreamEvent,
+  type Session
+} from "@aexhq/contracts";
 import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
@@ -166,7 +172,12 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
       io.stdout(`\n✗ ${failureMessage}${failureClass}\n`);
     }
     const costUsd = finalSession.costUsd;
-    const usage = finalSession.usage;
+    // Token counts come from `costTelemetry.providerUsage` — the ONE server
+    // source. This read used to be `finalSession.usage`, a top-level field the
+    // data plane has never emitted, so the footer's `in=`/`out=`/`total=` were
+    // unreachable in practice.
+    const providerUsage = finalSession.costTelemetry?.providerUsage;
+    const usage = providerUsage ? usageFromProviderUsage(providerUsage) : undefined;
     if (costUsd !== undefined || usage) {
       const parts: string[] = [`status=${finalSession.status}`];
       if (costUsd !== undefined) parts.push(`costUsd=${costUsd}`);

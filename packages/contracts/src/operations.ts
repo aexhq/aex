@@ -38,6 +38,7 @@ import type {
   ChildSessionRef,
   SessionFile,
   SessionFileLink,
+  SessionFileLinkWire,
   SessionFileLinkOptions,
   SessionFileDownload,
   SessionFilePathSelector,
@@ -55,6 +56,7 @@ import type {
   SessionMessageRequest,
   SessionMessagesPage,
   SessionMessagesQuery,
+  SessionDeleteAccepted,
   SessionStateChangeAccepted,
   SessionWebhookDelivery,
   SecretRecord,
@@ -390,15 +392,31 @@ export async function denySession(
   return normalizeSessionAccepted(accepted, "session deny response");
 }
 
+/**
+ * Delete a session and purge its stored footprint.
+ *
+ * Answers 200 with a BODY, not 204 — the deleted session plus the counters from
+ * a best-effort cleanup. This used to be typed `SessionStateChangeAccepted |
+ * void`, which said the body might not arrive and hid the two cleanup fields
+ * entirely; it always arrives, and `cleanupComplete: false` is the only signal
+ * that some stored objects survived the delete.
+ */
 export async function deleteSession(
   http: HttpClient,
   sessionId: string
-): Promise<SessionStateChangeAccepted | void> {
-  const accepted = await http.request<SessionStateChangeAccepted | void>(
+): Promise<SessionDeleteAccepted> {
+  const accepted = await http.request<SessionDeleteAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}`,
     { method: "DELETE" }
   );
-  return accepted === undefined ? undefined : normalizeSessionAccepted(accepted, "session delete response");
+  const normalized = normalizeSessionAccepted(accepted, "session delete response");
+  if (typeof normalized.purgedSessionFileObjects !== "number") {
+    throw new SessionStateError("session delete response is missing purgedSessionFileObjects");
+  }
+  if (typeof normalized.cleanupComplete !== "boolean") {
+    throw new SessionStateError("session delete response is missing cleanupComplete");
+  }
+  return normalized;
 }
 
 export async function listSessionEvents(
@@ -657,11 +675,20 @@ export async function getSessionCoordinatorTicket(
 // server that never clears `nextCursor` can't loop forever.
 const LIST_EVENTS_PAGE_BUDGET = 1000;
 
-/** A coordinator WS connection grant minted by the hosted API's ticket broker. */
+/**
+ * A coordinator WS connection grant minted by the hosted API's ticket broker.
+ *
+ * `ok` and `region` are on the wire and were undeclared. `region` is the plane
+ * the ticket was minted in, which matters because the grant is only valid
+ * against that region's coordinator.
+ */
 export interface CoordinatorTicket {
+  readonly ok: true;
   readonly wsUrl: string;
   readonly ticket: string;
   readonly expiresAtMs: number;
+  /** The region whose coordinator this ticket authorises. */
+  readonly region: string;
 }
 
 export async function findSessionFiles(
@@ -700,7 +727,10 @@ export async function sessionFileLink(
   const file = await resolveSessionFileLinkTarget(http, sessionId, selectorOrQuery, requestedCheckpointId);
   const expiresInSeconds = normalizeSessionFileLinkExpiresIn(options?.expiresIn);
   const checkpointId = requestedCheckpointId ?? file.checkpointId;
-  const result = await http.request<SessionFileLink>(
+  // The WIRE type, not `SessionFileLink`: the server sends no absolute
+  // `expiresAt`, and asking for the client type here is what made the synthesis
+  // below look like a fallback for a field the server sometimes omits.
+  const result = await http.request<SessionFileLinkWire>(
     sessionFileRoute(sessionId, file.id, "link", checkpointId),
     {
       method: "POST",
@@ -709,9 +739,9 @@ export async function sessionFileLink(
   );
   const effectiveExpiresIn = result.expiresInSeconds ?? expiresInSeconds;
   return {
-    ...result,
+    url: result.url,
     expiresInSeconds: effectiveExpiresIn,
-    expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn),
+    expiresAt: syntheticExpiresAt(effectiveExpiresIn),
     file
   };
 }
@@ -731,18 +761,21 @@ export async function eventArchiveLink(
   options?: SessionFileLinkOptions
 ): Promise<SessionFileLink> {
   const expiresInSeconds = normalizeSessionFileLinkExpiresIn(options?.expiresIn);
-  const result = await http.request<SessionFileLink>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/events/link`,
-    {
-      method: "POST",
-      body: JSON.stringify({ expiresInSeconds })
-    }
-  );
+  // `EventArchiveLinkResponseSchema` — `{ url, expiresInSeconds }` and NO
+  // `file`, unlike the per-file link. Hence `SessionFileLink.file` staying
+  // optional while `expiresAt` and `expiresInSeconds` are not.
+  const result = await http.request<{
+    readonly url: string;
+    readonly expiresInSeconds?: number;
+  }>(`/api/sessions/${encodeURIComponent(sessionId)}/events/link`, {
+    method: "POST",
+    body: JSON.stringify({ expiresInSeconds })
+  });
   const effectiveExpiresIn = result.expiresInSeconds ?? expiresInSeconds;
   return {
-    ...result,
+    url: result.url,
     expiresInSeconds: effectiveExpiresIn,
-    expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn)
+    expiresAt: syntheticExpiresAt(effectiveExpiresIn)
   };
 }
 

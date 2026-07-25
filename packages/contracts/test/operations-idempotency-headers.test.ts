@@ -89,7 +89,16 @@ describe("lifecycle controls are not advertised as idempotent", () => {
       fetch: async (_input, init) => {
         seenHeader = new Headers(init?.headers).get("Idempotency-Key");
         return new Response(
-          JSON.stringify({ session: { id: "sess_1", status: "idle", acceptsMessages: true } }),
+          JSON.stringify({
+            session: { id: "sess_1", status: "idle", acceptsMessages: true },
+            // DELETE alone answers with the footprint-cleanup counters beside
+            // the session; the six state-change routes answer `{ session }` and
+            // nothing else. One body serves both cases here because the extra
+            // keys are ignored by the state-change reads and REQUIRED by the
+            // delete read, which no longer treats a bodyless 204 as possible.
+            purgedSessionFileObjects: 0,
+            cleanupComplete: true
+          }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }

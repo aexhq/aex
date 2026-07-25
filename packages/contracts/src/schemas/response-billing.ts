@@ -8,16 +8,21 @@
  *    sends both, unconditionally.
  * 2. `BillingLedgerEntry` does not declare `workspaceId`; the server sends it on
  *    every row (the WS2 cost-attribution tag), `null` for org-level rows.
- * 3. Both interfaces carry `[key: string]: unknown` — an explicit "additive
- *    server fields pass through" promise. That promise is what makes 1 and 2
- *    invisible today, and it is exactly what a strict response schema exists to
- *    stop being invisible. The index signature is not honoured here.
+ * 3. Both interfaces USED to carry `[key: string]: unknown` — an explicit
+ *    "additive server fields pass through" promise. That promise is what made 1
+ *    and 2 invisible, and it is exactly what a strict response schema exists to
+ *    stop being invisible. Both signatures are now gone from the types as well,
+ *    and both interfaces declare the fields above.
  *
  * Two timestamp fields on this surface are NOT ISO-8601: `pastDueAt` here and
  * `createdAt` on a ledger entry are selected raw, so they arrive as the Data
  * API's `"YYYY-MM-DD HH:MM:SS"` text. They are validated as non-empty strings,
- * deliberately, and the inconsistency is reported rather than encoded as if
- * intended.
+ * deliberately, and the inconsistency is reported (on the types, at the field)
+ * rather than encoded as if intended. `whoami.limits.pastDueAt` — the same
+ * concept — IS ISO-8601 with a `Z`, because that route formats it.
+ *
+ * `workspaceId` on a ledger entry and on the three admin routes is a RAW id, not
+ * the public `wsp_<hex>` form `whoami` and the MCP-server records carry.
  */
 import * as z from "zod/mini";
 import {
