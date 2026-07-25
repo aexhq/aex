@@ -34,7 +34,8 @@
     }
   },
   "dependencies": {
-    "fflate": "0.8.2"
+    "fflate": "0.8.2",
+    "zod": "4.4.3"
   },
   "scripts": {
     "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",

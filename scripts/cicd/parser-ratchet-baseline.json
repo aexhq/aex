@@ -1,0 +1,13 @@
+{
+  "comment": "C1 gate. Hand-rolled allow-list call sites still awaiting a schema port. Lower with --write as families land; must reach 0, at which point allowed-keys.ts and this baseline are deleted. See references/contract-pipeline-2026-07-25/04-gates.md.",
+  "files": [
+    "packages/contracts/src/submission.ts",
+    "packages/contracts/src/session-config.ts",
+    "packages/contracts/src/post-hook.ts",
+    "packages/contracts/src/side-effect-audit.ts"
+  ],
+  "maxCallSites": {
+    "defineAllowedKeys": 28,
+    "assertAllowedKeys": 24
+  }
+}

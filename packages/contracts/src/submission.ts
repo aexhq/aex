@@ -32,6 +32,8 @@ import {
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 import { UnknownFieldError } from "./unknown-field-error.js";
 import { withContractParseError } from "./contract-parse-error.js";
+import { parseWire } from "./schemas/wire.js";
+import { SessionWebhookSchema } from "./schemas/session-webhook.js";
 import {
   isJsonValue,
   isRecord,
@@ -986,28 +988,10 @@ export function parseSessionSubmissionRequest(
  */
 export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefined {
   return withContractParseError("parseSessionWebhook", () => {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "webhook");
-  const allowed = defineAllowedKeys<SessionWebhookSpec>()("url");
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`webhook.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  const url = requireString(value.url, "webhook.url");
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`webhook.url must be a valid absolute URL (got ${JSON.stringify(url)})`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(`webhook.url must use https (got ${parsed.protocol.replace(/:$/, "")})`);
-  }
-  if (parsed.username !== "" || parsed.password !== "") {
-    throw new Error("webhook.url must not contain userinfo (user:pass@host)");
-  }
-  return { url };
+    if (input === undefined) {
+      return undefined;
+    }
+    return parseWire(SessionWebhookSchema, input);
   });
 }
 

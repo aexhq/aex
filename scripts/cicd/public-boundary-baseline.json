@@ -18,7 +18,8 @@
   "contractsPackage": {
     "dir": "packages/contracts",
     "allowedRuntimeDependencies": [
-      "fflate"
+      "fflate",
+      "zod"
     ]
   },
   "sdkPackage": {
@@ -35,7 +36,8 @@
     },
     "allowedRuntimeDependencies": [
       "fflate",
-      "ignore"
+      "ignore",
+      "zod"
     ],
     "requiredPackedPublicDeclarationTerms": [
       "StartSessionOptions",
@@ -98,6 +100,8 @@
       "./runtime-security-profile.js",
       "./runtime-sizes.js",
       "./runtime-types.js",
+      "./schemas/session-webhook.js",
+      "./schemas/wire.js",
       "./sdk-errors.js",
       "./sdk-secrets.js",
       "./session-archive.js",

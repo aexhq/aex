@@ -42,7 +42,7 @@ describe("value guard ownership", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly dependencies?: Readonly<Record<string, string>> };
-    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate"]);
+    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate", "zod"]);
 
     const boundary = JSON.parse(
       readFileSync(new URL("../../../scripts/cicd/public-boundary-baseline.json", import.meta.url), "utf8")
