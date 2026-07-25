@@ -24,6 +24,12 @@
  */
 
 import { ASSET_ARCHIVE_LIMITS } from "./session-config.js";
+import {
+  bundleManifestSidecarSchema,
+  serializableBundleManifestSchema,
+  tryParseBundleManifestSidecar
+} from "./schemas/bundle-manifest.js";
+import { parseWire } from "./schemas/wire.js";
 
 /** Reserved zip entry carrying the fidelity sidecar. Rejected as a user file path. */
 export const RESERVED_META_ENTRY = ".aexmeta.json";
@@ -35,7 +41,13 @@ export const DEFAULT_FILE_MODE = 0o644;
 
 /** Bundle-time cap on a captured symlink target string. */
 export const MAX_SYMLINK_TARGET_LENGTH = 4096;
-/** Defensive cap for each metadata array before the parser iterates it. */
+/**
+ * Defensive cap on each metadata array, applied on both the encode and decode
+ * sides. The decode side reaches it only after `JSON.parse` has already
+ * materialised the array under {@link ASSET_ARCHIVE_LIMITS.maxMetadataBytes}, so
+ * it bounds what the fidelity graph may contain rather than what the parser may
+ * allocate.
+ */
 const MAX_BUNDLE_METADATA_RECORDS = ASSET_ARCHIVE_LIMITS.maxEntries;
 
 /** A captured symlink: `path` is the bundle-relative link name, `target` the raw `readlink()` string. */
@@ -66,6 +78,17 @@ export function bundleManifestIsEmpty(manifest: {
 const META_TEXT_ENCODER = new TextEncoder();
 const META_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 
+// Built once: the caps are module constants, so there is nothing per-call to
+// close over and no reason to pay schema construction on every sidecar.
+const SIDECAR_SCHEMA = bundleManifestSidecarSchema(
+  MAX_BUNDLE_METADATA_RECORDS,
+  MAX_SYMLINK_TARGET_LENGTH
+);
+const SERIALIZABLE_SCHEMA = serializableBundleManifestSchema(
+  MAX_BUNDLE_METADATA_RECORDS,
+  MAX_SYMLINK_TARGET_LENGTH
+);
+
 /**
  * Serialize a manifest to canonical, byte-stable UTF-8 bytes: fixed field order
  * (`v`, `exec`, `symlinks`), `exec` sorted ascending, `symlinks` sorted by
@@ -74,12 +97,7 @@ const META_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
  * perturbs dedup determinism.
  */
 export function serializeBundleManifest(manifest: BundleManifest): Uint8Array {
-  if (manifest.exec.length > MAX_BUNDLE_METADATA_RECORDS || manifest.symlinks.length > MAX_BUNDLE_METADATA_RECORDS) {
-    throw new Error(`bundle fidelity metadata exceeds the ${MAX_BUNDLE_METADATA_RECORDS}-record limit`);
-  }
-  if (manifest.symlinks.some((entry) => entry.target.length > MAX_SYMLINK_TARGET_LENGTH)) {
-    throw new Error(`bundle fidelity symlink target exceeds ${MAX_SYMLINK_TARGET_LENGTH} characters`);
-  }
+  parseWire(SERIALIZABLE_SCHEMA, manifest);
   const exec = [...manifest.exec].sort(byString);
   const symlinks = [...manifest.symlinks]
     .map((s) => ({ path: s.path, target: s.target }))
@@ -110,34 +128,7 @@ export function tryParseBundleManifest(bytes: Uint8Array | null | undefined): Bu
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const record = parsed as Record<string, unknown>;
-  if (record.v !== 1) return null;
-  if (!Array.isArray(record.exec) || !Array.isArray(record.symlinks)) return null;
-  if (
-    record.exec.length > MAX_BUNDLE_METADATA_RECORDS ||
-    record.symlinks.length > MAX_BUNDLE_METADATA_RECORDS
-  ) return null;
-  const exec: string[] = [];
-  for (const item of record.exec) {
-    if (typeof item !== "string" || item.length === 0) return null;
-    exec.push(item);
-  }
-  const symlinks: BundleSymlink[] = [];
-  for (const item of record.symlinks) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-    const rec = item as Record<string, unknown>;
-    const path = rec.path;
-    const target = rec.target;
-    if (
-      typeof path !== "string" ||
-      path.length === 0 ||
-      typeof target !== "string" ||
-      target.length > MAX_SYMLINK_TARGET_LENGTH
-    ) return null;
-    symlinks.push({ path, target });
-  }
-  return { v: 1, exec, symlinks };
+  return tryParseBundleManifestSidecar(SIDECAR_SCHEMA, parsed);
 }
 
 /** @deprecated Use {@link tryParseBundleManifest}; this compatibility wrapper is identical. */

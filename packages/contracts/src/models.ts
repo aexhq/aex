@@ -1,4 +1,6 @@
 import { rethrowContractParseError } from "./contract-parse-error.js";
+import { MODEL_SLUG_PATTERN, modelSlugSchema } from "./schemas/models.js";
+import { parseWire } from "./schemas/wire.js";
 
 /**
  * Public model ids are plain **Vercel AI Gateway `creator/model` slug strings**.
@@ -19,7 +21,7 @@ export type ModelName = string;
  * model segment. Matches Vercel AI Gateway `creator/model` slugs
  * (e.g. `anthropic/claude-sonnet-4-6`, `openai/gpt-4.1`, `x-ai/grok-2`).
  */
-export const MODEL_SLUG_PATTERN = /^[a-z0-9-]+\/[A-Za-z0-9._:-]+$/;
+export { MODEL_SLUG_PATTERN };
 
 /** True when `input` is a structurally valid `creator/model` gateway slug. */
 export function isModelSlug(input: unknown): input is string {
@@ -35,15 +37,7 @@ export function isModelSlug(input: unknown): input is string {
  */
 export function parseModelSlug(input: unknown, field = "submission.model"): string {
   try {
-    if (typeof input !== "string" || input.length === 0) {
-      throw new Error(`${field} must be a non-empty gateway model slug string ("creator/model")`);
-    }
-    if (!MODEL_SLUG_PATTERN.test(input)) {
-      throw new Error(
-        `${field} must be a gateway model slug of the form "creator/model" matching ${MODEL_SLUG_PATTERN.source} (got ${JSON.stringify(input)})`
-      );
-    }
-    return input;
+    return parseWire(modelSlugSchema(field), input);
   } catch (error) {
     rethrowContractParseError(error, "parseModelSlug");
   }

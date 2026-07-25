@@ -8,7 +8,11 @@ import {
   underscoredHighEntropyPattern,
   type PublicSafeStringPattern
 } from "./sdk-secrets.js";
-import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
+import {
+  SideEffectAuditDeletionMetadataSchema,
+  SideEffectAuditMetadataSchema
+} from "./schemas/side-effect-audit.js";
+import { parseWire } from "./schemas/wire.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
@@ -239,12 +243,6 @@ export type SideEffectAuditMetadataInput = Omit<SideEffectAuditMetadataV1, "reda
   readonly redaction?: never;
 };
 
-type SupportedSideEffectAuditMetadataInput = Omit<SideEffectAuditMetadataInput, "redaction">;
-type DeletionSideEffectAuditMetadataInput = Pick<
-  SupportedSideEffectAuditMetadataInput,
-  "status" | "counts" | "timestamps"
->;
-
 export type SideEffectAuditEventInput = Omit<
   SideEffectAuditEventV1,
   "schemaVersion" | "kind" | "metadata"
@@ -368,7 +366,7 @@ export function redactSideEffectAuditMetadata(
   action?: SideEffectAuditAction
 ): SideEffectAuditMetadataV1 {
   assertPublicSafeSideEffectAuditPayload(input);
-  assertSupportedMetadataKeys(input, action);
+  assertSupportedMetadata(input, action);
   const metadata = Object.freeze({
     ...(input.status ? { status: normalizeStatusMetadata(input.status) } : {}),
     ...(input.counts ? { counts: normalizeCounts(input.counts) } : {}),
@@ -464,26 +462,22 @@ function normalizeCorrelation(input: SideEffectAuditCorrelationInput): SideEffec
   });
 }
 
+/**
+ * Drop the absent fields of an already-validated `metadata.status`.
+ *
+ * Shape, supported keys, and the `statusCode` range are settled by
+ * `SideEffectAuditStatusMetadataSchema` before this runs. What remains is
+ * the public-safety scan, which no schema can perform because it raises
+ * {@link SideEffectAuditRedactionError} rather than a parse failure, and the
+ * empty-string drop — a falsy value carries no signal and is omitted rather
+ * than recorded.
+ */
 function normalizeStatusMetadata(
   input: SideEffectAuditStatusMetadataV1
 ): SideEffectAuditStatusMetadataV1 {
-  const allowed = defineAllowedKeys<SideEffectAuditStatusMetadataV1>()(
-    "status",
-    "statusCode",
-    "errorClass",
-    "denialReason",
-    "followUpRequired"
-  );
-  assertAllowedKeys(
-    input,
-    allowed,
-    (key) => new Error(`side-effect audit metadata.status.${key} is not supported`)
-  );
   return Object.freeze({
     ...(input.status ? { status: assertSafeMetadataString(input.status, "metadata.status.status") } : {}),
-    ...(input.statusCode !== undefined
-      ? { statusCode: nonNegativeInteger(input.statusCode, "metadata.status.statusCode") }
-      : {}),
+    ...(input.statusCode !== undefined ? { statusCode: input.statusCode } : {}),
     ...(input.errorClass
       ? { errorClass: assertSafeMetadataString(input.errorClass, "metadata.status.errorClass") }
       : {}),
@@ -524,20 +518,17 @@ function normalizeTimestamps(
   return Object.freeze(out);
 }
 
+/**
+ * Drop the absent fields of an already-validated `metadata.dimensions`.
+ *
+ * Sibling of {@link normalizeStatusMetadata}: supported keys and the closed
+ * `namespace` / `method` value sets are settled by
+ * `SideEffectAuditDimensionsMetadataSchema`, leaving only the scan and the
+ * empty-value drop.
+ */
 function normalizeDimensions(
   input: SideEffectAuditDimensionsMetadataV1
 ): SideEffectAuditDimensionsMetadataV1 {
-  const allowed = defineAllowedKeys<SideEffectAuditDimensionsMetadataV1>()(
-    "provider",
-    "namespace",
-    "method",
-    "surface"
-  );
-  assertAllowedKeys(
-    input,
-    allowed,
-    (key) => new Error(`side-effect audit metadata.dimensions.${key} is not supported`)
-  );
   return Object.freeze({
     ...(input.provider ? { provider: assertSafeMetadataString(input.provider, "metadata.dimensions.provider") } : {}),
     ...(input.namespace ? { namespace: input.namespace } : {}),
@@ -546,14 +537,25 @@ function normalizeDimensions(
   });
 }
 
-function assertSupportedMetadataKeys(
+/**
+ * Reject an envelope a caller may not send, choosing the schema by action.
+ *
+ * The two schemas differ only in whether `dimensions` is a declared container,
+ * so a deletion audit reports it with the same "not supported" wording an
+ * invented key gets. Nested containers are validated in the same pass; the
+ * shallowest complaint is the one reported, which is the order the hand-written
+ * ladder produced.
+ */
+function assertSupportedMetadata(
   input: SideEffectAuditMetadataInput,
   action: SideEffectAuditAction | undefined
 ): void {
-  const allowed = isDeletionAction(action)
-    ? defineAllowedKeys<DeletionSideEffectAuditMetadataInput>()("status", "counts", "timestamps")
-    : defineAllowedKeys<SupportedSideEffectAuditMetadataInput>()("status", "counts", "timestamps", "dimensions");
-  assertAllowedKeys(input, allowed, (key) => new Error(`side-effect audit metadata.${key} is not supported`));
+  parseWire(
+    isDeletionAction(action)
+      ? SideEffectAuditDeletionMetadataSchema
+      : SideEffectAuditMetadataSchema,
+    input
+  );
 }
 
 function buildSessionScopedAuditEvent(
@@ -737,13 +739,6 @@ function assertTimestamp(value: string, field: string): string {
   const ms = Date.parse(value);
   if (!Number.isFinite(ms)) {
     throw new Error(`side-effect audit ${field} must be an ISO timestamp string`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: number, field: string): number {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`side-effect audit ${field} must be a non-negative safe integer`);
   }
   return value;
 }

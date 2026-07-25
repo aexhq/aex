@@ -29,13 +29,34 @@ import {
   assertWorkspaceFileResourceName,
   assertWorkspaceInstructionResourceName
 } from "./workspace-resources.js";
-import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
-import { UnknownFieldError } from "./unknown-field-error.js";
 import { withContractParseError } from "./contract-parse-error.js";
 import { parseWire } from "./schemas/wire.js";
+import { SessionSubmissionRequestSchema } from "./schemas/submission-request.js";
+import {
+  ApprovalGateSchema,
+  FileCaptureSchema,
+  PlatformInjectionSchema,
+  ResponseFormatJsonSchemaSchema,
+  ResponseFormatTextSchema,
+  SubmissionSchema
+} from "./schemas/submission-body.js";
+import {
+  SubmissionAssetsSchema,
+  gateWorkspaceFileRef,
+  gateWorkspaceInstructionRef,
+  gateWorkspaceSkillRef,
+  gateWorkspaceToolRef,
+  type WorkspaceResourceRefGate
+} from "./schemas/submission-assets.js";
 import { SessionWebhookSchema } from "./schemas/session-webhook.js";
 import { SessionLimitsSchema, normalizeSessionLimits } from "./schemas/session-limits.js";
 import { SessionMachineSchema, normalizeSessionMachine } from "./schemas/session-machine.js";
+import {
+  EnvironmentSchema,
+  normalizeAllowedHosts,
+  normalizePlatformPackage
+} from "./schemas/submission-environment.js";
+import { InlineSecretsSchema, normalizeEnvSecrets } from "./schemas/submission-secrets.js";
 import {
   isJsonValue,
   isRecord,
@@ -75,54 +96,26 @@ export type PlatformEnvironmentInput = Omit<PlatformEnvironment, "packages"> & {
   readonly packages?: readonly PlatformPackageInput[];
 };
 
-/**
- * Reserved prefix for aex-set runtime env vars (`AEX_CLI`,
- * `AEX_RUNTIME_JSON`, …). Customer `environment.envVars` keys carrying this
- * prefix are rejected at submission parse time so platform-set values
- * cannot be silently overwritten.
- */
-export const AEX_RESERVED_ENV_PREFIX = "AEX_";
-
-/**
- * Maximum number of `environment.envVars` entries accepted per
- * submission. Picked to be generous for real customer config bags
- * (the broll case ships a handful — `BROLL_STORE`, `BROLL_OUTPUTS`,
- * `BROLL_MODE`, …) while still bounding the size of every RUNTIME
- * file we mount into the container.
- */
-export const ENV_VARS_MAX_ENTRIES = 64;
-
-/** Maximum byte length of a single `environment.envVars` value. */
-export const ENV_VARS_MAX_VALUE_BYTES = 4096;
-
-/** Maximum total byte length of all `environment.envVars` keys+values combined. */
-export const ENV_VARS_MAX_TOTAL_BYTES = 65536;
-
-/**
- * POSIX-shell-portable env var key: starts with `A-Z` or `_`, body is
- * `A-Z`, `0-9`, `_`. We deliberately reject lowercase to keep
- * `RUNTIME.env` readable and consistent with platform conventions; if
- * a customer has lowercase keys today, they uppercase them at the
- * call site.
- */
-const ENV_VAR_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+// Bounds, patterns and the ecosystem list live in a leaf module so the schemas
+// can read them without importing this file back. Re-exported here so the
+// published surface is unchanged.
+export {
+  AEX_RESERVED_ENV_PREFIX,
+  ENV_VARS_MAX_ENTRIES,
+  ENV_VARS_MAX_VALUE_BYTES,
+  ENV_VARS_MAX_TOTAL_BYTES,
+  PLATFORM_PACKAGE_ECOSYSTEMS
+} from "./submission-limits.js";
+export type { PlatformPackageEcosystem } from "./submission-limits.js";
+// Also imported locally: a re-export does not bind the names in this module.
+import { PLATFORM_PACKAGE_ECOSYSTEMS } from "./submission-limits.js";
+import type { PlatformPackageEcosystem } from "./submission-limits.js";
 
 export interface PlatformNetworking {
   readonly mode: "limited" | "open";
   /** Lowercase host names. The hosted API always appends the proxy host. */
   readonly allowedHosts?: readonly string[];
 }
-
-/**
- * Package-manager ecosystems accepted by the public submission schema.
- * The customer encodes the target manager as a `name` prefix
- * `"<eco>:<pkg>"` (e.g. "pip:pandas", "npm:express", "apt:ffmpeg"); an
- * UNPREFIXED name defaults to `apt`. After parsing, `PlatformPackage.name`
- * is the bare package and `PlatformPackage.ecosystem` is the resolved
- * manager.
- */
-export const PLATFORM_PACKAGE_ECOSYSTEMS = ["apt", "npm", "pip"] as const;
-export type PlatformPackageEcosystem = (typeof PLATFORM_PACKAGE_ECOSYSTEMS)[number];
 
 export interface PlatformPackage {
   readonly name: string;
@@ -261,20 +254,22 @@ export const deniedSecretFields = new Set([
   "credentials"
 ]);
 
+/**
+ * Parse `submission.environment` — the customer-controlled runtime environment.
+ *
+ * The schema owns shape, the allow-list and the bounds; the normalisers own the
+ * transforms (ecosystem-prefix splitting, host case folding) and the
+ * collapse-to-`undefined` rules. Keeping those apart is what lets the same
+ * schema generate the OpenAPI document — see D4/L1.
+ */
 function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
   if (input === undefined) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.environment");
-  const allowed = defineAllowedKeys<PlatformEnvironmentInput>()("networking", "packages", "envVars");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.environment.${key} is not an allowed field; permitted: networking, packages, envVars`)
-  );
-  const networking = parseNetworking(value.networking);
-  const packages = parsePackages(value.packages);
-  const envVars = parseEnvVars(value.envVars);
+  const parsed = parseWire(EnvironmentSchema, input);
+  const networking = normalizeNetworking(parsed.networking);
+  const packages = normalizePackages(parsed.packages);
+  const envVars = normalizeEnvVars(parsed.envVars);
   if (!networking && !packages && !envVars) {
     return undefined;
   }
@@ -285,161 +280,44 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
   };
 }
 
-/**
- * Validate a customer-supplied `environment.envVars` map. Returns a
- * frozen copy with keys in insertion order, or `undefined` when the
- * input is absent / an empty object (treated as not supplied so the
- * hosted API can omit the field from the parsed snapshot).
- *
- * Rules:
- *   - Must be a JSON object whose values are all strings.
- *   - Keys match `[A-Z_][A-Z0-9_]*` (POSIX-shell portable, uppercase
- *     only — keeps RUNTIME.env readable, matches platform convention).
- *   - Keys MUST NOT start with the reserved `AEX_` prefix; that
- *     prefix is owned by platform-set runtime keys and a collision
- *     would silently mask `__AEX_CLI__` etc. substitution
- *     targets.
- *   - Bounded: max ENV_VARS_MAX_ENTRIES entries, max
- *     ENV_VARS_MAX_VALUE_BYTES per value, max ENV_VARS_MAX_TOTAL_BYTES
- *     overall. The caps stop a sessionaway customer from making the
- *     mounted RUNTIME files unbounded.
- *   - Values are arbitrary UTF-8 strings, EXCEPT NUL bytes are
- *     rejected (NUL terminates C-strings and breaks env-var
- *     transport even inside the container).
- */
-function parseEnvVars(input: unknown): Readonly<Record<string, string>> | undefined {
-  if (input === undefined) {
+/** An empty map is treated as not supplied, so it never lands on the snapshot. */
+function normalizeEnvVars(
+  envVars: Record<string, unknown> | undefined
+): Readonly<Record<string, string>> | undefined {
+  if (envVars === undefined || Object.keys(envVars).length === 0) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.environment.envVars");
-  const keys = Object.keys(value);
-  if (keys.length === 0) {
-    return undefined;
-  }
-  if (keys.length > ENV_VARS_MAX_ENTRIES) {
-    throw new Error(
-      `submission.environment.envVars has ${keys.length} entries; maximum is ${ENV_VARS_MAX_ENTRIES}`
-    );
-  }
-  const out: Record<string, string> = {};
-  let totalBytes = 0;
-  for (const key of keys) {
-    if (!ENV_VAR_KEY_PATTERN.test(key)) {
-      throw new Error(
-        `submission.environment.envVars.${key} key must match /^[A-Z_][A-Z0-9_]*$/`
-      );
-    }
-    if (key.startsWith(AEX_RESERVED_ENV_PREFIX)) {
-      throw new Error(
-        `submission.environment.envVars.${key} uses reserved prefix "${AEX_RESERVED_ENV_PREFIX}" (set by the aex runtime)`
-      );
-    }
-    const raw = value[key];
-    if (typeof raw !== "string") {
-      throw new Error(`submission.environment.envVars.${key} must be a string`);
-    }
-    if (raw.includes("\0")) {
-      throw new Error(`submission.environment.envVars.${key} must not contain NUL bytes`);
-    }
-    const valueBytes = Buffer.byteLength(raw, "utf8");
-    if (valueBytes > ENV_VARS_MAX_VALUE_BYTES) {
-      throw new Error(
-        `submission.environment.envVars.${key} value is ${valueBytes} bytes; maximum is ${ENV_VARS_MAX_VALUE_BYTES}`
-      );
-    }
-    totalBytes += Buffer.byteLength(key, "utf8") + valueBytes;
-    if (totalBytes > ENV_VARS_MAX_TOTAL_BYTES) {
-      throw new Error(
-        `submission.environment.envVars total byte size exceeds maximum ${ENV_VARS_MAX_TOTAL_BYTES}`
-      );
-    }
-    out[key] = raw;
-  }
-  return Object.freeze(out);
+  return Object.freeze({ ...envVars } as Record<string, string>);
 }
 
-function parseNetworking(input: unknown): PlatformNetworking | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "submission.environment.networking");
-  const allowed = defineAllowedKeys<PlatformNetworking>()("mode", "allowedHosts");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.environment.networking.${key} is not an allowed field; permitted: mode, allowedHosts`)
-  );
-  const mode = optionalEnum(value.mode, "submission.environment.networking.mode", ["limited", "open"]);
-  if (!mode) {
-    throw new Error("submission.environment.networking.mode is required when networking is provided");
-  }
-  const allowedHosts = parseAllowedHosts(value.allowedHosts);
-  return allowedHosts ? { mode, allowedHosts } : { mode };
-}
-
-function parseAllowedHosts(input: unknown): readonly string[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.environment.networking.allowedHosts must be an array of strings");
-  }
-  const seen = new Set<string>();
-  return input.map((entry, index) => {
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`submission.environment.networking.allowedHosts[${index}] must be a non-empty string`);
-    }
-    const lower = entry.toLowerCase();
-    if (seen.has(lower)) {
-      throw new Error(`submission.environment.networking.allowedHosts duplicate entry: ${entry}`);
-    }
-    seen.add(lower);
-    return lower;
-  });
-}
-
-function parsePackages(input: unknown): readonly PlatformPackage[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.environment.packages must be an array");
-  }
-  return input.map((entry, index) => {
-    const value = requireRecord(entry, `submission.environment.packages[${index}]`);
-    const allowed = defineAllowedKeys<PlatformPackageInput>()("name", "version");
-    assertAllowedKeys(
-      value,
-      allowed,
-      (key) => new Error(`submission.environment.packages[${index}].${key} is not an allowed field; permitted: name, version`)
-    );
-    const rawName = requireString(value.name, `submission.environment.packages[${index}].name`);
-    const version = optionalString(value.version, `submission.environment.packages[${index}].version`);
-    // The ecosystem is encoded as a `name` prefix `"<eco>:<pkg>"`; an
-    // unprefixed name defaults to `apt`. A colon-delimited prefix that is
-    // NOT a known ecosystem is rejected (rather than silently folded into
-    // the package name) so a typo'd manager fails closed.
-    let ecosystem: PlatformPackageEcosystem = "apt";
-    let name = rawName;
-    const colon = rawName.indexOf(":");
-    if (colon > 0) {
-      const prefix = rawName.slice(0, colon);
-      if (!(PLATFORM_PACKAGE_ECOSYSTEMS as readonly string[]).includes(prefix)) {
-        throw new Error(
-          `submission.environment.packages[${index}].name has unknown ecosystem prefix "${prefix}:"; permitted: ${PLATFORM_PACKAGE_ECOSYSTEMS.join(", ")}`
-        );
+function normalizeNetworking(
+  networking:
+    | {
+        readonly mode?: "limited" | "open" | undefined;
+        readonly allowedHosts?: readonly string[] | undefined;
       }
-      ecosystem = prefix as PlatformPackageEcosystem;
-      name = rawName.slice(colon + 1);
-    }
-    if (name.length === 0) {
-      throw new Error(
-        `submission.environment.packages[${index}].name resolves to an empty package after stripping the "${ecosystem}:" ecosystem prefix`
-      );
-    }
-    const parsed = version ? { name, version, ecosystem } : { name, ecosystem };
-    assertPlatformPackage(parsed, `submission.environment.packages[${index}]`);
-    return parsed;
+    | undefined
+): PlatformNetworking | undefined {
+  if (networking?.mode === undefined) {
+    return undefined;
+  }
+  const allowedHosts = networking.allowedHosts;
+  return allowedHosts
+    ? { mode: networking.mode, allowedHosts: normalizeAllowedHosts(allowedHosts) }
+    : { mode: networking.mode };
+}
+
+function normalizePackages(
+  packages: readonly { readonly name: string; readonly version?: string | undefined }[] | undefined
+): readonly PlatformPackage[] | undefined {
+  if (packages === undefined) {
+    return undefined;
+  }
+  return packages.map((entry, index) => {
+    const path = `submission.environment.packages[${index}]`;
+    const normalized = normalizePlatformPackage(entry, path) as PlatformPackage;
+    assertPlatformPackage(normalized, path);
+    return normalized;
   });
 }
 
@@ -488,72 +366,19 @@ export function crossValidateSecretEnvAndValues(
 
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   return withContractParseError("parseInlineSecrets", () => {
-  // Absent/null secrets collapse to an empty bundle. Under managed gateway keys
-  // a run needs no provider key, so an empty bundle is always admissible.
-  if (input === undefined || input === null) return {};
-  const value = requireRecord(input, "secrets");
-  const allowedTopLevel = defineAllowedKeys<PlatformInlineSecrets>()("mcpServers", "envSecrets");
-  assertAllowedKeys(
-    value,
-    allowedTopLevel,
-    (key, orderedKeys) => key.startsWith("__aex_")
-      ? new Error(`secrets.${key} uses the platform-internal __aex_ namespace and may not be set by callers`)
-      : new UnknownFieldError("secrets", key, orderedKeys)
-  );
-  const mcpServers = parseMcpServerSecrets(value.mcpServers);
-  const envSecrets = parseEnvSecrets(value.envSecrets);
-
-  return {
-    ...(mcpServers ? { mcpServers } : {}),
-    ...(envSecrets ? { envSecrets } : {})
-  };
+    // Absent/null secrets collapse to an empty bundle. Under managed gateway keys
+    // a run needs no provider key, so an empty bundle is always admissible.
+    if (input === undefined || input === null) return {};
+    const parsed = parseWire(InlineSecretsSchema, input);
+    const mcpServers = parsed.mcpServers as PlatformInlineSecrets["mcpServers"];
+    const envSecrets = normalizeEnvSecrets(parsed.envSecrets);
+    // Spread only the present halves: `PlatformInlineSecrets` promises each key
+    // is absent or a value, never present-and-undefined.
+    return {
+      ...(mcpServers ? { mcpServers } : {}),
+      ...(envSecrets ? { envSecrets } : {})
+    };
   });
-}
-
-function parseEnvSecrets(input: unknown): Readonly<Record<string, string>> | undefined {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "secrets.envSecrets");
-  const out: Record<string, string> = {};
-  for (const [envName, entry] of Object.entries(value)) {
-    if (!SECRET_ENV_NAME_PATTERN.test(envName)) {
-      throw new Error(
-        `secrets.envSecrets key "${envName}" must be a valid env var name matching ${SECRET_ENV_NAME_PATTERN.source}`
-      );
-    }
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`secrets.envSecrets.${envName} must be a non-empty string`);
-    }
-    out[envName] = entry;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function parseMcpServerSecrets(input: unknown): readonly PlatformMcpServerSecret[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("secrets.mcpServers must be an array");
-  }
-  const seen = new Set<string>();
-  return input.map((entry, index) => {
-    const parsed = parseMcpServerSecret(entry, `secrets.mcpServers[${index}]`);
-    if (seen.has(parsed.name)) {
-      throw new Error(`secrets.mcpServers duplicate name: ${parsed.name}`);
-    }
-    seen.add(parsed.name);
-    return parsed;
-  });
-}
-
-function parseMcpServerSecret(input: unknown, path: string): PlatformMcpServerSecret {
-  const value = requireRecord(input, path);
-  const allowed = defineAllowedKeys<PlatformMcpServerSecret>()("name", "url", "headers");
-  assertAllowedKeys(value, allowed, (key) => new Error(`${path}.${key} is not an allowed field; permitted: name, url, headers`));
-  const name = requireString(value.name, `${path}.name`);
-  const url = requireString(value.url, `${path}.url`);
-  const headers = optionalStringRecord(value.headers, `${path}.headers`);
-  return headers ? { name, url, headers } : { name, url };
 }
 
 export function assertNoSecretBearingFields(input: unknown, path: readonly string[]): void {
@@ -900,24 +725,7 @@ export function parseSessionSubmissionRequest(
   input: unknown
 ): PlatformSessionSubmissionRequest {
   return withContractParseError("parseSessionSubmissionRequest", () => {
-  const value = requireRecord(input, "submission");
-  const allowedTopLevelFields = defineAllowedKeys<PlatformSessionSubmissionInput>()(
-    "workspaceId",
-    "idempotencyKey",
-    "submission",
-    "runtimeSize",
-    "runtimeKind",
-    "timeout",
-    "webhook",
-    "limits",
-    "machine",
-    SECRETS_KEY
-  );
-  assertAllowedKeys(
-    value,
-    allowedTopLevelFields,
-    (key, orderedKeys) => new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
+  const value = parseWire(SessionSubmissionRequestSchema, input);
   // Defence in depth: scan every non-secrets field for credential-named
   // keys. The `secrets` key is
   // the only allow-listed home for credential material.
@@ -1057,27 +865,7 @@ export function parseSessionMachine(input: unknown): SessionMachine | undefined 
 
 export function parseSubmission(input: unknown): PlatformSubmission {
   return withContractParseError("parseSubmission", () => {
-  const value = requireRecord(input, "submission.submission");
-  const allowed = defineAllowedKeys<PlatformSubmission>()(
-    "model",
-    "system",
-    "prompt",
-    "assets",
-    "mcpServers",
-    "secretEnv",
-    "environment",
-    "securityProfile",
-    "metadata",
-    "fileCapture",
-    "builtinTools",
-    "outputMode",
-    "responseFormat",
-    "approvalGate",
-    "platform"
-  );
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
+  const value = parseWire(SubmissionSchema, input);
   const model = parseModelSlug(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
@@ -1115,13 +903,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
 }
 
 function parseSubmissionAssets(input: unknown): SubmissionAssets {
-  const value = requireRecord(input, "submission.assets");
-  const allowed = defineAllowedKeys<SubmissionAssets>()("files", "skills", "tools", "instructions");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.assets.${key} is not allowed; permitted: files, skills, tools, instructions`)
-  );
+  const value = parseWire(SubmissionAssetsSchema, input);
   return {
     files: parseWorkspaceFiles(value.files),
     skills: parseWorkspaceSkills(value.skills),
@@ -1135,7 +917,7 @@ function parseWorkspaceFiles(input: unknown): readonly WorkspaceFileRef[] {
     input,
     "files",
     "file",
-    defineAllowedKeys<WorkspaceFileRef>()("kind", "resourceId", "version", "assetId", "contentHash", "name", "mountPath"),
+    gateWorkspaceFileRef,
     (raw, base, path) => {
     const name = requireString(raw.name, `${path}.name`);
     assertWorkspaceFileResourceName(name, `${path}.name`);
@@ -1151,7 +933,7 @@ function parseWorkspaceSkills(input: unknown): readonly WorkspaceSkillRef[] {
     input,
     "skills",
     "skill",
-    defineAllowedKeys<WorkspaceSkillRef>()("kind", "resourceId", "version", "assetId", "contentHash", "name", "description"),
+    gateWorkspaceSkillRef,
     (raw, base, path) => {
     const name = requireString(raw.name, `${path}.name`);
     assertValidSkillName(name, `${path}.name`);
@@ -1166,17 +948,7 @@ function parseWorkspaceTools(input: unknown): readonly WorkspaceToolRef[] {
     input,
     "tools",
     "tool",
-    defineAllowedKeys<WorkspaceToolRef>()(
-      "kind",
-      "resourceId",
-      "version",
-      "assetId",
-      "contentHash",
-      "name",
-      "description",
-      "input_schema",
-      "entry"
-    ),
+    gateWorkspaceToolRef,
     (raw, base, path) => {
       const name = requireString(raw.name, `${path}.name`);
       if (!TOOL_NAME_PATTERN.test(name) || name.includes("__")) {
@@ -1205,7 +977,7 @@ function parseWorkspaceInstructions(input: unknown): readonly WorkspaceInstructi
     input,
     "instructions",
     "instruction",
-    defineAllowedKeys<WorkspaceInstructionRef>()("kind", "resourceId", "version", "assetId", "contentHash", "name"),
+    gateWorkspaceInstructionRef,
     (raw, base, path) => {
     const name = requireString(raw.name, `${path}.name`);
     assertWorkspaceInstructionResourceName(name, `${path}.name`);
@@ -1223,7 +995,7 @@ function parseWorkspaceResourceArray<T extends WorkspaceFileRef | WorkspaceSkill
   input: unknown,
   field: "files" | "skills" | "tools" | "instructions",
   kind: T["kind"],
-  allowedFields: readonly string[],
+  gateKeys: WorkspaceResourceRefGate,
   project: (raw: Record<string, unknown>, base: PinnedResourceBase, path: string) => T
 ): readonly T[] {
   if (input === undefined) return [];
@@ -1231,8 +1003,7 @@ function parseWorkspaceResourceArray<T extends WorkspaceFileRef | WorkspaceSkill
   const seen = new Set<string>();
   return input.map((item, index) => {
     const path = `submission.assets.${field}[${index}]`;
-    const raw = requireRecord(item, path);
-    assertAllowedKeys(raw, allowedFields, (key) => new Error(`${path}.${key} is not allowed`));
+    const raw = gateKeys(path, item);
     if (raw.kind !== kind) throw new Error(`${path}.kind must be '${kind}'`);
     const base: PinnedResourceBase = {
       resourceId: requireString(raw.resourceId, `${path}.resourceId`),
@@ -1300,13 +1071,7 @@ function parseSecretEnv(
 
 function parsePlatformConfig(input: unknown): PlatformInjectionConfig | undefined {
   if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "submission.platform");
-  const allowed = defineAllowedKeys<PlatformInjectionConfig>()("systemPrompt");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.platform.${key} is not an allowed field; permitted: systemPrompt`)
-  );
+  const value = parseWire(PlatformInjectionSchema, input);
   if (value.systemPrompt === undefined) return undefined;
   if (value.systemPrompt !== "default" && value.systemPrompt !== "off") {
     throw new Error(`submission.platform.systemPrompt must be "default" or "off"`);
@@ -1362,26 +1127,15 @@ export function parseResponseFormat(input: unknown): ResponseFormat | undefined 
   if (typeof kind !== "string" || !(RESPONSE_FORMAT_KINDS as readonly string[]).includes(kind)) {
     throw new Error(`submission.responseFormat.kind must be one of ${RESPONSE_FORMAT_KINDS.join(", ")}`);
   }
+  // `kind` selects the variant BEFORE either schema runs — a bad `kind` must
+  // outrank an unknown key, and the two variants word their rejection
+  // differently — so the object gate above stays a `requireRecord` and each
+  // schema below is a pure key gate over the record it already produced.
   if (kind === "text") {
-    const allowed = defineAllowedKeys<Extract<ResponseFormat, { readonly kind: "text" }>>()("kind");
-    assertAllowedKeys(
-      value,
-      allowed,
-      (key) => new Error(`submission.responseFormat.${key} is not allowed when kind is 'text'`)
-    );
+    parseWire(ResponseFormatTextSchema, value);
     return { kind: "text" };
   }
-  const allowed = defineAllowedKeys<Extract<ResponseFormat, { readonly kind: "json_schema" }>>()(
-    "kind",
-    "schema",
-    "strict",
-    "name"
-  );
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key, orderedKeys) => new Error(`submission.responseFormat.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
+  parseWire(ResponseFormatJsonSchemaSchema, value);
   if (!isRecord(value.schema) || !isJsonValue(value.schema)) {
     throw new Error("submission.responseFormat.schema must be a JSON-serializable object");
   }
@@ -1416,13 +1170,7 @@ export interface ApprovalGate {
 export function parseApprovalGate(input: unknown): ApprovalGate | undefined {
   return withContractParseError("parseApprovalGate", () => {
   if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "submission.approvalGate");
-  const allowed = defineAllowedKeys<ApprovalGate>()("tools");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.approvalGate.${key} is not an allowed field; permitted: tools`)
-  );
+  const value = parseWire(ApprovalGateSchema, input);
   if (!Array.isArray(value.tools)) {
     throw new Error("submission.approvalGate.tools must be an array of tool names");
   }
@@ -1619,18 +1367,7 @@ function parseFileCapture(input: unknown): PlatformFileCaptureConfig | undefined
   if (input === undefined || input === null) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.fileCapture");
-  const allowed = defineAllowedKeys<PlatformFileCaptureConfig>()(
-    "allowedDirs",
-    "deniedDirs",
-    "captureTimeoutMs",
-    "maxFileBytes",
-    "maxTotalBytes",
-    "maxFiles"
-  );
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`submission.fileCapture.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
+  const value = parseWire(FileCaptureSchema, input);
   const allowedDirs = parseFileCaptureAllowedDirs(value.allowedDirs);
   const deniedDirs = parseFileCaptureDeniedDirs(value.deniedDirs);
   const captureTimeoutMs = parseFileCapturePositiveInteger(value.captureTimeoutMs, "submission.fileCapture.captureTimeoutMs", {

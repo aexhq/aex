@@ -1,6 +1,11 @@
 import { withContractParseError } from "./contract-parse-error.js";
+import {
+  RUNTIME_SECURITY_PROFILES,
+  RuntimeSecurityProfileSchema
+} from "./schemas/runtime-security-profile.js";
+import { parseWire } from "./schemas/wire.js";
 
-export const RUNTIME_SECURITY_PROFILES = ["strict", "standard", "developer"] as const;
+export { RUNTIME_SECURITY_PROFILES };
 export type RuntimeSecurityProfileName = (typeof RUNTIME_SECURITY_PROFILES)[number];
 
 export interface RuntimeSecurityProfile {
@@ -55,12 +60,7 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
 export function parseRuntimeSecurityProfile(input: unknown): RuntimeSecurityProfileName | undefined {
   return withContractParseError("parseRuntimeSecurityProfile", () => {
     if (input === undefined || input === null) return undefined;
-    if (typeof input !== "string" || !(RUNTIME_SECURITY_PROFILES as readonly string[]).includes(input)) {
-      throw new Error(
-        `securityProfile must be one of: ${RUNTIME_SECURITY_PROFILES.join(", ")} (got ${JSON.stringify(input)})`
-      );
-    }
-    return input as RuntimeSecurityProfileName;
+    return parseWire(RuntimeSecurityProfileSchema, input);
   });
 }
 

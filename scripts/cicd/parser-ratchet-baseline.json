@@ -4,10 +4,11 @@
     "packages/contracts/src/submission.ts",
     "packages/contracts/src/session-config.ts",
     "packages/contracts/src/post-hook.ts",
-    "packages/contracts/src/side-effect-audit.ts"
+    "packages/contracts/src/side-effect-audit.ts",
+    "packages/contracts/src/subagent-input.ts"
   ],
   "maxCallSites": {
-    "defineAllowedKeys": 26,
-    "assertAllowedKeys": 22
+    "defineAllowedKeys": 4,
+    "assertAllowedKeys": 2
   }
 }

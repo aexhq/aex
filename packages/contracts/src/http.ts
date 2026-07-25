@@ -1,6 +1,7 @@
 import { AexError, AexNetworkError, extractErrorCode, redactUrl } from "./sdk-errors.js";
 import { apiErrorFromResponse } from "./error-factory.js";
 import { AEX_DEFAULT_BASE_URL } from "./stable.js";
+import { reportWireResponse } from "./wire-observer.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -118,6 +119,16 @@ export class HttpClient {
             message: extractErrorMessage(errorBody)
           });
         }
+        // C4: the harness validates real server bytes against the response
+        // schemas. Every JSON response the SDK, the CLI and the user-test suites
+        // receive passes through this one line, which is why the gate attaches
+        // here instead of at each of ~120 call sites.
+        reportWireResponse(() => ({
+          method,
+          path: url.pathname,
+          status: response.status,
+          body
+        }));
         return body as T;
       } catch (err) {
         if (shouldRetryTransientRead(err, retry, attempt)) {
