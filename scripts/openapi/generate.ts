@@ -199,6 +199,10 @@ function readVersion(): string {
   ).version;
 }
 
+function normalizeEol(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
 function sortKeys<T>(value: Record<string, T>): Record<string, T> {
   return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)));
 }
@@ -266,7 +270,11 @@ async function main(): Promise<number> {
     const target = resolve(outputDir, plane.file);
     if (check) {
       const existing = await readFile(target, "utf8").catch(() => "");
-      if (existing !== rendered) {
+      // Compare with line endings normalised. `.gitattributes` pins these files
+      // to LF so the working tree is canonical, but a checkout made before that
+      // landed — or with a local core.autocrlf — would otherwise report a clean
+      // tree as stale, which teaches people to ignore the gate.
+      if (normalizeEol(existing) !== normalizeEol(rendered)) {
         console.error(
           `openapi:check FAILED — ${plane.file} is stale. Run \`bun run openapi:generate\`.`
         );
