@@ -71,14 +71,17 @@ export const WhoAmILimitsSchema = describeResponse(
     monthSpendUsd: wireNumber,
     balanceUsd: wireNumber,
     balanceGraceFloorUsd: wireNumber,
-    balanceGateActive: wireBoolean,
+    // Billing WS5 replaced the subscription gate with a credit gate and the plan
+    // catalog with card-driven admission: `balanceGateActive` became
+    // `creditGateActive`, and `planKey` / `subscriptionStatus` / `subscriptionGate`
+    // / `pastDueAt` / `graceEndsAt` are gone. A strict schema still expecting them
+    // fails C4 against the current server.
+    llmTokenAllowanceRemainingUsd: wireNumber,
+    creditGateActive: wireBoolean,
     paymentMethodStatus: wireEnum(["none", "active"]),
-    planKey: wireEnum(["free", "pro", "team"]),
-    accountType: wireEnum(["standard", "internal"]),
-    subscriptionStatus: wireEnum(["none", "active", "past_due", "canceled"]),
-    subscriptionGate: wireEnum(["ok", "past_due_grace", "past_due_suspended"]),
-    pastDueAt: optional(wireTimestamp),
-    graceEndsAt: optional(wireTimestamp)
+    admissionState: wireNonEmptyString,
+    autoTopupEnabled: wireBoolean,
+    accountType: wireEnum(["standard", "internal"])
   })
 );
 

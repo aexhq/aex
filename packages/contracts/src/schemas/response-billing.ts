@@ -48,13 +48,16 @@ export const BillingSummaryResponseSchema = describeResponse(
   "Workspace billing summary: prepaid balance, month-to-date spend, cap and plan state.",
   responseObject({
     balanceUsd: wireNumber,
-    monthSpendUsd: wireNumber,
-    spendCapUsd: wireNumber,
-    planKey: wireNonEmptyString,
-    subscriptionStatus: wireEnum(["none", "active", "past_due", "canceled"]),
+    // The plan catalog was demolished (billing WS5): admission is decided by card
+    // presence, not by a subscribed plan, so `planKey`, `subscriptionStatus` and
+    // `pastDueAt` went with it. Recorded because a strict schema still expecting
+    // them would fail C4 against the current server.
+    admissionState: wireNonEmptyString,
+    autoTopupEnabled: wireBoolean,
     paymentMethodStatus: wireEnum(["none", "active"]),
     accountType: wireEnum(["standard", "internal"]),
-    pastDueAt: z.nullable(wireString)
+    monthSpendUsd: wireNumber,
+    spendCapUsd: wireNumber
   })
 );
 

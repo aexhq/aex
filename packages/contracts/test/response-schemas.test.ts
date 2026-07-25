@@ -168,12 +168,12 @@ const whoami = {
     monthSpendUsd: 1.25,
     balanceUsd: 5,
     balanceGraceFloorUsd: 0,
-    balanceGateActive: true,
+    llmTokenAllowanceRemainingUsd: 0,
+    creditGateActive: true,
     paymentMethodStatus: "none",
-    planKey: "free",
-    accountType: "standard",
-    subscriptionStatus: "none",
-    subscriptionGate: "ok"
+    admissionState: "free",
+    autoTopupEnabled: false,
+    accountType: "standard"
   },
   runtimeCapabilities: {
     schemaVersion: 1,
@@ -715,24 +715,22 @@ const cases: readonly Case[] = [
     schema: BillingSummaryResponseSchema,
     accepts: {
       balanceUsd: 5,
-      monthSpendUsd: 1.25,
-      spendCapUsd: 0,
-      planKey: "free",
-      subscriptionStatus: "none",
+      admissionState: "free",
+      autoTopupEnabled: false,
       paymentMethodStatus: "none",
       accountType: "standard",
-      pastDueAt: null
+      monthSpendUsd: 1.25,
+      spendCapUsd: 0
     },
     // `accountType` is on the wire and NOT on the declared `BillingSummary`.
     // Its absence is the drift the declared type cannot express.
     rejects: {
       balanceUsd: 5,
-      monthSpendUsd: 1.25,
-      spendCapUsd: 0,
-      planKey: "free",
-      subscriptionStatus: "none",
+      admissionState: "free",
+      autoTopupEnabled: false,
       paymentMethodStatus: "none",
-      pastDueAt: null
+      monthSpendUsd: 1.25,
+      spendCapUsd: 0
     },
     because: "accountType"
   },
