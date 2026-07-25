@@ -35,9 +35,25 @@ import {
   type PlatformEnvironment
 } from "./submission.js";
 import { rethrowContractParseError, withContractParseError } from "./contract-parse-error.js";
-import { parseModelSlug, type ModelName } from "./models.js";
+import { type ModelName } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
-import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
+import {
+  ASSET_ID_PATTERN,
+  MOUNT_PATH_MAX_LENGTH,
+  MOUNT_PATH_PATTERN,
+  assertValidMountPath,
+  normalizeAssetRef,
+  parseAssetRefWire
+} from "./schemas/asset-ref.js";
+import {
+  MCP_SERVER_NAME_PATTERN,
+  REMOTE_MCP_STDIO_REJECTED_MESSAGE,
+  normalizeMcpServerRef,
+  parseMcpServerRefWire,
+  rejectStdioMcpShape,
+  type McpWirePolicy
+} from "./schemas/mcp-server.js";
+import { parseSessionRequestConfigWire } from "./schemas/session-request-config.js";
 
 // ---------------------------------------------------------------------------
 // Skill ID + name format
@@ -169,8 +185,11 @@ export function isAssetRef(ref: FileRef): ref is AssetRef {
 /**
  * Asset ids are storage-neutral product ids. Current uploads derive the id from
  * the content digest (`asset_<sha256hex>`), but callers must treat it as opaque.
+ *
+ * Declared in `schemas/asset-ref.ts` next to the schema that enforces it — this
+ * module imports that one, so it cannot live here without a cycle.
  */
-export const ASSET_ID_PATTERN = /^asset_[A-Za-z0-9_-]{8,128}$/;
+export { ASSET_ID_PATTERN };
 
 // ---------------------------------------------------------------------------
 // File refs — third SDK concept. Uploaded assets carry the DIRECTORY the
@@ -192,38 +211,15 @@ export const isFileAssetRef: typeof isAssetRef = isAssetRef;
 export const DEFAULT_FILE_MOUNT_PATH = "/workspace";
 
 /**
- * A `mountPath` is an ABSOLUTE container directory under the workspace. It must
- * start with `/`, contain no `..`/`.` traversal or NUL/backslash, and stay
- * within {@link MOUNT_PATH_MAX_LENGTH}. The managed runtime rebases it under the
- * workspace root, so a path outside `/workspace` is clamped there — the pattern
- * just rejects obviously-malformed input at the SDK/BFF boundary. A trailing
- * slash is allowed (it is a directory) but not required.
+ * A `mountPath` is an ABSOLUTE container directory under the workspace, and
+ * {@link assertValidMountPath} is the assert the SDK `File` builders and the BFF
+ * asset-ref parser share so both reject the same malformed input.
+ *
+ * All three are declared in `schemas/asset-ref.ts`, next to the schema that
+ * enforces them — this module imports that one, so they cannot live here without
+ * a cycle.
  */
-export const MOUNT_PATH_PATTERN = /^\/(?:[^/\0\\]+\/?)*$/;
-export const MOUNT_PATH_MAX_LENGTH = 512;
-
-/**
- * Validate a `File.mountPath` (an absolute container directory). Shared by the
- * SDK `File` builders and the BFF asset-ref parser so both reject the same
- * malformed input. Throws with `field` context on failure.
- */
-export function assertValidMountPath(value: string, field: string): void {
-  if (value.length === 0 || value.length > MOUNT_PATH_MAX_LENGTH) {
-    throw new Error(`${field} must be 1..${MOUNT_PATH_MAX_LENGTH} chars`);
-  }
-  if (!value.startsWith("/")) {
-    throw new Error(`${field} must be an absolute path starting with '/'`);
-  }
-  if (value.includes("\0") || value.includes("\\")) {
-    throw new Error(`${field} must not contain NUL or backslash`);
-  }
-  if (value.split("/").some((seg) => seg === "..")) {
-    throw new Error(`${field} must not contain '..' traversal segments`);
-  }
-  if (!MOUNT_PATH_PATTERN.test(value)) {
-    throw new Error(`${field} must match ${MOUNT_PATH_PATTERN.source}`);
-  }
-}
+export { MOUNT_PATH_PATTERN, MOUNT_PATH_MAX_LENGTH, assertValidMountPath };
 
 /**
  * Common parser for any `kind: "asset"` ref (file / tool bundle).
@@ -232,31 +228,9 @@ export function parseAssetRefFields(
   record: Record<string, unknown>,
   path: string
 ): AssetRef {
-  return withContractParseError("parseAssetRefFields", () => {
-  const allowed = defineAllowedKeys<AssetRef>()("kind", "assetId", "name", "mountPath");
-  assertAllowedKeys(record, allowed, (key) => new Error(`${path} contains unexpected field for asset ref: ${key}`));
-  const assetId = record.assetId;
-  if (typeof assetId !== "string" || !ASSET_ID_PATTERN.test(assetId)) {
-    throw new Error(`${path}.assetId must match ${ASSET_ID_PATTERN.source}`);
-  }
-  const name = record.name;
-  if (typeof name !== "string" || name.length === 0 || name.length > 128) {
-    throw new Error(`${path}.name must be a non-empty string (<= 128 chars)`);
-  }
-  const mountPath = record.mountPath;
-  if (mountPath !== undefined) {
-    if (typeof mountPath !== "string") {
-      throw new Error(`${path}.mountPath, when provided, must be a string`);
-    }
-    assertValidMountPath(mountPath, `${path}.mountPath`);
-  }
-  return {
-    kind: "asset",
-    assetId,
-    name,
-    ...(mountPath !== undefined ? { mountPath } : {})
-  };
-  });
+  return withContractParseError("parseAssetRefFields", () =>
+    normalizeAssetRef(parseAssetRefWire(record, path))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -502,17 +476,10 @@ export type RemoteMcpTransport = (typeof REMOTE_MCP_TRANSPORTS)[number];
  * `args` / `env`). Pinned in source so every surface — shared parser,
  * SDK builder, CLI flag parser, dashboard form — surfaces the same
  * message and a user can find it via grep.
+ *
+ * Declared in `schemas/mcp-server.ts` alongside the shape gate that raises it.
  */
-export const REMOTE_MCP_STDIO_REJECTED_MESSAGE =
-  "stdio MCP servers are not supported by Aex. Aex supports remote MCP servers over HTTP/SSE only.";
-
-/**
- * Stdio-only fields. Used by the parser to detect a stdio shape even
- * when the caller omits `transport: "stdio"` (e.g. `{ url, command }`
- * — the presence of `command` alone is enough to identify a stdio
- * declaration and reject it).
- */
-const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
+export { REMOTE_MCP_STDIO_REJECTED_MESSAGE };
 
 /**
  * The non-secret half of an MCP server declaration. This is what enters
@@ -530,7 +497,8 @@ export interface McpServerRef {
   readonly transport?: RemoteMcpTransport;
 }
 
-export const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,62}$/;
+/** Declared in `schemas/mcp-server.ts`, next to the schema that enforces it. */
+export { MCP_SERVER_NAME_PATTERN };
 
 /**
  * A session-config MCP entry. The user is free to supply headers inline; the SDK
@@ -541,82 +509,20 @@ export interface SessionConfigMcpServer extends McpServerRef {
   readonly headers?: Readonly<Record<string, string>>;
 }
 
+/**
+ * Parse the non-secret half of an MCP server declaration mounted at `path`.
+ *
+ * SSRF guard at the parser boundary (C4) — the platform MCP proxy relies on
+ * this validation; each branch of {@link denyReasonForMcpHost} maps to an SSRF
+ * regression test case.
+ */
 export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
-  return withContractParseError("parseMcpServerRef", () => {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error(`${path} must be an object`);
-  }
-  const record = input as Record<string, unknown>;
-  rejectStdioMcpShape(record);
-  // Headers belong on `SessionConfigMcpServer`, not the non-secret wire ref;
-  // and the wire `submission.mcpServers` must NEVER contain headers. So
-  // reject any field other than {name,url,transport} explicitly to make a
-  // caller accidentally inlining `headers` into the non-secret half fail
-  // loudly instead of silently dropping the field.
-  // `parseSessionConfigMcpServerRef` handles the headers case separately for
-  // session-config entries.
-  const allowed = defineAllowedKeys<McpServerRef>()("name", "url", "transport");
-  assertAllowedKeys(
-    record,
-    allowed,
-    (key) => new Error(`${path}.${key} is not an allowed field for McpServerRef; permitted: name, url, transport`)
+  return withContractParseError("parseMcpServerRef", () =>
+    normalizeMcpServerRef(parseMcpServerRefWire(input, path, MCP_WIRE_POLICY))
   );
-  const name = record.name;
-  if (typeof name !== "string" || !MCP_SERVER_NAME_PATTERN.test(name)) {
-    throw new Error(`${path}.name must match ${MCP_SERVER_NAME_PATTERN.source}`);
-  }
-  const url = record.url;
-  if (typeof url !== "string" || url.length === 0) {
-    throw new Error(`${path}.url must be a non-empty string`);
-  }
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw new Error(`${path}.url must use http or https (got ${parsed.protocol})`);
-    }
-    // Auth belongs in `secrets.mcpServers[i].headers`, never in the URL
-    // itself. A `https://user:pass@host` style URL would be persisted in
-    // the non-secret session snapshot and hashed into the idempotency key —
-    // both unacceptable for credential material.
-    if (parsed.username !== "" || parsed.password !== "") {
-      throw new Error(
-        `${path}.url must not contain userinfo (username/password); use secrets.mcpServers[].headers for auth`
-      );
-    }
-    // SSRF guard at the parser boundary (C4) — the platform MCP proxy
-    // relies on this validation. Each branch below maps to an
-    // SSRF regression test case.
-    const ssrfDenial = denyReasonForMcpHost(parsed);
-    if (ssrfDenial !== null) {
-      throw new Error(`${path}.url ${ssrfDenial}`);
-    }
-  } catch (cause) {
-    if (cause instanceof Error && cause.message.startsWith(path)) {
-      throw cause;
-    }
-    throw new Error(`${path}.url is not a valid URL: ${url}`);
-  }
-  const transport = parseRemoteMcpTransport(record.transport, `${path}.transport`);
-  return transport ? { name, url, transport } : { name, url };
-  });
 }
 
-/**
- * Throw the canonical stdio-rejected error if the record carries any
- * stdio-only marker (`transport: "stdio"`, `command`, `args`, `env`).
- * Used by both the shared parser and the SDK `McpServer.remote`
- * builder so every entry point surfaces the same message.
- */
-export function rejectStdioMcpShape(record: Record<string, unknown>): void {
-  if (record.transport === "stdio") {
-    throw new Error(REMOTE_MCP_STDIO_REJECTED_MESSAGE);
-  }
-  for (const field of STDIO_ONLY_FIELDS) {
-    if (record[field] !== undefined) {
-      throw new Error(REMOTE_MCP_STDIO_REJECTED_MESSAGE);
-    }
-  }
-}
+export { rejectStdioMcpShape };
 
 /**
  * One entry in {@link EGRESS_DENIED_RANGES}.
@@ -813,42 +719,19 @@ function parseRemoteMcpTransport(input: unknown, field: string): RemoteMcpTransp
 }
 
 /**
- * Strict parser for session-config MCP server entries. Allows only the
- * `{name, url, headers?}` shape so config loaded from `--config session.json`
- * cannot smuggle unrelated fields past the parser.
+ * The two rules the MCP schemas defer back to this module for.
+ *
+ * Injected rather than imported the other way around because
+ * `scripts/cicd/check-contract-parity.mjs` locates the SSRF deny-list INSIDE
+ * this file — it slices from `denyReasonForHostIp` to `parseRemoteMcpTransport`
+ * and byte-compares that region against `platform/packages/shared/src/blueprint.ts`.
+ * Moving either function into `schemas/` would break the only check that keeps
+ * the two deny-lists identical.
  */
-function parseSessionConfigMcpServerRef(input: unknown, path: string): SessionConfigMcpServer {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error(`${path} must be an object`);
-  }
-  const record = input as Record<string, unknown>;
-  rejectStdioMcpShape(record);
-  const allowed = defineAllowedKeys<SessionConfigMcpServer>()("name", "url", "transport", "headers");
-  assertAllowedKeys(
-    record,
-    allowed,
-    (key) => new Error(`${path}.${key} is not an allowed field for SessionConfigMcpServer; permitted: name, url, transport, headers`)
-  );
-  // Reuse the {name,url,transport} validator by passing the stripped object.
-  const stripped: Record<string, unknown> = { name: record.name, url: record.url };
-  if (record.transport !== undefined) stripped.transport = record.transport;
-  const ref = parseMcpServerRef(stripped, path);
-  const rawHeaders = record.headers;
-  if (rawHeaders === undefined) {
-    return ref;
-  }
-  if (rawHeaders === null || typeof rawHeaders !== "object" || Array.isArray(rawHeaders)) {
-    throw new Error(`${path}.headers, when provided, must be a string-keyed object`);
-  }
-  const headers: Record<string, string> = {};
-  for (const [hk, hv] of Object.entries(rawHeaders as Record<string, unknown>)) {
-    if (typeof hv !== "string") {
-      throw new Error(`${path}.headers.${hk} must be a string`);
-    }
-    headers[hk] = hv;
-  }
-  return { ...ref, headers };
-}
+const MCP_WIRE_POLICY: McpWirePolicy = {
+  denyReasonForHost: denyReasonForMcpHost,
+  parseTransport: parseRemoteMcpTransport
+};
 
 // ---------------------------------------------------------------------------
 // Session request config
@@ -883,94 +766,9 @@ export interface SessionRequestConfig {
  * later by the SDK normalisation step.
  */
 export function parseSessionRequestConfig(input: unknown): SessionRequestConfig {
-  return withContractParseError("parseSessionRequestConfig", () => {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("session request config must be an object");
-  }
-  const record = input as Record<string, unknown>;
-  const allowed = defineAllowedKeys<SessionRequestConfig>()(
-    "model",
-    "system",
-    "prompt",
-    "mcpServers",
-    "environment",
-    "runtimeSize",
-    "timeout",
-    "metadata"
+  return withContractParseError("parseSessionRequestConfig", () =>
+    parseSessionRequestConfigWire(input, MCP_WIRE_POLICY)
   );
-  assertAllowedKeys(record, allowed, (key) => new Error(`session request config contains unexpected field: ${key}`));
-  const model = parseModelSlug(record.model, "session request config model");
-  const system = record.system;
-  if (system !== undefined && typeof system !== "string") {
-    throw new Error("session request config system, when provided, must be a string");
-  }
-  const prompt = parseSessionRequestConfigPrompt(record.prompt);
-  const mcpServers = parseSessionRequestConfigMcpServers(record.mcpServers);
-  return {
-    model,
-    ...(system !== undefined ? { system } : {}),
-    prompt,
-    ...(mcpServers !== undefined ? { mcpServers } : {}),
-    // environment / metadata: passed through as-is — the BFF revalidates
-    // them via `parseSessionSubmissionRequest`,
-    // so duplicating the heavyweight parsers here would mean two sources
-    // of truth. The CLI surfaces structural errors at submission time.
-    ...(record.environment !== undefined
-      ? { environment: record.environment as NonNullable<SessionRequestConfig["environment"]> }
-      : {}),
-    ...(record.runtimeSize !== undefined
-      ? { runtimeSize: record.runtimeSize as NonNullable<SessionRequestConfig["runtimeSize"]> }
-      : {}),
-    ...(record.timeout !== undefined
-      ? { timeout: record.timeout as NonNullable<SessionRequestConfig["timeout"]> }
-      : {}),
-    ...(record.metadata !== undefined
-      ? { metadata: record.metadata as NonNullable<SessionRequestConfig["metadata"]> }
-      : {})
-  };
-  });
-}
-
-function parseSessionRequestConfigPrompt(value: unknown): string | readonly string[] {
-  if (typeof value === "string") {
-    if (value.length === 0) {
-      throw new Error("session request config prompt must be a non-empty string");
-    }
-    return value;
-  }
-  if (Array.isArray(value)) {
-    const arr: string[] = [];
-    for (let i = 0; i < value.length; i++) {
-      const item = value[i];
-      if (typeof item !== "string" || item.length === 0) {
-        throw new Error(`session request config prompt[${i}] must be a non-empty string`);
-      }
-      arr.push(item);
-    }
-    if (arr.length === 0) {
-      throw new Error("session request config prompt must be a non-empty string or array of strings");
-    }
-    return arr;
-  }
-  throw new Error("session request config prompt must be a string or array of strings");
-}
-
-function parseSessionRequestConfigMcpServers(value: unknown): readonly SessionConfigMcpServer[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    throw new Error("session request config mcpServers must be an array");
-  }
-  const seen = new Set<string>();
-  return value.map((item, index) => {
-    const entry = parseSessionConfigMcpServerRef(item, `session request config mcpServers[${index}]`);
-    if (seen.has(entry.name)) {
-      throw new Error(`session request config mcpServers duplicate name: ${entry.name}`);
-    }
-    seen.add(entry.name);
-    return entry;
-  });
 }
 
 // ---------------------------------------------------------------------------

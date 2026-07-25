@@ -8,6 +8,7 @@ import {
   isRetryableHttpStatus,
   tryParseRetryAfterMs
 } from "./retry-core.js";
+import { reportWireResponse } from "./wire-observer.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -407,6 +408,20 @@ export class HttpClient {
           message: extractErrorMessage(errorBody)
         });
       }
+      // C4: the harness validates real server bytes against the response
+      // schemas. Every JSON response the SDK, the CLI and the user-test suites
+      // receive passes through this one line, which is why the gate attaches
+      // here instead of at each of ~120 call sites.
+      //
+      // It stays on the INNER single attempt, not around the retry loop: the loop
+      // now lives in `withHttpRetry`, and a retried request must report each
+      // response it actually received, not just the last one.
+      reportWireResponse(() => ({
+        method,
+        path: url.pathname,
+        status: response.status,
+        body
+      }));
       return body as T;
     } catch (err) {
       throw toNetworkError(method, url, err, Date.now() - startedMs);

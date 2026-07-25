@@ -26,18 +26,19 @@ describe("allowed-key assertion ownership", () => {
     }
   });
 
-  it("keeps the helper off both supported barrels and retains only fflate", () => {
+  it("keeps the helper off both supported barrels", () => {
     expect(source("index.ts")).not.toMatch(/allowed-keys/);
     expect(source("internal.ts")).not.toMatch(/allowed-keys/);
-    const packageJson = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8")
-    ) as { readonly dependencies?: Readonly<Record<string, string>> };
-    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate"]);
   });
 
-  it("routes every static migrated boundary through typed ordered tuples", () => {
-    const combined = productionFiles.map(source).join("\n");
-    expect(combined.match(/defineAllowedKeys</g)).toHaveLength(29);
-    expect(combined.match(/assertAllowedKeys\(/g)).toHaveLength(25);
-  });
+  // The permitted runtime dependency set is asserted once, in
+  // value-guards-ownership.test.ts, against `public-boundary-baseline.json`.
+  // It used to be restated here as a literal, which meant two tests to update
+  // for one decision — and both were stale for a while.
+
+  // The remaining hand-rolled allow-list call sites are counted by the C1 parser
+  // ratchet (`scripts/cicd/check-parser-ratchet.mjs`, run from root `lint`), which
+  // fails when the count rises and reaches zero when the last family is ported.
+  // A frozen count here would be a second statement of the same fact that also
+  // fails on the way *down*.
 });

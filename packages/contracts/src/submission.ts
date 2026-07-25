@@ -7,16 +7,10 @@ import {
   parseMcpServerRef
 } from "./session-config.js";
 import type { McpServerRef, ToolInputSchema } from "./session-config.js";
-import { parseSessionTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
-import { parseRuntimeKind, type RuntimeKind } from "./runtime-kind.js";
-import {
-  parseModelSlug,
-  type ModelName
-} from "./models.js";
-import {
-  parseRuntimeSecurityProfile,
-  type RuntimeSecurityProfileName
-} from "./runtime-security-profile.js";
+import { parseSessionTimeout, type RuntimeSize } from "./runtime-sizes.js";
+import type { RuntimeKind } from "./runtime-kind.js";
+import type { ModelName } from "./models.js";
+import type { RuntimeSecurityProfileName } from "./runtime-security-profile.js";
 import type {
   SubmissionAssets,
   WorkspaceFileRef,
@@ -29,15 +23,29 @@ import {
   assertWorkspaceFileResourceName,
   assertWorkspaceInstructionResourceName
 } from "./workspace-resources.js";
-import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
-import { UnknownFieldError } from "./unknown-field-error.js";
 import { withContractParseError } from "./contract-parse-error.js";
+import { parseWire } from "./schemas/wire.js";
 import {
-  isJsonValue,
-  isRecord,
-  isStringLiteral,
-  type JsonValue
-} from "./value-guards.js";
+  SessionSubmissionRequestSchema,
+  type SessionSubmissionRequestWire
+} from "./schemas/submission-request.js";
+import {
+  ApprovalGateSchema,
+  OUTPUT_MODES,
+  RESPONSE_FORMAT_KINDS,
+  ResponseFormatSchema,
+  SubmissionSchema,
+  type SubmissionWire
+} from "./schemas/submission-body.js";
+import { SessionWebhookSchema } from "./schemas/session-webhook.js";
+import { SessionLimitsSchema, normalizeSessionLimits } from "./schemas/session-limits.js";
+import { SessionMachineSchema, normalizeSessionMachine } from "./schemas/session-machine.js";
+import {
+  normalizeAllowedHosts,
+  normalizePlatformPackage
+} from "./schemas/submission-environment.js";
+import { InlineSecretsSchema, normalizeEnvSecrets } from "./schemas/submission-secrets.js";
+import { isRecord, isStringLiteral, type JsonValue } from "./value-guards.js";
 
 export type { JsonPrimitive, JsonValue } from "./value-guards.js";
 
@@ -71,54 +79,26 @@ export type PlatformEnvironmentInput = Omit<PlatformEnvironment, "packages"> & {
   readonly packages?: readonly PlatformPackageInput[];
 };
 
-/**
- * Reserved prefix for aex-set runtime env vars (`AEX_CLI`,
- * `AEX_RUNTIME_JSON`, …). Customer `environment.envVars` keys carrying this
- * prefix are rejected at submission parse time so platform-set values
- * cannot be silently overwritten.
- */
-export const AEX_RESERVED_ENV_PREFIX = "AEX_";
-
-/**
- * Maximum number of `environment.envVars` entries accepted per
- * submission. Picked to be generous for real customer config bags
- * (the broll case ships a handful — `BROLL_STORE`, `BROLL_OUTPUTS`,
- * `BROLL_MODE`, …) while still bounding the size of every RUNTIME
- * file we mount into the container.
- */
-export const ENV_VARS_MAX_ENTRIES = 64;
-
-/** Maximum byte length of a single `environment.envVars` value. */
-export const ENV_VARS_MAX_VALUE_BYTES = 4096;
-
-/** Maximum total byte length of all `environment.envVars` keys+values combined. */
-export const ENV_VARS_MAX_TOTAL_BYTES = 65536;
-
-/**
- * POSIX-shell-portable env var key: starts with `A-Z` or `_`, body is
- * `A-Z`, `0-9`, `_`. We deliberately reject lowercase to keep
- * `RUNTIME.env` readable and consistent with platform conventions; if
- * a customer has lowercase keys today, they uppercase them at the
- * call site.
- */
-const ENV_VAR_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+// Bounds, patterns and the ecosystem list live in a leaf module so the schemas
+// can read them without importing this file back. Re-exported here so the
+// published surface is unchanged.
+export {
+  AEX_RESERVED_ENV_PREFIX,
+  ENV_VARS_MAX_ENTRIES,
+  ENV_VARS_MAX_VALUE_BYTES,
+  ENV_VARS_MAX_TOTAL_BYTES,
+  PLATFORM_PACKAGE_ECOSYSTEMS
+} from "./submission-limits.js";
+export type { PlatformPackageEcosystem } from "./submission-limits.js";
+// Also imported locally: a re-export does not bind the names in this module.
+import { PLATFORM_PACKAGE_ECOSYSTEMS } from "./submission-limits.js";
+import type { PlatformPackageEcosystem } from "./submission-limits.js";
 
 export interface PlatformNetworking {
   readonly mode: "limited" | "open";
   /** Lowercase host names. The hosted API always appends the proxy host. */
   readonly allowedHosts?: readonly string[];
 }
-
-/**
- * Package-manager ecosystems accepted by the public submission schema.
- * The customer encodes the target manager as a `name` prefix
- * `"<eco>:<pkg>"` (e.g. "pip:pandas", "npm:express", "apt:ffmpeg"); an
- * UNPREFIXED name defaults to `apt`. After parsing, `PlatformPackage.name`
- * is the bare package and `PlatformPackage.ecosystem` is the resolved
- * manager.
- */
-export const PLATFORM_PACKAGE_ECOSYSTEMS = ["apt", "npm", "pip"] as const;
-export type PlatformPackageEcosystem = (typeof PLATFORM_PACKAGE_ECOSYSTEMS)[number];
 
 export interface PlatformPackage {
   readonly name: string;
@@ -230,10 +210,12 @@ export interface PlatformInlineSecrets {
 
 export const SECRETS_KEY = "secrets";
 
-/** POSIX-style env var name a `secretEnv` entry binds to (e.g. `SERPER_API_KEY`). */
-export const SECRET_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-/** Workspace secret handle a `secretEnv` ref points at (and the name `secret.upload` persists to). */
-export const SECRET_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/**
+ * The `secretEnv` grammars, declared in the leaf bounds module so
+ * `schemas/submission-body.ts` can enforce them without importing this file
+ * back, and re-exported here so the published surface is unchanged.
+ */
+export { SECRET_ENV_NAME_PATTERN, SECRET_HANDLE_PATTERN } from "./submission-limits.js";
 
 /**
  * One `submission.secretEnv` entry — VALUE-FREE, so it rides the (hashed)
@@ -257,20 +239,23 @@ export const deniedSecretFields = new Set([
   "credentials"
 ]);
 
-function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
-  if (input === undefined) {
+/**
+ * Resolve a validated `submission.environment` into the runtime snapshot.
+ *
+ * The schema owns shape, the allow-list and the bounds; the normalisers own the
+ * transforms (ecosystem-prefix splitting, host case folding) and the
+ * collapse-to-`undefined` rules. Keeping those apart is what lets the same
+ * schema generate the OpenAPI document — see D4/L1.
+ */
+function normalizeEnvironment(
+  parsed: SubmissionWire["environment"]
+): PlatformEnvironment | undefined {
+  if (parsed === undefined) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.environment");
-  const allowed = defineAllowedKeys<PlatformEnvironmentInput>()("networking", "packages", "envVars");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.environment.${key} is not an allowed field; permitted: networking, packages, envVars`)
-  );
-  const networking = parseNetworking(value.networking);
-  const packages = parsePackages(value.packages);
-  const envVars = parseEnvVars(value.envVars);
+  const networking = normalizeNetworking(parsed.networking);
+  const packages = normalizePackages(parsed.packages);
+  const envVars = normalizeEnvVars(parsed.envVars);
   if (!networking && !packages && !envVars) {
     return undefined;
   }
@@ -281,161 +266,44 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
   };
 }
 
-/**
- * Validate a customer-supplied `environment.envVars` map. Returns a
- * frozen copy with keys in insertion order, or `undefined` when the
- * input is absent / an empty object (treated as not supplied so the
- * hosted API can omit the field from the parsed snapshot).
- *
- * Rules:
- *   - Must be a JSON object whose values are all strings.
- *   - Keys match `[A-Z_][A-Z0-9_]*` (POSIX-shell portable, uppercase
- *     only — keeps RUNTIME.env readable, matches platform convention).
- *   - Keys MUST NOT start with the reserved `AEX_` prefix; that
- *     prefix is owned by platform-set runtime keys and a collision
- *     would silently mask `__AEX_CLI__` etc. substitution
- *     targets.
- *   - Bounded: max ENV_VARS_MAX_ENTRIES entries, max
- *     ENV_VARS_MAX_VALUE_BYTES per value, max ENV_VARS_MAX_TOTAL_BYTES
- *     overall. The caps stop a sessionaway customer from making the
- *     mounted RUNTIME files unbounded.
- *   - Values are arbitrary UTF-8 strings, EXCEPT NUL bytes are
- *     rejected (NUL terminates C-strings and breaks env-var
- *     transport even inside the container).
- */
-function parseEnvVars(input: unknown): Readonly<Record<string, string>> | undefined {
-  if (input === undefined) {
+/** An empty map is treated as not supplied, so it never lands on the snapshot. */
+function normalizeEnvVars(
+  envVars: Record<string, unknown> | undefined
+): Readonly<Record<string, string>> | undefined {
+  if (envVars === undefined || Object.keys(envVars).length === 0) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.environment.envVars");
-  const keys = Object.keys(value);
-  if (keys.length === 0) {
-    return undefined;
-  }
-  if (keys.length > ENV_VARS_MAX_ENTRIES) {
-    throw new Error(
-      `submission.environment.envVars has ${keys.length} entries; maximum is ${ENV_VARS_MAX_ENTRIES}`
-    );
-  }
-  const out: Record<string, string> = {};
-  let totalBytes = 0;
-  for (const key of keys) {
-    if (!ENV_VAR_KEY_PATTERN.test(key)) {
-      throw new Error(
-        `submission.environment.envVars.${key} key must match /^[A-Z_][A-Z0-9_]*$/`
-      );
-    }
-    if (key.startsWith(AEX_RESERVED_ENV_PREFIX)) {
-      throw new Error(
-        `submission.environment.envVars.${key} uses reserved prefix "${AEX_RESERVED_ENV_PREFIX}" (set by the aex runtime)`
-      );
-    }
-    const raw = value[key];
-    if (typeof raw !== "string") {
-      throw new Error(`submission.environment.envVars.${key} must be a string`);
-    }
-    if (raw.includes("\0")) {
-      throw new Error(`submission.environment.envVars.${key} must not contain NUL bytes`);
-    }
-    const valueBytes = Buffer.byteLength(raw, "utf8");
-    if (valueBytes > ENV_VARS_MAX_VALUE_BYTES) {
-      throw new Error(
-        `submission.environment.envVars.${key} value is ${valueBytes} bytes; maximum is ${ENV_VARS_MAX_VALUE_BYTES}`
-      );
-    }
-    totalBytes += Buffer.byteLength(key, "utf8") + valueBytes;
-    if (totalBytes > ENV_VARS_MAX_TOTAL_BYTES) {
-      throw new Error(
-        `submission.environment.envVars total byte size exceeds maximum ${ENV_VARS_MAX_TOTAL_BYTES}`
-      );
-    }
-    out[key] = raw;
-  }
-  return Object.freeze(out);
+  return Object.freeze({ ...envVars } as Record<string, string>);
 }
 
-function parseNetworking(input: unknown): PlatformNetworking | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "submission.environment.networking");
-  const allowed = defineAllowedKeys<PlatformNetworking>()("mode", "allowedHosts");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.environment.networking.${key} is not an allowed field; permitted: mode, allowedHosts`)
-  );
-  const mode = optionalEnum(value.mode, "submission.environment.networking.mode", ["limited", "open"]);
-  if (!mode) {
-    throw new Error("submission.environment.networking.mode is required when networking is provided");
-  }
-  const allowedHosts = parseAllowedHosts(value.allowedHosts);
-  return allowedHosts ? { mode, allowedHosts } : { mode };
-}
-
-function parseAllowedHosts(input: unknown): readonly string[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.environment.networking.allowedHosts must be an array of strings");
-  }
-  const seen = new Set<string>();
-  return input.map((entry, index) => {
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`submission.environment.networking.allowedHosts[${index}] must be a non-empty string`);
-    }
-    const lower = entry.toLowerCase();
-    if (seen.has(lower)) {
-      throw new Error(`submission.environment.networking.allowedHosts duplicate entry: ${entry}`);
-    }
-    seen.add(lower);
-    return lower;
-  });
-}
-
-function parsePackages(input: unknown): readonly PlatformPackage[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.environment.packages must be an array");
-  }
-  return input.map((entry, index) => {
-    const value = requireRecord(entry, `submission.environment.packages[${index}]`);
-    const allowed = defineAllowedKeys<PlatformPackageInput>()("name", "version");
-    assertAllowedKeys(
-      value,
-      allowed,
-      (key) => new Error(`submission.environment.packages[${index}].${key} is not an allowed field; permitted: name, version`)
-    );
-    const rawName = requireString(value.name, `submission.environment.packages[${index}].name`);
-    const version = optionalString(value.version, `submission.environment.packages[${index}].version`);
-    // The ecosystem is encoded as a `name` prefix `"<eco>:<pkg>"`; an
-    // unprefixed name defaults to `apt`. A colon-delimited prefix that is
-    // NOT a known ecosystem is rejected (rather than silently folded into
-    // the package name) so a typo'd manager fails closed.
-    let ecosystem: PlatformPackageEcosystem = "apt";
-    let name = rawName;
-    const colon = rawName.indexOf(":");
-    if (colon > 0) {
-      const prefix = rawName.slice(0, colon);
-      if (!(PLATFORM_PACKAGE_ECOSYSTEMS as readonly string[]).includes(prefix)) {
-        throw new Error(
-          `submission.environment.packages[${index}].name has unknown ecosystem prefix "${prefix}:"; permitted: ${PLATFORM_PACKAGE_ECOSYSTEMS.join(", ")}`
-        );
+function normalizeNetworking(
+  networking:
+    | {
+        readonly mode?: "limited" | "open" | undefined;
+        readonly allowedHosts?: readonly string[] | undefined;
       }
-      ecosystem = prefix as PlatformPackageEcosystem;
-      name = rawName.slice(colon + 1);
-    }
-    if (name.length === 0) {
-      throw new Error(
-        `submission.environment.packages[${index}].name resolves to an empty package after stripping the "${ecosystem}:" ecosystem prefix`
-      );
-    }
-    const parsed = version ? { name, version, ecosystem } : { name, ecosystem };
-    assertPlatformPackage(parsed, `submission.environment.packages[${index}]`);
-    return parsed;
+    | undefined
+): PlatformNetworking | undefined {
+  if (networking?.mode === undefined) {
+    return undefined;
+  }
+  const allowedHosts = networking.allowedHosts;
+  return allowedHosts
+    ? { mode: networking.mode, allowedHosts: normalizeAllowedHosts(allowedHosts) }
+    : { mode: networking.mode };
+}
+
+function normalizePackages(
+  packages: readonly { readonly name: string; readonly version?: string | undefined }[] | undefined
+): readonly PlatformPackage[] | undefined {
+  if (packages === undefined) {
+    return undefined;
+  }
+  return packages.map((entry, index) => {
+    const path = `submission.environment.packages[${index}]`;
+    const normalized = normalizePlatformPackage(entry, path) as PlatformPackage;
+    assertPlatformPackage(normalized, path);
+    return normalized;
   });
 }
 
@@ -484,72 +352,34 @@ export function crossValidateSecretEnvAndValues(
 
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   return withContractParseError("parseInlineSecrets", () => {
-  // Absent/null secrets collapse to an empty bundle. Under managed gateway keys
-  // a run needs no provider key, so an empty bundle is always admissible.
-  if (input === undefined || input === null) return {};
-  const value = requireRecord(input, "secrets");
-  const allowedTopLevel = defineAllowedKeys<PlatformInlineSecrets>()("mcpServers", "envSecrets");
-  assertAllowedKeys(
-    value,
-    allowedTopLevel,
-    (key, orderedKeys) => key.startsWith("__aex_")
-      ? new Error(`secrets.${key} uses the platform-internal __aex_ namespace and may not be set by callers`)
-      : new UnknownFieldError("secrets", key, orderedKeys)
-  );
-  const mcpServers = parseMcpServerSecrets(value.mcpServers);
-  const envSecrets = parseEnvSecrets(value.envSecrets);
+    // Absent/null secrets collapse to an empty bundle. Under managed gateway keys
+    // a run needs no provider key, so an empty bundle is always admissible.
+    if (input === undefined || input === null) return {};
+    return normalizeInlineSecrets(parseWire(InlineSecretsSchema, input));
+  });
+}
 
+/**
+ * Collapse a validated secrets bundle onto {@link PlatformInlineSecrets}.
+ *
+ * Split from {@link parseInlineSecrets} so the request envelope — which
+ * validates the bundle as part of its own single parse — resolves it without
+ * parsing it a second time.
+ */
+function normalizeInlineSecrets(
+  parsed: SessionSubmissionRequestWire["secrets"]
+): PlatformInlineSecrets {
+  if (parsed === undefined || parsed === null) {
+    return {};
+  }
+  const mcpServers = parsed.mcpServers as PlatformInlineSecrets["mcpServers"];
+  const envSecrets = normalizeEnvSecrets(parsed.envSecrets);
+  // Spread only the present halves: `PlatformInlineSecrets` promises each key
+  // is absent or a value, never present-and-undefined.
   return {
     ...(mcpServers ? { mcpServers } : {}),
     ...(envSecrets ? { envSecrets } : {})
   };
-  });
-}
-
-function parseEnvSecrets(input: unknown): Readonly<Record<string, string>> | undefined {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "secrets.envSecrets");
-  const out: Record<string, string> = {};
-  for (const [envName, entry] of Object.entries(value)) {
-    if (!SECRET_ENV_NAME_PATTERN.test(envName)) {
-      throw new Error(
-        `secrets.envSecrets key "${envName}" must be a valid env var name matching ${SECRET_ENV_NAME_PATTERN.source}`
-      );
-    }
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`secrets.envSecrets.${envName} must be a non-empty string`);
-    }
-    out[envName] = entry;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function parseMcpServerSecrets(input: unknown): readonly PlatformMcpServerSecret[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("secrets.mcpServers must be an array");
-  }
-  const seen = new Set<string>();
-  return input.map((entry, index) => {
-    const parsed = parseMcpServerSecret(entry, `secrets.mcpServers[${index}]`);
-    if (seen.has(parsed.name)) {
-      throw new Error(`secrets.mcpServers duplicate name: ${parsed.name}`);
-    }
-    seen.add(parsed.name);
-    return parsed;
-  });
-}
-
-function parseMcpServerSecret(input: unknown, path: string): PlatformMcpServerSecret {
-  const value = requireRecord(input, path);
-  const allowed = defineAllowedKeys<PlatformMcpServerSecret>()("name", "url", "headers");
-  assertAllowedKeys(value, allowed, (key) => new Error(`${path}.${key} is not an allowed field; permitted: name, url, headers`));
-  const name = requireString(value.name, `${path}.name`);
-  const url = requireString(value.url, `${path}.url`);
-  const headers = optionalStringRecord(value.headers, `${path}.headers`);
-  return headers ? { name, url, headers } : { name, url };
 }
 
 export function assertNoSecretBearingFields(input: unknown, path: readonly string[]): void {
@@ -598,39 +428,6 @@ export function optionalEnum<const T extends readonly string[]>(input: unknown, 
     throw new Error(`${field} must be one of: ${allowed.join(", ")}`);
   }
   return input;
-}
-
-function requireStringArray(input: unknown, field: string): readonly string[] {
-  if (!Array.isArray(input) || input.length === 0 || input.some((item) => typeof item !== "string" || item.length === 0)) {
-    throw new Error(`${field} must be a non-empty string array`);
-  }
-  return input;
-}
-
-function optionalStringRecord(input: unknown, field: string): Record<string, string> | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, field);
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`${field}.${key} must be a non-empty string`);
-    }
-  }
-  return value as Record<string, string>;
-}
-
-function optionalJsonRecord(input: unknown, field: string): Record<string, JsonValue> | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, field);
-  for (const [key, entry] of Object.entries(value)) {
-    if (!isJsonValue(entry)) {
-      throw new Error(`${field}.${key} must be JSON-serializable`);
-    }
-  }
-  return value as Record<string, JsonValue>;
 }
 
 export function optionalPositiveInt(input: unknown, field: string): number | undefined {
@@ -896,24 +693,7 @@ export function parseSessionSubmissionRequest(
   input: unknown
 ): PlatformSessionSubmissionRequest {
   return withContractParseError("parseSessionSubmissionRequest", () => {
-  const value = requireRecord(input, "submission");
-  const allowedTopLevelFields = defineAllowedKeys<PlatformSessionSubmissionInput>()(
-    "workspaceId",
-    "idempotencyKey",
-    "submission",
-    "runtimeSize",
-    "runtimeKind",
-    "timeout",
-    "webhook",
-    "limits",
-    "machine",
-    SECRETS_KEY
-  );
-  assertAllowedKeys(
-    value,
-    allowedTopLevelFields,
-    (key, orderedKeys) => new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
+  const value = parseWire(SessionSubmissionRequestSchema, input);
   // Defence in depth: scan every non-secrets field for credential-named
   // keys. The `secrets` key is
   // the only allow-listed home for credential material.
@@ -926,15 +706,22 @@ export function parseSessionSubmissionRequest(
     }
     assertNoSecretBearingFields(fieldValue, [key]);
   }
-  const runtimeSize = parseRuntimeSize(value.runtimeSize);
-  const runtimeKind = parseRuntimeKind(value.runtimeKind);
+  // The envelope schema has already validated every dial; what is left is the
+  // decode (`timeout` -> ms) and the collapse-to-`undefined` rules.
+  const runtimeSize = value.runtimeSize;
+  const runtimeKind = value.runtimeKind;
   const timeoutMs = parseSessionTimeout(value.timeout);
-  const webhook = parseSessionWebhook(value.webhook);
-  const limits = parseSessionLimits(value.limits);
-  const machine = parseSessionMachine(value.machine);
-  const secrets = parseInlineSecrets(value.secrets);
+  const webhook = value.webhook;
+  const limits = value.limits === undefined ? undefined : normalizeSessionLimits(value.limits);
+  const machine = value.machine === undefined ? undefined : normalizeSessionMachine(value.machine);
+  const secrets = normalizeInlineSecrets(value.secrets);
 
-  const submission = parseSubmission(value.submission);
+  // Branded as `parseSubmission` because that is the parser a caller would
+  // recognise as having rejected the brief, even though the shape was validated
+  // one level up as part of the envelope.
+  const submission = withContractParseError("parseSubmission", () =>
+    normalizeSubmission(value.submission)
+  );
 
   crossValidateSecretEnvAndValues(submission.secretEnv, secrets.envSecrets);
 
@@ -962,8 +749,8 @@ export function parseSessionSubmissionRequest(
   }
 
   return {
-    workspaceId: requireString(value.workspaceId, "workspaceId"),
-    idempotencyKey: requireString(value.idempotencyKey, "idempotencyKey"),
+    workspaceId: value.workspaceId,
+    idempotencyKey: value.idempotencyKey,
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(runtimeKind ? { runtimeKind } : {}),
@@ -986,28 +773,10 @@ export function parseSessionSubmissionRequest(
  */
 export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefined {
   return withContractParseError("parseSessionWebhook", () => {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "webhook");
-  const allowed = defineAllowedKeys<SessionWebhookSpec>()("url");
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`webhook.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  const url = requireString(value.url, "webhook.url");
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`webhook.url must be a valid absolute URL (got ${JSON.stringify(url)})`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(`webhook.url must use https (got ${parsed.protocol.replace(/:$/, "")})`);
-  }
-  if (parsed.username !== "" || parsed.password !== "") {
-    throw new Error("webhook.url must not contain userinfo (user:pass@host)");
-  }
-  return { url };
+    if (input === undefined) {
+      return undefined;
+    }
+    return parseWire(SessionWebhookSchema, input);
   });
 }
 
@@ -1024,55 +793,10 @@ export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefi
  */
 export function parseSessionLimits(input: unknown): SessionLimits | undefined {
   return withContractParseError("parseSessionLimits", () => {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "limits");
-  const allowed = defineAllowedKeys<SessionLimits>()(
-    "maxConcurrentChildSessions",
-    "maxSubagentDepth",
-    "maxSpendUsd",
-    "maxTurns",
-    "maxStepsPerTurn"
-  );
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`limits.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  const maxConcurrentChildSessions = optionalPositiveInt(
-    value.maxConcurrentChildSessions,
-    "limits.maxConcurrentChildSessions"
-  );
-  const maxSubagentDepth = optionalPositiveInt(value.maxSubagentDepth, "limits.maxSubagentDepth");
-  // maxSpendUsd is a USD amount (may be fractional, e.g. $2.50) so it is a positive
-  // NUMBER, not a positive int. Clamping to the workspace/platform ceiling is the
-  // resolver's job; here we only enforce shape + positivity.
-  const maxSpendUsd = optionalPositiveNumber(value.maxSpendUsd, "limits.maxSpendUsd");
-  // maxTurns is an ITERATION count — a positive safe integer. Clamp to the ceiling
-  // is the resolver's job; here we enforce shape + positivity only.
-  const maxTurns = optionalPositiveInt(value.maxTurns, "limits.maxTurns");
-  // maxStepsPerTurn is a per-turn STEP count — a positive safe integer (the
-  // runaway-loop backstop one level below maxTurns). Same shape/positivity gate;
-  // the resolver clamps to the ceiling.
-  const maxStepsPerTurn = optionalPositiveInt(value.maxStepsPerTurn, "limits.maxStepsPerTurn");
-  // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
-  // lands an empty object on the request — matches sibling parsers (parseSessionWebhook,
-  // parseEnvironment). The resolver supplies platform defaults for absent fields.
-  if (
-    maxConcurrentChildSessions === undefined &&
-    maxSubagentDepth === undefined &&
-    maxSpendUsd === undefined &&
-    maxTurns === undefined &&
-    maxStepsPerTurn === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    ...(maxConcurrentChildSessions !== undefined ? { maxConcurrentChildSessions } : {}),
-    ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
-    ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {}),
-    ...(maxTurns !== undefined ? { maxTurns } : {}),
-    ...(maxStepsPerTurn !== undefined ? { maxStepsPerTurn } : {})
-  };
+    if (input === undefined) {
+      return undefined;
+    }
+    return normalizeSessionLimits(parseWire(SessionLimitsSchema, input));
   });
 }
 
@@ -1107,65 +831,47 @@ export function sessionBudgetLimits(limits: SessionLimits | undefined): { budget
  */
 export function parseSessionMachine(input: unknown): SessionMachine | undefined {
   return withContractParseError("parseSessionMachine", () => {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "machine");
-  const allowed = defineAllowedKeys<SessionMachine>()("spot");
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`machine.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  if (value.spot !== undefined && typeof value.spot !== "boolean") {
-    throw new Error("machine.spot must be a boolean");
-  }
-  if (value.spot === undefined) {
-    return undefined;
-  }
-  return { spot: value.spot };
+    if (input === undefined) {
+      return undefined;
+    }
+    return normalizeSessionMachine(parseWire(SessionMachineSchema, input));
   });
 }
 
 export function parseSubmission(input: unknown): PlatformSubmission {
-  return withContractParseError("parseSubmission", () => {
-  const value = requireRecord(input, "submission.submission");
-  const allowed = defineAllowedKeys<PlatformSubmission>()(
-    "model",
-    "system",
-    "prompt",
-    "assets",
-    "mcpServers",
-    "secretEnv",
-    "environment",
-    "securityProfile",
-    "metadata",
-    "fileCapture",
-    "builtinTools",
-    "outputMode",
-    "responseFormat",
-    "approvalGate",
-    "platform"
+  return withContractParseError("parseSubmission", () =>
+    normalizeSubmission(parseWire(SubmissionSchema, input))
   );
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  const model = parseModelSlug(value.model, "submission.model");
-  const system = optionalString(value.system, "submission.system");
-  const prompt = parsePrompt(value.prompt);
-  const assets = parseSubmissionAssets(value.assets);
+}
+
+/**
+ * Resolve a validated brief onto {@link PlatformSubmission}.
+ *
+ * Everything here is a transform or a lookup the schema deliberately does not
+ * own: the prompt's single-string form widened to a list, ecosystem prefixes
+ * split, resource name grammars asserted, no-signal objects collapsed to
+ * `undefined`, builtin tool names resolved into canonical order. Key order in
+ * the returned object is pinned by
+ * `test/allowed-keys-parser-golden.test.ts`.
+ */
+function normalizeSubmission(value: SubmissionWire): PlatformSubmission {
+  const system = value.system;
+  const prompt = normalizePrompt(value.prompt);
+  const assets = normalizeSubmissionAssets(value.assets);
   const mcpServers = parseMcpServers(value.mcpServers);
-  const secretEnv = parseSecretEnv(value.secretEnv);
-  const environment = parseEnvironment(value.environment);
-  const securityProfile = parseRuntimeSecurityProfile(value.securityProfile);
-  const metadata = optionalJsonRecord(value.metadata, "submission.metadata");
-  const fileCapture = parseFileCapture(value.fileCapture);
-  const builtinTools = parseBuiltinToolsSelection(value.builtinTools);
-  const outputMode = parseOutputMode(value.outputMode);
-  const responseFormat = parseResponseFormat(value.responseFormat);
-  const approvalGate = parseApprovalGate(value.approvalGate);
-  const platform = parsePlatformConfig(value.platform);
+  const secretEnv = normalizeSecretEnv(value.secretEnv);
+  const environment = normalizeEnvironment(value.environment);
+  const securityProfile = value.securityProfile ?? undefined;
+  const metadata = value.metadata as Record<string, JsonValue> | undefined;
+  const fileCapture = normalizeFileCapture(value.fileCapture);
+  const builtinTools = resolveBuiltinToolsSelection(value.builtinTools);
+  const outputMode = value.outputMode ?? undefined;
+  const responseFormat = normalizeResponseFormat(value.responseFormat);
+  const approvalGate = normalizeApprovalGate(value.approvalGate);
+  const platform = normalizePlatformInjection(value.platform);
 
   return {
-    model,
+    model: value.model,
     ...(system ? { system } : {}),
     prompt,
     assets,
@@ -1181,107 +887,37 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     ...(approvalGate !== undefined ? { approvalGate } : {}),
     ...(platform ? { platform } : {})
   };
-  });
 }
 
-function parseSubmissionAssets(input: unknown): SubmissionAssets {
-  const value = requireRecord(input, "submission.assets");
-  const allowed = defineAllowedKeys<SubmissionAssets>()("files", "skills", "tools", "instructions");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.assets.${key} is not allowed; permitted: files, skills, tools, instructions`)
-  );
+function normalizeSubmissionAssets(value: SubmissionWire["assets"]): SubmissionAssets {
   return {
-    files: parseWorkspaceFiles(value.files),
-    skills: parseWorkspaceSkills(value.skills),
-    tools: parseWorkspaceTools(value.tools),
-    instructions: parseWorkspaceInstructions(value.instructions)
-  };
-}
-
-function parseWorkspaceFiles(input: unknown): readonly WorkspaceFileRef[] {
-  return parseWorkspaceResourceArray(
-    input,
-    "files",
-    "file",
-    defineAllowedKeys<WorkspaceFileRef>()("kind", "resourceId", "version", "assetId", "contentHash", "name", "mountPath"),
-    (raw, base, path) => {
-    const name = requireString(raw.name, `${path}.name`);
-    assertWorkspaceFileResourceName(name, `${path}.name`);
-    const mountPath = requireString(raw.mountPath, `${path}.mountPath`);
-    assertValidMountPath(mountPath, `${path}.mountPath`);
-    return { ...base, kind: "file", name, mountPath };
-    }
-  );
-}
-
-function parseWorkspaceSkills(input: unknown): readonly WorkspaceSkillRef[] {
-  return parseWorkspaceResourceArray(
-    input,
-    "skills",
-    "skill",
-    defineAllowedKeys<WorkspaceSkillRef>()("kind", "resourceId", "version", "assetId", "contentHash", "name", "description"),
-    (raw, base, path) => {
-    const name = requireString(raw.name, `${path}.name`);
-    assertValidSkillName(name, `${path}.name`);
-    const description = requireResourceDescription(raw.description, `${path}.description`);
-    return { ...base, kind: "skill", name, description };
-    }
-  );
-}
-
-function parseWorkspaceTools(input: unknown): readonly WorkspaceToolRef[] {
-  return parseWorkspaceResourceArray(
-    input,
-    "tools",
-    "tool",
-    defineAllowedKeys<WorkspaceToolRef>()(
-      "kind",
-      "resourceId",
-      "version",
-      "assetId",
-      "contentHash",
-      "name",
-      "description",
-      "input_schema",
-      "entry"
-    ),
-    (raw, base, path) => {
-      const name = requireString(raw.name, `${path}.name`);
-      if (!TOOL_NAME_PATTERN.test(name) || name.includes("__")) {
+    files: projectWorkspaceResources(value.files, "files", (raw, base, path) => {
+      assertWorkspaceFileResourceName(raw.name, `${path}.name`);
+      assertValidMountPath(raw.mountPath, `${path}.mountPath`);
+      return { ...base, kind: "file", name: raw.name, mountPath: raw.mountPath };
+    }),
+    skills: projectWorkspaceResources(value.skills, "skills", (raw, base, path) => {
+      assertValidSkillName(raw.name, `${path}.name`);
+      return { ...base, kind: "skill", name: raw.name, description: raw.description };
+    }),
+    tools: projectWorkspaceResources(value.tools, "tools", (raw, base, path) => {
+      if (!TOOL_NAME_PATTERN.test(raw.name) || raw.name.includes("__")) {
         throw new Error(`${path}.name must be a non-reserved tool name matching ${TOOL_NAME_PATTERN.source}`);
       }
-      const description = requireResourceDescription(raw.description, `${path}.description`);
-      const inputSchema = requireRecord(raw.input_schema, `${path}.input_schema`);
-      if (!isJsonValue(inputSchema) || inputSchema.type !== "object") {
-        throw new Error(`${path}.input_schema must be a JSON Schema object with type 'object'`);
-      }
-      const entry = normaliseSkillBundlePath(requireString(raw.entry, `${path}.entry`));
       return {
         ...base,
         kind: "tool",
-        name,
-        description,
-        input_schema: inputSchema as ToolInputSchema,
-        entry
+        name: raw.name,
+        description: raw.description,
+        input_schema: raw.input_schema as ToolInputSchema,
+        entry: normaliseSkillBundlePath(raw.entry)
       };
-    }
-  );
-}
-
-function parseWorkspaceInstructions(input: unknown): readonly WorkspaceInstructionRef[] {
-  return parseWorkspaceResourceArray(
-    input,
-    "instructions",
-    "instruction",
-    defineAllowedKeys<WorkspaceInstructionRef>()("kind", "resourceId", "version", "assetId", "contentHash", "name"),
-    (raw, base, path) => {
-    const name = requireString(raw.name, `${path}.name`);
-    assertWorkspaceInstructionResourceName(name, `${path}.name`);
-    return { ...base, kind: "instruction", name };
-    }
-  );
+    }),
+    instructions: projectWorkspaceResources(value.instructions, "instructions", (raw, base, path) => {
+      assertWorkspaceInstructionResourceName(raw.name, `${path}.name`);
+      return { ...base, kind: "instruction", name: raw.name };
+    })
+  };
 }
 
 type PinnedResourceBase = Pick<
@@ -1289,26 +925,35 @@ type PinnedResourceBase = Pick<
   "resourceId" | "version" | "assetId" | "contentHash"
 >;
 
-function parseWorkspaceResourceArray<T extends WorkspaceFileRef | WorkspaceSkillRef | WorkspaceToolRef | WorkspaceInstructionRef>(
-  input: unknown,
+type PinnedResourceWire = PinnedResourceBase;
+
+/**
+ * Project one validated list onto its parsed refs.
+ *
+ * What survives here rather than moving into the element schema is what a
+ * schema cannot state: the name grammars (asserts the SDK builders call
+ * directly, two of them declared in `session-config.ts`, which imports this
+ * file), the `entry` bundle-path normalisation, the `assetId`/`contentHash`
+ * agreement, and per-list duplicate detection — which needs every element at
+ * once and reports the LATER element, not the list.
+ */
+function projectWorkspaceResources<
+  Wire extends PinnedResourceWire,
+  T extends WorkspaceFileRef | WorkspaceSkillRef | WorkspaceToolRef | WorkspaceInstructionRef
+>(
+  entries: readonly Wire[] | undefined,
   field: "files" | "skills" | "tools" | "instructions",
-  kind: T["kind"],
-  allowedFields: readonly string[],
-  project: (raw: Record<string, unknown>, base: PinnedResourceBase, path: string) => T
+  project: (raw: Wire, base: PinnedResourceBase, path: string) => T
 ): readonly T[] {
-  if (input === undefined) return [];
-  if (!Array.isArray(input)) throw new Error(`submission.assets.${field} must be an array`);
+  if (entries === undefined) return [];
   const seen = new Set<string>();
-  return input.map((item, index) => {
+  return entries.map((raw, index) => {
     const path = `submission.assets.${field}[${index}]`;
-    const raw = requireRecord(item, path);
-    assertAllowedKeys(raw, allowedFields, (key) => new Error(`${path}.${key} is not allowed`));
-    if (raw.kind !== kind) throw new Error(`${path}.kind must be '${kind}'`);
     const base: PinnedResourceBase = {
-      resourceId: requireString(raw.resourceId, `${path}.resourceId`),
-      version: requirePositiveInteger(raw.version, `${path}.version`),
-      assetId: requireString(raw.assetId, `${path}.assetId`),
-      contentHash: requireString(raw.contentHash, `${path}.contentHash`)
+      resourceId: raw.resourceId,
+      version: raw.version,
+      assetId: raw.assetId,
+      contentHash: raw.contentHash
     };
     const result = project(raw, base, path);
     assertPinnedWorkspaceResource(result, path);
@@ -1319,90 +964,35 @@ function parseWorkspaceResourceArray<T extends WorkspaceFileRef | WorkspaceSkill
   });
 }
 
-function requirePositiveInteger(input: unknown, path: string): number {
-  if (!Number.isSafeInteger(input) || (input as number) < 1) {
-    throw new Error(`${path} must be a positive integer`);
-  }
-  return input as number;
-}
-
-function requireResourceDescription(input: unknown, path: string): string {
-  const value = requireString(input, path);
-  if (value.trim().length === 0 || value.length > 2048) {
-    throw new Error(`${path} must be non-empty and <= 2048 chars`);
-  }
-  return value;
-}
-
-function parseSecretEnv(
-  input: unknown
+/** An empty declaration set carries no signal, so it is dropped rather than landed empty. */
+function normalizeSecretEnv(
+  secretEnv: SubmissionWire["secretEnv"]
 ): Readonly<Record<string, PlatformSecretEnvEntry>> | undefined {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "submission.secretEnv");
-  const out: Record<string, PlatformSecretEnvEntry> = {};
-  for (const [envName, entry] of Object.entries(value)) {
-    if (!SECRET_ENV_NAME_PATTERN.test(envName)) {
-      throw new Error(
-        `submission.secretEnv key "${envName}" must be a valid env var name matching ${SECRET_ENV_NAME_PATTERN.source}`
-      );
-    }
-    const path = `submission.secretEnv.${envName}`;
-    const record = requireRecord(entry, path);
-    const keys = Object.keys(record);
-    if (keys.length !== 1 || (!("ref" in record) && !("ephemeral" in record))) {
-      throw new Error(`${path} must be exactly one of { ref } or { ephemeral: true }`);
-    }
-    if ("ref" in record) {
-      const handle = requireString(record.ref, `${path}.ref`);
-      if (!SECRET_HANDLE_PATTERN.test(handle)) {
-        throw new Error(`${path}.ref handle must match ${SECRET_HANDLE_PATTERN.source}`);
-      }
-      out[envName] = { ref: handle };
-    } else {
-      if (record.ephemeral !== true) {
-        throw new Error(`${path}.ephemeral must be the literal true`);
-      }
-      out[envName] = { ephemeral: true };
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
+  if (secretEnv === undefined || secretEnv === null) return undefined;
+  const entries = Object.entries(secretEnv) as readonly [string, PlatformSecretEnvEntry][];
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function parsePlatformConfig(input: unknown): PlatformInjectionConfig | undefined {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "submission.platform");
-  const allowed = defineAllowedKeys<PlatformInjectionConfig>()("systemPrompt");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.platform.${key} is not an allowed field; permitted: systemPrompt`)
-  );
-  if (value.systemPrompt === undefined) return undefined;
-  if (value.systemPrompt !== "default" && value.systemPrompt !== "off") {
-    throw new Error(`submission.platform.systemPrompt must be "default" or "off"`);
-  }
+function normalizePlatformInjection(
+  value: SubmissionWire["platform"]
+): PlatformInjectionConfig | undefined {
+  if (value === undefined || value === null || value.systemPrompt === undefined) return undefined;
   return { systemPrompt: value.systemPrompt };
 }
 
-/** Assistant-output granularity values. Buffered is the platform default. */
-export const OUTPUT_MODES = ["buffered", "stream"] as const;
+/**
+ * Assistant-output granularity values and the structured-output kinds, declared
+ * with the schemas that enforce them and re-exported here so the published
+ * surface is unchanged — see the sibling note on the `secretEnv` grammars.
+ */
+export { OUTPUT_MODES, RESPONSE_FORMAT_KINDS } from "./schemas/submission-body.js";
 export type OutputMode = (typeof OUTPUT_MODES)[number];
 export const DEFAULT_OUTPUT_MODE: OutputMode = "buffered";
-
-function parseOutputMode(input: unknown): OutputMode | undefined {
-  if (input === undefined || input === null) return undefined;
-  if (typeof input !== "string" || !(OUTPUT_MODES as readonly string[]).includes(input)) {
-    throw new Error(`submission.outputMode must be one of ${OUTPUT_MODES.join(", ")}`);
-  }
-  return input as OutputMode;
-}
 
 // ---------------------------------------------------------------------------
 // Structured-output (schema-decode) policy — WS10.
 // ---------------------------------------------------------------------------
 
-/** Response-format kinds: free-form `text` (default) or provider-native `json_schema`. */
-export const RESPONSE_FORMAT_KINDS = ["text", "json_schema"] as const;
 export type ResponseFormatKind = (typeof RESPONSE_FORMAT_KINDS)[number];
 
 /**
@@ -1420,53 +1010,31 @@ export type ResponseFormat =
     };
 
 /**
- * Parse the optional `submission.responseFormat`. Mirrors {@link parseOutputMode}
- * / {@link OUTPUT_MODES}: absent ⇒ undefined; a bad `kind` or unknown subfield is
- * rejected (fail-fast). `json_schema` requires a JSON-object `schema`.
+ * Parse the optional `submission.responseFormat`. Absent ⇒ undefined; a bad
+ * `kind` or unknown subfield is rejected (fail-fast). `json_schema` requires a
+ * JSON-object `schema`.
  */
 export function parseResponseFormat(input: unknown): ResponseFormat | undefined {
   return withContractParseError("parseResponseFormat", () => {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "submission.responseFormat");
-  const kind = value.kind;
-  if (typeof kind !== "string" || !(RESPONSE_FORMAT_KINDS as readonly string[]).includes(kind)) {
-    throw new Error(`submission.responseFormat.kind must be one of ${RESPONSE_FORMAT_KINDS.join(", ")}`);
-  }
-  if (kind === "text") {
-    const allowed = defineAllowedKeys<Extract<ResponseFormat, { readonly kind: "text" }>>()("kind");
-    assertAllowedKeys(
-      value,
-      allowed,
-      (key) => new Error(`submission.responseFormat.${key} is not allowed when kind is 'text'`)
-    );
+    if (input === undefined || input === null) return undefined;
+    return normalizeResponseFormat(parseWire(ResponseFormatSchema, input));
+  });
+}
+
+/** Drop absent optional members so an omitted field never lands as `undefined`. */
+function normalizeResponseFormat(
+  value: SubmissionWire["responseFormat"]
+): ResponseFormat | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value.kind === "text") {
     return { kind: "text" };
   }
-  const allowed = defineAllowedKeys<Extract<ResponseFormat, { readonly kind: "json_schema" }>>()(
-    "kind",
-    "schema",
-    "strict",
-    "name"
-  );
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key, orderedKeys) => new Error(`submission.responseFormat.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  if (!isRecord(value.schema) || !isJsonValue(value.schema)) {
-    throw new Error("submission.responseFormat.schema must be a JSON-serializable object");
-  }
-  const schema = value.schema as JsonValue;
-  if (value.strict !== undefined && typeof value.strict !== "boolean") {
-    throw new Error("submission.responseFormat.strict must be a boolean");
-  }
-  const name = optionalString(value.name, "submission.responseFormat.name");
   return {
     kind: "json_schema",
-    schema,
+    schema: value.schema as JsonValue,
     ...(value.strict !== undefined ? { strict: value.strict } : {}),
-    ...(name !== undefined ? { name } : {})
+    ...(value.name !== undefined ? { name: value.name } : {})
   };
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1485,31 +1053,23 @@ export interface ApprovalGate {
  */
 export function parseApprovalGate(input: unknown): ApprovalGate | undefined {
   return withContractParseError("parseApprovalGate", () => {
-  if (input === undefined || input === null) return undefined;
-  const value = requireRecord(input, "submission.approvalGate");
-  const allowed = defineAllowedKeys<ApprovalGate>()("tools");
-  assertAllowedKeys(
-    value,
-    allowed,
-    (key) => new Error(`submission.approvalGate.${key} is not an allowed field; permitted: tools`)
-  );
-  if (!Array.isArray(value.tools)) {
-    throw new Error("submission.approvalGate.tools must be an array of tool names");
-  }
+    if (input === undefined || input === null) return undefined;
+    return normalizeApprovalGate(parseWire(ApprovalGateSchema, input));
+  });
+}
+
+/** Dedupe in first-seen order; an empty gate carries no signal and is dropped. */
+function normalizeApprovalGate(value: SubmissionWire["approvalGate"]): ApprovalGate | undefined {
+  if (value === undefined || value === null) return undefined;
   const seen = new Set<string>();
   const tools: string[] = [];
-  value.tools.forEach((entry, index) => {
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`submission.approvalGate.tools[${index}] must be a non-empty string`);
-    }
+  for (const entry of value.tools) {
     if (!seen.has(entry)) {
       seen.add(entry);
       tools.push(entry);
     }
-  });
-  if (tools.length === 0) return undefined;
-  return { tools };
-  });
+  }
+  return tools.length === 0 ? undefined : { tools };
 }
 
 /**
@@ -1651,12 +1211,16 @@ export function resolveBuiltinToolNames(
   return BUILTIN_TOOL_NAMES.filter((name) => enabled.has(name));
 }
 
-function parseBuiltinToolsSelection(input: unknown): BuiltinToolsSelection {
+/**
+ * Resolve a validated selection into canonical order.
+ *
+ * Membership in {@link BUILTIN_TOOL_NAMES} and the resulting order are
+ * `resolveBuiltinToolNames`' — a lookup plus a re-order, which is a transform,
+ * and against a list the schema cannot import without a cycle.
+ */
+function resolveBuiltinToolsSelection(input: SubmissionWire["builtinTools"]): BuiltinToolsSelection {
   if (input === undefined || input === null || input === "default") return "default";
   if (input === "none") return "none";
-  if (!Array.isArray(input)) {
-    throw new Error("submission.builtinTools must be 'default', 'none', or an array of builtin tool names");
-  }
   return resolveBuiltinToolNames(input.map((value, index) => {
     if (typeof value !== "string") {
       throw new Error(`submission.builtinTools[${index}] must be a builtin tool name`);
@@ -1666,50 +1230,25 @@ function parseBuiltinToolsSelection(input: unknown): BuiltinToolsSelection {
 }
 
 /**
- * Maximum number of file capture entries accepted per list.
- *
- * 32 is enough room for the typical "one or two capture roots" pattern
- * plus a generous margin for legitimate multi-root use cases (per-tool
- * file directory + scratch state + logs, repeated across a few
- * subdirectories), without inviting abuse of the synthetic-turn path
- * the platform capture path drives at session terminal.
+ * Ceiling the platform will spend capturing files. A CLAMP, not a rejection —
+ * an over-large request is honoured at the maximum rather than refused — so it
+ * belongs here and not on the schema, which describes what is accepted.
  */
-const MAX_FILE_CAPTURE_DIRS = 32;
-
-/**
- * Maximum byte length of a single file capture entry (after UTF-8
- * encoding). 512 bytes comfortably covers `/very/long/nested/path`
- * style entries without letting a misuse smuggle large blobs through
- * the field.
- */
-const MAX_FILE_CAPTURE_DIR_BYTES = 512;
 const MAX_FILE_CAPTURE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
-function parseFileCapture(input: unknown): PlatformFileCaptureConfig | undefined {
-  if (input === undefined || input === null) {
+function normalizeFileCapture(
+  value: SubmissionWire["fileCapture"]
+): PlatformFileCaptureConfig | undefined {
+  if (value === undefined || value === null) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.fileCapture");
-  const allowed = defineAllowedKeys<PlatformFileCaptureConfig>()(
-    "allowedDirs",
-    "deniedDirs",
-    "captureTimeoutMs",
-    "maxFileBytes",
-    "maxTotalBytes",
-    "maxFiles"
-  );
-  assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    new Error(`submission.fileCapture.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
-  );
-  const allowedDirs = parseFileCaptureAllowedDirs(value.allowedDirs);
-  const deniedDirs = parseFileCaptureDeniedDirs(value.deniedDirs);
-  const captureTimeoutMs = parseFileCapturePositiveInteger(value.captureTimeoutMs, "submission.fileCapture.captureTimeoutMs", {
-    max: MAX_FILE_CAPTURE_TIMEOUT_MS,
-    clamp: true
-  });
-  const maxFileBytes = parseFileCapturePositiveInteger(value.maxFileBytes, "submission.fileCapture.maxFileBytes");
-  const maxTotalBytes = parseFileCapturePositiveInteger(value.maxTotalBytes, "submission.fileCapture.maxTotalBytes");
-  const maxFiles = parseFileCapturePositiveInteger(value.maxFiles, "submission.fileCapture.maxFiles");
+  const allowedDirs = normalizeCaptureDirs(value.allowedDirs);
+  const deniedDirs = normalizeCaptureDirs(value.deniedDirs);
+  const captureTimeoutMs =
+    value.captureTimeoutMs === undefined
+      ? undefined
+      : Math.min(value.captureTimeoutMs, MAX_FILE_CAPTURE_TIMEOUT_MS);
+  const { maxFileBytes, maxTotalBytes, maxFiles } = value;
   if (!allowedDirs && !deniedDirs && captureTimeoutMs === undefined && maxFileBytes === undefined && maxTotalBytes === undefined && maxFiles === undefined) {
     return undefined;
   }
@@ -1723,79 +1262,21 @@ function parseFileCapture(input: unknown): PlatformFileCaptureConfig | undefined
   };
 }
 
-function parseFileCapturePositiveInteger(
-  input: unknown,
-  field: string,
-  options: { readonly max?: number; readonly clamp?: boolean } = {}
-): number | undefined {
-  if (input === undefined) {
+/**
+ * Canonicalise a capture list and drop repeats.
+ *
+ * An empty array is treated as omission so the idempotency hash matches the
+ * "no list supplied" case. Only absolute entries are canonicalised: a denied
+ * pattern like `node_modules` or `*.tmp` is not a path and is kept verbatim.
+ */
+function normalizeCaptureDirs(entries: readonly unknown[] | undefined): readonly string[] | undefined {
+  if (entries === undefined || entries.length === 0) {
     return undefined;
-  }
-  if (typeof input !== "number" || !Number.isInteger(input) || input <= 0) {
-    throw new Error(`${field} must be a positive integer`);
-  }
-  if (options.max !== undefined && input > options.max) {
-    return options.clamp ? options.max : input;
-  }
-  return input;
-}
-
-function parseFileCaptureAllowedDirs(input: unknown): readonly string[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.fileCapture.allowedDirs must be an array of absolute UNIX paths");
-  }
-  if (input.length === 0) {
-    // Treat an empty array as omission so the idempotency hash matches
-    // the "no allowedDirs" case.
-    return undefined;
-  }
-  if (input.length > MAX_FILE_CAPTURE_DIRS) {
-    throw new Error(
-      `submission.fileCapture.allowedDirs has ${input.length} entries; max is ${MAX_FILE_CAPTURE_DIRS}`
-    );
   }
   const seen = new Set<string>();
   const normalised: string[] = [];
-  for (let i = 0; i < input.length; i++) {
-    const item = input[i];
-    if (typeof item !== "string") {
-      throw new Error(`submission.fileCapture.allowedDirs[${i}] must be a string`);
-    }
-    if (item.length === 0) {
-      throw new Error(`submission.fileCapture.allowedDirs[${i}] must be a non-empty absolute UNIX path`);
-    }
-    const bytes = new TextEncoder().encode(item).length;
-    if (bytes > MAX_FILE_CAPTURE_DIR_BYTES) {
-      throw new Error(
-        `submission.fileCapture.allowedDirs[${i}] exceeds ${MAX_FILE_CAPTURE_DIR_BYTES} bytes (got ${bytes})`
-      );
-    }
-    if (!item.startsWith("/")) {
-      throw new Error(
-        `submission.fileCapture.allowedDirs[${i}] must be an absolute UNIX path (start with '/')`
-      );
-    }
-    if (item.includes("\0")) {
-      throw new Error(`submission.fileCapture.allowedDirs[${i}] must not contain NUL bytes`);
-    }
-    if (item.includes("\n") || item.includes("\r")) {
-      throw new Error(`submission.fileCapture.allowedDirs[${i}] must not contain newline characters`);
-    }
-    const segments = item.split("/");
-    if (segments.includes("..")) {
-      throw new Error(`submission.fileCapture.allowedDirs[${i}] must not contain '..' segments`);
-    }
-    const collapsed = segments
-      .filter((seg, idx) => seg.length > 0 || idx === 0)
-      .join("/");
-    const stripped =
-      collapsed.length > 1 && collapsed.endsWith("/")
-        ? collapsed.slice(0, -1)
-        : collapsed;
-    const canonical = stripped.length === 0 ? "/" : stripped;
+  for (const entry of entries as readonly string[]) {
+    const canonical = entry.startsWith("/") ? canonicalCapturePath(entry) : entry;
     if (seen.has(canonical)) {
       continue;
     }
@@ -1805,86 +1286,23 @@ function parseFileCaptureAllowedDirs(input: unknown): readonly string[] | undefi
   return normalised;
 }
 
-function parseFileCaptureDeniedDirs(input: unknown): readonly string[] | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.fileCapture.deniedDirs must be an array of strings");
-  }
-  if (input.length === 0) {
-    return undefined;
-  }
-  if (input.length > MAX_FILE_CAPTURE_DIRS) {
-    throw new Error(`submission.fileCapture.deniedDirs has ${input.length} entries; max is ${MAX_FILE_CAPTURE_DIRS}`);
-  }
-  const seen = new Set<string>();
-  const normalised: string[] = [];
-  for (let i = 0; i < input.length; i++) {
-    const item = input[i];
-    if (typeof item !== "string") {
-      throw new Error(`submission.fileCapture.deniedDirs[${i}] must be a string`);
-    }
-    if (item.length === 0) {
-      throw new Error(`submission.fileCapture.deniedDirs[${i}] must be a non-empty pattern`);
-    }
-    const bytes = new TextEncoder().encode(item).length;
-    if (bytes > MAX_FILE_CAPTURE_DIR_BYTES) {
-      throw new Error(`submission.fileCapture.deniedDirs[${i}] exceeds ${MAX_FILE_CAPTURE_DIR_BYTES} bytes (got ${bytes})`);
-    }
-    if (item.includes("\0")) {
-      throw new Error(`submission.fileCapture.deniedDirs[${i}] must not contain NUL bytes`);
-    }
-    if (item.includes("\n") || item.includes("\r")) {
-      throw new Error(`submission.fileCapture.deniedDirs[${i}] must not contain newline characters`);
-    }
-    if (item.split("/").includes("..")) {
-      throw new Error(`submission.fileCapture.deniedDirs[${i}] must not contain '..' segments`);
-    }
-    let canonical = item;
-    if (item.startsWith("/")) {
-      const collapsed = item
-        .split("/")
-        .filter((seg, idx) => seg.length > 0 || idx === 0)
-        .join("/");
-      canonical =
-        collapsed.length > 1 && collapsed.endsWith("/") ? collapsed.slice(0, -1) : collapsed;
-    }
-    if (seen.has(canonical)) {
-      continue;
-    }
-    seen.add(canonical);
-    normalised.push(canonical);
-  }
-  return normalised;
+/** Collapse repeated separators and drop a trailing slash; `/` stays `/`. */
+function canonicalCapturePath(entry: string): string {
+  const collapsed = entry
+    .split("/")
+    .filter((segment, index) => segment.length > 0 || index === 0)
+    .join("/");
+  const stripped =
+    collapsed.length > 1 && collapsed.endsWith("/") ? collapsed.slice(0, -1) : collapsed;
+  return stripped.length === 0 ? "/" : stripped;
 }
 
-function parsePrompt(input: unknown): readonly string[] {
-  if (typeof input === "string") {
-    if (input.length === 0) {
-      throw new Error("submission.prompt must be non-empty");
-    }
-    if (input.trim().length === 0) {
-      throw new Error("submission.prompt must contain non-whitespace text");
-    }
-    return [input];
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.prompt must be a string or an array of strings");
-  }
-  if (input.length === 0) {
-    throw new Error("submission.prompt array must be non-empty");
-  }
-  const parts = input.map((item, index) => {
-    if (typeof item !== "string" || item.length === 0) {
-      throw new Error(`submission.prompt[${index}] must be a non-empty string`);
-    }
-    return item;
-  });
-  if (parts.every((part) => part.trim().length === 0)) {
-    throw new Error("submission.prompt must contain non-whitespace text");
-  }
-  return parts;
+/**
+ * Widen the single-string form to the one-element list the platform carries
+ * everywhere downstream. The emptiness and whitespace rules are the schema's.
+ */
+function normalizePrompt(input: SubmissionWire["prompt"]): readonly string[] {
+  return typeof input === "string" ? [input] : (input as readonly string[]);
 }
 
 /**
@@ -1904,12 +1322,9 @@ function assertValidSkillName(name: string, field: string): void {
   }
 }
 
-function parseMcpServers(input: unknown): readonly McpServerRef[] {
+function parseMcpServers(input: readonly unknown[] | undefined): readonly McpServerRef[] {
   if (input === undefined) {
     return [];
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.mcpServers must be an array of {name, url} objects");
   }
   const seen = new Set<string>();
   return input.map((item, index) => {

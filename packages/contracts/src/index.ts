@@ -125,3 +125,9 @@ export {
   isContractParseError
 } from "./contract-parse-error.js";
 export type { ContractParseError } from "./contract-parse-error.js";
+export * from "./schemas/index.js";
+// The data-plane route table. Declared here rather than in the platform so the
+// spec generator, the platform dispatcher and any future non-TypeScript SDK all
+// read one statement of the HTTP surface. A subpath export is not available:
+// public-contracts-snapshot.mjs asserts the exports map is exactly four entries.
+export * from "./api-routes.js";

@@ -42,16 +42,23 @@ describe("value guard ownership", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly dependencies?: Readonly<Record<string, string>> };
-    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate"]);
 
     const boundary = JSON.parse(
       readFileSync(new URL("../../../scripts/cicd/public-boundary-baseline.json", import.meta.url), "utf8")
     ) as {
+      readonly contractsPackage?: { readonly allowedRuntimeDependencies?: readonly string[] };
       readonly contractsInline?: {
         readonly allowedModuleFiles?: readonly string[];
         readonly privateModuleMaxBytes?: Readonly<Record<string, number>>;
       };
     };
+    // Asserted AGAINST the boundary baseline rather than against a literal list.
+    // The permitted dependency set is a fact this package, the SDK manifest and
+    // the platform snapshot already state; a fourth copy here would be one more
+    // thing to update in lockstep and one more place to forget.
+    expect(Object.keys(packageJson.dependencies ?? {}).sort()).toEqual(
+      [...(boundary.contractsPackage?.allowedRuntimeDependencies ?? [])].sort()
+    );
     expect(boundary.contractsInline?.allowedModuleFiles).toContain("./value-guards.js");
     expect(boundary.contractsInline?.privateModuleMaxBytes?.["value-guards.js"]).toBe(2048);
   });

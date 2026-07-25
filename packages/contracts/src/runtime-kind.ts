@@ -22,10 +22,12 @@
  * reclaim replays the interrupted step. Pricing differs per runtime.
  */
 
-/** The accepted execution-runtime values (the wire/CLI tokens). */
 import { rethrowContractParseError } from "./contract-parse-error.js";
+import { RUNTIME_KINDS, RuntimeKindSchema } from "./schemas/runtime-kind.js";
+import { parseWire } from "./schemas/wire.js";
 
-export const RUNTIME_KINDS = ["container", "spot_container", "lambda"] as const;
+/** The accepted execution-runtime values (the wire/CLI tokens). */
+export { RUNTIME_KINDS };
 
 /** One of the closed {@link RUNTIME_KINDS} tokens. */
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
@@ -68,12 +70,7 @@ export function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
     if (input === undefined) {
       return undefined;
     }
-    if (typeof input !== "string" || !(RUNTIME_KINDS as readonly string[]).includes(input)) {
-      throw new Error(
-        `runtimeKind must be one of: ${RUNTIME_KINDS.join(", ")} (got ${JSON.stringify(input)})`
-      );
-    }
-    return input as RuntimeKind;
+    return parseWire(RuntimeKindSchema, input);
   } catch (error) {
     rethrowContractParseError(error, "parseRuntimeKind");
   }

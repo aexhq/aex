@@ -4,6 +4,12 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  API_REFERENCE_DESCRIPTION,
+  API_REFERENCE_SPEC_PATH,
+  API_REFERENCE_TITLE,
+  renderApiReferenceMarkdown
+} from "./api-reference.ts";
 
 const execFileAsync = promisify(execFile);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -55,13 +61,14 @@ const appDocRoutes = new Map([
   ["provider-runtime-capabilities.md", "/docs/reference/provider-runtime-capabilities/"]
 ]);
 
-const referencePages = ["index", "sdk", "cli", "events", "provider-runtime-capabilities"];
+const referencePages = ["index", "sdk", "cli", "api", "events", "provider-runtime-capabilities"];
 
 await syncOverviewPages();
 await syncConcepts();
 await syncGuides();
 await syncGeneratedCapabilityReference();
 await generateCliReference();
+await generateApiReference();
 await generateEventReference();
 await generateSdkReference();
 await generateLlmsFiles();
@@ -231,6 +238,22 @@ async function generateCliReference() {
   });
 }
 
+/**
+ * The HTTP API page, rendered from the generated OpenAPI document.
+ *
+ * Nothing here reads the route table or the schemas directly: the document is
+ * already their single derivation, and a second reader of the same sources is
+ * the duplication-by-mirror this pipeline exists to remove.
+ */
+async function generateApiReference() {
+  const spec = JSON.parse(await readFile(resolve(repoRoot, API_REFERENCE_SPEC_PATH), "utf8"));
+  await writeMarkdown(resolve(contentRoot, "reference", "api.md"), {
+    title: API_REFERENCE_TITLE,
+    description: API_REFERENCE_DESCRIPTION,
+    body: renderApiReferenceMarkdown(spec)
+  });
+}
+
 async function generateEventReference() {
   const envelope = await readFile(resolve(repoRoot, "packages", "contracts", "src", "event-envelope.ts"), "utf8");
 
@@ -348,6 +371,7 @@ async function generateLlmsFiles() {
     "",
     `- [SDK](${publicDocsBase}/reference/sdk/)`,
     `- [CLI](${publicDocsBase}/reference/cli/)`,
+    `- [HTTP API](${publicDocsBase}/reference/api/)`,
     `- [Events](${publicDocsBase}/reference/events/)`,
     `- [Provider Runtime Capabilities](${publicDocsBase}/reference/provider-runtime-capabilities/)`,
     ""

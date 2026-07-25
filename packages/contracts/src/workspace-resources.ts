@@ -1,6 +1,10 @@
 import type { ToolInputSchema } from "./session-config.js";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
-import { isId } from "./ids.js";
+import {
+  pinnedWorkspaceResourceSchema,
+  workspaceResourceNameSchema
+} from "./schemas/workspace-resources.js";
+import { parseWire } from "./schemas/wire.js";
 
 /**
  * Persisted workspace file resource names accepted by the public wire boundary.
@@ -35,12 +39,7 @@ export function assertWorkspaceInstructionResourceName(
 }
 
 function assertWorkspaceResourceName(value: unknown, path: string, pattern: RegExp): asserts value is string {
-  if (typeof value !== "string" || !pattern.test(value)) {
-    throw new Error(`${path} must match ${pattern.source}`);
-  }
-  if (value.includes("__")) {
-    throw new Error(`${path} must not contain "__"`);
-  }
+  parseWire(workspaceResourceNameSchema(path, pattern), value);
 }
 
 /** Immutable bytes in the workspace content-addressed asset store. */
@@ -128,25 +127,17 @@ export interface WorkspaceResourceListQuery {
   readonly limit?: number;
 }
 
-/** Validate the immutable identity fields common to every submitted resource. */
+/**
+ * Validate the immutable identity fields common to every submitted resource.
+ *
+ * The canonical digest grammar is passed to the schema rather than imported by
+ * it: `canonical-sha256.ts` declares that grammar once and this module is its
+ * declared consumer, which is the arrangement `canonical-sha256-ownership.test.ts`
+ * pins.
+ */
 export function assertPinnedWorkspaceResource(
   value: WorkspaceResourceRef,
   path: string
 ): void {
-  if (!isId("resource", value.resourceId)) {
-    throw new Error(`${path}.resourceId must match wres_<32 lowercase hex>`);
-  }
-  if (!Number.isSafeInteger(value.version) || value.version < 1) {
-    throw new Error(`${path}.version must be a positive integer`);
-  }
-  if (typeof value.assetId !== "string" || value.assetId.length === 0) {
-    throw new Error(`${path}.assetId must be a non-empty string`);
-  }
-  if (!CANONICAL_SHA256_DIGEST_PATTERN.test(value.contentHash)) {
-    throw new Error(`${path}.contentHash must be a sha256 digest`);
-  }
-  const expectedAssetId = `asset_${value.contentHash.slice("sha256:".length)}`;
-  if (value.assetId !== expectedAssetId) {
-    throw new Error(`${path}.assetId must identify the same bytes as contentHash`);
-  }
+  parseWire(pinnedWorkspaceResourceSchema(path, CANONICAL_SHA256_DIGEST_PATTERN), value);
 }
