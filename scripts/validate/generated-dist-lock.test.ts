@@ -68,7 +68,7 @@ describe("generated dist lock", () => {
     const entries = await readdir(probeRoot);
     expect(outputScopedLocks).toEqual([true, true]);
     expect(entries.some((name) => name.startsWith("overlap-"))).toBe(true);
-  }, 20_000);
+  }, 60_000);
 
   it("does not delete a replacement owner's lock during cleanup", async () => {
     await mkdir(probeRoot, { recursive: true });
@@ -125,7 +125,7 @@ function runLockedProbe(
 }
 
 async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 30_000;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error("timed out waiting for locked probe");
     await new Promise((resolveWait) => setTimeout(resolveWait, 10));

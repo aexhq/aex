@@ -3,7 +3,7 @@ import {
   type AssetFetch,
   type AssetUploadRetryOptions
 } from "./asset-upload-helper.js";
-import { ASSET_ARCHIVE_LIMITS } from "./session-config.js";
+import { assertArchiveCompressedSize } from "./archive-limits.js";
 
 // Workspace-internal entry point. Re-exports submission building blocks and
 // hosts small shared helpers so public packages can avoid hand-mirroring
@@ -87,9 +87,7 @@ export interface UploadedAsset {
  * direct-to-storage presign flow shared by SDK and CLI callers.
  */
 export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset> {
-  if (args.bytes.byteLength > ASSET_ARCHIVE_LIMITS.maxCompressedBytes) {
-    throw new Error(`uploadAsset exceeds the 64 MiB compressed limit (got ${args.bytes.byteLength})`);
-  }
+  assertArchiveCompressedSize(args.bytes.byteLength, "uploadAsset");
   const expected = args.hash.startsWith("sha256:") ? args.hash.slice("sha256:".length) : args.hash;
   const actual = await computeSha256Hex(args.bytes);
   if (actual !== expected) {

@@ -49,12 +49,12 @@ describe("canonical public API documentation", () => {
     const files = readFileSync(resolve(repoRoot, "packages/sdk/docs/files.md"), "utf8");
 
     expect(ASSET_ARCHIVE_LIMITS).toEqual({
-      maxCompressedBytes: 64 * 1024 * 1024,
+      maxCompressedBytes: 16 * 1024 * 1024,
       maxDecompressedBytes: 128 * 1024 * 1024,
       maxEntries: 1_000,
       maxMetadataBytes: 8 * 1024 * 1024
     });
-    expect(limits).toContain("Compressed archive bytes | 64 MiB maximum");
+    expect(limits).toContain("Compressed archive bytes | 16 MiB maximum");
     expect(limits).toContain("Expanded archive bytes | 128 MiB maximum");
     expect(limits).toContain("Materialized files and safe symlinks | 1,000 maximum per archive");
     expect(limits).toContain("Fidelity metadata | 8 MiB maximum");

@@ -54,7 +54,7 @@ available to session code; a partial archive is never exposed.
 
 | Limit | Value |
 | --- | --- |
-| Compressed archive bytes | 64 MiB maximum |
+| Compressed archive bytes | 16 MiB maximum |
 | Expanded archive bytes | 128 MiB maximum |
 | Materialized files and safe symlinks | 1,000 maximum per archive |
 | Fidelity metadata | 8 MiB maximum |
@@ -97,7 +97,7 @@ attached to the current workspace. Stable admission errors include
 
 | Limit | Value | Adjustable? |
 | --- | --- | --- |
-| Runtime asset archive | 64 MiB compressed, 128 MiB expanded, 1,000 materialized entries | No |
+| Runtime asset archive | 16 MiB compressed, 128 MiB expanded, 1,000 materialized entries | No |
 | Skill bundle directory depth | 16 | Contact support |
 | Skill bundle entry path | 512 characters | No |
 | `File.mountPath` | 512 characters | No |

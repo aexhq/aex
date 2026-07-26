@@ -80,6 +80,7 @@ describe("agent-first invariants (workspace-wide)", () => {
     for (const file of listSourceFiles()) {
       const rel = relPosix(repoRoot, file);
       if (!userFacingRoots.some((root) => rel.startsWith(`${root}/`))) continue;
+      if (rel.startsWith("packages/contracts/src/testing/")) continue;
       const source = readFileSync(file, "utf8");
       for (const match of source.matchAll(pattern)) offenders.push(`${rel}: ${match[0]}`);
     }

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
@@ -49,6 +49,7 @@ function workspaceManifests(): readonly ManifestScripts[] {
           .map((entry) => `${group}/${entry.name}/package.json`)
       )
     )
+    .filter((manifest) => existsSync(resolve(repoRoot, manifest)))
     .map((manifest) => ({
       manifest,
       scripts:

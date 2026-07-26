@@ -26,7 +26,7 @@ import type { Secret } from "./secret.js";
  * A transcript message as the SDK hands it to a caller.
  *
  * Deliberately NOT an alias of {@link SessionMessage}, which is the WIRE shape
- * returned by `GET /sessions/{id}/messages` and always carries `timestamp`,
+ * returned by `GET /api/sessions/{id}/messages` and always carries `timestamp`,
  * `sequence` and `content`. A `Message` may also be PROJECTED from the event
  * stream by `projectAssistantMessages`, which is building one as the tokens
  * arrive and legitimately has no sequence or timestamp yet, and never has the

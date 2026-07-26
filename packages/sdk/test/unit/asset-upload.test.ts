@@ -30,7 +30,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     const oversized = { byteLength: ASSET_ARCHIVE_LIMITS.maxCompressedBytes + 1 } as Uint8Array;
 
     await expect(uploadAsset({ http, bytes: oversized, hash: `sha256:${"0".repeat(64)}` }))
-      .rejects.toThrow(/64 MiB compressed limit/);
+      .rejects.toThrow(/16 MiB compressed limit/);
     expect(http.request).not.toHaveBeenCalled();
   });
 

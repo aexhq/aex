@@ -46,7 +46,7 @@ the catalog. Runs always receive pinned refs; they never resolve a mutable
 "latest" version during execution.
 
 As a run boots, each attached input archive is checked against a separate
-runtime materialization envelope: at most 64 MiB compressed, 128 MiB expanded,
+runtime materialization envelope: at most 16 MiB compressed, 128 MiB expanded,
 and 1,000 materialized files or safe symlinks. The runtime may overlap bulk skill extraction with
 the first model call, but it blocks the first tool, any post-run hook, and run
 completion until every promised input is ready. These execution-safety bounds
