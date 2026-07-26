@@ -28,7 +28,7 @@ export function formatChildFailure(
 }
 
 export const LIVE_REQUEST_TRACE_SOURCE = `
-const __aexTraceKnownSecrets = [process.env.AEX_API_KEY]
+const __aexTraceKnownSecrets = [process.env.AEX_API_KEY, process.env.DEEPSEEK_KEY]
   .filter((value) => typeof value === "string" && value.length >= 4);
 
 function redactTraceText(value) {

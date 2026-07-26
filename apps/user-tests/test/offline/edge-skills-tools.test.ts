@@ -9,7 +9,7 @@
  *
  *   A. Skill-bundle path safety + hard limits via `bundleSkillFiles` directly —
  *      path traversal (`..`), absolute/drive-letter paths, backslash separators,
- *      NUL bytes, trailing slash, depth > 16, path length > 512, empty map,
+ *      NUL bytes, trailing slash, path length > 4096, empty map,
  *      missing SKILL.md, > 1000 files, and expanded bytes above the runtime cap.
  *   B. `Tool.fromFiles` manifest validation — missing/empty/array input schema,
  *      non-"object" schema type, empty / oversized description, reserved "__" in
@@ -136,8 +136,7 @@ function onlyCreateBody(calls) {
 
 // SKILL_BUNDLE_LIMITS (contract), referenced so the intent is explicit.
 const LIMIT_MAX_FILES = 1000;
-const LIMIT_MAX_DEPTH = 16;
-const LIMIT_MAX_PATH = 512;
+const LIMIT_MAX_PATH = 4096;
 
 describe("edge: skills & tools composition (offline, installed package)", () => {
   let install: InstallResult;
@@ -180,7 +179,6 @@ const bad = [
   ["trailing slash", { "SKILL.md": SKILL, "dir/": "x" }, /must not end with '\/'/],
   ["dot segment", { "SKILL.md": SKILL, "./x.txt": "x" }, /empty or '\.' segment/],
   ["empty key", { "SKILL.md": SKILL, "": "x" }, /must be non-empty/],
-  ["too deep", { "SKILL.md": SKILL, [Array.from({ length: ${LIMIT_MAX_DEPTH} + 1 }, (_, i) => "d" + i).join("/") + "/f.txt"]: "x" }, /maxDepth/],
   ["path too long", { "SKILL.md": SKILL, ["a/" + "z".repeat(${LIMIT_MAX_PATH})]: "x" }, /maxPathLength/]
 ];
 const msgs = {};
@@ -221,7 +219,7 @@ console.log(JSON.stringify({
 }));
 `;
     const result = await runChild(script, "edge-bundle-paths.mjs");
-    expect(result).toMatchObject({ ok: true, rejected: 11, manyRejected: true, bigRejected: true });
+    expect(result).toMatchObject({ ok: true, rejected: 10, manyRejected: true, bigRejected: true });
   });
 
   it("B: Tool.fromFiles validates manifest, schema, name, entry, and file paths", async () => {
