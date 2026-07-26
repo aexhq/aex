@@ -56,6 +56,7 @@ import {
   AdminBillingAccountTypeResponseSchema,
   AdminBillingPaymentMethodResponseSchema,
   AdminBillingTopupResponseSchema,
+  BillingAutoTopupResponseSchema,
   BillingHostedSessionResponseSchema,
   BillingLedgerResponseSchema,
   BillingSummaryResponseSchema
@@ -210,7 +211,8 @@ const RESPONSE_SCHEMA_BY_OPERATION: Readonly<Record<string, StandardSchemaV1>> =
   // Billing.
   "billing.get": BillingSummaryResponseSchema,
   "billing.ledger": BillingLedgerResponseSchema,
-  "billing.checkout": BillingHostedSessionResponseSchema,
+  "billing.topupCheckout": BillingHostedSessionResponseSchema,
+  "billing.autoTopup": BillingAutoTopupResponseSchema,
   "billing.portal": BillingHostedSessionResponseSchema,
   "adminBilling.topup": AdminBillingTopupResponseSchema,
   "adminBilling.paymentMethod": AdminBillingPaymentMethodResponseSchema,

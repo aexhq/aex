@@ -30,6 +30,7 @@ import {
   AdminBillingAccountTypeResponseSchema,
   AdminBillingPaymentMethodResponseSchema,
   AdminBillingTopupResponseSchema,
+  BillingAutoTopupResponseSchema,
   BillingHostedSessionResponseSchema,
   BillingLedgerResponseSchema,
   BillingSummaryResponseSchema
@@ -156,6 +157,53 @@ const sessionFile = {
   sha256: "a".repeat(64)
 };
 
+/**
+ * A real `GET /billing` body. Quotas and units come from the server, so the
+ * fixture states plausible ones rather than importing the hosted table: the
+ * schema checks the SHAPE, and pinning the policy here would be the second copy
+ * the prepaid model exists to remove.
+ */
+const billingSummary = {
+  balanceUsd: 5,
+  monthSpendUsd: 1.25,
+  spendCapUsd: 0,
+  period: "2026-07",
+  admissionState: "carded_manual",
+  accountType: "standard",
+  paymentMethodStatus: "active",
+  autoTopupEnabled: false,
+  blocked: null,
+  paymentMethod: { present: true, brand: "visa", last4: "4242" },
+  autoTopup: {
+    enabled: false,
+    thresholdUsd: 5,
+    amountUsd: 20,
+    minimumAmountUsd: 10,
+    maxPerDay: 4
+  },
+  allowances: [
+    {
+      dimension: "llm_token_usd",
+      quota: 2,
+      used: 0.5,
+      remaining: 1.5,
+      unit: "USD",
+      label: "model usage",
+      resetAt: TS,
+      approximateTokens: { model: "anthropic/claude-haiku-4-5", tokens: 1_200_000 }
+    },
+    {
+      dimension: "egress_gb",
+      quota: 5,
+      used: 1.4,
+      remaining: 3.6,
+      unit: "GB",
+      label: "egress",
+      resetAt: TS
+    }
+  ]
+};
+
 const whoami = {
   ok: true,
   principalType: "api_key",
@@ -168,12 +216,12 @@ const whoami = {
     monthSpendUsd: 1.25,
     balanceUsd: 5,
     balanceGraceFloorUsd: 0,
-    balanceGateActive: true,
+    llmTokenAllowanceRemainingUsd: 2,
+    creditGateActive: true,
     paymentMethodStatus: "none",
-    planKey: "free",
-    accountType: "standard",
-    subscriptionStatus: "none",
-    subscriptionGate: "ok"
+    admissionState: "free",
+    autoTopupEnabled: false,
+    accountType: "standard"
   },
   runtimeCapabilities: {
     schemaVersion: 1,
@@ -713,7 +761,11 @@ const cases: readonly Case[] = [
   {
     name: "billing.get",
     schema: BillingSummaryResponseSchema,
-    accepts: {
+    accepts: billingSummary,
+    // The retired catalog envelope. `planKey`/`subscriptionStatus`/`pastDueAt`
+    // describe a subscription that no longer exists, and the prepaid fields that
+    // replaced them are absent — so the whole body is refused, not tolerated.
+    rejects: {
       balanceUsd: 5,
       monthSpendUsd: 1.25,
       spendCapUsd: 0,
@@ -723,18 +775,16 @@ const cases: readonly Case[] = [
       accountType: "standard",
       pastDueAt: null
     },
-    // `accountType` is on the wire and NOT on the declared `BillingSummary`.
-    // Its absence is the drift the declared type cannot express.
-    rejects: {
-      balanceUsd: 5,
-      monthSpendUsd: 1.25,
-      spendCapUsd: 0,
-      planKey: "free",
-      subscriptionStatus: "none",
-      paymentMethodStatus: "none",
-      pastDueAt: null
-    },
-    because: "accountType"
+    because: "planKey"
+  },
+  {
+    name: "billing.autoTopup",
+    schema: BillingAutoTopupResponseSchema,
+    accepts: { autoTopup: billingSummary.autoTopup },
+    // A settings echo without the guards is a form with no way to know the
+    // minimum it must enforce.
+    rejects: { autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 20 } },
+    because: "minimumAmountUsd"
   },
   {
     name: "billing.ledger",
@@ -772,7 +822,7 @@ const cases: readonly Case[] = [
     because: "amountUsd"
   },
   {
-    name: "billing.checkout / billing.portal",
+    name: "billing.topupCheckout / billing.portal",
     schema: BillingHostedSessionResponseSchema,
     accepts: { url: "https://checkout.stripe.com/c/pay/cs_test" },
     rejects: { url: "https://checkout.stripe.com/c/pay/cs_test", sessionId: "cs_test" },

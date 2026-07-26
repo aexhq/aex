@@ -30,12 +30,14 @@ import {
   toFilenameMatcher
 } from "./session-file-query.js";
 import type {
-  BillingCheckoutRequest,
+  BillingAutoTopupRequest,
+  BillingAutoTopupUpdate,
   BillingHostedSession,
   BillingLedgerPage,
   BillingLedgerQuery,
   BillingPortalRequest,
   BillingSummary,
+  BillingTopupCheckoutRequest,
   ChildSessionRef,
   SessionFile,
   SessionFileLink,
@@ -77,7 +79,7 @@ import type {
   RuntimeCapabilityState,
   RuntimeProfile
 } from "./runtime-types.js";
-import { RUNTIME_CAPABILITY_NAMES, SESSION_RUN_PHASES } from "./runtime-types.js";
+import { BILLING_ADMISSION_STATES, RUNTIME_CAPABILITY_NAMES, SESSION_RUN_PHASES } from "./runtime-types.js";
 import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
 import { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES } from "./status.js";
@@ -1492,31 +1494,25 @@ function parseWhoAmILimits(value: unknown): WhoAmI["limits"] {
     "spendCapUsd",
     "monthSpendUsd",
     "balanceUsd",
-    "balanceGraceFloorUsd"
+    "balanceGraceFloorUsd",
+    "llmTokenAllowanceRemainingUsd"
   ] as const;
   for (const field of requiredNumbers) {
     if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
       throw new SessionStateError(`whoami response limits.${field} must be a finite number`);
     }
   }
-  if (typeof value.balanceGateActive !== "boolean") {
-    throw new SessionStateError("whoami response limits.balanceGateActive must be a boolean");
-  }
-  const paymentMethodStatus = value.paymentMethodStatus;
-  const planKey = value.planKey;
-  const accountType = value.accountType;
-  const subscriptionStatus = value.subscriptionStatus;
-  const subscriptionGate = value.subscriptionGate;
-  assertOneOf(paymentMethodStatus, ["none", "active"], "limits.paymentMethodStatus");
-  assertOneOf(planKey, ["free", "pro", "team"], "limits.planKey");
-  assertOneOf(accountType, ["standard", "internal"], "limits.accountType");
-  assertOneOf(subscriptionStatus, ["none", "active", "past_due", "canceled"], "limits.subscriptionStatus");
-  assertOneOf(subscriptionGate, ["ok", "past_due_grace", "past_due_suspended"], "limits.subscriptionGate");
-  for (const field of ["pastDueAt", "graceEndsAt"] as const) {
-    if (value[field] !== undefined && (typeof value[field] !== "string" || !Number.isFinite(Date.parse(value[field])))) {
-      throw new SessionStateError(`whoami response limits.${field} must be an ISO-8601 timestamp`);
+  for (const field of ["creditGateActive", "autoTopupEnabled"] as const) {
+    if (typeof value[field] !== "boolean") {
+      throw new SessionStateError(`whoami response limits.${field} must be a boolean`);
     }
   }
+  const paymentMethodStatus = value.paymentMethodStatus;
+  const admissionState = value.admissionState;
+  const accountType = value.accountType;
+  assertOneOf(paymentMethodStatus, ["none", "active"], "limits.paymentMethodStatus");
+  assertOneOf(admissionState, BILLING_ADMISSION_STATES, "limits.admissionState");
+  assertOneOf(accountType, ["standard", "internal"], "limits.accountType");
   return {
     maxConcurrentSessions: value.maxConcurrentSessions as number,
     submitRatePerMinute: value.submitRatePerMinute as number,
@@ -1524,14 +1520,12 @@ function parseWhoAmILimits(value: unknown): WhoAmI["limits"] {
     monthSpendUsd: value.monthSpendUsd as number,
     balanceUsd: value.balanceUsd as number,
     balanceGraceFloorUsd: value.balanceGraceFloorUsd as number,
-    balanceGateActive: value.balanceGateActive,
+    llmTokenAllowanceRemainingUsd: value.llmTokenAllowanceRemainingUsd as number,
+    creditGateActive: value.creditGateActive as boolean,
     paymentMethodStatus,
-    planKey,
-    accountType,
-    subscriptionStatus,
-    subscriptionGate,
-    ...(typeof value.pastDueAt === "string" ? { pastDueAt: value.pastDueAt } : {}),
-    ...(typeof value.graceEndsAt === "string" ? { graceEndsAt: value.graceEndsAt } : {})
+    admissionState,
+    autoTopupEnabled: value.autoTopupEnabled as boolean,
+    accountType
   };
 }
 
@@ -1547,37 +1541,62 @@ function assertOneOf<const TAllowed extends readonly string[]>(
 
 /**
  * Read the workspace billing summary (`GET /api/billing`, scope `billing:read`):
- * prepaid balance, current-month spend, spend cap, and plan fields. The result
- * is additive-tolerant — server fields this SDK does not know yet pass through.
+ * prepaid balance, current-month spend, spend cap, the free monthly allowances,
+ * auto-recharge settings and the saved card. The result is additive-tolerant —
+ * server fields this SDK does not know yet pass through.
  */
 export async function getBilling(http: HttpClient): Promise<BillingSummary> {
   return http.request<BillingSummary>("/api/billing");
 }
 
-function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOptions): string {
+function rejectBodyIdempotencyKey(request: unknown): void {
   if (isRecord(request) && Object.prototype.hasOwnProperty.call(request, "idempotencyKey")) {
     throw configError(
       "idempotencyKey",
       "billing idempotencyKey belongs in the second options argument, not the request body"
     );
   }
+}
+
+function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOptions): string {
+  rejectBodyIdempotencyKey(request);
   const idempotencyKey = resolveIdempotencyKey(options?.idempotencyKey);
   return idempotencyKey;
 }
 
 /**
- * Create a hosted checkout session for a paid plan. Returns only the hosted
- * URL; plan activation happens after checkout completes.
+ * Buy prepaid credit (`POST /api/billing/topup/checkout`). Returns only the
+ * hosted URL; the balance moves after the charge settles, not when this
+ * resolves. The same flow captures the card on first use.
  */
-export async function createBillingCheckout(
+export async function createBillingTopupCheckout(
   http: HttpClient,
-  request: BillingCheckoutRequest,
+  request: BillingTopupCheckoutRequest,
   options?: IdempotencyOptions
 ): Promise<BillingHostedSession> {
   const idempotencyKey = resolveBillingIdempotencyKey(request, options);
-  return http.request<BillingHostedSession>("/api/billing/checkout", {
+  return http.request<BillingHostedSession>("/api/billing/topup/checkout", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(request)
+  });
+}
+
+/**
+ * Update auto-recharge (`PATCH /api/billing/autotopup`). Omitted fields keep
+ * their stored value; the response echoes the stored settings.
+ *
+ * No idempotency key: this is a whole-state PATCH, so a replay writes the same
+ * row. The body guard stays — an `idempotencyKey` in the body was never a
+ * request field and silently ignoring it would look like it worked.
+ */
+export async function updateBillingAutoTopup(
+  http: HttpClient,
+  request: BillingAutoTopupRequest
+): Promise<BillingAutoTopupUpdate> {
+  rejectBodyIdempotencyKey(request);
+  return http.request<BillingAutoTopupUpdate>("/api/billing/autotopup", {
+    method: "PATCH",
     body: JSON.stringify(request)
   });
 }

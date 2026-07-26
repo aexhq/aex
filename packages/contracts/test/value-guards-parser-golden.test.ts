@@ -23,12 +23,12 @@ const limits = {
   monthSpendUsd: 12.5,
   balanceUsd: 100,
   balanceGraceFloorUsd: 0,
-  balanceGateActive: true,
+  llmTokenAllowanceRemainingUsd: 2,
+  creditGateActive: true,
   paymentMethodStatus: "none",
-  planKey: "free",
-  accountType: "standard",
-  subscriptionStatus: "none",
-  subscriptionGate: "ok"
+  admissionState: "free",
+  autoTopupEnabled: false,
+  accountType: "standard"
 } as const;
 
 function clientReturning(body: unknown): HttpClient {
@@ -111,11 +111,11 @@ describe("shared value guard parser goldens", () => {
       principalType: "api_key",
       workspaceId: "ws_guard",
       scopes: [],
-      limits: { ...limits, planKey: "enterprise" }
+      limits: { ...limits, admissionState: "enterprise" }
     }));
     await expect(invalid).rejects.toEqual(expect.objectContaining({
       name: "SessionStateError",
-      message: "whoami response limits.planKey is invalid"
+      message: "whoami response limits.admissionState is invalid"
     }));
     await expect(invalid).rejects.toBeInstanceOf(SessionStateError);
 
@@ -137,12 +137,12 @@ describe("shared value guard parser goldens", () => {
       "monthSpendUsd",
       "balanceUsd",
       "balanceGraceFloorUsd",
-      "balanceGateActive",
+      "llmTokenAllowanceRemainingUsd",
+      "creditGateActive",
       "paymentMethodStatus",
-      "planKey",
-      "accountType",
-      "subscriptionStatus",
-      "subscriptionGate"
+      "admissionState",
+      "autoTopupEnabled",
+      "accountType"
     ]);
     expect(parsed.limits).toEqual(limits);
   });

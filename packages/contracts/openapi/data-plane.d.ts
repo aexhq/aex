@@ -163,7 +163,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/billing/checkout": {
+    "/api/billing/autotopup": {
         parameters: {
             query?: never;
             header?: never;
@@ -172,12 +172,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** billing.checkout */
-        post: operations["billing.checkout"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** billing.autoTopup */
+        patch: operations["billing.autoTopup"];
         trace?: never;
     };
     "/api/billing/ledger": {
@@ -208,6 +208,23 @@ export interface paths {
         put?: never;
         /** billing.portal */
         post: operations["billing.portal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/topup/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** billing.topupCheckout */
+        post: operations["billing.topupCheckout"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1359,7 +1376,7 @@ export interface operations {
             };
         };
     };
-    "billing.checkout": {
+    "billing.autoTopup": {
         parameters: {
             query?: never;
             header?: never;
@@ -1414,6 +1431,33 @@ export interface operations {
         };
     };
     "billing.portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error envelope. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
+    "billing.topupCheckout": {
         parameters: {
             query?: never;
             header?: never;

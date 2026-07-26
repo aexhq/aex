@@ -13,6 +13,7 @@
  * See `testing/response-bindings.ts`.
  */
 import * as z from "zod/mini";
+import { BILLING_ADMISSION_STATES } from "../runtime-types.js";
 import { RUNTIME_KINDS } from "./runtime-kind.js";
 import { RUNTIME_SIZES } from "./runtime-sizes.js";
 import {
@@ -23,8 +24,7 @@ import {
   wireLiteral,
   wireNonEmptyString,
   wireNumber,
-  wireString,
-  wireTimestamp
+  wireString
 } from "./response-common.js";
 
 const optional = z.optional;
@@ -55,13 +55,16 @@ export const RuntimeCapabilitiesSchema = describeResponse(
 /**
  * Effective workspace limits, from the same read models admission uses.
  *
- * `pastDueAt` and `graceEndsAt` appear only when the subscription gate is not
- * `ok`, and even then only when the underlying timestamp exists — so both are
- * optional and a `past_due_suspended` account may carry neither.
+ * Every field is REQUIRED. The plan catalog is gone, and with it the optional
+ * `pastDueAt` / `graceEndsAt` pair that only existed while a subscription could
+ * be in arrears — prepaid credit cannot go negative, so there is no dunning
+ * state to report. What gates a submit now is the pair
+ * (`balanceUsd`, `llmTokenAllowanceRemainingUsd`), and `admissionState` says
+ * which of the three card-derived states produced the caps above it.
  */
 export const WhoAmILimitsSchema = describeResponse(
   "WhoAmILimits",
-  "Effective concurrency, rate, spend and balance limits plus plan state.",
+  "Effective concurrency, rate, spend and prepaid-credit limits plus the card-derived admission state.",
   responseObject({
     maxConcurrentSessions: wireNumber,
     submitRatePerMinute: wireNumber,
@@ -69,14 +72,12 @@ export const WhoAmILimitsSchema = describeResponse(
     monthSpendUsd: wireNumber,
     balanceUsd: wireNumber,
     balanceGraceFloorUsd: wireNumber,
-    balanceGateActive: wireBoolean,
+    llmTokenAllowanceRemainingUsd: wireNumber,
+    creditGateActive: wireBoolean,
     paymentMethodStatus: wireEnum(["none", "active"]),
-    planKey: wireEnum(["free", "pro", "team"]),
-    accountType: wireEnum(["standard", "internal"]),
-    subscriptionStatus: wireEnum(["none", "active", "past_due", "canceled"]),
-    subscriptionGate: wireEnum(["ok", "past_due_grace", "past_due_suspended"]),
-    pastDueAt: optional(wireTimestamp),
-    graceEndsAt: optional(wireTimestamp)
+    admissionState: wireEnum(BILLING_ADMISSION_STATES),
+    autoTopupEnabled: wireBoolean,
+    accountType: wireEnum(["standard", "internal"])
   })
 );
 

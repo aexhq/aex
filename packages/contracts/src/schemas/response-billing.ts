@@ -1,25 +1,22 @@
 /**
  * Response schemas for the `billing.*` and `adminBilling.*` families.
  *
- * Three places the server and the declared types disagree, all resolved in
- * favour of the server (a schema that fails every real response is not a gate):
+ * One place the server and the declared types still disagree, resolved in favour
+ * of the server (a schema that fails every real response is not a gate):
+ * `BillingLedgerEntry` does not declare `workspaceId`; the server sends it on
+ * every row (the WS2 cost-attribution tag), `null` for org-level rows. Both
+ * interfaces carry `[key: string]: unknown` — an explicit "additive server
+ * fields pass through" promise, and that promise is what makes the gap
+ * invisible. The index signature is not honoured here.
  *
- * 1. `BillingSummary` does not declare `accountType` or `pastDueAt`; the server
- *    sends both, unconditionally.
- * 2. `BillingLedgerEntry` does not declare `workspaceId`; the server sends it on
- *    every row (the WS2 cost-attribution tag), `null` for org-level rows.
- * 3. Both interfaces carry `[key: string]: unknown` — an explicit "additive
- *    server fields pass through" promise. That promise is what makes 1 and 2
- *    invisible today, and it is exactly what a strict response schema exists to
- *    stop being invisible. The index signature is not honoured here.
- *
- * Two timestamp fields on this surface are NOT ISO-8601: `pastDueAt` here and
- * `createdAt` on a ledger entry are selected raw, so they arrive as the Data
- * API's `"YYYY-MM-DD HH:MM:SS"` text. They are validated as non-empty strings,
- * deliberately, and the inconsistency is reported rather than encoded as if
- * intended.
+ * `createdAt` on a ledger entry is NOT ISO-8601: it is selected raw, so it
+ * arrives as the Data API's `"YYYY-MM-DD HH:MM:SS"` text. It is validated as a
+ * non-empty string, deliberately, and the inconsistency is reported rather than
+ * encoded as if intended. `resetAt` and `blocked.at` ARE ISO-8601 — they are
+ * constructed, not selected.
  */
 import * as z from "zod/mini";
+import { BILLING_ADMISSION_STATES } from "../runtime-types.js";
 import {
   describeResponse,
   responseObject,
@@ -28,29 +25,88 @@ import {
   wireLiteral,
   wireNonEmptyString,
   wireNumber,
-  wireString
+  wireString,
+  wireTimestamp
 } from "./response-common.js";
+
+/**
+ * One free monthly allowance row inside `GET /billing`.
+ *
+ * `dimension`, `unit` and `label` are validated as non-empty strings rather than
+ * as enums on purpose: the dimensions a free allowance is denominated in are
+ * hosted billing policy, and pinning them here would put a second copy of that
+ * policy in the public package — the exact duplication the prepaid model was
+ * built to remove. The SHAPE is what this schema is for.
+ *
+ * `approximateTokens` rides only on the USD-denominated token allowance, and
+ * only when there is usage to infer a model from.
+ */
+export const BillingAllowanceSchema = describeResponse(
+  "BillingAllowance",
+  "One free monthly allowance: quota, consumption and the instant it resets.",
+  responseObject({
+    dimension: wireNonEmptyString,
+    quota: wireNumber,
+    used: wireNumber,
+    remaining: wireNumber,
+    unit: wireNonEmptyString,
+    label: wireNonEmptyString,
+    resetAt: wireTimestamp,
+    approximateTokens: z.optional(
+      responseObject({ model: wireNonEmptyString, tokens: wireNumber })
+    )
+  })
+);
+
+/** Auto-recharge settings plus the two guards a top-up form has to respect. */
+export const BillingAutoTopupSchema = describeResponse(
+  "BillingAutoTopup",
+  "Auto-recharge settings, the minimum accepted top-up and the daily recharge cap.",
+  responseObject({
+    enabled: wireBoolean,
+    thresholdUsd: wireNumber,
+    amountUsd: wireNumber,
+    minimumAmountUsd: wireNumber,
+    maxPerDay: wireNumber
+  })
+);
 
 /**
  * `GET /billing`.
  *
- * `planKey` is the raw `plan_key` column, NOT normalised to the
- * `free | pro | team` union the way `whoami.limits.planKey` is — so it is a
- * string here and an enum there, for the same concept.
+ * `planKey`, `subscriptionStatus` and `pastDueAt` are GONE with the catalog they
+ * described. What replaces them is the prepaid surface: the period, the
+ * card-derived `admissionState`, the allowance rows, the auto-recharge block,
+ * the saved card, and any live block.
  */
 export const BillingSummaryResponseSchema = describeResponse(
   "BillingSummaryResponse",
-  "Workspace billing summary: prepaid balance, month-to-date spend, cap and plan state.",
+  "Workspace billing summary: prepaid balance, month-to-date spend, cap, free allowances and card state.",
   responseObject({
     balanceUsd: wireNumber,
     monthSpendUsd: wireNumber,
     spendCapUsd: wireNumber,
-    planKey: wireNonEmptyString,
-    subscriptionStatus: wireEnum(["none", "active", "past_due", "canceled"]),
-    paymentMethodStatus: wireEnum(["none", "active"]),
+    period: wireNonEmptyString,
+    admissionState: wireEnum(BILLING_ADMISSION_STATES),
     accountType: wireEnum(["standard", "internal"]),
-    pastDueAt: z.nullable(wireString)
+    paymentMethodStatus: wireEnum(["none", "active"]),
+    autoTopupEnabled: wireBoolean,
+    blocked: z.nullable(responseObject({ at: wireTimestamp, reason: wireNonEmptyString })),
+    paymentMethod: responseObject({
+      present: wireBoolean,
+      brand: z.nullable(wireString),
+      last4: z.nullable(wireString)
+    }),
+    autoTopup: BillingAutoTopupSchema,
+    allowances: z.array(BillingAllowanceSchema)
   })
+);
+
+/** `PATCH /billing/autotopup` echoes exactly the stored settings. */
+export const BillingAutoTopupResponseSchema = describeResponse(
+  "BillingAutoTopupResponse",
+  "The stored auto-recharge settings after the update.",
+  responseObject({ autoTopup: BillingAutoTopupSchema })
 );
 
 export const BillingLedgerEntrySchema = describeResponse(
@@ -75,7 +131,7 @@ export const BillingLedgerResponseSchema = describeResponse(
   responseObject({ entries: z.array(BillingLedgerEntrySchema) })
 );
 
-/** `POST /billing/checkout` and `POST /billing/portal` both answer exactly `{ url }`. */
+/** `POST /billing/topup/checkout` and `POST /billing/portal` both answer exactly `{ url }`. */
 export const BillingHostedSessionResponseSchema = describeResponse(
   "BillingHostedSessionResponse",
   "A hosted checkout or billing-portal session. The client should open `url`.",

@@ -540,21 +540,35 @@ export interface WhoAmI {
     readonly spendCapUsd: number;
     /** Accrued spend in the current UTC calendar month — the value the spend gate compares. */
     readonly monthSpendUsd: number;
-    /** Prepaid balance read-model — the value the balance gate compares. */
+    /** Prepaid credit balance in USD — one of the two things the credit gate compares. */
     readonly balanceUsd: number;
-    /** Submit floor used when {@link balanceGateActive} is true. */
+    /** Submit floor the balance is compared against; only meaningful when {@link creditGateActive}. */
     readonly balanceGraceFloorUsd: number;
-    /** Whether the allowance-balance gate applies to this workspace. */
-    readonly balanceGateActive: boolean;
+    /**
+     * The OTHER half of the credit predicate: free model-usage allowance left
+     * this UTC month, in USD. A submit is admitted while EITHER this or
+     * {@link balanceUsd} is positive; both at zero is `402 insufficient_credits`.
+     */
+    readonly llmTokenAllowanceRemainingUsd: number;
+    /** Whether the prepaid credit gate applies to this workspace. */
+    readonly creditGateActive: boolean;
     readonly paymentMethodStatus: "none" | "active";
-    readonly planKey: "free" | "pro" | "team";
+    /** What the gates sized this workspace at — card presence is the lever, not a plan. */
+    readonly admissionState: BillingAdmissionState;
+    /** True when auto-recharge is on, i.e. exhaustion triggers a top-up instead of a 402. */
+    readonly autoTopupEnabled: boolean;
     readonly accountType: "standard" | "internal";
-    readonly subscriptionStatus: "none" | "active" | "past_due" | "canceled";
-    readonly subscriptionGate: "ok" | "past_due_grace" | "past_due_suspended";
-    readonly pastDueAt?: string;
-    readonly graceEndsAt?: string;
   };
 }
+
+/**
+ * How the money gates size a workspace. There is no plan catalog: a saved card
+ * and the auto-recharge flag are the only inputs, so the state is derived rather
+ * than sold.
+ */
+export const BILLING_ADMISSION_STATES = ["free", "carded_manual", "carded_auto"] as const;
+
+export type BillingAdmissionState = (typeof BILLING_ADMISSION_STATES)[number];
 
 /** The closed capability vocabulary a runtime profile declares. */
 export const RUNTIME_CAPABILITY_NAMES = [
@@ -646,10 +660,67 @@ export interface SecretRecord {
 }
 
 /**
+ * One free monthly allowance, as reported by `GET /api/billing`.
+ *
+ * `dimension`, `unit` and `label` are OPEN strings on purpose. The quantities a
+ * free allowance is denominated in, and what each one is worth, are hosted
+ * billing policy; this contract states the SHAPE the server reports them in so a
+ * client can render the panel without keeping a second copy of the numbers.
+ */
+export interface BillingAllowance {
+  /** Server-owned dimension key, e.g. `llm_token_usd`. */
+  readonly dimension: string;
+  /** This period's quota, counted in {@link unit}. */
+  readonly quota: number;
+  readonly used: number;
+  readonly remaining: number;
+  /** What the quota counts, e.g. `GB`, `calls`, `USD`. */
+  readonly unit: string;
+  /** The customer-facing name of the dimension, e.g. `model usage`. */
+  readonly label: string;
+  /** ISO-8601 instant the allowance resets — the start of the next UTC month. */
+  readonly resetAt: string;
+  readonly [key: string]: unknown;
+}
+
+/** Auto-recharge settings plus the guards a top-up form has to respect. */
+export interface BillingAutoTopup {
+  /** Opt-in and OFF by default: a card being on file never enables recharge. */
+  readonly enabled: boolean;
+  /** Balance below which a recharge is triggered. */
+  readonly thresholdUsd: number;
+  /** Amount charged per recharge. */
+  readonly amountUsd: number;
+  /** Smallest accepted top-up; a smaller `amountUsd` is a `400`. */
+  readonly minimumAmountUsd: number;
+  /** Ceiling on successful automatic recharges per rolling 24h. */
+  readonly maxPerDay: number;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * The saved card. `present` is authoritative and decides whether top-up and
+ * auto-recharge are reachable at all; `brand`/`last4` are cosmetic and are
+ * `null` when the payment provider could not be reached.
+ */
+export interface BillingPaymentMethod {
+  readonly present: boolean;
+  readonly brand: string | null;
+  readonly last4: string | null;
+  readonly [key: string]: unknown;
+}
+
+/** A live block on the organization — new work is refused with `402 account_blocked`. */
+export interface BillingBlock {
+  /** ISO-8601 instant the block was applied. */
+  readonly at: string;
+  readonly reason: string;
+}
+
+/**
  * Customer-facing billing summary — `GET /api/billing` (scope `billing:read`).
  * All money fields are USD numbers. The index signature keeps the shape tolerant
- * of ADDITIVE server fields (e.g. a deployment newer than this SDK reporting
- * extra plan attributes) — unknown keys are preserved, never rejected.
+ * of ADDITIVE server fields — unknown keys are preserved, never rejected.
  */
 export interface BillingSummary {
   /** Prepaid balance (authoritative ledger sum). */
@@ -658,22 +729,52 @@ export interface BillingSummary {
   readonly monthSpendUsd: number;
   /** Monthly spend cap enforced on new sessions. */
   readonly spendCapUsd: number;
-  readonly planKey: string;
-  readonly subscriptionStatus: string;
-  /** `"active"` once a payment method is bound; older deployments omit it. */
+  /** The UTC allowance period these figures cover, `YYYY-MM`. */
+  readonly period: string;
+  /** What the money gates sized this workspace at. */
+  readonly admissionState: BillingAdmissionState;
+  /** `"standard"` (billable) or `"internal"` (money gates skipped). */
+  readonly accountType: string;
+  /** `"active"` once a payment method is bound. */
   readonly paymentMethodStatus?: string;
+  readonly autoTopupEnabled: boolean;
+  /** `null` when the organization is not blocked. */
+  readonly blocked: BillingBlock | null;
+  readonly paymentMethod: BillingPaymentMethod;
+  readonly autoTopup: BillingAutoTopup;
+  /** One entry per free monthly allowance, in the server's canonical order. */
+  readonly allowances: readonly BillingAllowance[];
   readonly [key: string]: unknown;
 }
 
-/** Self-serve paid plans exposed through hosted checkout. */
-export type BillingCheckoutPlanKey = "pro" | "team";
-
-export interface BillingCheckoutRequest {
-  readonly planKey: BillingCheckoutPlanKey;
+/**
+ * `POST /api/billing/topup/checkout`. One hosted Checkout does card capture,
+ * address/tax collection and the credit purchase; `amountUsd` is rejected below
+ * the server's minimum ({@link BillingAutoTopup.minimumAmountUsd}).
+ */
+export interface BillingTopupCheckoutRequest {
+  readonly amountUsd: number;
   /** Optional return URL after successful hosted checkout. */
   readonly successUrl?: string;
   /** Optional return URL after checkout cancellation. */
   readonly cancelUrl?: string;
+}
+
+/**
+ * `PATCH /api/billing/autotopup`. Every field is optional: an omitted field
+ * keeps its stored value. Enabling requires a saved card, and `thresholdUsd`
+ * must stay strictly below `amountUsd` — a threshold at or above the amount is a
+ * recharge loop.
+ */
+export interface BillingAutoTopupRequest {
+  readonly enabled?: boolean;
+  readonly thresholdUsd?: number;
+  readonly amountUsd?: number;
+}
+
+/** What `PATCH /api/billing/autotopup` echoes back: the stored settings. */
+export interface BillingAutoTopupUpdate {
+  readonly autoTopup: BillingAutoTopup;
 }
 
 export interface BillingPortalRequest {

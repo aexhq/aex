@@ -305,10 +305,10 @@
         }
       }
     },
-    "/api/billing/checkout": {
-      "post": {
-        "operationId": "billing.checkout",
-        "summary": "billing.checkout",
+    "/api/billing/autotopup": {
+      "patch": {
+        "operationId": "billing.autoTopup",
+        "summary": "billing.autoTopup",
         "tags": [
           "billing"
         ],
@@ -371,6 +371,37 @@
       "post": {
         "operationId": "billing.portal",
         "summary": "billing.portal",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/topup/checkout": {
+      "post": {
+        "operationId": "billing.topupCheckout",
+        "summary": "billing.topupCheckout",
         "tags": [
           "billing"
         ],

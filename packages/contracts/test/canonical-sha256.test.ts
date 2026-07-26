@@ -31,12 +31,12 @@ const limits = {
   monthSpendUsd: 0,
   balanceUsd: 1,
   balanceGraceFloorUsd: 0,
-  balanceGateActive: true,
+  llmTokenAllowanceRemainingUsd: 2,
+  creditGateActive: true,
   paymentMethodStatus: "none",
-  planKey: "free",
-  accountType: "standard",
-  subscriptionStatus: "none",
-  subscriptionGate: "ok"
+  admissionState: "free",
+  autoTopupEnabled: false,
+  accountType: "standard"
 } as const;
 
 function pinnedResource(contentHash: string) {

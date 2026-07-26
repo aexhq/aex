@@ -115,9 +115,9 @@ describe("operations config errors", () => {
 
   it("rejects a billing-body idempotency key before transport", async () => {
     const { http, calls } = noNetworkHttp();
-    const error = await rejected(() => operations.createBillingCheckout(
+    const error = await rejected(() => operations.createBillingTopupCheckout(
       http,
-      { planKey: "pro", idempotencyKey: "sensitive-legacy-key" } as never
+      { amountUsd: 25, idempotencyKey: "sensitive-legacy-key" } as never
     ));
     expectConfigError(error, "idempotencyKey");
     expect((error as Error).message).not.toContain("sensitive-legacy-key");
