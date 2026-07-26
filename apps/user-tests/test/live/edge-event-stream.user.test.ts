@@ -16,9 +16,9 @@
  * the sibling live tests. One live run is created in `beforeAll` and REUSED by
  * every read-side case (replay/polling/abort-on-replay); only the reconnect,
  * keep-alive, and abort-mid-live cases each cost one extra live run. Model is
- * deepseek-v4-flash with tiny prompts.
+ * deepseek/deepseek-v4-flash with tiny prompts.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION.
  */
 import { writeFileSync } from "node:fs";
@@ -51,7 +51,6 @@ const model = gateModel();
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const SESSION_ID = process.env.SESSION_ID;
 let __childSessionId = null;

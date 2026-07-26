@@ -4,8 +4,8 @@
  * REGRESSION PROBES — two defects fixed after the dev sweep (2026-07-04):
  *
  *   1. `web_search` must work without placing the platform Serper key in the
- *      brain task env. The key is injected at the managed byok-inject egress
- *      boundary, and this probe asserts the tool RESULT succeeds.
+ *      brain task env. The key is injected at the managed egress boundary, and
+ *      this probe asserts the tool RESULT succeeds.
  *
  *   2. `web_fetch` to an SSRF-blocked target (link-local metadata IP) must be a
  *      tool-level denial, not a session crash, and the denial must name the egress
@@ -13,7 +13,7 @@
  *
  * Cost: two tiny billable turns.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, plus
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -64,7 +64,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-  const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
 `;
 

@@ -96,11 +96,11 @@ describe("typescript consumer", () => {
       const clientWithDefaults = new Aex("aex_type_surface");
 
       const createOptions = {
-        model: "claude-haiku-4-5"
+        model: "anthropic/claude-haiku-4-5"
       } satisfies SessionCreateOptions;
 
       const runOptions = {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "Summarize the session in one sentence."
       } satisfies SessionStartOptions;
 
@@ -151,13 +151,13 @@ describe("typescript consumer", () => {
       import type { PlatformProxyEndpoint } from "@aexhq/sdk";
 
       const createOptions = {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         // @ts-expect-error proxyEndpoints is not a slim session create option.
         proxyEndpoints: []
       } satisfies SessionCreateOptions;
 
       const runOptions = {
-        model: "claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4-5",
         message: "hello",
         // @ts-expect-error proxyEndpoints is not a slim session session option.
         proxyEndpoints: []

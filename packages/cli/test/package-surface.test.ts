@@ -72,7 +72,9 @@ describe("@aexhq/cli supported and packed package surface", () => {
       expect(pack.status, pack.stderr || pack.stdout).toBe(0);
       const tarballs = readdirSync(scratch).filter((name) => name.endsWith(".tgz"));
       expect(tarballs).toHaveLength(1);
-      const extract = run("tar", ["-xzf", resolve(scratch, tarballs[0]!), "-C", scratch], scratch);
+      // GNU tar treats a Windows `C:\...` argument as a remote-tape host
+      // (`C:`), so keep both archive and destination relative to cwd.
+      const extract = run("tar", ["-xzf", tarballs[0]!, "-C", "."], scratch);
       expect(extract.status, extract.stderr || extract.stdout).toBe(0);
 
       const packedRoot = resolve(scratch, "package");

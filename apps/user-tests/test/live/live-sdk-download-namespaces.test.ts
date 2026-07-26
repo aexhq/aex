@@ -16,8 +16,7 @@
  * download verb round-trips against a live run, without unzipping in the child.
  *
  * Required env: same as the other live-sdk-* files
- * (AEX_API_URL, AEX_API_KEY,
- * DEEPSEEK_API_KEY, + AEX_USER_TEST_TARBALL/VERSION).
+ * (AEX_API_URL, AEX_API_KEY, plus AEX_USER_TEST_TARBALL/VERSION).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,8 +33,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 interface Cell {
   readonly id: string;
@@ -154,8 +152,7 @@ async function runDownloadNamespacesChild(
     timeoutMs: 8 * 60_000,
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
-      AEX_API_KEY: apiKey,
-      DEEPSEEK_KEY_SUBMIT: deepseekKey
+      AEX_API_KEY: apiKey
     })
   });
   if (child.exitCode !== 0) {

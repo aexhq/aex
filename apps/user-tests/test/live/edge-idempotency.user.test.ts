@@ -14,7 +14,7 @@
  * ONE billable session turn total (tiny prompt); the mismatch probes replay/conflict
  * against that session and never start a second billable turn.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, plus
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -64,7 +64,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
-  const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
 
   // Instrument fetch so the parent can assert on the RAW HTTP statuses the
@@ -168,7 +167,7 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
           }
         }
         const diffMessage = await mismatch({ message: "Reply with the single word OTHER. Do not use any tools." });
-        const alternateModel = MODEL === "deepseek-v4-flash" ? "deepseek-v4-pro" : "deepseek-v4-flash";
+        const alternateModel = MODEL === "deepseek/deepseek-v4-flash" ? "deepseek/deepseek-v4-pro" : "deepseek/deepseek-v4-flash";
         const diffModel = await mismatch({ model: alternateModel });
         const diffRuntime = await mismatch({ runtime: { size: "0.25cpu-1gb" } });
 

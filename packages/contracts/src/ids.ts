@@ -12,7 +12,7 @@
  * already drifted, so `assertId` throws instead.
  *
  * This module is isomorphic — `crypto.getRandomValues` only, no `node:crypto`,
- * no `Buffer` — because `@aexhq/contracts` ships to browsers and workers and
+ * no `Buffer` — because `@aexhq/contracts` ships to browser and edge runtimes and
  * declares no runtime dependency beyond `fflate`. The token pepper and its HMAC
  * stay private in `@aexhq/contract-core`; nothing secret lives here.
  */

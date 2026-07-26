@@ -40,8 +40,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 const LIVE_TIMEOUT_MS = 12 * 60_000;
 const CHILD_TIMEOUT_MS = 15 * 60_000;
@@ -91,7 +90,6 @@ const client = new Aex({
   apiKey: process.env.AEX_API_KEY
 });
 const MODEL = process.env.MODEL_DEEPSEEK;
-const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 
 // Execution-runtime fan-out: every seeded tool scenario runs against the selected
 // runtime. Omitted test configuration defaults to spot_container so the test lane
@@ -188,7 +186,6 @@ function passEnv(extras: Readonly<Record<string, string>> = {}): Record<string, 
   const env: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    DEEPSEEK_KEY: deepseekKey,
     MODEL_DEEPSEEK: deepseekModel,
     // Propagate the execution-runtime selector into the child runner so its
     // client.start() submissions carry the fanned-out runtimeKind.
@@ -287,7 +284,7 @@ function assertToolSurface(
       throw new Error(`expected tool ${expected}, got [${called.join(", ")}]\n${dump}`);
     }
   }
-  expect(stdout.includes(deepseekKey), dump).toBe(false);
+  expect(stdout.includes(apiKey), dump).toBe(false);
   for (const secret of extraSecrets) {
     expect(stdout.includes(secret), dump).toBe(false);
   }

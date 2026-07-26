@@ -5,11 +5,11 @@
  * Surface area: `Aex.start` / `SessionStartOptions` in packages/sdk/src/client.ts.
  * Each `it` installs the packed SDK (shared per worker) and drives a real session in
  * a child Bun process that `import { Aex } from "@aexhq/sdk"`, then asserts on the
- * printed JSON. Prompts are tiny and the model is deepseek-v4-flash to keep spend
+ * printed JSON. Prompts are tiny and the model is deepseek/deepseek-v4-flash to keep spend
  * and time low. Cases that only exercise CLIENT-side validation make no HTTP call.
  *
  * Required env (wired by the shared live runner):
- *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL
+ *   AEX_API_URL, AEX_API_KEY, AEX_USER_TEST_TARBALL
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +20,7 @@ import { gateModel } from "../_fixtures/provider.js";
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
-    throw new Error(`edge-session-lifecycle: required env ${name} is missing (needs a real dev-plane URL + gate-provider key).`);
+    throw new Error(`edge-session-lifecycle: required env ${name} is missing (needs a real hosted API).`);
   }
   return value;
 }
@@ -37,8 +37,7 @@ const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
-const KEY = process.env.PROVIDER_KEY;
-const knownSecrets = [process.env.AEX_API_KEY, KEY]
+const knownSecrets = [process.env.AEX_API_KEY]
   .filter((value) => typeof value === "string" && value.length > 0);
 const WAIT = Number(process.env.WAIT_MS || "240000");
 function uid(p){ return p + "-" + Date.now() + "-" + Math.random().toString(36).slice(2,8); }

@@ -89,21 +89,18 @@ They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
 - **Secret `AEX_API_KEY`** — workspace API key for the selected API URL.
-- **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key. DeepSeek is the
-  single RELEASE-GATING provider (SSoT `test/_fixtures/provider.ts`): gating
-  gating jobs must never depend on another provider account's billing state.
-  `ANTHROPIC_API_KEY` is needed only by the non-gating providers suite
-  (`live-on-demand-tests.yml`).
+- **Optional variable `AEX_USER_TEST_DEEPSEEK_MODEL`** — managed-gateway
+  `creator/model` slug; defaults to `deepseek/deepseek-v4-flash`.
 
 ## Live SDK siblings (2026 rebuild)
 
 The `test/live/live-sdk-*.test.ts` files exercise the packed tarball
-end-to-end against the configured hosted API. All gating live
-coverage runs DeepSeek-managed (the gate provider); Anthropic-managed is a
-per-provider correctness round-trip in `test/live/providers/` (non-gating).
+end-to-end against the configured hosted API. Gating coverage uses one cheap
+managed-gateway model; the on-demand matrix exercises an additional model
+family. Neither lane accepts or needs a customer provider key.
 
 Each test installs the packed tarball into a tempdir, opens a session or runs a
-one-shot `aex.start({ message, apiKeys, ... })`, reads through the session accessors,
+one-shot `aex.start({ model, message, ... })`, reads through the session accessors,
 and asserts the user's probe string round-trips through a real upstream LLM call.
 
 Required env:
@@ -112,8 +109,6 @@ Required env:
 - `AEX_API_KEY`
 - `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION` when testing an
   explicit artifact; if neither is set, the harness packs the checked-out SDK.
-- `ANTHROPIC_API_KEY`
-- `DEEPSEEK_API_KEY`
 
 Local `.env.local` files should use the canonical variables above.
 
@@ -141,7 +136,8 @@ prove the **app** behaves as expected under a
 maximal submission, not to test model capability.
 
 Scope: one DeepSeek-managed cell using the configured
-`AEX_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-v4-flash`.
+`AEX_USER_TEST_DEEPSEEK_MODEL` or the default
+`deepseek/deepseek-v4-flash`.
 
 It is **excluded** from the default `test:user` sweep (see
 `collectDefaultSweepFiles()` in `scripts/user-bun-test.mjs`) and runs only via
@@ -153,7 +149,7 @@ bun run --filter @aexhq/user-tests test:user:heavy   # or: bun run test:user:hea
 
 Required env is identical to the comprehensive scenario
 (`AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
-`AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
+`AEX_USER_TEST_VERSION`); model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
 CI: it runs via the consolidated on-demand pipeline (see below), not the
@@ -178,7 +174,7 @@ bun run --filter @aexhq/user-tests test:user:tool-fuzz
 ```
 
 Required env is `AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
-`AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`; model override is
+`AEX_USER_TEST_VERSION`; model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
 Because this gate is a single file, its only parallelism lever was running the
@@ -191,21 +187,14 @@ spend bound is 1 concurrent session — strictly lower than the previous cap of
 is therefore inert until the cells are marked `test.concurrent` and the lane
 passes `--max-concurrency` (follow-up; live-validate on the dev plane first).
 
-## Per-provider correctness suite
+## Managed model-family correctness suite
 
-`test/live/providers/` holds one minimal round-trip per NON-GATE provider
-(`live-sdk-anthropic-managed.test.ts`, `live-sdk-doubao.test.ts`, and future
-openai/gemini/mistral/openrouter). Each
-proves only that the provider's adapter/routing/registry wiring reaches its
-real upstream and returns a valid response — feature depth is covered by the
-DeepSeek (openai-chat) gate suites; a non-gate provider (including Anthropic,
-anthropic-messages) needs only this connectivity check, not the full scenario
-matrix, so the release gate never depends on its account's billing state.
-
-Each file hard-fails when its provider key is absent (e.g. `ANTHROPIC_API_KEY`, `DOUBAO_API_KEY`);
-run the suite only in an environment provisioned for the provider matrix. The suite is **excluded**
-from the default `test:user` sweep (see `collectDefaultSweepFiles()` in
-`scripts/user-bun-test.mjs`) and runs via its own lane script:
+`test/live/providers/` holds one minimal round-trip per non-gate managed model
+family. Each proves that the managed gateway reaches the real upstream and
+returns a valid response; feature depth stays in the default DeepSeek suite.
+The suite is **excluded** from the default `test:user` sweep (see
+`collectDefaultSweepFiles()` in `scripts/user-bun-test.mjs`) and runs via its
+own lane script:
 
 ```bash
 bun run --filter @aexhq/user-tests test:user:providers

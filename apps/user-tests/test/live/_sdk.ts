@@ -12,7 +12,6 @@
  * They validate the FIXED behaviour and so only pass once the fixes are
  * DEPLOYED to the remote hosted API. Env mirrors the other user-tests:
  *   AEX_API_URL, AEX_API_KEY,
- *   DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION (the SDK to install).
  */
 import { writeFileSync } from "node:fs";
@@ -22,7 +21,6 @@ import { getBunCommand, runCommand, type InstallResult } from "../_fixtures/inst
 export interface UserEnv {
   readonly apiBase: string;
   readonly apiKey: string;
-  readonly deepseekKey?: string;
   readonly deepseekModel: string;
 }
 
@@ -30,21 +28,17 @@ function req(name: string): string {
   const v = process.env[name];
   if (!v || v.length === 0) {
     throw new Error(
-      `user-tests: required env ${name} is missing. The SDK config-fix tests run against a real aex-local deploy with a real provider key.`
+      `user-tests: required env ${name} is missing. The SDK config-fix tests run against a real hosted API.`
     );
   }
   return v;
 }
 
-export function requireUserEnv(opts: { deepseek?: boolean } = {}): UserEnv {
-  const env: UserEnv = {
+export function requireUserEnv(_opts: { deepseek?: boolean } = {}): UserEnv {
+  return {
     apiBase: req("AEX_API_URL").replace(/\/$/, ""),
     apiKey: req("AEX_API_KEY"),
-    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash"
-  };
-  return {
-    ...env,
-    ...(opts.deepseek ? { deepseekKey: req("DEEPSEEK_API_KEY") } : {})
+    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL?.trim() || "deepseek/deepseek-v4-flash"
   };
 }
 
@@ -88,12 +82,11 @@ export interface SdkSessionResult {
 
 /**
  * Script preamble: imports the SDK + builds the client from env. Available
- * in-script: `client`, `DEEPSEEK_KEY`, `MODEL_DEEPSEEK`, and `Instructions`.
+ * in-script: `client`, `MODEL_DEEPSEEK`, and `Instructions`.
  */
 const PREAMBLE = `
 import { Aex, Instructions } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
 
@@ -176,8 +169,7 @@ export async function runSdkScript(
     AEX_API_URL: env.apiBase,
     AEX_API_KEY: env.apiKey,
     MODEL_DEEPSEEK: env.deepseekModel,
-    WAIT_MS: String(opts.waitMs ?? 240_000),
-    ...(env.deepseekKey ? { DEEPSEEK_KEY: env.deepseekKey } : {})
+    WAIT_MS: String(opts.waitMs ?? 240_000)
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
   if (process.env[pathKey]) passEnv[pathKey] = process.env[pathKey]!;

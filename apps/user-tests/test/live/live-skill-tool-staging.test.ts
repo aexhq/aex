@@ -29,14 +29,13 @@
  *   4. Secret redaction — a secret-SHAPED value (`sk-ant-…`) in the SKILL.md
  *      body is returned as `[REDACTED]`, never verbatim.
  *
- * Gating: this is a LIVE suite. Missing creds (AEX_API_URL / AEX_API_KEY /
- * DEEPSEEK_API_KEY) are a hard collection-time failure; the live lane must never
+ * Gating: this is a LIVE suite. Missing AEX_API_URL / AEX_API_KEY credentials
+ * are a hard collection-time failure; the live lane must never
  * pass by silently skipping.
  *
  * Required env (live only):
  *   AEX_API_URL                 live hosted API URL
  *   AEX_API_KEY               workspace API key
- *   DEEPSEEK_API_KEY            customer DeepSeek key
  *   AEX_USER_TEST_TARBALL       packed SDK tarball
  *     OR AEX_USER_TEST_VERSION  published package version
  */
@@ -47,8 +46,7 @@ import { getBunCommand, installAex, runCommand, type InstallResult } from "../_f
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -237,8 +235,7 @@ async function runScenario(installDir: string, scriptName: string, cfg: ScriptCo
   writeFileSync(scriptPath, buildScript(cfg));
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    DEEPSEEK_KEY_SUBMIT: deepseekKey
+    AEX_API_KEY: apiKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,

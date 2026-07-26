@@ -3,10 +3,9 @@ name: Live On-Demand Tests
 # Consolidated, manually-dispatched pipeline for the OPTIONAL live suites that
 # are deliberately kept out of the default Live User Tests sweep. One trigger
 # runs them both:
-#   1. Per-provider correctness matrix (apps/user-tests/test/live/providers/) —
-#      one minimal round-trip per extra provider (doubao, future
-#      openai/gemini/mistral/openrouter); required provider keys hard-fail when
-#      unset, so only dispatch this suite from a fully provisioned environment.
+#   1. Managed-gateway model-family matrix
+#      (apps/user-tests/test/live/providers/) — one minimal round-trip per
+#      additional model family, with no customer-supplied provider keys.
 #   2. Heavy full-feature long session (test:user:heavy) — one maximal-submission
 #      DeepSeek-managed session exercising the entire feature surface.
 #
@@ -28,6 +27,10 @@ on:
           - published-version
       version:
         description: Published aex version when artifact_source is published-version.
+        required: false
+        type: string
+      source_sha:
+        description: Exact 40-character source SHA when artifact_source is published-version.
         required: false
         type: string
 
@@ -63,16 +66,19 @@ jobs:
         env:
           ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
           PACKAGE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
+          set -euo pipefail
           if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
-            if [ -z "$PACKAGE_VERSION" ]; then
-              echo "version input is required when artifact_source is published-version." >&2
+            if [ -z "$PACKAGE_VERSION" ] || ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "version and a lowercase 40-character source_sha are required when artifact_source is published-version." >&2
               exit 1
             fi
-            bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION"
+            bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION" --source-sha "$SOURCE_SHA"
             bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "$PACKAGE_VERSION"
             echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           else
+            bun run pack:sdk
             pack_dir="$RUNNER_TEMP/aex-pack"
             mkdir -p "$pack_dir"
             (cd packages/sdk && bun pm pack --destination "$pack_dir")
@@ -140,14 +146,7 @@ jobs:
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
-          # One key env per extra provider. Tests hard-fail when their key is
-          # empty; add a provider's secret here before requiring its evidence
-          # (future: OPENAI_API_KEY, GEMINI_API_KEY, etc.).
-          DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
-          AEX_USER_TEST_DOUBAO_MODEL: ${{ vars.AEX_USER_TEST_DOUBAO_MODEL }}
-          AEX_USER_TEST_DOUBAO_PROVIDER: ${{ vars.AEX_USER_TEST_DOUBAO_PROVIDER }}
         run: bun run test:user:providers
 
   heavy-session:
@@ -197,8 +196,5 @@ jobs:
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
         run: bun run test:user:heavy

@@ -7,7 +7,7 @@
  * per cell that exercises the *entire* customer feature surface at once
  * and validates EVERY observable aspect of the session. The goal is not to
  * test the model's capability — it is to prove the aex app
- * (materialization, BYOK proxy, event log, files pipeline, secret
+ * (materialization, managed gateway, event log, files pipeline, secret
  * caps) behaves as expected under a maximal submission.
  *
  * Sessions as an explicit gate AFTER the rest of the live user-tests pass
@@ -15,8 +15,7 @@
  * never swept into the default `test:user` run. Wired into
  * live-user-tests.yml as the manual canary.
  *
- * Scope: one DeepSeek-managed cell. No other provider keys are provisioned in
- * CI for this public live canary.
+ * Scope: one DeepSeek-managed cell, fanned out across runtime kinds.
  *
  * Each cell submits ONE run carrying the full surface together:
  *   - 3 inline Skills          multi-skill manifest + materialization
@@ -30,7 +29,7 @@
  *   - 1 instructions resource   (probe-tagged project guidance)
  *   - a custom `fileCapture.allowedDirs` path (proves re-rooting under workspaceRoot)
  *   - `builtins: ["developer"]`, `environment.envVars`, `metadata`
- *   - `secrets` carrying the customer provider key
+ *   - no customer-supplied provider credentials
  *
  * Input files / workspace assets are intentionally NOT exercised — that
  * feature was dropped in the MVP for simplicity. "Read file" coverage
@@ -57,17 +56,16 @@
  *   - the FILES pipeline round-trips: every captured file downloads
  *     without error, and at least one agent-written file carries its
  *     expected REF-out token (write → capture → object storage → download e2e).
- *   - the customer provider key never appears anywhere in the
+ *   - the workspace API key never appears anywhere in the
  *     SDK-visible payload (run + events + files).
  *
  * Required env:
  *   AEX_API_URL                live hosted API URL (local or prod)
  *   AEX_API_KEY               workspace API key
- *   DEEPSEEK_API_KEY                customer DeepSeek API key
  *   AEX_USER_TEST_TARBALL            packed SDK tarball
  *     OR AEX_USER_TEST_VERSION       published package version
  * Optional:
- *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek-v4-flash"
+ *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek/deepseek-v4-flash"
  *   AEX_USER_TEST_RUNTIME          default "spot_container"
  */
 import { writeFileSync } from "node:fs";
@@ -87,8 +85,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 const runtimeKind = selectedRuntimeKind();
 
 function selectedRuntimeKind(): "container" | "spot_container" | "lambda" {
@@ -147,8 +144,6 @@ interface CaseSpec {
   readonly scriptName: string;
   readonly provider: "deepseek";
   readonly model: string;
-  readonly keyEnvName: string;
-  readonly keyValue: string;
   readonly pollDeadlineMs: number;
   readonly pollIntervalMs: number;
   readonly timeoutMs: number;
@@ -260,7 +255,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
 
     async function runOnce() {
       const result = await client.start(submitOpts, { timeoutMs: ${spec.pollDeadlineMs} });
-      requireSucceededRunBeforeFiles("heavy-session", result, [process.env.DEEPSEEK_KEY, process.env.${spec.keyEnvName}]);
+      requireSucceededRunBeforeFiles("heavy-session", result, [process.env.AEX_API_KEY]);
       const sessionId = result.sessionId;
       const run = {
         status: result.status,
@@ -384,7 +379,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       }
 
       const serialized = JSON.stringify({ run, events, files });
-      const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
+      const apiKeyEnv = process.env.AEX_API_KEY ?? "";
       return {
         sessionId: sessionId,
         runOutcome: run.status,
@@ -415,7 +410,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         outProbesFound: Array.from(outProbesFound),
         channelProbeSources,
         channelProbeMisses,
-        leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
+        leakedApiKey: apiKeyEnv.length > 0 && serialized.includes(apiKeyEnv),
         streamErrors
       };
     }
@@ -445,8 +440,6 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    [spec.keyEnvName]: spec.keyValue,
-    DEEPSEEK_KEY: deepseekKey,
     AEX_USER_TEST_RUNTIME: runtimeKind
   });
 
@@ -482,8 +475,6 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
           scriptName: "heavy-managed-deepseek.mjs",
           provider: "deepseek",
           model: deepseekModel,
-          keyEnvName: "DEEPSEEK_KEY_SUBMIT",
-          keyValue: deepseekKey,
           pollDeadlineMs: 9 * 60_000,
           pollIntervalMs: 3_000,
           timeoutMs: 12 * 60_000

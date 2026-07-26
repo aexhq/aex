@@ -15,6 +15,10 @@ on:
         description: Published aex version when artifact_source is published-version.
         required: false
         type: string
+      source_sha:
+        description: Exact 40-character source SHA when artifact_source is published-version.
+        required: false
+        type: string
 
 concurrency:
   group: live-user-tests
@@ -26,7 +30,7 @@ permissions:
 jobs:
   prepare-artifact:
     name: Prepare SDK artifact
-    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.artifact.outputs.version }}
       tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
@@ -49,17 +53,20 @@ jobs:
         env:
           ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
           PACKAGE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
+          set -euo pipefail
           if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
-            if [ -z "$PACKAGE_VERSION" ]; then
-              echo "version input is required when artifact_source is published-version." >&2
+            if [ -z "$PACKAGE_VERSION" ] || ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "version and a lowercase 40-character source_sha are required when artifact_source is published-version." >&2
               exit 1
             fi
-            bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION"
+            bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION" --source-sha "$SOURCE_SHA"
             bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "$PACKAGE_VERSION"
             echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
-            echo "candidate_identity=npm:@aexhq/sdk@$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+            echo "candidate_identity=npm:@aexhq/sdk@$PACKAGE_VERSION#$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           else
+            bun run pack:sdk
             pack_dir="$RUNNER_TEMP/aex-pack"
             mkdir -p "$pack_dir"
             (cd packages/sdk && bun pm pack --destination "$pack_dir")
@@ -84,7 +91,7 @@ jobs:
 
   live-user-tests-preflight:
     name: Live user tests preflight
-    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     environment: live-user-tests
     needs: prepare-artifact
     outputs:
@@ -105,14 +112,13 @@ jobs:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 1
           LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,sessions:cancel,sessions:delete,files:read,files:write,assets:write,skills:write,tools:write,instructions:write,secrets:read,secrets:write
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
   prepare-live-test-matrix:
     name: Prepare authenticated runtime matrix
-    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     needs:
       - prepare-artifact
       - live-user-tests-preflight
@@ -156,7 +162,7 @@ jobs:
       - prepare-artifact
       - live-user-tests-preflight
       - prepare-live-test-matrix
-    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     environment: live-user-tests
     timeout-minutes: 240
     strategy:
@@ -214,7 +220,6 @@ jobs:
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_MAX_WORKERS: 1
           AEX_USER_TEST_RUNTIME_KIND: ${{ matrix.runtimeKind }}
@@ -270,7 +275,6 @@ jobs:
         if: ${{ always() }}
         env:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
           REDACTED_LOG: ${{ github.workspace }}/.suite-diagnostics/redacted/live-user-tests-shard-${{ matrix.shard }}.log
         run: |
@@ -288,7 +292,7 @@ jobs:
             ? readFileSync(rawPath, "utf8")
             : "live-user-tests.log was not created before diagnostics collection.\n";
 
-          for (const name of ["AEX_API_KEY", "DEEPSEEK_API_KEY"]) {
+          for (const name of ["AEX_API_KEY"]) {
             const value = process.env[name];
             if (value && value.length > 0) {
               text = text.split(value).join(`[REDACTED:${name}]`);
@@ -343,7 +347,7 @@ jobs:
       - prepare-artifact
       - prepare-live-test-matrix
       - live-user-tests
-    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6

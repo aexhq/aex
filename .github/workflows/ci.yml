@@ -165,17 +165,14 @@ jobs:
           set -euo pipefail
           base_version="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; console.log(JSON.parse(readFileSync("packages/sdk/package.json", "utf8")).version)')"
           version="$(bun scripts/cicd/canary-version.mjs resolve --base-version "$base_version" --sha "$RELEASE_HEAD_SHA")"
-          while :; do
-            remote_sha="$(git ls-remote origin "refs/tags/canary/${version}^{}" | awk 'NR == 1 { print $1 }')"
-            if [ -z "$remote_sha" ]; then
-              remote_sha="$(git ls-remote origin "refs/tags/canary/${version}" | awk 'NR == 1 { print $1 }')"
-            fi
-            if [ -z "$remote_sha" ] || [ "$remote_sha" = "$RELEASE_HEAD_SHA" ]; then
-              break
-            fi
-            echo "Canary tag canary/${version} points to ${remote_sha}; advancing candidate."
-            version="$(bun scripts/cicd/canary-version.mjs next --version "$version")"
-          done
+          remote_sha="$(git ls-remote origin "refs/tags/canary/${version}^{}" | awk 'NR == 1 { print $1 }')"
+          if [ -z "$remote_sha" ]; then
+            remote_sha="$(git ls-remote origin "refs/tags/canary/${version}" | awk 'NR == 1 { print $1 }')"
+          fi
+          if [ -n "$remote_sha" ]; then
+            echo "::error::Canary tag canary/${version} already exists at ${remote_sha}. Bump the SDK base version and fix forward."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Publishing @aexhq/sdk@$version from $RELEASE_HEAD_SHA"
 
@@ -235,8 +232,6 @@ jobs:
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Publish canary to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish "${{ steps.pack.outputs.tarball }}" \
             --registry https://registry.npmjs.org \

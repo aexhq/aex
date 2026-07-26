@@ -4,7 +4,7 @@
  * Drives the **published `@aexhq/sdk` SDK** against the live
  * api.aex.dev hosted API with a real DeepSeek round-trip on the
  * managed runtime: SDK → /api/sessions → control-plane workflow → managed
- * runtime → real managed-runtime process → BYOK provider-proxy → api.deepseek.com →
+ * runtime → real managed-runtime process → managed AI gateway →
  * stream-json events → terminal. No smoke shortcut.
  *
  * This is the canonical "customer uses the SDK to run a minimal
@@ -14,12 +14,12 @@
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
- *   DEEPSEEK_API_KEY     customer's DeepSeek API key
+ *   AEX_API_KEY              workspace API key
  *   AEX_USER_TEST_TARBALL          path to a packed aex tgz
  *     OR AEX_USER_TEST_VERSION     published package version
  *
  * Optional:
- *   AEX_USER_TEST_DEEPSEEK_MODEL            default "deepseek-v4-flash"
+ *   AEX_USER_TEST_DEEPSEEK_MODEL            default "deepseek/deepseek-v4-flash"
  *
  * TODO (D7 cost tracking, not yet implemented): when enabled, an
  * AEX_COST_LOG_PATH env var would have these tests append a JSONL line per
@@ -44,8 +44,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 interface LiveResult {
   readonly sessionId: string;
@@ -64,7 +63,7 @@ interface LiveResult {
   // live-sdk-download-namespaces.test.ts; this simple text round-trip does not
   // assert that the model/runtime produced no user deliverables.
   readonly files: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
-  readonly leakedDeepseekKey: boolean;
+  readonly leakedApiKey: boolean;
 }
 
 describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed runtime", () => {
@@ -89,7 +88,6 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         import { Aex } from "@aexhq/sdk";
 
         const apiBase = process.env.AEX_API_URL;
-        const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const apiKey = process.env.AEX_API_KEY;
 
@@ -142,7 +140,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           terminalData,
           fileCount: files.length,
           files: files.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
-          leakedDeepseekKey: serialized.includes(deepseekKey)
+          leakedApiKey: serialized.includes(apiKey)
         };
         process.stdout.write(JSON.stringify(result));
         process.exit(0);
@@ -157,7 +155,6 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
         AEX_API_KEY: apiKey,
-        DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -229,9 +226,8 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       const terminal = result.terminalData ?? {};
       expect(terminal["outcome"]).toBe("succeeded");
 
-      // The customer's DeepSeek key MUST NOT appear anywhere in the
-      // SDK-visible response surface.
-      expect(result.leakedDeepseekKey).toBe(false);
+      // The workspace API key MUST NOT appear anywhere in the SDK-visible response surface.
+      expect(result.leakedApiKey).toBe(false);
     },
     11 * 60 * 1000
   );

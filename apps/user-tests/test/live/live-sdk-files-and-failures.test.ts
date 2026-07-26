@@ -36,19 +36,16 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 interface Cell {
   readonly id: string;
   readonly provider: "deepseek";
   readonly model: string;
-  readonly keyEnvName: string;
-  readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed",  provider: "deepseek", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
+  { id: "deepseek-managed", provider: "deepseek", model: deepseekModel }
 ];
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -229,8 +226,7 @@ async function startFileCell(cell: Cell, installDir: string): Promise<FileCaseRe
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    [cell.keyEnvName]: cell.keyValue
+    AEX_API_KEY: apiKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
@@ -541,7 +537,7 @@ function buildIncompatibleRuntimeScript(): string {
     try {
       const result = await client.start({
         runtimeSize: "native",
-        model: "deepseek-v4-flash",
+        model: "deepseek/deepseek-v4-flash",
         message: "Hello.",
         idempotencyKey: "fail-incompat-runtime-" + Date.now()
       });
@@ -653,8 +649,7 @@ async function runFailureCase(
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    DEEPSEEK_KEY_SUBMIT: deepseekKey
+    AEX_API_KEY: apiKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,

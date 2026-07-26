@@ -17,12 +17,11 @@
  * adapter drops the tool_request translation.
  *
  * This file runs the assertion body on a single managed cell:
- *   - (deepseek, managed)  — managed runtime + DeepSeek via provider-proxy
+ *   - (deepseek, managed)  — managed runtime + DeepSeek via the managed gateway
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL
  *   AEX_API_KEY             workspace API key
- *   DEEPSEEK_API_KEY    customer DeepSeek key
  *   AEX_USER_TEST_TARBALL          packed SDK tarball
  *     OR AEX_USER_TEST_VERSION     published package version
  */
@@ -41,8 +40,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 // DeepWiki — public, unauthenticated MCP exposing GitHub repo Q&A tools.
 // Same upstream as live-sdk-comprehensive uses; needs no credential.
@@ -53,17 +51,13 @@ interface Cell {
   readonly id: string;
   readonly provider: "deepseek";
   readonly model: string;
-  readonly keyEnvName: string;
-  readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
   {
     id: "deepseek-managed",
     provider: "deepseek",
-    model: deepseekModel,
-    keyEnvName: "DEEPSEEK_KEY_SUBMIT",
-    keyValue: deepseekKey
+    model: deepseekModel
   }
 ];
 
@@ -81,7 +75,7 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedDeepseekKey: boolean;
+  readonly leakedApiKey: boolean;
 }
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -179,7 +173,7 @@ function buildScript(cell: Cell): string {
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
-    const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
+    const apiKeyEnv = process.env.AEX_API_KEY ?? "";
     const result = {
       sessionId: sessionId,
       runStatus: run.status,
@@ -194,7 +188,7 @@ function buildScript(cell: Cell): string {
       terminalKind: terminal ? terminal.type : null,
       terminalData,
       streamErrors,
-      leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
+      leakedApiKey: apiKeyEnv.length > 0 && serialized.includes(apiKeyEnv)
     };
     process.stdout.write(JSON.stringify(result));
     process.exit(0);
@@ -227,9 +221,7 @@ async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    [cell.keyEnvName]: cell.keyValue,
-    DEEPSEEK_KEY: deepseekKey
+    AEX_API_KEY: apiKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
@@ -305,7 +297,7 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
 
       // No secret leakage.
-      expect(result.leakedDeepseekKey, dump()).toBe(false);
+      expect(result.leakedApiKey, dump()).toBe(false);
     },
     10 * 60_000
   );

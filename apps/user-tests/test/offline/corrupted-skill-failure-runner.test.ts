@@ -41,7 +41,7 @@ function extractCorruptedSkillRunnerScript(): string {
     if (span.expression.getText(source) !== "JSON.stringify(deepseekModel)") {
       throw new Error(`unsupported corrupted-skill runner interpolation: ${span.expression.getText(source)}`);
     }
-    script += JSON.stringify("deepseek-v4-flash");
+    script += JSON.stringify("deepseek/deepseek-v4-flash");
     script += span.literal.text;
   }
   return script;

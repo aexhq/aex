@@ -1584,49 +1584,27 @@ export class Aex {
     return operations.whoami(this.#http);
   }
 
-  /**
-   * Read the workspace billing summary: prepaid `balanceUsd`, current-month
-   * `monthSpendUsd`, the enforced `spendCapUsd`, this period's free
-   * `allowances`, the `autoTopup` settings and the saved `paymentMethod`. Backed
-   * by `GET /api/billing` (scope `billing:read`).
-   */
+  /** Read prepaid balance, current-period allowances, recharge settings, and card state. */
   billing(): Promise<BillingSummary> {
     return operations.getBilling(this.#http);
   }
 
-  /**
-   * Buy prepaid credit through hosted checkout. Open the returned `url`; the
-   * same flow saves the card on first use, and the balance moves once the charge
-   * settles. An amount below `billing().autoTopup.minimumAmountUsd` is refused.
-   */
+  /** Buy prepaid credit through hosted checkout; first use also saves the card. */
   billingTopup(request: BillingTopupCheckoutRequest, options?: IdempotencyOptions): Promise<BillingHostedSession> {
     return operations.createBillingTopupCheckout(this.#http, request, options);
   }
 
-  /**
-   * Set auto-recharge. OFF by default, and a saved card does not enable it —
-   * that is the difference between consenting to one charge and granting a
-   * standing authority. Omitted fields keep their stored value; enabling needs a
-   * saved card and `thresholdUsd` must stay strictly below `amountUsd`.
-   */
+  /** Set the separately consented, off-by-default auto-recharge authority. */
   billingAutoTopup(request: BillingAutoTopupRequest): Promise<BillingAutoTopupUpdate> {
     return operations.updateBillingAutoTopup(this.#http, request);
   }
 
-  /**
-   * Create a hosted billing-portal session for the workspace customer.
-   * Open the returned `url` in a browser.
-   */
+  /** Create a hosted billing-portal session. */
   billingPortal(request: BillingPortalRequest = {}, options?: IdempotencyOptions): Promise<BillingHostedSession> {
     return operations.createBillingPortal(this.#http, request, options);
   }
 
-  /**
-   * Read recent workspace credit-ledger rows, newest first — top-ups, run
-   * charges, and redemptions with signed `amountUsd`. Backed by
-   * `GET /api/billing/ledger`; `limit` is clamped server-side to [1, 100]
-   * (default 25). Not cursor-paged.
-   */
+  /** Read recent signed credit-ledger rows, newest first. */
   billingLedger(query?: BillingLedgerQuery): Promise<BillingLedgerPage> {
     return operations.getBillingLedger(this.#http, query);
   }

@@ -175,7 +175,7 @@ describe("LIVE API adversarial fuzz", () => {
 
     // stdio MCP transport — server-side backstop reject (cheap, pre-dispatch).
     const stdioBody = JSON.stringify({
-      submission: { model: "claude-haiku-4-5", prompt: ["x"], mcpServers: [{ name: "s", url: "stdio://x", transport: "stdio" }] },
+      submission: { model: "anthropic/claude-haiku-4-5", prompt: ["x"], mcpServers: [{ name: "s", url: "stdio://x", transport: "stdio" }] },
       secrets: {}
     });
     expect4xx("POST /api/sessions stdio-mcp", await call("POST", "/api/sessions", { token: TOKEN, body: stdioBody }));
@@ -185,7 +185,7 @@ describe("LIVE API adversarial fuzz", () => {
       fc.asyncProperty(
         fc.constantFrom("http://example.com/h", "https://127.0.0.1/h", "https://10.0.0.1/h", "https://169.254.169.254/h", "https://user:pw@example.com/h", "not-a-url"),
         async (url) => {
-          const body = JSON.stringify({ submission: { model: "claude-haiku-4-5", prompt: ["x"] }, secrets: {}, webhook: { url } });
+          const body = JSON.stringify({ submission: { model: "anthropic/claude-haiku-4-5", prompt: ["x"] }, secrets: {}, webhook: { url } });
           const r = await call("POST", "/api/sessions", { token: TOKEN, body });
           expect4xx(`POST /api/sessions bad-webhook ${url}`, r);
         }

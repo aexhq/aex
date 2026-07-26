@@ -256,7 +256,6 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "workspace_cap_exceeded":
         case "insufficient_credits":
         case "account_blocked":
-        case "subscription_past_due":
         case "quota_exhausted":
         case "depth_exceeded":
         case "out_of_memory":

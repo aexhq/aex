@@ -13,7 +13,6 @@
  * Required env:
  *   AEX_API_URL
  *   AEX_API_KEY
- *   DEEPSEEK_API_KEY
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -32,8 +31,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -105,7 +103,6 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
 
         const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
         const apiKey = process.env.AEX_API_KEY;
-        const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const probe = "REF.chat." + Math.random().toString(36).slice(2, 10);
         const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
@@ -171,7 +168,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           snapshotTypes: [...new Set(events.map((e) => e.type))],
           customNames: [...new Set(events.filter((e) => e.type === "CUSTOM").map((e) => e.data && e.data.name).filter(Boolean))],
           turnFinishedCount: events.filter((e) => e.type === "RUN_FINISHED").length,
-          leakedKey: serialized.includes(deepseekKey)
+          leakedKey: serialized.includes(apiKey)
         }));
         process.exit(0);
       `;
@@ -183,12 +180,11 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         env: buildPassEnv({
           AEX_API_URL: apiUrl,
           AEX_API_KEY: apiKey,
-          DEEPSEEK_KEY: deepseekKey,
           MODEL: deepseekModel
         })
       });
       if (child.exitCode !== 0) {
-        throw new Error(formatChildFailure("chat-session SDK runner", child, [apiKey, deepseekKey]));
+        throw new Error(formatChildFailure("chat-session SDK runner", child, [apiKey]));
       }
       const result = JSON.parse(child.stdout.trim()) as ChatSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);
@@ -220,7 +216,6 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
 
         const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
         const apiKey = process.env.AEX_API_KEY;
-        const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
 
@@ -309,7 +304,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           turnFinishedCount: events.filter((e) => e.type === "RUN_FINISHED").length,
           terminalKind: terminal.type,
           terminalOutcome: terminal.data && terminal.data.outcome,
-          leakedKey: serialized.includes(deepseekKey)
+          leakedKey: serialized.includes(apiKey)
         }));
         process.exit(0);
       `;
@@ -321,12 +316,11 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         env: buildPassEnv({
           AEX_API_URL: apiUrl,
           AEX_API_KEY: apiKey,
-          DEEPSEEK_KEY: deepseekKey,
           MODEL: deepseekModel
         })
       });
       if (child.exitCode !== 0) {
-        throw new Error(formatChildFailure("chat-session raw runner", child, [apiKey, deepseekKey]));
+        throw new Error(formatChildFailure("chat-session raw runner", child, [apiKey]));
       }
       const result = JSON.parse(child.stdout.trim()) as RawSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);

@@ -328,8 +328,6 @@ export interface OrgRecord {
   readonly name: string;
   /** Globally-unique org slug (`/org/<slug>`); omitted by older deployments. */
   readonly slug?: string;
-  /** Plan key that governs billing + the per-org workspace cap (e.g. `free`). */
-  readonly planKey?: string;
   /** The caller's role in this org: `admin` or `member`. */
   readonly role?: string;
   readonly createdAt?: string;
@@ -355,7 +353,7 @@ export interface WorkspaceRecord {
   readonly createdAt?: string;
 }
 
-/** Request body for {@link createWorkspace}. Free tier caps at 3 workspaces per org. */
+/** Request body for {@link createWorkspace}; hosted policy owns any org workspace limit. */
 export interface CreateWorkspaceRequest {
   /** The org to create the workspace under. */
   readonly orgId: string;

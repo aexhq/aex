@@ -21,7 +21,7 @@
  * Cost: two tiny deepseek sessions. The Finding-1 parent is cancelled after the
  * probe to release its container promptly.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, plus
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -58,7 +58,6 @@ function buildPassEnv(extra: Record<string, string>): Record<string, string> {
 
 const CHILD_PRELUDE = `
   import { Aex, McpServer } from "@aexhq/sdk";
-  const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
   const errShape = (e) => ({

@@ -48,13 +48,13 @@
   "files": {
     "apps/user-tests/test/live/edge-event-stream.user.test.ts": {
       "kind": "test",
-      "lines": 848,
-      "reason": "frozen 2026-07-25: 848 lines (budget 800)"
+      "lines": 847,
+      "reason": "frozen 2026-07-25: 847 lines (budget 800)"
     },
     "apps/user-tests/test/live/live-sdk-files-and-failures.test.ts": {
       "kind": "test",
-      "lines": 879,
-      "reason": "frozen 2026-07-25: 879 lines (budget 800)"
+      "lines": 874,
+      "reason": "frozen 2026-07-25: 874 lines (budget 800)"
     },
     "packages/cli/src/host/common.ts": {
       "kind": "source",
@@ -123,13 +123,13 @@
     },
     "packages/contracts/src/operations.ts": {
       "kind": "source",
-      "lines": 2096,
-      "reason": "frozen 2026-07-25: 2096 lines (budget 600)"
+      "lines": 2089,
+      "reason": "frozen 2026-07-25: 2089 lines (budget 600)"
     },
     "packages/contracts/src/runtime-types.ts": {
       "kind": "source",
-      "lines": 790,
-      "reason": "frozen 2026-07-25: 790 lines (budget 600)"
+      "lines": 789,
+      "reason": "frozen 2026-07-25: 789 lines (budget 600)"
     },
     "packages/contracts/src/session-config.ts": {
       "kind": "source",
@@ -138,14 +138,14 @@
     },
     "packages/contracts/src/session-cost.ts": {
       "kind": "source",
-      "lines": 705,
+      "lines": 704,
       "functions": [
         {
           "label": "Function 'buildSessionCostTelemetryFromUsageSamples'",
           "lines": 127
         }
       ],
-      "reason": "frozen 2026-07-25: 705 lines (budget 600); 1 function(s) over 120 lines, worst Function 'buildSessionCostTelemetryFromUsageSamples' at 127"
+      "reason": "frozen 2026-07-25: 704 lines (budget 600); 1 function(s) over 120 lines, worst Function 'buildSessionCostTelemetryFromUsageSamples' at 127"
     },
     "packages/contracts/src/session-retention.ts": {
       "kind": "source",
@@ -174,14 +174,14 @@
     },
     "packages/sdk/src/client.ts": {
       "kind": "source",
-      "lines": 1823,
+      "lines": 1821,
       "functions": [
         {
           "label": "Private async method #buildSessionCreateRequest",
           "lines": 185
         }
       ],
-      "reason": "frozen 2026-07-25: 1823 lines (budget 600); 1 function(s) over 120 lines, worst Private async method #buildSessionCreateRequest at 185"
+      "reason": "frozen 2026-07-25: 1821 lines (budget 600); 1 function(s) over 120 lines, worst Private async method #buildSessionCreateRequest at 185"
     },
     "scripts/cicd/check-public-boundary.mjs": {
       "kind": "source",

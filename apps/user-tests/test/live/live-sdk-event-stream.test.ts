@@ -18,7 +18,6 @@
  * Required env:
  *   AEX_API_URL              live hosted API URL (local or prod)
  *   AEX_API_KEY             workspace API key
- *   DEEPSEEK_API_KEY    customer DeepSeek API key
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -36,8 +35,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 const runtimeKind = requireRuntimeKind();
 
 function requireRuntimeKind(): "container" | "spot_container" | "lambda" {
@@ -159,7 +157,6 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
 
         const baseUrl = process.env.AEX_API_URL;
         const apiKey = process.env.AEX_API_KEY;
-        const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const runtimeKind = process.env.RUNTIME_KIND;
 
@@ -267,7 +264,7 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           archiveMatchesSnapshot,
           cleanupPassed: true,
           lifecycle,
-          leakedKey: [deepseekKey, apiKey].some((secret) => serialized.includes(secret)),
+          leakedKey: serialized.includes(apiKey),
           terminalOutcome: snapshot.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")?.data?.outcome ?? null,
           liveDeltaCount: liveDeltas.length,
           liveSequenceOrdered,
@@ -287,7 +284,6 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
         AEX_API_KEY: apiKey,
-        DEEPSEEK_KEY: deepseekKey,
         MODEL: model,
         RUNTIME_KIND: runtimeKind
       };

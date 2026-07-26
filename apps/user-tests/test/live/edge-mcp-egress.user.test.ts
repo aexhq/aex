@@ -22,7 +22,7 @@
  * Both paths must fail closed without dialing the target or leaking metadata.
  *
  * Required env (wired by the live runner):
- *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
+ *   AEX_API_URL, AEX_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -274,7 +274,7 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
       environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
       idempotencyKey: "edge-egress-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
-    requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.PROVIDER_KEY]);
+    requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.AEX_API_KEY]);
     ${COLLECT}
     const evidence = (toolResultText + " " + assistantText).replace(/\\s+/g, "");
     process.stdout.write(JSON.stringify({ sessionId, status, eventKinds, evidence, streamErrors }));
@@ -317,7 +317,7 @@ function mcpSecretChildScript(marker: string): string {
       builtinTools: "none",
       idempotencyKey: "edge-mcp-secret-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
-    requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.PROVIDER_KEY, marker]);
+    requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.AEX_API_KEY, marker]);
     ${COLLECT}
     const secretLeaked = serialized.includes(marker) || subEntry.includes(marker);
     process.stdout.write(JSON.stringify({ sessionId, status, eventKinds, toolRequests, toolResponseCount, assistantText, secretLeaked, streamErrors }));

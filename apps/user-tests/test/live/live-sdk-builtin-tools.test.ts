@@ -32,8 +32,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 // Tool names that the agent might call to satisfy "use your shell tool".
 // managed runtime: "shell" (developer builtin). Older event payloads may use "bash".
@@ -43,12 +42,10 @@ interface Cell {
   readonly id: string;
   readonly provider: "deepseek";
   readonly model: string;
-  readonly keyEnvName: string;
-  readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed",  provider: "deepseek", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
+  { id: "deepseek-managed", provider: "deepseek", model: deepseekModel }
 ];
 
 interface CaseResult {
@@ -66,7 +63,7 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedProviderKey: boolean;
+  readonly leakedApiKey: boolean;
 }
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -145,7 +142,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
-    const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
+    const apiKeyEnv = process.env.AEX_API_KEY ?? "";
     const result = {
       sessionId: sessionId,
       runStatus: run.status,
@@ -161,7 +158,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       terminalKind: terminal ? terminal.type : null,
       terminalData,
       streamErrors,
-      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
+      leakedApiKey: apiKeyEnv.length > 0 && serialized.includes(apiKeyEnv)
     };
     process.stdout.write(JSON.stringify(result));
     process.exit(0);
@@ -193,9 +190,7 @@ async function runCell(cell: Cell, mode: "positive" | "negative", installDir: st
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    [cell.keyEnvName]: cell.keyValue,
-    DEEPSEEK_KEY: deepseekKey
+    AEX_API_KEY: apiKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
@@ -248,7 +243,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
         throw new Error(`assistant_text missing marker "${result.marker}"\n\n${dump()}`);
       }
 
-      expect(result.leakedProviderKey, dump()).toBe(false);
+      expect(result.leakedApiKey, dump()).toBe(false);
     },
     9 * 60_000
   );
@@ -276,7 +271,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       // Sanity: the agent still produced some text (graceful "no tool"
       // reply rather than nothing).
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.leakedProviderKey, dump()).toBe(false);
+      expect(result.leakedApiKey, dump()).toBe(false);
     },
     9 * 60_000
   );

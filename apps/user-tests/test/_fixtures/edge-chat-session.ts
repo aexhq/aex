@@ -13,9 +13,9 @@
  * catch everything and always `emit(...)` so the raw behaviour is captured as
  * evidence even when an assertion later fails.
  *
- * Model: deepseek-v4-flash, tiny prompts. Provider key via the gate-provider apiKeys map.
+ * Model: deepseek/deepseek-v4-flash through the managed gateway, with tiny prompts.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";

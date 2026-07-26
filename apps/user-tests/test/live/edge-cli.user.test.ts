@@ -10,13 +10,13 @@
  *   - the read verbs (status/events/files/download) work on that session,
  *   - the auth/error paths (bad token -> 401, missing run -> 404) return a clean
  *     JSON error envelope + non-zero exit, NOT a stack trace or a hang,
- *   - no secret (api key or provider key) is ever echoed to stdout/stderr.
+ *   - no workspace API key is ever echoed to stdout/stderr.
  *
  * Billable sessions: exactly ONE (`aex start --follow`); every other case is a
  * read-only or auth call.
  *
  * Required env (wired by session-live.sh): AEX_API_URL, AEX_API_KEY,
- * DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL.
+ * AEX_USER_TEST_TARBALL.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

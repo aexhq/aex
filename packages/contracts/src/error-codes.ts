@@ -36,7 +36,6 @@ export const AEX_API_ERROR_CODES = [
   "workspace_cap_exceeded",
   "insufficient_credits",
   "account_blocked",
-  "subscription_past_due",
   "quota_exhausted",
   "depth_exceeded",
   "rate_limited",
@@ -80,7 +79,6 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   insufficient_credits:
     "The free monthly allowance and the prepaid credit balance are both exhausted.",
   account_blocked: "The organization is blocked and cannot start new work.",
-  subscription_past_due: "The organization's subscription is past due and its grace period has ended.",
   quota_exhausted:
     "The request exceeds the workspace's remaining usage grant and there is no billable path for the overage.",
   depth_exceeded: "The request would create a subagent deeper than the lineage depth ceiling.",
@@ -114,7 +112,6 @@ export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = 
   workspace_concurrency_exceeded: "Wait for in-flight sessions to finish or raise the concurrency limit.",
   workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit.",
   workspace_cap_exceeded: "Delete an unused workspace, or contact support to raise the organization's workspace limit.",
-  subscription_past_due: "Settle the outstanding invoice, or update the payment method on the billing page.",
   quota_exhausted:
     "Top up the prepaid balance so usage beyond the free monthly allowance has somewhere to bill.",
   depth_exceeded: "Spawn the subagent from a shallower session, or flatten the lineage.",

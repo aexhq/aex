@@ -30,8 +30,7 @@
  * when a credential is missing, so the file is only collected and run with live
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
- *   AEX_API_KEY              workspace API key
- *   DEEPSEEK_API_KEY          customer gate-provider (DeepSeek) key
+ *   AEX_API_KEY               workspace API key
  *   AEX_USER_TEST_TARBALL      packed SDK tarball  (OR AEX_USER_TEST_VERSION)
  */
 import { createHash } from "node:crypto";
@@ -76,7 +75,7 @@ interface Observation {
   readonly assistantText: string;
   readonly assistantTextEventCount: number;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedProviderKey: boolean;
+  readonly leakedApiKey: boolean;
 }
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -95,13 +94,12 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   return env;
 }
 
-// Child preamble: gate-provider managed client + a failure-tolerant observe().
+// Child preamble: managed-gateway client + a failure-tolerant observe().
 const SCRIPT_PREAMBLE = `
 import { Aex, Instructions, BuiltinTools, File } from "@aexhq/sdk";
 
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
-const PROVIDER_KEY = process.env.PROVIDER_KEY;
 
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
 function customName(e) { const d = eventData(e); return typeof d.name === "string" ? d.name : null; }
@@ -117,7 +115,7 @@ async function observe(result, threw) {
     return {
       threw: threw ?? "unknown", sessionId: null, status: "threw", errorMessage: threw ?? null,
       terminalKind: null, terminalOutcome: null, eventKinds: [], toolCallNames: [], toolResults: [],
-      assistantText: "", assistantTextEventCount: 0, streamErrors: [], leakedProviderKey: false
+      assistantText: "", assistantTextEventCount: 0, streamErrors: [], leakedApiKey: false
     };
   }
   const sessionId = typeof result.sessionId === "string" ? result.sessionId : null;
@@ -154,7 +152,7 @@ async function observe(result, threw) {
     terminalOutcome: terminal ? eventData(terminal).outcome ?? null : null,
     eventKinds, toolCallNames, toolResults,
     assistantText: assistantText.slice(0, 4000), assistantTextEventCount: assistantTextEvents.length,
-    streamErrors, leakedProviderKey: PROVIDER_KEY.length > 0 && serialized.includes(PROVIDER_KEY)
+    streamErrors, leakedApiKey: serialized.includes(process.env.AEX_API_KEY)
   };
 }
 
@@ -250,7 +248,7 @@ await runOne({
       // The steering token appears in the reply => instructions reached AND changed behaviour.
       expect(norm(observation.assistantText), dump).toContain(token);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -282,7 +280,7 @@ await runOne({
       const seen = norm(toolText(observation) + " " + observation.assistantText);
       expect(seen, dump).toContain(marker);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -315,7 +313,7 @@ await runOne({
       // The codename buried at the end of a 100 KB instructions survived (not truncated).
       expect(norm(observation.assistantText), dump).toContain(codename);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -351,7 +349,7 @@ await runOne({
       const seen = (toolText(observation) + " " + observation.assistantText).toLowerCase();
       expect(seen, dump).toContain(expectedDigest);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -398,7 +396,7 @@ await runOne({
       // ...and the instructions composed alongside them (codename from context).
       expect(norm(observation.assistantText), dump).toContain(codename);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -440,7 +438,7 @@ await runOne({
       // eslint-disable-next-line no-console
       console.log(`[mountpath-escape] status=${observation.status} evidence=${evidence.slice(0, 400)}`);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -478,7 +476,7 @@ await runOne({
       expect(seen, dump).toContain(markerS);
       expect(seen, dump).toContain(markerU);
 
-      expect(observation.leakedProviderKey, dump).toBe(false);
+      expect(observation.leakedApiKey, dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );

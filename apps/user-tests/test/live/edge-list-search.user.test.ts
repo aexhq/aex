@@ -134,8 +134,7 @@ describe("edge: finished consistency and session listing", () => {
         foundFileId: found?.id ?? null,
         foundFilename: found?.filename ?? null,
         foundCheckpointId: found?.checkpointId ?? null,
-        leakedApiKey: serialized.includes(process.env.AEX_API_KEY),
-        leakedProviderKey: serialized.includes(PROVIDER_KEY)
+        leakedApiKey: serialized.includes(process.env.AEX_API_KEY)
       });
     `);
 
@@ -157,7 +156,6 @@ describe("edge: finished consistency and session listing", () => {
     expect(out.resultCostUsd, dump).toBeTypeOf("number");
     expect(out.resultUsageIsObject, dump).toBe(true);
     expect(out.leakedApiKey, dump).toBe(false);
-    expect(out.leakedProviderKey, dump).toBe(false);
   }, 12 * 60_000);
 
   it("sessions.list paginates without duplicates and exposes only lifecycle statuses", async () => {
@@ -239,6 +237,5 @@ describe("edge: finished consistency and session listing", () => {
 
     expect(out.count).toBeGreaterThan(0);
     expect(out.leakedApiKey).toBe(false);
-    expect(out.leakedProviderKey).toBe(false);
   }, 180_000);
 });

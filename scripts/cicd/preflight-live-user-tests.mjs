@@ -4,7 +4,7 @@ import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseRuntimeCapabilities } from "./runtime-capabilities.mjs";
 
-const REQUIRED_ENV = ["AEX_API_URL", "AEX_API_KEY", "DEEPSEEK_API_KEY"];
+const REQUIRED_ENV = ["AEX_API_URL", "AEX_API_KEY"];
 const DEFAULT_ATTEMPTS = 4;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_BASE_DELAY_MS = 1_000;

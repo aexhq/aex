@@ -53,7 +53,6 @@ const AEX_API_ERROR_CODES = [
   "workspace_cap_exceeded",
   "insufficient_credits",
   "account_blocked",
-  "subscription_past_due",
   "quota_exhausted",
   "depth_exceeded",
   "rate_limited",

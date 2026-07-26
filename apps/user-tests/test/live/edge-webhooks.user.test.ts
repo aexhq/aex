@@ -11,11 +11,11 @@
  *   - URL-validation cases use `sessions.create(...)` WITHOUT a turn, so a rejected
  *     (or even accepted-but-unstarted) webhook costs NO billable LLM turn.
  *   - Only the delivery-observation + SSRF-delivery cases spend billable session turns
- *     (tiny `deepseek-v4-flash` prompts). Total billable session turns in this file: 3.
+ *     (tiny `deepseek/deepseek-v4-flash` prompts). Total billable session turns in this file: 3.
  *   - Secrets are read from env passed to the child; never printed. Leak checks
  *     emit booleans only.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY.
+ * Required env: AEX_API_URL, AEX_API_KEY.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +27,7 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The webhook edge sweep must execute against a real dev api URL with a real gate-provider key.`
+      `user-tests live: required env ${name} is missing. The webhook edge sweep must execute against a real hosted API.`
     );
   }
   return value;
@@ -238,7 +238,7 @@ describe("live hosted - session webhooks edge cases", () => {
         }
         const serialized = JSON.stringify({ deliveries, events });
         const leakedWhsec = serialized.includes("whsec_");
-        const leakedProviderKey = providerKey.length > 0 && serialized.includes(providerKey);
+        const leakedApiKey = serialized.includes(process.env.AEX_API_KEY);
 
         process.stdout.write(JSON.stringify({
           sessionId,
@@ -252,7 +252,7 @@ describe("live hosted - session webhooks edge cases", () => {
           redeliverReal,
           redeliverBogus,
           leakedWhsec,
-          leakedProviderKey
+          leakedApiKey
         }));
         process.exit(process.exitCode ?? 0);
       `;
@@ -277,7 +277,7 @@ describe("live hosted - session webhooks edge cases", () => {
         redeliverReal: { ok: boolean; status?: number | null; message?: string } | null;
         redeliverBogus: { ok: boolean; status?: number | null; message?: string } | null;
         leakedWhsec: boolean;
-        leakedProviderKey: boolean;
+        leakedApiKey: boolean;
       }>(install, "wh-valid.mjs", body, 9 * 60 * 1000);
 
       // eslint-disable-next-line no-console
@@ -285,10 +285,10 @@ describe("live hosted - session webhooks edge cases", () => {
 
       expect(out.ok, `session did not complete ok: status=${out.status}`).toBe(true);
 
-      // Secret hygiene: neither the workspace signing secret nor the provider key
+      // Secret hygiene: neither the workspace signing secret nor the API key
       // may appear in the ledger or event log.
       expect(out.leakedWhsec, "workspace signing secret (whsec_) leaked into ledger/events").toBe(false);
-      expect(out.leakedProviderKey, "provider API key leaked into ledger/events").toBe(false);
+      expect(out.leakedApiKey, "workspace API key leaked into ledger/events").toBe(false);
 
       // redeliver on a bogus id must be a CLEAN error, never a crash / 5xx.
       expect(out.redeliverBogus).not.toBeNull();

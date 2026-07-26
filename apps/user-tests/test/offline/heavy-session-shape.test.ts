@@ -58,7 +58,7 @@ function baseResult(overrides: Partial<CaseResult> = {}): CaseResult {
       prompt: ["toolCallResult"]
     },
     channelProbeMisses: [],
-    leakedDeepseekKey: false,
+    leakedApiKey: false,
     streamErrors: [],
     ...overrides
   };

@@ -19,7 +19,7 @@
  * cases B create sessions only (no LLM turn). Waves are run selectively with
  * `-t`. Total kept well under the ~15-live-sessions-per-wave budget.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, plus
  * AEX_USER_TEST_TARBALL/VERSION (wired by session-live-deepseek.sh).
  */
 import { writeFileSync } from "node:fs";
@@ -37,8 +37,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -69,7 +68,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 /**
  * Child prelude: an `Aex` client from env, a `scrub()` that strips the api key
- * / provider key from any string before it can reach stdout, and a `dense()`
+ * key from any string before it can reach stdout, and a `dense()`
  * whitespace-stripper (managed-runtime streams fragment tokens across content
  * blocks). Secrets are read from env for LEAK checks but NEVER emitted — only
  * booleans, ids, and scrubbed samples cross the process boundary.
@@ -78,14 +77,12 @@ const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const API_URL = process.env.AEX_API_URL;
   const API_KEY = process.env.AEX_API_KEY;
-  const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
   const MODEL = process.env.MODEL;
   const client = new Aex({ baseUrl: API_URL, apiKey: API_KEY });
 
   function scrub(s) {
     let out = String(s == null ? "" : s);
     if (API_KEY) out = out.split(API_KEY).join("***TOKEN***");
-    if (DEEPSEEK_KEY) out = out.split(DEEPSEEK_KEY).join("***KEY***");
     return out;
   }
   function dense(s) { return String(s == null ? "" : s).replace(/\\s+/g, ""); }
@@ -114,7 +111,6 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      DEEPSEEK_KEY: deepseekKey,
       MODEL: model
     })
   });

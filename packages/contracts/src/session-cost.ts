@@ -28,10 +28,9 @@ import {
   type SessionUsageSampleUnit
 } from "./session-cost-types.js";
 
-// The vocabulary and record shapes this module builds and validates live in
-// `session-cost-types.js`. Re-exported here so `session-cost.js` — and the root
-// barrel that re-exports it — publish exactly the surface they always did.
-export * from "./session-cost-types.js";
+// Keep the named list explicit so the platform mirror gate can follow the source boundary.
+export { SESSION_COST_BASIS_STATUSES, SESSION_COST_SUMMARY_STATUSES, SESSION_COST_TELEMETRY_SCHEMA_VERSION, SESSION_USAGE_SAMPLE_METRICS, SESSION_USAGE_SAMPLE_SCHEMA_VERSION, SESSION_USAGE_SAMPLE_SOURCE_TYPES, SESSION_USAGE_SAMPLE_UNITS } from "./session-cost-types.js";
+export type { SessionCostBasis, SessionCostBasisLabel, SessionCostBasisStatus, SessionCostCaptureTelemetry, SessionCostDurations, SessionCostFileTelemetry, SessionCostProviderUsage, SessionCostProxyTelemetry, SessionCostRetryTelemetry, SessionCostSourceSummary, SessionCostStorageTelemetry, SessionCostSummaryStatus, SessionCostTelemetry, SessionCostTelemetryFromUsageSamplesInput, SessionCostTelemetryInput, SessionUsageSample, SessionUsageSampleInput, SessionUsageSampleMetric, SessionUsageSampleSource, SessionUsageSampleSourceType, SessionUsageSampleUnit } from "./session-cost-types.js";
 
 /**
  * The unit each metric is denominated in. Module-private: it is an

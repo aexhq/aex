@@ -16,7 +16,7 @@
  * (zero billable). Probe 1 sends cap+1 tiny turns (~$0.003 at gateway rates) —
  * it cannot observe concurrent running states without running concurrently.
  *
- * Required env: AEX_API_URL, AEX_API_KEY, + AEX_USER_TEST_TARBALL/VERSION
+ * Required env: AEX_API_URL, AEX_API_KEY, plus AEX_USER_TEST_TARBALL/VERSION
  * (wired by the shared runner). No provider key: the platform's managed gateway
  * key serves every model call.
  *
@@ -361,7 +361,7 @@ describe("edge: session-path admission gates", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           submission: {
-            model: "claude-haiku-4-5",
+            model: "anthropic/claude-haiku-4-5",
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },

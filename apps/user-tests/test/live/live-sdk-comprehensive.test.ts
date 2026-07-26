@@ -21,7 +21,7 @@
  *     the custom-dir submission path; this session does not force a write into it,
  *     so the re-root is not asserted here, only that any uploaded files
  *     round-trip)
- *   - `secrets` carrying the customer's provider key
+ *   - no customer-supplied provider credentials
  *
  * Then waits for the committed `RUN_FINISHED` terminal and asserts:
  *   - The session reached `succeeded`.
@@ -29,11 +29,11 @@
  *   - Every submitted skill produced a `skill_loaded`
  *     notification (proves materialization of all skills).
  *   - At least one `assistant_text` event landed (The managed runtime generated a
- *     real reply via the BYOK provider-proxy).
+ *     real reply via the managed AI gateway).
  *   - The collected assistant text contains the system + Instructions +
  *     prompt probes (proves `composeInstructions()` carried all three
  *     channels into the recipe.yaml that the managed runtime reads).
- *   - No secret value (the provider key) appears anywhere
+ *   - No workspace credential appears anywhere
  *     in the SDK-visible payload (run + events + files).
  *
  * No env-var flags gate scope. The five `test:*` commands are the
@@ -42,7 +42,6 @@
  * Required env:
  *   AEX_API_URL                live hosted API URL (local or prod)
  *   AEX_API_KEY               workspace API key
- *   DEEPSEEK_API_KEY                customer DeepSeek API key
  *   AEX_USER_TEST_TARBALL            packed SDK tarball
  *     OR AEX_USER_TEST_VERSION       published package version
  */
@@ -62,8 +61,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
@@ -90,7 +88,7 @@ interface CaseResult {
   readonly terminalData: Record<string, unknown> | null;
   readonly fileCount: number;
   readonly files: readonly { filename: string; sizeBytes: number; sample: string | null }[];
-  readonly leakedProviderKey: boolean;
+  readonly leakedApiKey: boolean;
   // Full payload of every stream_error event the runner emitted —
   // captures the actual exception message + phase when materialize or
   // manifest fetch fails (the runner emits a stream_error with the
@@ -129,8 +127,6 @@ interface CaseSpec {
   readonly scriptName: string;
   readonly provider: "deepseek";
   readonly model: string;
-  readonly keyEnvName: string;
-  readonly keyValue: string;
   readonly customOutputDir: string;
   readonly pollDeadlineMs: number;
   readonly pollIntervalMs: number;
@@ -218,7 +214,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
     const sessionResult = await client.start(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
-    requireSucceededRunBeforeFiles("comprehensive-session", sessionResult, [process.env.DEEPSEEK_KEY, process.env.${spec.keyEnvName}]);
+    requireSucceededRunBeforeFiles("comprehensive-session", sessionResult, [process.env.AEX_API_KEY]);
     const sessionId = sessionResult.sessionId;
     const session = await client.sessions.open(sessionId);
     const run = {
@@ -294,7 +290,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
     }
 
     const serialized = JSON.stringify({ run, events, files });
-    const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
+    const apiKeyEnv = process.env.AEX_API_KEY ?? "";
     const result = {
       sessionId: sessionId,
       runStatus: run.status,
@@ -312,7 +308,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
       terminalData,
       fileCount: files.length,
       files: filesCollected,
-      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
+      leakedApiKey: apiKeyEnv.length > 0 && serialized.includes(apiKeyEnv),
       streamErrors
     };
     process.stdout.write(JSON.stringify(result));
@@ -343,9 +339,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
 
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    [spec.keyEnvName]: spec.keyValue,
-    DEEPSEEK_KEY: deepseekKey
+    AEX_API_KEY: apiKey
   });
 
   const child = await runCommand(getBunCommand(), [scriptPath], {
@@ -422,7 +416,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(normalized).toContain(result.probes.prompt);
 
   // No secret leakage anywhere in the SDK-visible payload.
-  expect(result.leakedProviderKey).toBe(false);
+  expect(result.leakedApiKey).toBe(false);
 
   // Files: any file the managed runtime wrote under the custom fileCapture.allowedDirs path was
   // uploaded. Downloading each one returns content (a download error
@@ -456,8 +450,6 @@ describe("live hosted API — comprehensive end-to-end via installed SDK", () =>
           scriptName: "comprehensive-managed-deepseek.mjs",
           provider: "deepseek",
           model: deepseekModel,
-          keyEnvName: "DEEPSEEK_KEY_SUBMIT",
-          keyValue: deepseekKey,
           customOutputDir: "/data/exports/custom",
           pollDeadlineMs: 8 * 60_000,
           pollIntervalMs: 3_000,

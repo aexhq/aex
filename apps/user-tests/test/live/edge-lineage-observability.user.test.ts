@@ -16,10 +16,10 @@
  *
  * Hard invariants asserted here (the rest is characterized to a scratchpad JSON
  * for the human sweep): parent succeeds, subagent was actually called, a child
- * sessionId was returned, and neither the AEX nor DeepSeek key leaks into ANY
+ * sessionId was returned, and the workspace API key does not leak into any
  * SDK-visible surface (parent events, child events, tool output, or errors).
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_KEY,
  * MODEL. Cost-safe: one parent + one tiny child, DeepSeek, tiny prompts.
  */
 import { writeFileSync } from "node:fs";
@@ -35,18 +35,9 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function requireAnyEnv(...names: string[]): string {
-  for (const name of names) {
-    const value = process.env[name];
-    if (value && value.length > 0) return value;
-  }
-  throw new Error(`user-tests live (lineage): required env ${names.join(" or ")} is missing.`);
-}
-
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const deepseekKey = requireAnyEnv("DEEPSEEK_API_KEY", "DEEPSEEK_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
 
 interface Wave1Result {
   readonly stage: string;
@@ -92,8 +83,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
 
         const aexApiKey = process.env.AEX_API_KEY;
         const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: aexApiKey });
-        const deepseekKey = process.env.DEEPSEEK_KEY;
-        const knownSecrets = [aexApiKey, deepseekKey].filter((value) => typeof value === "string" && value.length > 0);
+        const knownSecrets = [aexApiKey].filter((value) => typeof value === "string" && value.length > 0);
         const model = process.env.MODEL;
         const startedAt = Date.now();
         let stage = "starting_parent";
@@ -240,8 +230,6 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
         AEX_API_KEY: apiKey,
-        DEEPSEEK_API_KEY: deepseekKey,
-        DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -288,7 +276,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
         leakedKeyAnywhere: result.leakedKeyAnywhere
       };
       const evidenceJson = JSON.stringify(evidence);
-      expect(evidenceJson.includes(apiKey) || evidenceJson.includes(deepseekKey), "metadata-only lineage evidence contains a known secret").toBe(false);
+      expect(evidenceJson.includes(apiKey), "metadata-only lineage evidence contains the API key").toBe(false);
       writeFileSync(join(install.installDir, "lineage-wave1-out.json"), JSON.stringify(evidence, null, 2));
       console.error(`[edge-evidence] edge-lineage-w1-runner.mjs: ${evidenceJson}`);
       if (child.exitCode !== 0) {

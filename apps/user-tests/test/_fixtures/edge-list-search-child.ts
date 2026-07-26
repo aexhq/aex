@@ -2,9 +2,8 @@ export function buildEdgeListSearchChildScript(body: string): string {
   return `
     import { Aex } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-    const PROVIDER_KEY = process.env.PROVIDER_KEY;
     const MODEL = process.env.MODEL;
-    const knownSecrets = [process.env.AEX_API_KEY, PROVIDER_KEY]
+    const knownSecrets = [process.env.AEX_API_KEY]
       .filter((value) => typeof value === "string" && value.length > 0);
     function serialized(value) {
       try { return JSON.stringify(value) || ""; } catch { return ""; }
@@ -40,7 +39,6 @@ export const EDGE_SESSION_DEBUG_BODY = String.raw`
   const joined = lines.join("\n");
   printSafe({
     count: lines.length,
-    leakedApiKey: joined.includes(process.env.AEX_API_KEY),
-    leakedProviderKey: joined.includes(PROVIDER_KEY)
+    leakedApiKey: joined.includes(process.env.AEX_API_KEY)
   });
 `;

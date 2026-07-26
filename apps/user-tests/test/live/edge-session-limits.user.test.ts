@@ -18,9 +18,9 @@
  * is data, not a non-zero exit.
  *
  * Required env (exported by the shared runner from .env.dev):
- *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY
+ *   AEX_API_URL, AEX_API_KEY
  * Optional:
- *   AEX_USER_TEST_DEEPSEEK_MODEL  (default "deepseek-v4-flash")
+ *   AEX_USER_TEST_DEEPSEEK_MODEL  (default "deepseek/deepseek-v4-flash")
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The edge session-limits sweep runs against a real dev API URL with a real gate-provider key.`
+      `user-tests live: required env ${name} is missing. The edge session-limits sweep runs against a real hosted API.`
     );
   }
   return value;
@@ -54,7 +54,6 @@ const VALID_SIZES = [
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const out = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
 const asErr = (e) => {

@@ -35,7 +35,7 @@ export interface CaseResult {
   readonly outProbesFound: readonly string[];
   readonly channelProbeSources: Readonly<Record<string, readonly string[]>>;
   readonly channelProbeMisses: readonly string[];
-  readonly leakedDeepseekKey: boolean;
+  readonly leakedApiKey: boolean;
   // Full payload of every runner-sourced stream_error. This captures the
   // exception message and phase when materialize / manifest fetch fails,
   // right before a runner_error terminal.
@@ -186,7 +186,7 @@ export function assertManagedShape(result: CaseResult, expectedSkillPrefixes: re
     fail(result, `no agent-written session file carried any expected REF-out token; files pipeline unverified`);
   }
 
-  if (result.leakedDeepseekKey) {
-    fail(result, `DeepSeek key leaked into SDK-visible payload`);
+  if (result.leakedApiKey) {
+    fail(result, `workspace API key leaked into SDK-visible payload`);
   }
 }

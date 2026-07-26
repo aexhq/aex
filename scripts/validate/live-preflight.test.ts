@@ -9,7 +9,6 @@ const preflightUrl = pathToFileURL(resolve(repoRoot, "scripts/cicd/preflight-liv
 const baseEnv = {
   AEX_API_URL: "https://dev-api.aex.dev",
   AEX_API_KEY: "aex_secret_token",
-  DEEPSEEK_API_KEY: "deepseek_secret",
   LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "50",
   LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS: "1"
 };
@@ -106,8 +105,8 @@ function runScenario(scenario: string): ChildResult {
     try {
       const env = {
         ...baseEnv,
-        ...(scenario === "missingEnv" ? { AEX_API_KEY: undefined, DEEPSEEK_API_KEY: undefined } : {}),
-        ...(scenario === "blankEnv" ? { AEX_API_KEY: "   ", DEEPSEEK_API_KEY: "" } : {}),
+        ...(scenario === "missingEnv" ? { AEX_API_KEY: undefined } : {}),
+        ...(scenario === "blankEnv" ? { AEX_API_KEY: "   " } : {}),
         ...(scenario === "privateUrl" ? { AEX_API_URL: "https://127.0.0.1:8787" } : {}),
         ...(scenario === "allowPrivateUrl" ? { AEX_API_URL: "https://127.0.0.1:8787", LIVE_USER_TEST_ALLOW_PRIVATE_API_URL: "true" } : {}),
         ...(scenario === "nonHttps" ? { AEX_API_URL: "http://dev-api.aex.dev" } : {}),
@@ -160,7 +159,6 @@ describe("live user-test preflight", () => {
     expect(result.logs).toContain("transient HTTP 503");
     expect(result.logs).toContain("requestId=req-1");
     expect(`${result.logs}${result.out}`).not.toContain(baseEnv.AEX_API_KEY);
-    expect(`${result.logs}${result.out}`).not.toContain(baseEnv.DEEPSEEK_API_KEY);
   });
 
   it("does not retry deterministic auth failures", () => {
@@ -175,7 +173,7 @@ describe("live user-test preflight", () => {
     const result = runScenario("missingEnv");
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain("AEX_API_KEY, DEEPSEEK_API_KEY");
+    expect(result.message).toContain("AEX_API_KEY");
     expect(result.calls).toBe(0);
   });
 
@@ -183,7 +181,7 @@ describe("live user-test preflight", () => {
     const result = runScenario("blankEnv");
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain("AEX_API_KEY, DEEPSEEK_API_KEY");
+    expect(result.message).toContain("AEX_API_KEY");
     expect(result.calls).toBe(0);
   });
 

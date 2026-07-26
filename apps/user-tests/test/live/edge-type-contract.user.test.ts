@@ -17,7 +17,7 @@
  * Billing: probe 1 runs ONE tiny billable turn (~$0.0004); probe 2 creates a
  * born-empty idle session and deletes it (zero billable).
  *
- * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, plus
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -68,7 +68,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-  const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const RAW_CONNECT_TRANSIENT_CODES = new Set([
     "ConnectionRefused",
