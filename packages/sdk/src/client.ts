@@ -16,12 +16,14 @@ import {
   type AexEventView,
   type AexStreamEvent,
   type AexStreamEventView,
-  type BillingCheckoutRequest,
+  type BillingAutoTopupRequest,
+  type BillingAutoTopupUpdate,
   type BillingHostedSession,
   type BillingLedgerPage,
   type BillingLedgerQuery,
   type BillingPortalRequest,
   type BillingSummary,
+  type BillingTopupCheckoutRequest,
   type ChildSessionRef,
   type DebugSink,
   type FetchLike,
@@ -1584,22 +1586,32 @@ export class Aex {
 
   /**
    * Read the workspace billing summary: prepaid `balanceUsd`, current-month
-   * `monthSpendUsd`, the enforced `spendCapUsd`, and plan fields. Backed by
-   * `GET /api/billing` (scope `billing:read`). The result is additive-tolerant:
-   * fields a newer deployment reports that this SDK does not know yet pass
-   * through on the returned object.
+   * `monthSpendUsd`, the enforced `spendCapUsd`, this period's free
+   * `allowances`, the `autoTopup` settings and the saved `paymentMethod`. Backed
+   * by `GET /api/billing` (scope `billing:read`). Additive-tolerant: fields a
+   * newer deployment reports pass through on the returned object.
    */
   billing(): Promise<BillingSummary> {
     return operations.getBilling(this.#http);
   }
 
   /**
-   * Create a hosted checkout session for a paid plan (`pro` or `team`).
-   * Open the returned `url` in a browser. Plan activation happens after
-   * checkout completes.
+   * Buy prepaid credit through hosted checkout. Open the returned `url`; the
+   * same flow saves the card on first use, and the balance moves once the charge
+   * settles. An amount below `billing().autoTopup.minimumAmountUsd` is refused.
    */
-  billingCheckout(request: BillingCheckoutRequest, options?: IdempotencyOptions): Promise<BillingHostedSession> {
-    return operations.createBillingCheckout(this.#http, request, options);
+  billingTopup(request: BillingTopupCheckoutRequest, options?: IdempotencyOptions): Promise<BillingHostedSession> {
+    return operations.createBillingTopupCheckout(this.#http, request, options);
+  }
+
+  /**
+   * Set auto-recharge. OFF by default, and a saved card does not enable it —
+   * that is the difference between consenting to one charge and granting a
+   * standing authority. Omitted fields keep their stored value; enabling needs a
+   * saved card and `thresholdUsd` must stay strictly below `amountUsd`.
+   */
+  billingAutoTopup(request: BillingAutoTopupRequest): Promise<BillingAutoTopupUpdate> {
+    return operations.updateBillingAutoTopup(this.#http, request);
   }
 
   /**

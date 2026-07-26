@@ -27,12 +27,12 @@ const whoami = {
     monthSpendUsd: 0,
     balanceUsd: 0,
     balanceGraceFloorUsd: 0,
-    balanceGateActive: true,
+    llmTokenAllowanceRemainingUsd: 2,
+    creditGateActive: true,
     paymentMethodStatus: "none",
-    planKey: "free",
-    accountType: "standard",
-    subscriptionStatus: "none",
-    subscriptionGate: "ok"
+    admissionState: "free",
+    autoTopupEnabled: false,
+    accountType: "standard"
   }
 };
 

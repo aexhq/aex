@@ -137,14 +137,20 @@ export type {
 
 // Runtime types
 export type {
-  BillingCheckoutPlanKey,
-  BillingCheckoutRequest,
+  BillingAdmissionState,
+  BillingAllowance,
+  BillingAutoTopup,
+  BillingAutoTopupRequest,
+  BillingAutoTopupUpdate,
+  BillingBlock,
   BillingHostedSession,
   BillingLedgerEntry,
   BillingLedgerPage,
   BillingLedgerQuery,
+  BillingPaymentMethod,
   BillingPortalRequest,
   BillingSummary,
+  BillingTopupCheckoutRequest,
   SessionFile,
   SessionFilesSnapshot,
   SessionCheckpointRevision,

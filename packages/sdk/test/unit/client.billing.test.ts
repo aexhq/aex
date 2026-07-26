@@ -35,20 +35,44 @@ function billingClient(body: unknown): { readonly client: Aex; readonly calls: R
   };
 }
 
+const SUMMARY = {
+  balanceUsd: 12.5,
+  monthSpendUsd: 0.42,
+  spendCapUsd: 50,
+  period: "2026-07",
+  admissionState: "carded_manual" as const,
+  accountType: "standard",
+  paymentMethodStatus: "active",
+  autoTopupEnabled: false,
+  blocked: null,
+  paymentMethod: { present: true, brand: "visa", last4: "4242" },
+  autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 },
+  allowances: [
+    {
+      dimension: "llm_token_usd",
+      quota: 2,
+      used: 0.5,
+      remaining: 1.5,
+      unit: "USD",
+      label: "model usage",
+      resetAt: "2026-08-01T00:00:00.000Z"
+    }
+  ]
+};
+
 describe("aex.billing", () => {
-  it("GETs /api/billing and returns the typed summary", async () => {
-    const summary = {
-      balanceUsd: 12.5,
-      monthSpendUsd: 0.42,
-      spendCapUsd: 50,
-      planKey: "free",
-      subscriptionStatus: "none"
-    };
-    const { client, calls } = billingClient(summary);
+  it("GETs /api/billing and returns the typed prepaid summary", async () => {
+    const { client, calls } = billingClient(SUMMARY);
 
     const result = await client.billing();
 
-    expect(result).toEqual(summary);
+    expect(result).toEqual(SUMMARY);
+    // The prepaid surface, typed without casts.
+    expect(result.admissionState).toBe("carded_manual");
+    expect(result.autoTopup.minimumAmountUsd).toBe(10);
+    expect(result.paymentMethod.last4).toBe("4242");
+    expect(result.allowances[0]!.remaining).toBe(1.5);
+    expect(result.allowances[0]!.unit).toBe("USD");
     expect(calls).toHaveLength(1);
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/api/billing");
@@ -57,16 +81,7 @@ describe("aex.billing", () => {
   });
 
   it("tolerates additive server fields on the summary (no strict-reject)", async () => {
-    const summary = {
-      balanceUsd: 1,
-      monthSpendUsd: 0,
-      spendCapUsd: 10,
-      planKey: "free",
-      subscriptionStatus: "none",
-      paymentMethodStatus: "active",
-      accountType: "team",
-      plan: { name: "future-field" }
-    };
+    const summary = { ...SUMMARY, statements: { available: true } };
     const { client } = billingClient(summary);
 
     const result = await client.billing();
@@ -74,16 +89,16 @@ describe("aex.billing", () => {
     // Unknown additive keys pass through untouched.
     expect(result).toEqual(summary);
     expect(result.paymentMethodStatus).toBe("active");
-    expect(result["accountType"]).toBe("team");
+    expect(result["statements"]).toEqual({ available: true });
   });
 });
 
-describe("aex.billingCheckout", () => {
-  it("POSTs /api/billing/checkout and returns the hosted URL", async () => {
+describe("aex.billingTopup", () => {
+  it("POSTs /api/billing/topup/checkout and returns the hosted URL", async () => {
     const { client, calls } = billingClient({ url: "https://checkout.stripe.test/session" });
 
-    const result = await client.billingCheckout({
-      planKey: "pro",
+    const result = await client.billingTopup({
+      amountUsd: 25,
       successUrl: "https://aex.dev/billing?checkout=success",
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
     }, { idempotencyKey: "checkout-key" });
@@ -91,10 +106,10 @@ describe("aex.billingCheckout", () => {
     expect(result).toEqual({ url: "https://checkout.stripe.test/session" });
     expect(calls).toHaveLength(1);
     const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe("/api/billing/checkout");
+    expect(url.pathname).toBe("/api/billing/topup/checkout");
     expect(calls[0]!.method).toBe("POST");
     expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({
-      planKey: "pro",
+      amountUsd: 25,
       successUrl: "https://aex.dev/billing?checkout=success",
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
@@ -123,12 +138,41 @@ describe("aex.billingCheckout", () => {
       }
     });
 
-    await client.billingCheckout({ planKey: "team" });
+    // A retried top-up must not become two charges: the identity is generated
+    // ONCE, before the first attempt, and reused verbatim.
+    await client.billingTopup({ amountUsd: 25 });
 
     expect(identities).toHaveLength(2);
     expect(isId("idempotency", identities[0])).toBe(true);
     expect(identities[1]).toBe(identities[0]);
-    expect(bodies).toEqual([{ planKey: "team" }, { planKey: "team" }]);
+    expect(bodies).toEqual([{ amountUsd: 25 }, { amountUsd: 25 }]);
+  });
+});
+
+describe("aex.billingAutoTopup", () => {
+  it("PATCHes /api/billing/autotopup with only the fields given", async () => {
+    const autoTopup = { enabled: true, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 };
+    const { client, calls } = billingClient({ autoTopup });
+
+    const result = await client.billingAutoTopup({ enabled: true, thresholdUsd: 5, amountUsd: 20 });
+
+    expect(result.autoTopup).toEqual(autoTopup);
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/api/billing/autotopup");
+    expect(calls[0]!.method).toBe("PATCH");
+    expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ enabled: true, thresholdUsd: 5, amountUsd: 20 });
+  });
+
+  it("sends a partial update verbatim — an omitted field keeps its stored value", async () => {
+    const { client, calls } = billingClient({
+      autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 50, minimumAmountUsd: 10, maxPerDay: 4 }
+    });
+
+    await client.billingAutoTopup({ amountUsd: 50 });
+
+    // Filling in `enabled: false` here would switch auto-recharge OFF for anyone
+    // who only wanted to change the amount.
+    expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ amountUsd: 50 });
   });
 });
 
