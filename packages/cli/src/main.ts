@@ -20,7 +20,7 @@
  *     - `aex sessions [--limit <n>] [--since <iso>]`
  *     - `aex whoami`
  *     - `aex billing [--json]` / `aex billing ledger [--limit <n>]`
- *     - `aex billing upgrade pro|team` / `aex billing portal`
+ *     - `aex billing topup <amountUsd>` / `aex billing autotopup` / `aex billing portal`
  *     - `aex webhooks secret`
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
@@ -203,9 +203,10 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex delete-asset <assetId|hash> --api-key T\n");
   io.stdout("  aex sessions [--limit N] [--since ISO] --api-key T      List the workspace's sessions (newest first, JSON)\n");
   io.stdout("  aex whoami --api-key T\n");
-  io.stdout("  aex billing [--json] --api-key T          Show prepaid balance, month spend, and spend cap\n");
+  io.stdout("  aex billing [--json] --api-key T          Show balance, month spend, cap, auto top-up and free allowances\n");
   io.stdout("  aex billing ledger [--limit N] --api-key T   Recent credit-ledger entries (newest first, JSON)\n");
-  io.stdout("  aex billing upgrade pro|team --api-key T   Create a hosted checkout session and print its URL\n");
+  io.stdout("  aex billing topup <amountUsd> --api-key T  Buy prepaid credit through hosted checkout; prints the URL\n");
+  io.stdout("  aex billing autotopup [--enable|--disable] [--threshold N] [--amount N] --api-key T   Set auto-recharge\n");
   io.stdout("  aex billing portal --api-key T             Create a hosted billing portal session and print its URL\n");
   io.stdout("  aex webhooks secret --api-key T           Reveal (create on first use) the webhook signing secret\n");
   io.stdout("\nControl-plane (account credential from `aex login`, or an account PAT via --api-key):\n");
