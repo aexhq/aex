@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "TypeScript SDK for autonomous agent sessions with managed Vercel AI Gateway model access.",
   "license": "Apache-2.0",
   "repository": {

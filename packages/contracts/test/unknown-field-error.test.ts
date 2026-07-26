@@ -75,6 +75,13 @@ describe("structured unknown-field diagnostics", () => {
     const first = thrownBy(() => parseInlineSecrets({ later: true, earlier: true }));
     expect(first).toMatchObject({ unknownKey: "later" });
 
+    const protoKey = Object.fromEntries([["__proto__", true]]);
+    const protoError = thrownBy(() => parseInlineSecrets(protoKey));
+    expect(protoError).toMatchObject({
+      unknownKey: "__proto__",
+      message: "secrets.__proto__ is not an allowed field; permitted: mcpServers, envSecrets"
+    });
+
     const reserved = thrownBy(() => parseInlineSecrets({ __aex_internal: true, unknown: true }));
     expect(reserved).toBeInstanceOf(Error);
     expect(reserved).not.toBeInstanceOf(UnknownFieldError);

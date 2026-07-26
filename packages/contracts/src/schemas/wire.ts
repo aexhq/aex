@@ -215,6 +215,18 @@ export function parseWire<Schema extends z.core.$ZodType>(
   schema: Schema,
   input: unknown
 ): z.infer<Schema> {
+  const meta = wireObjectMeta.get(schema as object);
+  if (meta && input !== null && typeof input === "object" && !Array.isArray(input)) {
+    // Zod deliberately skips `__proto__` while collecting unknown keys so a
+    // plain-object output cannot have its prototype replaced. That safety
+    // rule must not turn an attacker-controlled field into an accepted field;
+    // recover the strict wire-object diagnostic before Zod sees the input.
+    const unknownKey = Object.keys(input).find((key) => !meta.permitted.includes(key));
+    if (unknownKey !== undefined) {
+      const diagnostic = meta.unknownKey(meta.resolvePath([]), unknownKey, meta.permitted);
+      throw typeof diagnostic === "string" ? new Error(diagnostic) : diagnostic;
+    }
+  }
   const result = z.safeParse(schema, input);
   if (!result.success) {
     throw structuredError(schema, result.error) ?? errorFromZod(result.error);
