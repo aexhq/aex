@@ -29,6 +29,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { waitForCondition } from "@aexhq/contracts/testing";
+import { armWireConformance } from "./wire-conformance.js";
 
 export interface InstallResult {
   /** Absolute path to the install tempdir (Bun install was run here). */
@@ -204,6 +205,12 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
       );
     }
   }
+
+  // C4: arm the wire-conformance harness for every `bun` child this tree will
+  // host. Done here rather than at the ~40 spawn sites because every child runs
+  // with `cwd = installDir`, so one `bunfig.toml` covers all of them and no
+  // scenario has to remember. See `_fixtures/wire-conformance.ts`.
+  armWireConformance(installDir);
 
   return {
     installDir,

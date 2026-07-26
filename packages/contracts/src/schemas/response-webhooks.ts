@@ -5,8 +5,9 @@
  * module covers the two routes that are workspace-scoped rather than
  * session-scoped. They are not the same shape: the workspace view appends
  * `sessionId` and `callbackUrl` to each row, which the declared
- * `SessionWebhookDelivery` interface does not carry — there is no declared
- * client type for the workspace view at all.
+ * `SessionWebhookDelivery` interface does not carry. The workspace view had no
+ * declared client type at all; `WorkspaceWebhookDelivery` in `runtime-types.ts`
+ * is now `z.infer`red from the schema below.
  */
 import * as z from "zod/mini";
 import { SessionWebhookDeliverySchema } from "./response-sessions.js";

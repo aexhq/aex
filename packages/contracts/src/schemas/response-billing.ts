@@ -1,22 +1,28 @@
 /**
  * Response schemas for the `billing.*` and `adminBilling.*` families.
  *
- * One place the server and the declared types still disagree, resolved in favour
- * of the server (a schema that fails every real response is not a gate):
- * `BillingLedgerEntry` does not declare `workspaceId`; the server sends it on
- * every row (the WS2 cost-attribution tag), `null` for org-level rows. Both
- * interfaces carry `[key: string]: unknown` — an explicit "additive server
- * fields pass through" promise, and that promise is what makes the gap
- * invisible. The index signature is not honoured here.
+ * Both `BillingSummary` and `BillingLedgerEntry` USED to carry
+ * `[key: string]: unknown` — an explicit "additive server fields pass through"
+ * promise. That promise is what made two real gaps invisible (`BillingSummary`
+ * omitting `accountType`, `BillingLedgerEntry` omitting `workspaceId`), and it
+ * is exactly what a strict response schema exists to stop being invisible. Both
+ * signatures are now gone from the types as well, and both interfaces declare
+ * every field the server sends.
+ *
+ * One gap remains, resolved in favour of the server (a schema that fails every
+ * real response is not a gate): `workspaceId` on a ledger entry and on the three
+ * admin routes is a RAW id, not the public `wsp_<hex>` form `whoami` and the
+ * MCP-server records carry, so it is validated as a plain string.
  *
  * `createdAt` on a ledger entry is NOT ISO-8601: it is selected raw, so it
  * arrives as the Data API's `"YYYY-MM-DD HH:MM:SS"` text. It is validated as a
  * non-empty string, deliberately, and the inconsistency is reported rather than
  * encoded as if intended. `resetAt` and `blocked.at` ARE ISO-8601 — they are
- * constructed, not selected.
+ * constructed, not selected. `pastDueAt`, the third timestamp that used to sit
+ * here, went with the plan catalog.
  */
 import * as z from "zod/mini";
-import { BILLING_ADMISSION_STATES } from "../runtime-types.js";
+import { BILLING_ADMISSION_STATES } from "../billing-admission.js";
 import {
   describeResponse,
   responseObject,
@@ -75,7 +81,8 @@ export const BillingAutoTopupSchema = describeResponse(
  * `GET /billing`.
  *
  * `planKey`, `subscriptionStatus` and `pastDueAt` are GONE with the catalog they
- * described. What replaces them is the prepaid surface: the period, the
+ * described; a strict schema still expecting them fails C4 against the current
+ * server. What replaces them is the prepaid surface: the period, the
  * card-derived `admissionState`, the allowance rows, the auto-recharge block,
  * the saved card, and any live block.
  */
@@ -107,6 +114,37 @@ export const BillingAutoTopupResponseSchema = describeResponse(
   "BillingAutoTopupResponse",
   "The stored auto-recharge settings after the update.",
   responseObject({ autoTopup: BillingAutoTopupSchema })
+);
+
+/**
+ * One row of `GET /billing/statements`.
+ *
+ * Only ISSUED periods are listed. A month whose statement did not reconcile is
+ * withheld rather than rendered on demand, so an absent period is a statement
+ * that was never issued — not one this read failed to find.
+ *
+ * `issuedAt` IS ISO-8601: the handler formats it, unlike the raw ledger
+ * `createdAt` above.
+ */
+export const BillingStatementSummarySchema = describeResponse(
+  "BillingStatementSummary",
+  "One issued monthly statement: the period, when it was issued, and the five " +
+    "figures that reconcile opening balance to closing.",
+  responseObject({
+    period: wireNonEmptyString,
+    issuedAt: wireTimestamp,
+    openingBalanceUsd: wireNumber,
+    creditsPurchasedUsd: wireNumber,
+    usageUsd: wireNumber,
+    adjustmentsUsd: wireNumber,
+    closingBalanceUsd: wireNumber
+  })
+);
+
+export const BillingStatementListResponseSchema = describeResponse(
+  "BillingStatementListResponse",
+  "The months a customer can download, newest first. Bounded server-side; not cursor-paged.",
+  responseObject({ statements: z.array(BillingStatementSummarySchema) })
 );
 
 export const BillingLedgerEntrySchema = describeResponse(

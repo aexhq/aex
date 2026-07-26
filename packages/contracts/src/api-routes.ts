@@ -110,6 +110,11 @@ export const AUTHENTICATED_API_ROUTE_DESCRIPTORS: readonly AuthenticatedApiRoute
   route("billing.ledger", "GET", /^\/billing\/ledger$/, "/billing/ledger", "billing:read"),
   route("billing.topupCheckout", "POST", /^\/billing\/topup\/checkout$/, "/billing/topup/checkout", "billing:read"),
   route("billing.autoTopup", "PATCH", /^\/billing\/autotopup$/, "/billing/autotopup", "billing:read"),
+  // Monthly statements. The period segment is pinned to a UTC month rather than
+  // the usual `[^/]+`: a looser pattern would route `/billing/statements/../x`
+  // into the handler for it to reject, instead of refusing it at the door.
+  route("billing.statements", "GET", /^\/billing\/statements$/, "/billing/statements", "billing:read"),
+  route("billing.statement", "GET", /^\/billing\/statements\/[0-9]{4}-(0[1-9]|1[0-2])$/, "/billing/statements/2026-07", "billing:read"),
   route("billing.portal", "POST", /^\/billing\/portal$/, "/billing/portal", "billing:read"),
   route("adminBilling.topup", "POST", /^\/admin\/billing\/topup$/, "/admin/billing/topup", "billing:manage"),
   route("adminBilling.paymentMethod", "POST", /^\/admin\/billing\/payment-method$/, "/admin/billing/payment-method", "billing:manage"),

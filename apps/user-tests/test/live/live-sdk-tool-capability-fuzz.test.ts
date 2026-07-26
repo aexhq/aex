@@ -12,7 +12,6 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import fc from "fast-check";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   getBunCommand,
@@ -20,6 +19,16 @@ import {
   runCommand,
   type InstallResult
 } from "../_fixtures/install.js";
+// The seeded corpus this gate drives. Declared next door so the case data — and
+// the seeds that make a failure reproducible — read on their own.
+import {
+  BACKGROUND_CASES,
+  CUSTOM_CASES,
+  FILE_CASES,
+  PROCESS_CASES,
+  SUBAGENT_CASES,
+  WEB_CASES
+} from "./_tool-capability-cases.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -34,116 +43,8 @@ const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
-const FUZZ_CASES = 2;
-const BASE_SEED = 0x0ae2026;
 const LIVE_TIMEOUT_MS = 12 * 60_000;
 const CHILD_TIMEOUT_MS = 15 * 60_000;
-
-const wordArb = fc
-  .array(fc.constantFrom(..."abcdefghijkmnpqrstuvwxyz"), { minLength: 4, maxLength: 9 })
-  .map((chars) => chars.join(""));
-const wordsArb = fc.array(wordArb, { minLength: 7, maxLength: 10 });
-
-interface FileCase {
-  readonly id: number;
-  readonly lines: readonly string[];
-  readonly needle: string;
-  readonly replacement: string;
-  readonly headLines: number;
-  readonly tailLines: number;
-}
-
-const FILE_CASES: readonly FileCase[] = fc.sample(
-  fc.record({
-    lines: wordsArb,
-    needle: wordArb.map((word) => `needle_${word}`),
-    replacement: wordArb.map((word) => `replacement_${word}`),
-    headLines: fc.integer({ min: 1, max: 3 }),
-    tailLines: fc.integer({ min: 1, max: 3 })
-  }),
-  { seed: BASE_SEED + 1, numRuns: FUZZ_CASES }
-).map((value, id) => ({ ...value, id }));
-
-interface ProcessCase {
-  readonly id: number;
-  readonly left: number;
-  readonly right: number;
-  readonly todoWords: readonly string[];
-  readonly commitWord: string;
-}
-
-const PROCESS_CASES: readonly ProcessCase[] = fc.sample(
-  fc.record({
-    left: fc.integer({ min: 2, max: 40 }),
-    right: fc.integer({ min: 2, max: 40 }),
-    todoWords: fc.array(wordArb, { minLength: 2, maxLength: 4 }),
-    commitWord: wordArb
-  }),
-  { seed: BASE_SEED + 2, numRuns: FUZZ_CASES }
-).map((value, id) => ({ ...value, id }));
-
-interface BackgroundCase {
-  readonly id: number;
-  readonly marker: string;
-}
-
-const BACKGROUND_CASES: readonly BackgroundCase[] = fc.sample(
-  wordArb.map((word) => ({ marker: `bg_${word}` })),
-  { seed: BASE_SEED + 3, numRuns: FUZZ_CASES }
-).map((value, id) => ({ ...value, id }));
-
-interface WebCase {
-  readonly id: number;
-  readonly query: string;
-  readonly terms: readonly string[];
-  readonly maxResults: number;
-  readonly maxBytes: number;
-}
-
-const WEB_CASES: readonly WebCase[] = fc.sample(
-  fc.record({
-    query: fc.constantFrom("Wikipedia free encyclopedia", "IANA example domains"),
-    maxResults: fc.integer({ min: 1, max: 3 }),
-    maxBytes: fc.integer({ min: 3500, max: 6000 })
-  }),
-  { seed: BASE_SEED + 4, numRuns: FUZZ_CASES }
-).map((value, id) => ({
-  ...value,
-  id,
-  terms: value.query.startsWith("Wikipedia")
-    ? ["wikipedia", "encyclopedia"]
-    : ["iana", "domain"]
-}));
-
-interface SubagentCase {
-  readonly id: number;
-  readonly marker: string;
-}
-
-const SUBAGENT_CASES: readonly SubagentCase[] = fc.sample(
-  wordArb.map((word) => ({ marker: `child_${word}` })),
-  { seed: BASE_SEED + 5, numRuns: FUZZ_CASES }
-).map((value, id) => ({ ...value, id }));
-
-interface CustomCase {
-  readonly id: number;
-  readonly text: string;
-  readonly count: number;
-  readonly enabled: boolean;
-  readonly tags: readonly string[];
-  readonly appMode: string;
-}
-
-const CUSTOM_CASES: readonly CustomCase[] = fc.sample(
-  fc.record({
-    text: wordArb,
-    count: fc.integer({ min: 1, max: 4 }),
-    enabled: fc.boolean(),
-    tags: fc.array(wordArb, { minLength: 1, maxLength: 3 }),
-    appMode: wordArb.map((word) => `mode_${word}`)
-  }),
-  { seed: BASE_SEED + 6, numRuns: FUZZ_CASES }
-).map((value, id) => ({ ...value, id }));
 
 interface ToolCall {
   readonly id: string | null;

@@ -8,12 +8,14 @@
  *
  * The CONTROL plane serves a different body at the same path — an
  * `account_token` principal, parsed by `parseAccountWhoAmI`. It is declared here
- * too, and the two are NOT unioned: the harness matches on method and path only,
- * so a suite that talks to both planes needs to know which table it installed.
- * See `testing/response-bindings.ts`.
+ * too, and the two are NOT unioned: unioning them would let a data-plane whoami
+ * pass while carrying a control-plane body. They are kept apart by ORIGIN
+ * instead — `WireResponse` carries the origin it came from, and the harness is
+ * installed with the plane its bindings describe. See
+ * `testing/response-bindings.ts`.
  */
 import * as z from "zod/mini";
-import { BILLING_ADMISSION_STATES } from "../runtime-types.js";
+import { BILLING_ADMISSION_STATES } from "../billing-admission.js";
 import { RUNTIME_KINDS } from "./runtime-kind.js";
 import { RUNTIME_SIZES } from "./runtime-sizes.js";
 import {
@@ -60,7 +62,12 @@ export const RuntimeCapabilitiesSchema = describeResponse(
  * be in arrears — prepaid credit cannot go negative, so there is no dunning
  * state to report. What gates a submit now is the pair
  * (`balanceUsd`, `llmTokenAllowanceRemainingUsd`), and `admissionState` says
- * which of the three card-derived states produced the caps above it.
+ * which of the three card-derived states produced the caps above it. A strict
+ * schema still expecting the retired fields fails C4 against the current server.
+ *
+ * `admissionState` is a CLOSED enum here — unlike an allowance `dimension`, the
+ * three admission states are public contract (`BillingAdmissionState`), not
+ * hosted policy, so the declared union and the wire assertion share one list.
  */
 export const WhoAmILimitsSchema = describeResponse(
   "WhoAmILimits",

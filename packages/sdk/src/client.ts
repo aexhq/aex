@@ -1588,8 +1588,7 @@ export class Aex {
    * Read the workspace billing summary: prepaid `balanceUsd`, current-month
    * `monthSpendUsd`, the enforced `spendCapUsd`, this period's free
    * `allowances`, the `autoTopup` settings and the saved `paymentMethod`. Backed
-   * by `GET /api/billing` (scope `billing:read`). Additive-tolerant: fields a
-   * newer deployment reports pass through on the returned object.
+   * by `GET /api/billing` (scope `billing:read`).
    */
   billing(): Promise<BillingSummary> {
     return operations.getBilling(this.#http);

@@ -41,8 +41,8 @@ const SUMMARY = {
   spendCapUsd: 50,
   period: "2026-07",
   admissionState: "carded_manual" as const,
-  accountType: "standard",
-  paymentMethodStatus: "active",
+  accountType: "standard" as const,
+  paymentMethodStatus: "active" as const,
   autoTopupEnabled: false,
   blocked: null,
   paymentMethod: { present: true, brand: "visa", last4: "4242" },
@@ -80,16 +80,26 @@ describe("aex.billing", () => {
     expect(calls[0]!.method).toBe("GET");
   });
 
-  it("tolerates additive server fields on the summary (no strict-reject)", async () => {
+  it("passes an undeclared server field through the read without rejecting it", async () => {
+    // `getBilling` does not parse; it hands the decoded body back, so an
+    // undeclared key still arrives at RUN TIME. What changed is that
+    // `BillingSummary` no longer DECLARES that it will: `[key: string]: unknown`
+    // made every undeclared field structurally legal, and that is how
+    // `accountType` went missing from the interface while the server sent it on
+    // every call. Reaching one now takes an explicit widening.
     const summary = { ...SUMMARY, statements: { available: true } };
     const { client } = billingClient(summary);
 
     const result = await client.billing();
 
-    // Unknown additive keys pass through untouched.
     expect(result).toEqual(summary);
     expect(result.paymentMethodStatus).toBe("active");
-    expect(result["statements"]).toEqual({ available: true });
+    expect(result.accountType).toBe("standard");
+    // The double cast IS the proof: with the index signature gone, reaching an
+    // undeclared key is no longer something the type quietly allows.
+    expect((result as unknown as Record<string, unknown>)["statements"]).toEqual({
+      available: true
+    });
   });
 });
 
@@ -134,7 +144,7 @@ describe("aex.billingTopup", () => {
             headers: { "content-type": "application/json", "retry-after": "0" }
           });
         }
-        return json({ url: "https://checkout.stripe.test/session" });
+        return json({ url: "https://billing.stripe.test/session" });
       }
     });
 
@@ -204,9 +214,13 @@ describe("aex.billingLedger", () => {
           amountUsd: 10,
           currency: "USD",
           sessionId: null,
+          // The WS2 cost-attribution tag: sent on every row, `null` for
+          // org-level entries like this top-up. Previously undeclared.
+          workspaceId: null,
           description: "admin top-up",
           createdBy: "admin:ops@example.test",
-          createdAt: "2026-07-01T00:00:00Z"
+          // Raw Data-API text, NOT ISO-8601 — this column is selected unformatted.
+          createdAt: "2026-07-01 00:00:00"
         }
       ]
     };

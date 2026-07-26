@@ -5,12 +5,16 @@ import type { ProviderName } from "./submission.js";
  * aex places things inside the agent container, plus the merged
  * env-var bag delivered via `RUNTIME.env` / `RUNTIME.json`.
  *
- * The hosted API computes a manifest for the session-create response
- * from the validated submission via {@link buildRuntimeManifest} and
- * echoes it on the wire as
- * `Session.runtimeManifest`, so caller code (anyone rendering catalog markdown
- * pre-submission, or resolving aex's in-container path strings) doesn't
- * have to guess.
+ * A manifest is computed from the validated submission via
+ * {@link buildRuntimeManifest}, so caller code (anyone rendering catalog
+ * markdown pre-submission, or resolving aex's in-container path strings)
+ * doesn't have to guess.
+ *
+ * It is NOT on the session wire. `Session.runtimeManifest` was declared and
+ * `publicSessionFromItem` has never emitted one, so every read of it returned
+ * `undefined`; the field is gone rather than left as a promise nothing keeps.
+ * Build the manifest from the submission instead.
+ *
  * The managed runtime materialises the actual `RUNTIME.env` / `RUNTIME.json`
  * files in-container from the same envVars inputs, so the
  * SDK-side view and the in-container view describe the same layout.

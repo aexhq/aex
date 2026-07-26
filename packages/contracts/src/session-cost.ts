@@ -1,77 +1,43 @@
 import type { ProviderName } from "./submission.js";
+import {
+  SESSION_COST_BASIS_STATUSES,
+  SESSION_COST_SUMMARY_STATUSES,
+  SESSION_COST_TELEMETRY_SCHEMA_VERSION,
+  SESSION_USAGE_SAMPLE_METRICS,
+  SESSION_USAGE_SAMPLE_SCHEMA_VERSION,
+  SESSION_USAGE_SAMPLE_SOURCE_TYPES,
+  SESSION_USAGE_SAMPLE_UNITS,
+  type SessionCostBasis,
+  type SessionCostCaptureTelemetry,
+  type SessionCostDurations,
+  type SessionCostFileTelemetry,
+  type SessionCostProviderUsage,
+  type SessionCostProxyTelemetry,
+  type SessionCostRetryTelemetry,
+  type SessionCostSourceSummary,
+  type SessionCostStorageTelemetry,
+  type SessionCostSummaryStatus,
+  type SessionCostTelemetry,
+  type SessionCostTelemetryFromUsageSamplesInput,
+  type SessionCostTelemetryInput,
+  type SessionUsageSample,
+  type SessionUsageSampleInput,
+  type SessionUsageSampleMetric,
+  type SessionUsageSampleSource,
+  type SessionUsageSampleSourceType,
+  type SessionUsageSampleUnit
+} from "./session-cost-types.js";
 
-export const SESSION_COST_TELEMETRY_SCHEMA_VERSION = 1;
-export const SESSION_USAGE_SAMPLE_SCHEMA_VERSION = 1;
+// The vocabulary and record shapes this module builds and validates live in
+// `session-cost-types.js`. Re-exported here so `session-cost.js` — and the root
+// barrel that re-exports it — publish exactly the surface they always did.
+export * from "./session-cost-types.js";
 
-export const SESSION_COST_SUMMARY_STATUSES = [
-  "pending",
-  "partial",
-  "complete",
-  "unavailable",
-  "not_applicable"
-] as const;
-
-export type SessionCostSummaryStatus = (typeof SESSION_COST_SUMMARY_STATUSES)[number];
-
-export const SESSION_USAGE_SAMPLE_UNITS = [
-  "token",
-  "millisecond",
-  "byte",
-  "byte_millisecond",
-  "count",
-  "file",
-  "credit_unit"
-] as const;
-
-export type SessionUsageSampleUnit = (typeof SESSION_USAGE_SAMPLE_UNITS)[number];
-
-export const SESSION_USAGE_SAMPLE_SOURCE_TYPES = [
-  "coordinator-event",
-  "session-event",
-  "usage-ledger",
-  "file-object",
-  "proxy-call",
-  "runtime-job",
-  "provider-session",
-  "storage-accrual",
-  "manual-adjustment"
-] as const;
-
-export type SessionUsageSampleSourceType = (typeof SESSION_USAGE_SAMPLE_SOURCE_TYPES)[number];
-
-export const SESSION_USAGE_SAMPLE_METRICS = [
-  "provider.input_tokens",
-  "provider.output_tokens",
-  "provider.cache_read_input_tokens",
-  "provider.cache_creation_input_tokens",
-  "provider.total_tokens",
-  "runtime.queued_ms",
-  "runtime.active_ms",
-  "runtime.file_capture_ms",
-  "runtime.cleanup_ms",
-  "session.total_ms",
-  "file.discovered_files",
-  "file.captured_files",
-  "file.failed_files",
-  "file.captured_bytes",
-  "retry.runtime_attempts",
-  "retry.provider_poll",
-  "retry.file_capture",
-  "retry.file_upload",
-  "capture.uploaded_files",
-  "capture.failed_files",
-  "capture.total_bytes",
-  "storage.current_bytes",
-  "storage.byte_milliseconds",
-  "proxy.call_count",
-  "proxy.failed_call_count",
-  "proxy.request_bytes",
-  "proxy.response_bytes",
-  "proxy.duration_ms"
-] as const;
-
-export type SessionUsageSampleMetric = (typeof SESSION_USAGE_SAMPLE_METRICS)[number];
-
+/**
+ * The unit each metric is denominated in. Module-private: it is an
+ * implementation detail of {@link buildSessionUsageSample}, which rejects a
+ * sample whose declared unit disagrees with its metric.
+ */
 const SESSION_USAGE_SAMPLE_METRIC_UNITS = {
   "provider.input_tokens": "token",
   "provider.output_tokens": "token",
@@ -102,150 +68,6 @@ const SESSION_USAGE_SAMPLE_METRIC_UNITS = {
   "proxy.response_bytes": "byte",
   "proxy.duration_ms": "millisecond"
 } satisfies Record<SessionUsageSampleMetric, SessionUsageSampleUnit>;
-
-export interface SessionUsageSampleSource {
-  readonly type: SessionUsageSampleSourceType;
-  readonly id: string;
-  readonly observedAt?: string;
-}
-
-export interface SessionUsageSample {
-  readonly schemaVersion: typeof SESSION_USAGE_SAMPLE_SCHEMA_VERSION;
-  readonly sampleId?: string;
-  readonly sessionId?: string;
-  readonly metric: SessionUsageSampleMetric;
-  readonly unit: SessionUsageSampleUnit;
-  readonly quantity: number;
-  readonly source: SessionUsageSampleSource;
-  readonly provider?: ProviderName | string;
-  readonly model?: string;
-  readonly recordedAt?: string;
-}
-
-export type SessionUsageSampleInput = Omit<SessionUsageSample, "schemaVersion" | "unit"> & {
-  readonly unit?: SessionUsageSampleUnit;
-};
-
-export interface SessionCostSourceSummary {
-  readonly sampleCount: number;
-  readonly metrics?: readonly SessionUsageSampleMetric[];
-  readonly sourceTypes?: readonly SessionUsageSampleSourceType[];
-  readonly sourceSampleIds?: readonly string[];
-}
-
-export interface SessionCostDurations {
-  readonly queuedMs?: number;
-  readonly runtimeMs?: number;
-  readonly fileCaptureMs?: number;
-  readonly cleanupMs?: number;
-  readonly totalMs?: number;
-}
-
-export interface SessionCostFileTelemetry {
-  readonly discoveredFiles?: number;
-  readonly capturedFiles?: number;
-  readonly failedFiles?: number;
-  readonly capturedBytes?: number;
-}
-
-export interface SessionCostRetryTelemetry {
-  readonly runtimeAttempts?: number;
-  readonly providerPollRetries?: number;
-  readonly fileCaptureRetries?: number;
-  readonly fileUploadRetries?: number;
-}
-
-export interface SessionCostCaptureTelemetry {
-  readonly attempted: boolean;
-  readonly uploadedFiles?: number;
-  readonly failedFiles?: number;
-  readonly totalBytes?: number;
-  readonly failureReasons?: readonly string[];
-}
-
-export interface SessionCostProviderUsage {
-  readonly provider: ProviderName | string;
-  readonly model?: string;
-  readonly inputTokens?: number;
-  readonly outputTokens?: number;
-  readonly cacheReadInputTokens?: number;
-  readonly cacheCreationInputTokens?: number;
-  readonly totalTokens?: number;
-  readonly sourceEventId?: string;
-  readonly sourceSampleIds?: readonly string[];
-}
-
-export interface SessionCostStorageTelemetry {
-  readonly storedBytes?: number;
-  /** Number of files retained in the checkpoint snapshot. */
-  readonly storedFiles?: number;
-  readonly byteMilliseconds?: number;
-}
-
-export interface SessionCostProxyTelemetry {
-  readonly calls?: number;
-  readonly failedCalls?: number;
-  readonly requestBytes?: number;
-  readonly responseBytes?: number;
-  readonly durationMs?: number;
-}
-
-/**
- * The basis for a {@link SessionCostTelemetry.billedCostUsd}: an honest marker of
- * whether the figure is a RUN-terminal ESTIMATE or has been RECONCILED against
- * authoritative actuals. Deliberately carries NO rate-card version or unit
- * rates — the platform's public-safe convention treats `rateCard`/`margin` as
- * private tokens (session-cost.test.ts privateCostFieldPattern), so the version the
- * figure was derived under stays internal (recorded only in the platform's
- * internal raw-usage export).
- */
-export const SESSION_COST_BASIS_STATUSES = ["estimated", "reconciled"] as const;
-export type SessionCostBasisStatus = (typeof SESSION_COST_BASIS_STATUSES)[number];
-
-export interface SessionCostBasis {
-  readonly currency: "USD";
-  readonly status: SessionCostBasisStatus;
-}
-
-export interface SessionCostTelemetry {
-  readonly schemaVersion: typeof SESSION_COST_TELEMETRY_SCHEMA_VERSION;
-  readonly sessionId?: string;
-  readonly provider?: ProviderName | string;
-  readonly recordedAt?: string;
-  readonly status?: SessionCostSummaryStatus;
-  readonly sourceSummary?: SessionCostSourceSummary;
-  readonly durations?: SessionCostDurations;
-  readonly files?: SessionCostFileTelemetry;
-  readonly retries?: SessionCostRetryTelemetry;
-  readonly capture?: SessionCostCaptureTelemetry;
-  readonly providerUsage?: readonly SessionCostProviderUsage[];
-  readonly storage?: SessionCostStorageTelemetry;
-  readonly proxy?: SessionCostProxyTelemetry;
-  /**
-   * Customer-facing AEX cost of serving this session, USD — a REPORTED ESTIMATE,
-   * not a charge (telemetry/showback only; no invoicing or credit deduction).
-   * = rawCostUsd × marginMultiplier (margin currently a global 1.0). INCLUDES
-   * the run's managed-gateway model tokens, which aex serves on its own key and
-   * bills as a usage dimension. The raw (pre-margin) figure is kept
-   * internal and never appears on this public-safe shape. A plain number, so it
-   * passes the session-record public-safe archive scan. Absent when the session incurred
-   * no priced AEX usage.
-   */
-  readonly billedCostUsd?: number;
-  /** Currency + estimate/reconciled basis for {@link billedCostUsd}. */
-  readonly costBasis?: SessionCostBasis;
-}
-
-export type SessionCostTelemetryInput = Omit<SessionCostTelemetry, "schemaVersion">;
-
-export interface SessionCostTelemetryFromUsageSamplesInput {
-  readonly sessionId?: string;
-  readonly provider?: ProviderName | string;
-  readonly recordedAt?: string;
-  readonly status?: SessionCostSummaryStatus;
-  readonly samples: readonly SessionUsageSampleInput[];
-}
-
 type MutableSessionCostTelemetryInput = {
   -readonly [K in keyof SessionCostTelemetryInput]?: SessionCostTelemetryInput[K]
 };
@@ -306,7 +128,27 @@ export function buildSessionCostTelemetry(input: SessionCostTelemetryInput): Ses
     ...(input.storage ? { storage: normalizeStorage(input.storage) } : {}),
     ...(input.proxy ? { proxy: normalizeProxy(input.proxy) } : {}),
     ...(input.billedCostUsd !== undefined ? { billedCostUsd: nonNegativeFinite(input.billedCostUsd, "billedCostUsd") } : {}),
-    ...(input.costBasis ? { costBasis: normalizeCostBasis(input.costBasis) } : {})
+    ...(input.costBasis ? { costBasis: normalizeCostBasis(input.costBasis) } : {}),
+    // The settle-written half. Carried through rather than dropped: a declared
+    // field this builder silently discards is worse than an undeclared one,
+    // because the loss is invisible at the call site.
+    ...(input.basis ? { basis: nonEmptyString(input.basis, "basis") } : {}),
+    ...(input.durationMs !== undefined ? { durationMs: nonNegativeFinite(input.durationMs, "durationMs") } : {}),
+    ...(input.turnSeq !== undefined ? { turnSeq: nonNegativeFinite(input.turnSeq, "turnSeq") } : {}),
+    ...(input.runtimeSize ? { runtimeSize: nonEmptyString(input.runtimeSize, "runtimeSize") } : {}),
+    ...(input.runtimeKind ? { runtimeKind: nonEmptyString(input.runtimeKind, "runtimeKind") } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.usage ? { usage: Object.freeze({ ...input.usage }) } : {}),
+    ...(input.byteCounts ? { byteCounts: Object.freeze({ ...input.byteCounts }) } : {}),
+    ...(input.childCostUsd !== undefined
+      ? { childCostUsd: nonNegativeFinite(input.childCostUsd, "childCostUsd") }
+      : {}),
+    ...(input.childSessionCount !== undefined
+      ? { childSessionCount: nonNegativeFinite(input.childSessionCount, "childSessionCount") }
+      : {}),
+    ...(input.childProviderUsage
+      ? { childProviderUsage: input.childProviderUsage.map(normalizeProviderUsage) }
+      : {})
   });
 }
 
@@ -474,6 +316,21 @@ export function mergeSessionCostTelemetry(
   // not additive metrics.
   const billedCostUsd = patch.billedCostUsd ?? base.billedCostUsd;
   const costBasis = patch.costBasis ?? base.costBasis;
+  // The settle-written half is DESCRIPTIVE of one settle (which basis, which
+  // turn, which box, what the manifest counted), not additive across turns, so
+  // it is last-writer-wins like the derived cost fields above. `childCostUsd` /
+  // `childSessionCount` are already rollups over the whole child set.
+  const basis = patch.basis ?? base.basis;
+  const durationMs = patch.durationMs ?? base.durationMs;
+  const turnSeq = patch.turnSeq ?? base.turnSeq;
+  const runtimeSize = patch.runtimeSize ?? base.runtimeSize;
+  const runtimeKind = patch.runtimeKind ?? base.runtimeKind;
+  const model = patch.model ?? base.model;
+  const usage = patch.usage ?? base.usage;
+  const byteCounts = patch.byteCounts ?? base.byteCounts;
+  const childCostUsd = patch.childCostUsd ?? base.childCostUsd;
+  const childSessionCount = patch.childSessionCount ?? base.childSessionCount;
+  const childProviderUsage = [...(base.childProviderUsage ?? []), ...(patch.childProviderUsage ?? [])];
   if (sessionId) merged.sessionId = sessionId;
   if (provider) merged.provider = provider;
   if (recordedAt) merged.recordedAt = recordedAt;
@@ -488,6 +345,17 @@ export function mergeSessionCostTelemetry(
   if (proxy) merged.proxy = proxy;
   if (billedCostUsd !== undefined) merged.billedCostUsd = billedCostUsd;
   if (costBasis) merged.costBasis = costBasis;
+  if (basis) merged.basis = basis;
+  if (durationMs !== undefined) merged.durationMs = durationMs;
+  if (turnSeq !== undefined) merged.turnSeq = turnSeq;
+  if (runtimeSize) merged.runtimeSize = runtimeSize;
+  if (runtimeKind) merged.runtimeKind = runtimeKind;
+  if (model) merged.model = model;
+  if (usage) merged.usage = usage;
+  if (byteCounts) merged.byteCounts = byteCounts;
+  if (childCostUsd !== undefined) merged.childCostUsd = childCostUsd;
+  if (childSessionCount !== undefined) merged.childSessionCount = childSessionCount;
+  if (childProviderUsage.length > 0) merged.childProviderUsage = childProviderUsage;
   return buildSessionCostTelemetry(merged);
 }
 

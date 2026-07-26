@@ -142,10 +142,15 @@ export const WorkspaceInstructionPageResponseSchema = describeResponse(
  * answers 200 with every counter at zero, indistinguishable from erasing an
  * empty one.
  *
- * There is no declared client type for this response — `deleteWorkspace()` in
+ * This response had no declared client type — `deleteWorkspace()` in
  * `operations.ts` targets the CONTROL plane's `DELETE /api/workspaces/{id}` and
  * returns `void`. Same method, same path pattern, different plane; see the
- * plane-collision note in `testing/response-bindings.ts`.
+ * plane-collision note in `testing/response-bindings.ts`. `WorkspaceEraseResult`
+ * in `runtime-types.ts` is now `z.infer`red from the schema below, and names the
+ * distinction so the two routes are no longer one undifferentiated `void`.
+ *
+ * `workspaceId` here is the RAW id, not the public `wsp_<hex>` form `whoami` and
+ * the MCP-server records carry.
  */
 export const WorkspaceEraseResponseSchema = describeResponse(
   "WorkspaceEraseResponse",

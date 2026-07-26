@@ -1,8 +1,7 @@
 /**
  * `aex billing` — GET /api/billing. Prints the workspace prepaid balance,
  * current-month spend, spend cap, auto-recharge state and the free monthly
- * allowances human-readably; `--json` emits the raw wire body (which may carry
- * additive server fields) for scripting.
+ * allowances human-readably; `--json` emits the raw wire body for scripting.
  *
  * `aex billing ledger [--limit N]` — GET /api/billing/ledger. Prints the recent
  * credit-ledger rows (newest first) as JSON, matching the other read verbs.
@@ -12,8 +11,10 @@
  * `aex billing autotopup` sets auto-recharge. `aex billing portal` opens the
  * hosted billing portal.
  *
- * There is no `upgrade` verb: card presence is the only lever and there is no
- * plan to move between.
+ * There is no `upgrade` verb. It drove POST /api/billing/checkout, a route the
+ * plan-catalog demolition removed server-side; card presence is the only lever
+ * now and there is no plan to move between, so a verb that can only 404 is not a
+ * surface worth keeping.
  */
 import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";

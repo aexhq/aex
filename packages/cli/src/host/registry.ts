@@ -170,14 +170,13 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   },
   {
     name: "billing",
-    summary: "Show balance / spend / cap; ledger, upgrade, and portal sub-verbs.",
+    summary: "Show balance / spend / cap; ledger and portal sub-verbs.",
     usage: [
       "aex billing [--json]",
       "aex billing ledger [--limit N]",
-      "aex billing upgrade pro|team",
       "aex billing portal"
     ],
-    subverbs: ["ledger", "upgrade", "portal"]
+    subverbs: ["ledger", "portal"]
   },
   {
     name: "webhooks",

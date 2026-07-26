@@ -398,6 +398,78 @@
         }
       }
     },
+    "/api/billing/statements": {
+      "get": {
+        "operationId": "billing.statements",
+        "summary": "billing.statements",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/statements/{statementId}": {
+      "get": {
+        "operationId": "billing.statement",
+        "summary": "billing.statement",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "statementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/billing/topup/checkout": {
       "post": {
         "operationId": "billing.topupCheckout",
