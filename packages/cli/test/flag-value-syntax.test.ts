@@ -35,6 +35,10 @@ const SINGLE_VALUE_FLAGS = [
   "--limit",
   "--since",
   "--return-url",
+  "--success-url",
+  "--cancel-url",
+  "--threshold",
+  "--amount",
   "--email",
   "--role",
   "--org"

@@ -11,12 +11,12 @@ export function canonicalWhoami(workspaceId: string, scopes: readonly string[] =
       monthSpendUsd: 0,
       balanceUsd: 0,
       balanceGraceFloorUsd: 0,
-      balanceGateActive: true,
+      llmTokenAllowanceRemainingUsd: 2,
+      creditGateActive: true,
       paymentMethodStatus: "none" as const,
-      planKey: "free" as const,
-      accountType: "standard" as const,
-      subscriptionStatus: "none" as const,
-      subscriptionGate: "ok" as const
+      admissionState: "free" as const,
+      autoTopupEnabled: false,
+      accountType: "standard" as const
     }
   };
 }

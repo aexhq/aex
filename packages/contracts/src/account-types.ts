@@ -39,6 +39,7 @@ import type {
   ChildFinalizeResponseSchema,
   ChildResultResponseSchema
 } from "./schemas/response-sessions-internal.js";
+import type { BillingAdmissionState } from "./billing-admission.js";
 
 /**
  * Wire-level record for a workspace secret as returned by the BFF.
@@ -66,14 +67,86 @@ export interface SecretRecord {
 }
 
 /**
+ * One free monthly allowance, as reported by `GET /api/billing`.
+ *
+ * `dimension`, `unit` and `label` are OPEN strings on purpose. The quantities a
+ * free allowance is denominated in, and what each one is worth, are hosted
+ * billing policy; this contract states the SHAPE the server reports them in so a
+ * client can render the panel without keeping a second copy of the numbers. A
+ * closed union here would be exactly the duplication the prepaid model removed.
+ * Contrast `admissionState`, which IS a closed union — three states, public
+ * contract, not policy.
+ */
+export interface BillingAllowance {
+  /** Server-owned dimension key, e.g. `llm_token_usd`. */
+  readonly dimension: string;
+  /** This period's quota, counted in {@link unit}. */
+  readonly quota: number;
+  readonly used: number;
+  readonly remaining: number;
+  /** What the quota counts, e.g. `GB`, `calls`, `USD`. */
+  readonly unit: string;
+  /** The customer-facing name of the dimension, e.g. `model usage`. */
+  readonly label: string;
+  /** ISO-8601 instant the allowance resets — the start of the next UTC month. */
+  readonly resetAt: string;
+  /**
+   * What the remaining USD buys in tokens, on the workspace's most-used model.
+   * Rides only on the USD-denominated token allowance, and only when there is
+   * usage to infer a model from.
+   */
+  readonly approximateTokens?: {
+    readonly model: string;
+    readonly tokens: number;
+  };
+}
+
+/** Auto-recharge settings plus the guards a top-up form has to respect. */
+export interface BillingAutoTopup {
+  /** Opt-in and OFF by default: a card being on file never enables recharge. */
+  readonly enabled: boolean;
+  /** Balance below which a recharge is triggered. */
+  readonly thresholdUsd: number;
+  /** Amount charged per recharge. */
+  readonly amountUsd: number;
+  /** Smallest accepted top-up; a smaller `amountUsd` is a `400`. */
+  readonly minimumAmountUsd: number;
+  /** Ceiling on successful automatic recharges per rolling 24h. */
+  readonly maxPerDay: number;
+}
+
+/**
+ * The saved card. `present` is authoritative and decides whether top-up and
+ * auto-recharge are reachable at all; `brand`/`last4` are cosmetic and are
+ * `null` when the payment provider could not be reached.
+ */
+export interface BillingPaymentMethod {
+  readonly present: boolean;
+  readonly brand: string | null;
+  readonly last4: string | null;
+}
+
+/** A live block on the organization — new work is refused with `402 account_blocked`. */
+export interface BillingBlock {
+  /** ISO-8601 instant the block was applied. */
+  readonly at: string;
+  readonly reason: string;
+}
+
+/**
  * Customer-facing billing summary — `GET /api/billing` (scope `billing:read`).
  * All money fields are USD numbers.
  *
+ * `planKey`, `subscriptionStatus` and `pastDueAt` are GONE with the catalog they
+ * described. What replaces them is the prepaid surface: the period, the
+ * card-derived {@link admissionState}, the allowance rows, the auto-recharge
+ * block, the saved card, and any live block.
+ *
  * This shape used to carry `[key: string]: unknown` as an "additive server
- * fields pass through" promise. That promise is precisely why `accountType` and
- * `pastDueAt` — both sent unconditionally — went undeclared for as long as they
- * did, and why no conformance check could notice: an index signature makes every
- * undeclared field structurally legal. It is gone; the fields are declared.
+ * fields pass through" promise. That promise is precisely why `accountType` —
+ * sent unconditionally — went undeclared for as long as it did, and why no
+ * conformance check could notice: an index signature makes every undeclared
+ * field structurally legal. It is gone; every field is declared.
  */
 export interface BillingSummary {
   /** Prepaid balance (authoritative ledger sum). */
@@ -82,37 +155,74 @@ export interface BillingSummary {
   readonly monthSpendUsd: number;
   /** Monthly spend cap enforced on new sessions. */
   readonly spendCapUsd: number;
-  /**
-   * The raw `plan_key` column. NOT normalised to the `free | pro | team` union
-   * that `whoami.limits.planKey` is narrowed to — same concept, two types, and
-   * this is the loose one.
-   */
-  readonly planKey: string;
-  readonly subscriptionStatus: "none" | "active" | "past_due" | "canceled";
-  /** `"active"` once a payment method is bound. Aurora-authoritative. */
-  readonly paymentMethodStatus: "none" | "active";
+  /** The UTC allowance period these figures cover, `YYYY-MM`. */
+  readonly period: string;
+  /** What the money gates sized this workspace at. */
+  readonly admissionState: BillingAdmissionState;
   /** `"internal"` marks an account exempt from the standard rate card. */
   readonly accountType: "standard" | "internal";
-  /**
-   * When the subscription entered `past_due`, or `null`.
-   *
-   * **NOT ISO-8601.** This column is selected raw, so it arrives as the Aurora
-   * Data API's text rendering — `"YYYY-MM-DD HH:MM:SS"`, no `T`, no zone. The
-   * SAME concept on `whoami.limits.pastDueAt` IS ISO-8601 with a `Z`, because
-   * that route formats it. Parse accordingly; do not assume one format.
-   */
-  readonly pastDueAt: string | null;
+  /** `"active"` once a payment method is bound. Aurora-authoritative. */
+  readonly paymentMethodStatus: "none" | "active";
+  readonly autoTopupEnabled: boolean;
+  /** `null` when the organization is not blocked. */
+  readonly blocked: BillingBlock | null;
+  readonly paymentMethod: BillingPaymentMethod;
+  readonly autoTopup: BillingAutoTopup;
+  /** One entry per free monthly allowance, in the server's canonical order. */
+  readonly allowances: readonly BillingAllowance[];
 }
 
-/** Self-serve paid plans exposed through hosted checkout. */
-export type BillingCheckoutPlanKey = "pro" | "team";
-
-export interface BillingCheckoutRequest {
-  readonly planKey: BillingCheckoutPlanKey;
+/**
+ * `POST /api/billing/topup/checkout`. One hosted Checkout does card capture,
+ * address/tax collection and the credit purchase; `amountUsd` is rejected below
+ * the server's minimum ({@link BillingAutoTopup.minimumAmountUsd}).
+ */
+export interface BillingTopupCheckoutRequest {
+  readonly amountUsd: number;
   /** Optional return URL after successful hosted checkout. */
   readonly successUrl?: string;
   /** Optional return URL after checkout cancellation. */
   readonly cancelUrl?: string;
+}
+
+/**
+ * `PATCH /api/billing/autotopup`. Every field is optional: an omitted field
+ * keeps its stored value. Enabling requires a saved card, and `thresholdUsd`
+ * must stay strictly below `amountUsd` — a threshold at or above the amount is a
+ * recharge loop.
+ */
+export interface BillingAutoTopupRequest {
+  readonly enabled?: boolean;
+  readonly thresholdUsd?: number;
+  readonly amountUsd?: number;
+}
+
+/** What `PATCH /api/billing/autotopup` echoes back: the stored settings. */
+export interface BillingAutoTopupUpdate {
+  readonly autoTopup: BillingAutoTopup;
+}
+
+/**
+ * One issued monthly statement as listed by `GET /api/billing/statements`.
+ *
+ * Only ISSUED periods are listed: a month the generator withheld because it did
+ * not reconcile is absent rather than rendered on demand.
+ */
+export interface BillingStatementSummary {
+  /** The UTC month the statement covers, `YYYY-MM`. */
+  readonly period: string;
+  /** ISO-8601 instant the statement was issued. */
+  readonly issuedAt: string;
+  readonly openingBalanceUsd: number;
+  readonly creditsPurchasedUsd: number;
+  readonly usageUsd: number;
+  readonly adjustmentsUsd: number;
+  readonly closingBalanceUsd: number;
+}
+
+/** `GET /api/billing/statements` — the months a customer can download, newest first. */
+export interface BillingStatementList {
+  readonly statements: readonly BillingStatementSummary[];
 }
 
 export interface BillingPortalRequest {
@@ -156,7 +266,10 @@ export interface BillingLedgerEntry {
   readonly createdBy: string;
   /**
    * **NOT ISO-8601** — selected raw, so it arrives as the Aurora Data API's
-   * `"YYYY-MM-DD HH:MM:SS"` text. See {@link BillingSummary.pastDueAt}.
+   * `"YYYY-MM-DD HH:MM:SS"` text, no `T` and no zone. It is the last such field
+   * on this surface; every other billing timestamp ({@link BillingAllowance.resetAt},
+   * {@link BillingBlock.at}, {@link BillingStatementSummary.issuedAt}) is
+   * constructed by its handler and IS ISO-8601 with a `Z`.
    */
   readonly createdAt: string;
 }

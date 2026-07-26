@@ -507,6 +507,21 @@ export function createRedactingStream(known: Iterable<string> = []): Transform {
   });
 }
 
+/**
+ * Wire keys that contain a secret-looking word but name a QUANTITY, not a
+ * credential. Same argument as the canonical-session-id exemption above: masking
+ * them destroys the one number the message exists to carry, and the value grants
+ * nothing to whoever reads it.
+ *
+ * `llm_token_usd` is the free model-usage allowance dimension. It is the field a
+ * `402 insufficient_credits` body is read for — "$0.00 of $2.00 left this month"
+ * — and the substring `token` in a dimension name is a coincidence of the
+ * metering vocabulary, not a credential. The name is fixed by the hosted
+ * allowance schema, so it cannot be spelled around on the client.
+ */
+const NON_SECRET_KEYS: ReadonlySet<string> = new Set(["llm_token_usd"]);
+
 function isSecretKey(key: string): boolean {
+  if (NON_SECRET_KEYS.has(key)) return false;
   return /(?:api[_-]?key|authorization|token|secret|password|credential)/i.test(key);
 }

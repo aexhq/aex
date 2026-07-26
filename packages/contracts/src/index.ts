@@ -105,6 +105,10 @@ export * from "./sdk-errors.js";
 export * from "./canonical-sha256.js";
 export * from "./session-config.js";
 export * from "./bundle-manifest.js";
+// The admission vocabulary is a LEAF: `runtime-types` (whoami), `account-types`
+// (the billing summary) and both response schemas read it, so none of them owns
+// it. Same shape as `runtime-kind` / `runtime-sizes`.
+export * from "./billing-admission.js";
 export * from "./runtime-types.js";
 // Split out of `runtime-types.js` and re-exported here so the account /
 // workspace-management record types keep the exact root-barrel surface they had
@@ -133,5 +137,6 @@ export * from "./schemas/index.js";
 // The data-plane route table. Declared here rather than in the platform so the
 // spec generator, the platform dispatcher and any future non-TypeScript SDK all
 // read one statement of the HTTP surface. A subpath export is not available:
-// public-contracts-snapshot.mjs asserts the exports map is exactly four entries.
+// public-contracts-snapshot.mjs pins the code entrypoints to a fixed set, and
+// this is not one of them.
 export * from "./api-routes.js";

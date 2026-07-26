@@ -66,6 +66,12 @@ describe("contracts entrypoint boundary", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
+    // `./ids` is the id owner, reachable WITHOUT the root barrel, and it exists
+    // for ONE consumer property: `ids.ts` imports nothing, while this package
+    // gained a `zod` dependency with the contract pipeline — so a bundle whose
+    // premise is zero `node_modules` can mint an id without pulling the barrel
+    // in. A NARROWER surface than the root, not a wider one.
+    //
     // The two `./openapi/*` entries are GENERATED ARTEFACTS, not code
     // entrypoints — the OpenAPI document emitted from the schemas in this
     // package, and the types emitted from that document. They are exported
@@ -75,6 +81,7 @@ describe("contracts entrypoint boundary", () => {
     expect(Object.keys(packageJson.exports ?? {})).toEqual([
       ".",
       "./internal",
+      "./ids",
       "./subagent-runtime",
       "./testing",
       "./openapi/data-plane.json",

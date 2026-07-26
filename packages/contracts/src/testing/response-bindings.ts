@@ -65,8 +65,10 @@ import {
   AdminBillingAccountTypeResponseSchema,
   AdminBillingPaymentMethodResponseSchema,
   AdminBillingTopupResponseSchema,
+  BillingAutoTopupResponseSchema,
   BillingHostedSessionResponseSchema,
   BillingLedgerResponseSchema,
+  BillingStatementListResponseSchema,
   BillingSummaryResponseSchema
 } from "../schemas/response-billing.js";
 import { WhoAmIResponseSchema } from "../schemas/response-identity.js";
@@ -219,7 +221,9 @@ const RESPONSE_SCHEMA_BY_OPERATION: Readonly<Record<string, StandardSchemaV1>> =
   // Billing.
   "billing.get": BillingSummaryResponseSchema,
   "billing.ledger": BillingLedgerResponseSchema,
-  "billing.checkout": BillingHostedSessionResponseSchema,
+  "billing.topupCheckout": BillingHostedSessionResponseSchema,
+  "billing.autoTopup": BillingAutoTopupResponseSchema,
+  "billing.statements": BillingStatementListResponseSchema,
   "billing.portal": BillingHostedSessionResponseSchema,
   "adminBilling.topup": AdminBillingTopupResponseSchema,
   "adminBilling.paymentMethod": AdminBillingPaymentMethodResponseSchema,
@@ -268,6 +272,14 @@ export const ROUTES_WITHOUT_RESPONSE_SCHEMA: readonly UnschemadRoute[] = [
       "Writer-token only, and its 200 body is the platform's journal control-item shape " +
       "(lambda-runtime-contracts), not a shape this package declares. Three of its six ops " +
       "answer 204 with no body."
+  },
+  {
+    name: "billing.statement",
+    reason:
+      "Not always JSON: the single statement is content-negotiated — `application/pdf` and " +
+      "`text/plain` renders of the same document alongside the JSON default — and the JSON " +
+      "body's `document` is the platform's stored render, not a shape this package declares. " +
+      "The LIST at `billing.statements` is plain JSON and IS bound."
   }
 ];
 
@@ -307,6 +319,13 @@ export const ROUTES_OFF_THE_SDK_SEAM: readonly UnschemadRoute[] = [
     reason:
       "No client function exists in `operations.ts`; only the session-scoped " +
       "`sessions.listWebhookDeliveries` has one."
+  },
+  {
+    name: "billing.statements",
+    reason:
+      "No client function exists in `operations.ts`. The descriptor is what makes the route " +
+      "reachable at all — the platform 404s an undeclared path before its handler ladder runs — " +
+      "and the dashboard reaches it directly."
   },
   { name: "adminBilling.topup", reason: "Operator route; no client function in `operations.ts`." },
   {

@@ -305,6 +305,37 @@
         }
       }
     },
+    "/api/billing/autotopup": {
+      "patch": {
+        "operationId": "billing.autoTopup",
+        "summary": "billing.autoTopup",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/billing/ledger": {
       "get": {
         "operationId": "billing.ledger",
@@ -340,6 +371,109 @@
       "post": {
         "operationId": "billing.portal",
         "summary": "billing.portal",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/statements": {
+      "get": {
+        "operationId": "billing.statements",
+        "summary": "billing.statements",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/statements/{statementId}": {
+      "get": {
+        "operationId": "billing.statement",
+        "summary": "billing.statement",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "statementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/topup/checkout": {
+      "post": {
+        "operationId": "billing.topupCheckout",
+        "summary": "billing.topupCheckout",
         "tags": [
           "billing"
         ],

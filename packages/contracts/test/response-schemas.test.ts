@@ -30,6 +30,7 @@ import {
   AdminBillingAccountTypeResponseSchema,
   AdminBillingPaymentMethodResponseSchema,
   AdminBillingTopupResponseSchema,
+  BillingAutoTopupResponseSchema,
   BillingHostedSessionResponseSchema,
   BillingLedgerResponseSchema,
   BillingSummaryResponseSchema
@@ -84,6 +85,7 @@ import {
 } from "../src/schemas/response-workspace.js";
 import {
   TS,
+  billingSummary,
   checkpoint,
   delivery,
   mcpServer,
@@ -572,26 +574,30 @@ const cases: readonly Case[] = [
   {
     name: "billing.get",
     schema: BillingSummaryResponseSchema,
-    accepts: {
-      balanceUsd: 5,
-      admissionState: "free",
-      autoTopupEnabled: false,
-      paymentMethodStatus: "none",
-      accountType: "standard",
-      monthSpendUsd: 1.25,
-      spendCapUsd: 0
-    },
-    // `accountType` is on the wire and NOT on the declared `BillingSummary`.
-    // Its absence is the drift the declared type cannot express.
+    accepts: billingSummary,
+    // The retired catalog envelope. `planKey`/`subscriptionStatus`/`pastDueAt`
+    // describe a subscription that no longer exists, and the prepaid fields that
+    // replaced them are absent — so the whole body is refused, not tolerated.
     rejects: {
       balanceUsd: 5,
-      admissionState: "free",
-      autoTopupEnabled: false,
-      paymentMethodStatus: "none",
       monthSpendUsd: 1.25,
-      spendCapUsd: 0
+      spendCapUsd: 0,
+      planKey: "free",
+      subscriptionStatus: "none",
+      paymentMethodStatus: "none",
+      accountType: "standard",
+      pastDueAt: null
     },
-    because: "accountType"
+    because: "planKey"
+  },
+  {
+    name: "billing.autoTopup",
+    schema: BillingAutoTopupResponseSchema,
+    accepts: { autoTopup: billingSummary.autoTopup },
+    // A settings echo without the guards is a form with no way to know the
+    // minimum it must enforce.
+    rejects: { autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 20 } },
+    because: "minimumAmountUsd"
   },
   {
     name: "billing.ledger",
@@ -629,7 +635,7 @@ const cases: readonly Case[] = [
     because: "amountUsd"
   },
   {
-    name: "billing.checkout / billing.portal",
+    name: "billing.topupCheckout / billing.portal",
     schema: BillingHostedSessionResponseSchema,
     accepts: { url: "https://checkout.stripe.com/c/pay/cs_test" },
     rejects: { url: "https://checkout.stripe.com/c/pay/cs_test", sessionId: "cs_test" },

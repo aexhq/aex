@@ -34,7 +34,8 @@ export const AEX_API_ERROR_CODES = [
   "workspace_submit_rate_exceeded",
   "workspace_spend_cap_exceeded",
   "workspace_cap_exceeded",
-  "insufficient_balance",
+  "insufficient_credits",
+  "account_blocked",
   "subscription_past_due",
   "quota_exhausted",
   "depth_exceeded",
@@ -76,7 +77,9 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   workspace_submit_rate_exceeded: "The workspace submit-rate limit was exceeded.",
   workspace_spend_cap_exceeded: "The workspace monthly spend cap was reached.",
   workspace_cap_exceeded: "The organization has reached its workspace limit.",
-  insufficient_balance: "The workspace prepaid balance is insufficient to submit this session.",
+  insufficient_credits:
+    "The free monthly allowance and the prepaid credit balance are both exhausted.",
+  account_blocked: "The organization is blocked and cannot start new work.",
   subscription_past_due: "The organization's subscription is past due and its grace period has ended.",
   quota_exhausted:
     "The request exceeds the workspace's remaining usage grant and there is no billable path for the overage.",
@@ -103,13 +106,17 @@ export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = 
   event_archive_deadline_exceeded: "Traverse the event history with session.events.iterate().",
   workspace_inactive: "Use an active workspace; a workspace being deleted cannot accept new session work.",
   workspace_spend_cap_exceeded: "Raise the workspace spend cap or wait for the next billing cycle.",
-  insufficient_balance: "Top up the workspace balance or add a payment method.",
+  insufficient_credits:
+    "Top up the prepaid balance, or add a payment method if the organization has none saved.",
+  // Deliberately NOT a top-up prompt: credit does not lift a block, so sending a
+  // blocked customer to the payment form takes their money and changes nothing.
+  account_blocked: "Adding credit does not lift the block — contact support to resolve it.",
   workspace_concurrency_exceeded: "Wait for in-flight sessions to finish or raise the concurrency limit.",
   workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit.",
-  workspace_cap_exceeded: "Delete an unused workspace, or upgrade the organization's plan for a higher workspace limit.",
+  workspace_cap_exceeded: "Delete an unused workspace, or contact support to raise the organization's workspace limit.",
   subscription_past_due: "Settle the outstanding invoice, or update the payment method on the billing page.",
   quota_exhausted:
-    "Upgrade to a paid plan, or — if you are already on one — add a payment method and enable overage to be billed for usage beyond the grant.",
+    "Top up the prepaid balance so usage beyond the free monthly allowance has somewhere to bill.",
   depth_exceeded: "Spawn the subagent from a shallower session, or flatten the lineage.",
   out_of_memory: "Re-run on a larger runtimeSize, or reduce the memory the session holds at once.",
   disk_full: "Re-run on a larger runtimeSize, or write fewer/smaller files inside the session.",

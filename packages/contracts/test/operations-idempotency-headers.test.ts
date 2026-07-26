@@ -112,6 +112,7 @@ describe("lifecycle controls are not advertised as idempotent", () => {
 
 describe("billing mutation identities", () => {
   it.each([
+    ["topup checkout", operations.createBillingTopupCheckout, { amountUsd: 25 }],
     ["portal", operations.createBillingPortal, { returnUrl: "https://aex.dev/billing" }]
   ] as const)("%s sends identity only as a header", async (_name, operation, request) => {
     let seenHeader: string | null = null;
@@ -150,13 +151,43 @@ describe("billing mutation identities", () => {
       }
     });
 
-    await operations.createBillingPortal(capture, { returnUrl: "https://aex.dev/billing" });
+    await operations.createBillingTopupCheckout(capture, { amountUsd: 25 });
     expect(isId("idempotency", seenHeader)).toBe(true);
     await expect(
-      operations.createBillingPortal(capture, { returnUrl: "https://aex.dev/b", idempotencyKey: "legacy" } as never)
+      operations.createBillingTopupCheckout(capture, { amountUsd: 25, idempotencyKey: "legacy" } as never)
     ).rejects.toBeInstanceOf(SessionConfigValidationError);
     await expect(
       operations.createBillingPortal(capture, {}, { idempotencyKey: "x".repeat(256) })
+    ).rejects.toBeInstanceOf(SessionConfigValidationError);
+  });
+
+  it("sends NO idempotency header for the auto-topup PATCH but still refuses a body key", async () => {
+    let seenHeader: string | null = null;
+    let seenMethod: string | undefined;
+    const capture = new HttpClient({
+      apiKey: "t",
+      baseUrl: "https://api.test",
+      fetch: async (_input, init) => {
+        seenHeader = new Headers(init?.headers).get("Idempotency-Key");
+        seenMethod = init?.method;
+        return new Response(
+          JSON.stringify({
+            autoTopup: { enabled: true, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+    });
+
+    // A whole-state PATCH replays to the same row, so there is nothing for a key
+    // to deduplicate and sending one would imply a guarantee the route has not made.
+    const updated = await operations.updateBillingAutoTopup(capture, { enabled: true });
+    expect(seenMethod).toBe("PATCH");
+    expect<string | null>(seenHeader).toBeNull();
+    expect(updated.autoTopup.enabled).toBe(true);
+
+    await expect(
+      operations.updateBillingAutoTopup(capture, { enabled: true, idempotencyKey: "legacy" } as never)
     ).rejects.toBeInstanceOf(SessionConfigValidationError);
   });
 });

@@ -35,27 +35,44 @@ function billingClient(body: unknown): { readonly client: Aex; readonly calls: R
   };
 }
 
+const SUMMARY = {
+  balanceUsd: 12.5,
+  monthSpendUsd: 0.42,
+  spendCapUsd: 50,
+  period: "2026-07",
+  admissionState: "carded_manual" as const,
+  accountType: "standard" as const,
+  paymentMethodStatus: "active" as const,
+  autoTopupEnabled: false,
+  blocked: null,
+  paymentMethod: { present: true, brand: "visa", last4: "4242" },
+  autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 },
+  allowances: [
+    {
+      dimension: "llm_token_usd",
+      quota: 2,
+      used: 0.5,
+      remaining: 1.5,
+      unit: "USD",
+      label: "model usage",
+      resetAt: "2026-08-01T00:00:00.000Z"
+    }
+  ]
+};
+
 describe("aex.billing", () => {
-  it("GETs /api/billing and returns the typed summary", async () => {
-    // Every key the handler sends, unconditionally. `accountType` and
-    // `pastDueAt` were absent from this fixture AND from `BillingSummary` while
-    // the server sent both on every call — the index signature that used to sit
-    // on that interface is what made the omission invisible.
-    const summary = {
-      balanceUsd: 12.5,
-      monthSpendUsd: 0.42,
-      spendCapUsd: 50,
-      planKey: "free",
-      subscriptionStatus: "none",
-      paymentMethodStatus: "none",
-      accountType: "standard",
-      pastDueAt: null
-    } as const;
-    const { client, calls } = billingClient(summary);
+  it("GETs /api/billing and returns the typed prepaid summary", async () => {
+    const { client, calls } = billingClient(SUMMARY);
 
     const result = await client.billing();
 
-    expect(result).toEqual(summary);
+    expect(result).toEqual(SUMMARY);
+    // The prepaid surface, typed without casts.
+    expect(result.admissionState).toBe("carded_manual");
+    expect(result.autoTopup.minimumAmountUsd).toBe(10);
+    expect(result.paymentMethod.last4).toBe("4242");
+    expect(result.allowances[0]!.remaining).toBe(1.5);
+    expect(result.allowances[0]!.unit).toBe("USD");
     expect(calls).toHaveLength(1);
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/api/billing");
@@ -64,44 +81,51 @@ describe("aex.billing", () => {
   });
 
   it("passes an undeclared server field through the read without rejecting it", async () => {
-    // `getBilling` does not parse; it hands the decoded body back. So an
-    // undeclared key still arrives at RUN TIME — what changed is that
-    // `BillingSummary` no longer DECLARES that it will, because
-    // `[key: string]: unknown` made every undeclared field structurally legal
-    // and so made `accountType` / `pastDueAt` impossible to notice missing.
-    // Reaching one now requires an explicit widening, which is the point.
-    const summary = {
-      balanceUsd: 1,
-      monthSpendUsd: 0,
-      spendCapUsd: 10,
-      planKey: "free",
-      subscriptionStatus: "none",
-      paymentMethodStatus: "active",
-      accountType: "internal",
-      pastDueAt: "2026-07-01 12:00:00",
-      plan: { name: "future-field" }
-    } as const;
+    // `getBilling` does not parse; it hands the decoded body back, so an
+    // undeclared key still arrives at RUN TIME. What changed is that
+    // `BillingSummary` no longer DECLARES that it will: `[key: string]: unknown`
+    // made every undeclared field structurally legal, and that is how
+    // `accountType` went missing from the interface while the server sent it on
+    // every call. Reaching one now takes an explicit widening.
+    const summary = { ...SUMMARY, statements: { available: true } };
     const { client } = billingClient(summary);
 
     const result = await client.billing();
 
     expect(result).toEqual(summary);
     expect(result.paymentMethodStatus).toBe("active");
-    expect(result.accountType).toBe("internal");
-    // The raw Data-API rendering, NOT ISO-8601 — the same concept on
-    // `whoami.limits.pastDueAt` carries a `T` and a `Z`.
-    expect(result.pastDueAt).toBe("2026-07-01 12:00:00");
+    expect(result.accountType).toBe("standard");
     // The double cast IS the proof: with the index signature gone, reaching an
     // undeclared key is no longer something the type quietly allows.
-    expect((result as unknown as Record<string, unknown>)["plan"]).toEqual({ name: "future-field" });
+    expect((result as unknown as Record<string, unknown>)["statements"]).toEqual({
+      available: true
+    });
   });
 });
 
-// `aex.billingCheckout` is gone with POST /api/billing/checkout, which the
-// plan-catalog demolition removed server-side. The retry-identity behaviour it
-// used to cover is real and still worth pinning, so it moves to the sibling
-// billing mutation that survives rather than being deleted with the route.
-describe("aex.billingPortal retry identity", () => {
+describe("aex.billingTopup", () => {
+  it("POSTs /api/billing/topup/checkout and returns the hosted URL", async () => {
+    const { client, calls } = billingClient({ url: "https://checkout.stripe.test/session" });
+
+    const result = await client.billingTopup({
+      amountUsd: 25,
+      successUrl: "https://aex.dev/billing?checkout=success",
+      cancelUrl: "https://aex.dev/billing?checkout=cancel"
+    }, { idempotencyKey: "checkout-key" });
+
+    expect(result).toEqual({ url: "https://checkout.stripe.test/session" });
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/api/billing/topup/checkout");
+    expect(calls[0]!.method).toBe("POST");
+    expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({
+      amountUsd: 25,
+      successUrl: "https://aex.dev/billing?checkout=success",
+      cancelUrl: "https://aex.dev/billing?checkout=cancel"
+    });
+    expect(calls[0]!.headers.get("idempotency-key")).toBe("checkout-key");
+  });
+
   it("reuses one generated identity across transport retries", async () => {
     const identities: string[] = [];
     const bodies: unknown[] = [];
@@ -124,15 +148,41 @@ describe("aex.billingPortal retry identity", () => {
       }
     });
 
-    await client.billingPortal({ returnUrl: "https://aex.dev/billing" });
+    // A retried top-up must not become two charges: the identity is generated
+    // ONCE, before the first attempt, and reused verbatim.
+    await client.billingTopup({ amountUsd: 25 });
 
     expect(identities).toHaveLength(2);
     expect(isId("idempotency", identities[0])).toBe(true);
     expect(identities[1]).toBe(identities[0]);
-    expect(bodies).toEqual([
-      { returnUrl: "https://aex.dev/billing" },
-      { returnUrl: "https://aex.dev/billing" }
-    ]);
+    expect(bodies).toEqual([{ amountUsd: 25 }, { amountUsd: 25 }]);
+  });
+});
+
+describe("aex.billingAutoTopup", () => {
+  it("PATCHes /api/billing/autotopup with only the fields given", async () => {
+    const autoTopup = { enabled: true, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 };
+    const { client, calls } = billingClient({ autoTopup });
+
+    const result = await client.billingAutoTopup({ enabled: true, thresholdUsd: 5, amountUsd: 20 });
+
+    expect(result.autoTopup).toEqual(autoTopup);
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/api/billing/autotopup");
+    expect(calls[0]!.method).toBe("PATCH");
+    expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ enabled: true, thresholdUsd: 5, amountUsd: 20 });
+  });
+
+  it("sends a partial update verbatim — an omitted field keeps its stored value", async () => {
+    const { client, calls } = billingClient({
+      autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 50, minimumAmountUsd: 10, maxPerDay: 4 }
+    });
+
+    await client.billingAutoTopup({ amountUsd: 50 });
+
+    // Filling in `enabled: false` here would switch auto-recharge OFF for anyone
+    // who only wanted to change the amount.
+    expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ amountUsd: 50 });
   });
 });
 

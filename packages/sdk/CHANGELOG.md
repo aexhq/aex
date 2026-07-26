@@ -4,6 +4,72 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## Unreleased
+
+Prepaid billing. The free/pro/team subscription catalog is gone: a card is
+optional, every workspace gets per-dimension free allowances that reset each UTC
+month, and past those you spend prepaid credit. There is no plan to be on.
+
+### Changed (BREAKING)
+
+- **`402 insufficient_balance` → `402 insufficient_credits`.** The code names
+  what is actually exhausted: the free monthly allowance *and* the prepaid
+  balance. The body gains `admissionState`, `exhaustedDimension`, an
+  `allowanceRemaining` map covering every dimension, and a remedy sentence in
+  `message`, so a client can render the whole allowance panel instead of
+  reprinting a bare code. `apiCode === "insufficient_balance"` never matches
+  again — branch on `insufficient_credits`.
+- **`GET /billing` (`aex.billing()`) drops `planKey`, `subscriptionStatus` and
+  `pastDueAt`.** It now reports `period`, `admissionState`, `allowances[]`
+  (`dimension` / `quota` / `used` / `remaining` / `unit` / `label` / `resetAt`),
+  `autoTopup`, `paymentMethod` and `blocked`. New types: `BillingAllowance`,
+  `BillingAutoTopup`, `BillingPaymentMethod`, `BillingBlock`.
+- **`whoami().limits` drops `planKey`, `subscriptionStatus`, `subscriptionGate`,
+  `pastDueAt` and `graceEndsAt`; `balanceGateActive` is renamed
+  `creditGateActive`.** It gains `llmTokenAllowanceRemainingUsd` (the other half
+  of the credit predicate — a submit is admitted while either it or `balanceUsd`
+  is positive), `admissionState` and `autoTopupEnabled`. The parser REJECTS the
+  old envelope rather than tolerating it: there is no plan left to report, so a
+  body still carrying one comes from a deployment this SDK cannot read.
+- **`aex.billingCheckout({ planKey })` → `aex.billingTopup({ amountUsd })`**,
+  backed by `POST /billing/topup/checkout`. One hosted Checkout captures the
+  card, collects tax and buys the credit. The server rejects an amount below its
+  published minimum (`billing().autoTopup.minimumAmountUsd`).
+- **CLI `aex billing upgrade pro|team` → `aex billing topup <amountUsd>`.**
+  `aex billing` prints the allowance table and auto-recharge state instead of a
+  plan line.
+- **`BillingCheckoutPlanKey` and `BillingCheckoutRequest` are removed**, replaced
+  by `BillingTopupCheckoutRequest`.
+
+### Added
+
+- **`aex.billingAutoTopup({ enabled?, thresholdUsd?, amountUsd? })`** —
+  `PATCH /billing/autotopup`. Auto-recharge is **opt-in and off by default**; a
+  saved card never enables it on its own. Omitted fields keep their stored value,
+  and `thresholdUsd` must stay strictly below `amountUsd`. CLI:
+  `aex billing autotopup [--enable|--disable] [--threshold N] [--amount N]`.
+- **`402 account_blocked`** — a chargeback or dispute block. Deliberately NOT a
+  flavour of `insufficient_credits`: buying credit does not lift a block, so its
+  remedy points at support rather than at the payment form.
+- **`BillingAdmissionState`** — `"free"` | `"carded_manual"` | `"carded_auto"`,
+  reported by both `whoami().limits` and `billing()`.
+
+### Fixed
+
+- `redactSecrets` no longer masks the `llm_token_usd` allowance value. The
+  key-name heuristic matched `token` inside a metering dimension, which turned
+  the one figure a `402 insufficient_credits` body exists to carry into
+  `"[REDACTED]"`.
+
+### Migration
+
+Replace `aex.billingCheckout({ planKey: "pro" })` with
+`aex.billingTopup({ amountUsd: 25 })`, and any
+`err.apiCode === "insufficient_balance"` check with `"insufficient_credits"` —
+handling `"account_blocked"` separately, since credit does not clear it. Read
+account state from `whoami().limits.admissionState` and remaining free allowance
+from `billing().allowances` rather than from `planKey`.
+
 ## 1.0.0
 
 Managed Vercel AI Gateway model access. Customers no longer supply provider API

@@ -25,6 +25,22 @@ const LIMITS: WhoAmI["limits"] = {
   monthSpendUsd: 12.5,
   balanceUsd: 100,
   balanceGraceFloorUsd: 0,
+  llmTokenAllowanceRemainingUsd: 2,
+  creditGateActive: true,
+  paymentMethodStatus: "none",
+  admissionState: "free",
+  autoTopupEnabled: false,
+  accountType: "standard"
+};
+
+/** The pre-prepaid envelope. Nothing serves it any more; nothing may parse it. */
+const RETIRED_PLAN_LIMITS = {
+  maxConcurrentSessions: 50,
+  submitRatePerMinute: 120,
+  spendCapUsd: 250,
+  monthSpendUsd: 12.5,
+  balanceUsd: 100,
+  balanceGraceFloorUsd: 0,
   balanceGateActive: true,
   paymentMethodStatus: "none",
   planKey: "free",
@@ -152,6 +168,44 @@ describe("whoami limits typing", () => {
     { ok: true, workspaceId: "ws_1", scopes: [], limits: LIMITS }
   ])("rejects incomplete or legacy identity envelopes", async (body) => {
     await expect(whoami(clientReturning(body))).rejects.toThrow();
+  });
+
+  it("rejects the retired plan/subscription limits envelope outright", async () => {
+    // A deliberate breaking cut, not a widening: there is no plan catalog left to
+    // report, so a body still carrying one is a deployment this SDK cannot read.
+    await expect(whoami(clientReturning({
+      ok: true,
+      principalType: "api_key",
+      workspaceId: "ws_1",
+      scopes: ["sessions:read"],
+      limits: RETIRED_PLAN_LIMITS
+    }))).rejects.toThrow(/llmTokenAllowanceRemainingUsd/);
+  });
+
+  it.each([
+    "llmTokenAllowanceRemainingUsd",
+    "creditGateActive",
+    "autoTopupEnabled",
+    "admissionState"
+  ] as const)("requires limits.%s", async (field) => {
+    const { [field]: _dropped, ...partial } = LIMITS;
+    await expect(whoami(clientReturning({
+      ok: true,
+      principalType: "api_key",
+      workspaceId: "ws_1",
+      scopes: ["sessions:read"],
+      limits: partial
+    }))).rejects.toThrow(new RegExp(field));
+  });
+
+  it("rejects an admission state outside the card-derived vocabulary", async () => {
+    await expect(whoami(clientReturning({
+      ok: true,
+      principalType: "api_key",
+      workspaceId: "ws_1",
+      scopes: ["sessions:read"],
+      limits: { ...LIMITS, admissionState: "pro" }
+    }))).rejects.toThrow(/limits\.admissionState is invalid/);
   });
 
   it("rejects malformed known limit fields even alongside additive metadata", async () => {

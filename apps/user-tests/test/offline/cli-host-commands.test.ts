@@ -47,6 +47,32 @@ function bytes(res: ServerResponse, status: number, body: Uint8Array, contentTyp
   res.writeHead(status, { "content-type": contentType });
   res.end(body);
 }
+/** A `GET /api/billing` body in the prepaid shape the packed CLI renders. */
+const BILLING_SUMMARY = {
+  balanceUsd: 25,
+  monthSpendUsd: 1.5,
+  spendCapUsd: 100,
+  period: "2026-07",
+  admissionState: "carded_manual",
+  accountType: "standard",
+  paymentMethodStatus: "active",
+  autoTopupEnabled: false,
+  blocked: null,
+  paymentMethod: { present: true, brand: "visa", last4: "4242" },
+  autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 },
+  allowances: [
+    {
+      dimension: "llm_token_usd",
+      quota: 2,
+      used: 0.5,
+      remaining: 1.5,
+      unit: "USD",
+      label: "model usage",
+      resetAt: "2026-08-01T00:00:00.000Z"
+    }
+  ]
+};
+
 async function startFakeApi(): Promise<FakeApi> {
   const requests: CapturedRequest[] = [];
   let statusPolls = 0;
@@ -164,13 +190,7 @@ async function startFakeApi(): Promise<FakeApi> {
     }
     // --- workspace billing + webhook signing secret reads ---
     if (req.method === "GET" && url.pathname === "/api/billing") {
-      json(res, 200, {
-        balanceUsd: 25,
-        monthSpendUsd: 1.5,
-        spendCapUsd: 100,
-        planKey: "free",
-        subscriptionStatus: "none"
-      });
+      json(res, 200, BILLING_SUMMARY);
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/billing/ledger") {
@@ -471,18 +491,14 @@ describe("installed CLI host commands", () => {
     expect(billing.stdout).toContain("$25.00");
     expect(billing.stdout).toContain("$1.50");
     expect(billing.stdout).toContain("$100.00");
+    expect(billing.stdout).toContain("Allowances (2026-07)");
+    expect(billing.stdout).toContain("model usage");
     const billingJson = await runCommand(binPath, ["billing", "--json", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(billingJson.exitCode, `stdout:\n${billingJson.stdout}\nstderr:\n${billingJson.stderr}`).toBe(0);
-    expect(JSON.parse(billingJson.stdout.trim())).toEqual({
-      balanceUsd: 25,
-      monthSpendUsd: 1.5,
-      spendCapUsd: 100,
-      planKey: "free",
-      subscriptionStatus: "none"
-    });
+    expect(JSON.parse(billingJson.stdout.trim())).toEqual(BILLING_SUMMARY);
     const ledger = await runCommand(binPath, ["billing", "ledger", "--limit", "10", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000

@@ -22,6 +22,11 @@
       "import": "./dist/internal.js",
       "default": "./dist/internal.js"
     },
+    "./ids": {
+      "types": "./dist/ids.d.ts",
+      "import": "./dist/ids.js",
+      "default": "./dist/ids.js"
+    },
     "./subagent-runtime": {
       "types": "./dist/subagent-runtime.d.ts",
       "import": "./dist/subagent-runtime.js",

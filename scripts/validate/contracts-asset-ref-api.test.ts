@@ -113,11 +113,18 @@ describe("generated AssetRef public API", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(repoRoot, "packages/contracts/package.json"), "utf8")
     ) as { readonly exports?: Readonly<Record<string, unknown>> };
+    // The same list `packages/contracts/test/public-entrypoints.test.ts` asserts,
+    // which carries the reasoning per entry: `./ids` is the barrel-free id owner a
+    // zero-`node_modules` bundle needs, and the two `./openapi/*` entries are
+    // generated artefacts rather than code entrypoints.
     expect(Object.keys(packageJson.exports ?? {})).toEqual([
       ".",
       "./internal",
+      "./ids",
       "./subagent-runtime",
-      "./testing"
+      "./testing",
+      "./openapi/data-plane.json",
+      "./openapi/data-plane"
     ]);
   });
 });

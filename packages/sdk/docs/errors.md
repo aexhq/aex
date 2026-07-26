@@ -22,7 +22,7 @@ factory dispatches to a subclass by code/status:
 | `AexIdempotencyConflictError` | `409` `idempotency_conflict` | — |
 | `AexNotFoundError` | `404` `not_found` | — |
 | `AexRateLimitError` | `429` (rate_limited, workspace_concurrency_exceeded, workspace_submit_rate_exceeded) | `retryAfterMs` (when advertised) |
-| `AexApiError` (base) | every other stable code (session_busy, checkpoint_not_available, session_not_terminal, session_terminal, event_archive_too_large, event_archive_deadline_exceeded, workspace_inactive, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
+| `AexApiError` (base) | every other stable code (session_busy, checkpoint_not_available, session_not_terminal, session_terminal, event_archive_too_large, event_archive_deadline_exceeded, workspace_inactive, insufficient_credits, account_blocked, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
 
 Branch with the exported guards instead of parsing bodies or matching status
 codes: `isAuthError`, `isInsufficientScope`, `isIdempotencyConflict`,
@@ -48,8 +48,8 @@ The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
 `session_busy`, `checkpoint_not_available`, `session_not_terminal`, `session_terminal`,
 `event_archive_too_large`, `event_archive_deadline_exceeded`, `unknown_workspace`,
 `workspace_inactive`, `workspace_concurrency_exceeded`, `workspace_submit_rate_exceeded`,
-`workspace_spend_cap_exceeded`, `insufficient_balance`, `rate_limited`,
-`upstream_error`, `internal_error`. A code outside this set (e.g. a validation
+`workspace_spend_cap_exceeded`, `insufficient_credits`, `account_blocked`,
+`rate_limited`, `upstream_error`, `internal_error`. A code outside this set (e.g. a validation
 `error` a route reports) still surfaces as an `AexApiError` with the `status` and
 `body.error` preserved; `apiCode` is then `undefined`.
 
@@ -115,25 +115,44 @@ these before the request is sent.
 
 ## 402 — payment required
 
-Two distinct submit gates return 402; both bodies are self-describing.
+Three distinct submit gates return 402; every body is self-describing.
 
-**`insufficient_balance`** — the workspace prepaid balance is at or below the
-effective submit floor. Top up the balance or bind a payment method.
+**`insufficient_credits`** — the free model-usage allowance for this UTC month
+AND the prepaid balance are both empty. A submit is admitted while either one is
+positive, so this fires only when both are gone.
 
 ```json
 {
-  "error": "insufficient_balance",
-  "message": "Workspace balance is depleted; top up your prepaid balance or bind a payment method to submit sessions.",
+  "error": "insufficient_credits",
+  "message": "Free model-usage allowance exhausted ($0.00 of $2.00 left this month) and the prepaid balance is $0.00. Add a payment method and buy credits to continue running.",
   "balanceUsd": 0,
   "balanceGraceFloorUsd": 0,
   "paymentMethodStatus": "none",
-  "planKey": "default"
+  "admissionState": "free",
+  "exhaustedDimension": "llm_token_usd",
+  "allowanceRemaining": { "llm_token_usd": 0, "egress_gb": 4.2, "web_search_calls": 36 }
 }
 ```
 
-`balanceGraceFloorUsd` is the payment-method-aware floor the gate compared
-against (`paymentMethodStatus: "active"` folds a bounded card overdraft into
-it, so the floor can be negative).
+`allowanceRemaining` covers **every** dimension, not just the exhausted one, so
+a client can render the whole allowance panel from the error alone.
+`admissionState` (`free` / `carded_manual` / `carded_auto`) is what the remedy in
+`message` follows: add a card, top up, or find out why the automatic recharge did
+not land.
+
+**`account_blocked`** — the organization is blocked (for example a disputed
+payment under review). This is a **separate code on purpose**: buying credit does
+not lift a block, so a client must not offer a top-up here.
+
+```json
+{
+  "error": "account_blocked",
+  "message": "This organization cannot start new work because a disputed payment is under review (blocked 2026-07-24). Adding credit will not restore access — contact support to resolve it.",
+  "reason": "dispute",
+  "blockedAt": "2026-07-24T09:00:00.000Z",
+  "admissionState": "carded_manual"
+}
+```
 
 **`workspace_spend_cap_exceeded`** — the workspace's monthly spend cap is
 reached. The cap resets at the start of the next UTC month; contact support to

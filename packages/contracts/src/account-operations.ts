@@ -20,11 +20,14 @@ import { isRecord } from "./value-guards.js";
 import { configError, resolveIdempotencyKey, type IdempotencyOptions } from "./operation-core.js";
 import type {
   ApiKeyRecord,
+  BillingAutoTopupRequest,
+  BillingAutoTopupUpdate,
   BillingHostedSession,
   BillingLedgerPage,
   BillingLedgerQuery,
   BillingPortalRequest,
   BillingSummary,
+  BillingTopupCheckoutRequest,
   CreateApiKeyRequest,
   CreateOrgInviteRequest,
   CreateOrgRequest,
@@ -41,23 +44,65 @@ import type {
 
 /**
  * Read the workspace billing summary (`GET /api/billing`, scope `billing:read`):
- * prepaid balance, current-month spend, spend cap, and plan fields. The result
- * is additive-tolerant — server fields this SDK does not know yet pass through.
+ * prepaid balance, current-month spend, spend cap, the free monthly allowances,
+ * auto-recharge settings and the saved card.
  */
 export async function getBilling(http: HttpClient): Promise<BillingSummary> {
   return http.request<BillingSummary>("/api/billing");
 }
 
-function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOptions): string {
+function rejectBodyIdempotencyKey(request: unknown): void {
   if (isRecord(request) && Object.prototype.hasOwnProperty.call(request, "idempotencyKey")) {
     throw configError(
       "idempotencyKey",
       "billing idempotencyKey belongs in the second options argument, not the request body"
     );
   }
+}
+
+function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOptions): string {
+  rejectBodyIdempotencyKey(request);
   const idempotencyKey = resolveIdempotencyKey(options?.idempotencyKey);
   return idempotencyKey;
 }
+
+/**
+ * Buy prepaid credit (`POST /api/billing/topup/checkout`). Returns only the
+ * hosted URL; the balance moves after the charge settles, not when this
+ * resolves. The same flow captures the card on first use.
+ */
+export async function createBillingTopupCheckout(
+  http: HttpClient,
+  request: BillingTopupCheckoutRequest,
+  options?: IdempotencyOptions
+): Promise<BillingHostedSession> {
+  const idempotencyKey = resolveBillingIdempotencyKey(request, options);
+  return http.request<BillingHostedSession>("/api/billing/topup/checkout", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(request)
+  });
+}
+
+/**
+ * Update auto-recharge (`PATCH /api/billing/autotopup`). Omitted fields keep
+ * their stored value; the response echoes the stored settings.
+ *
+ * No idempotency key: this is a whole-state PATCH, so a replay writes the same
+ * row. The body guard stays — an `idempotencyKey` in the body was never a
+ * request field and silently ignoring it would look like it worked.
+ */
+export async function updateBillingAutoTopup(
+  http: HttpClient,
+  request: BillingAutoTopupRequest
+): Promise<BillingAutoTopupUpdate> {
+  rejectBodyIdempotencyKey(request);
+  return http.request<BillingAutoTopupUpdate>("/api/billing/autotopup", {
+    method: "PATCH",
+    body: JSON.stringify(request)
+  });
+}
+
 /**
  * Create a hosted billing-portal session for the workspace customer.
  * Returns only the hosted URL.

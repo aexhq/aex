@@ -67,6 +67,7 @@ import type {
   RuntimeCapabilityState,
   RuntimeProfile
 } from "./runtime-types.js";
+import { BILLING_ADMISSION_STATES } from "./billing-admission.js";
 import { RUNTIME_CAPABILITY_NAMES, SESSION_RUN_PHASES } from "./runtime-types.js";
 import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
@@ -1470,31 +1471,25 @@ function parseWhoAmILimits(value: unknown): WhoAmI["limits"] {
     "spendCapUsd",
     "monthSpendUsd",
     "balanceUsd",
-    "balanceGraceFloorUsd"
+    "balanceGraceFloorUsd",
+    "llmTokenAllowanceRemainingUsd"
   ] as const;
   for (const field of requiredNumbers) {
     if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
       throw new SessionStateError(`whoami response limits.${field} must be a finite number`);
     }
   }
-  if (typeof value.balanceGateActive !== "boolean") {
-    throw new SessionStateError("whoami response limits.balanceGateActive must be a boolean");
-  }
-  const paymentMethodStatus = value.paymentMethodStatus;
-  const planKey = value.planKey;
-  const accountType = value.accountType;
-  const subscriptionStatus = value.subscriptionStatus;
-  const subscriptionGate = value.subscriptionGate;
-  assertOneOf(paymentMethodStatus, ["none", "active"], "limits.paymentMethodStatus");
-  assertOneOf(planKey, ["free", "pro", "team"], "limits.planKey");
-  assertOneOf(accountType, ["standard", "internal"], "limits.accountType");
-  assertOneOf(subscriptionStatus, ["none", "active", "past_due", "canceled"], "limits.subscriptionStatus");
-  assertOneOf(subscriptionGate, ["ok", "past_due_grace", "past_due_suspended"], "limits.subscriptionGate");
-  for (const field of ["pastDueAt", "graceEndsAt"] as const) {
-    if (value[field] !== undefined && (typeof value[field] !== "string" || !Number.isFinite(Date.parse(value[field])))) {
-      throw new SessionStateError(`whoami response limits.${field} must be an ISO-8601 timestamp`);
+  for (const field of ["creditGateActive", "autoTopupEnabled"] as const) {
+    if (typeof value[field] !== "boolean") {
+      throw new SessionStateError(`whoami response limits.${field} must be a boolean`);
     }
   }
+  const paymentMethodStatus = value.paymentMethodStatus;
+  const admissionState = value.admissionState;
+  const accountType = value.accountType;
+  assertOneOf(paymentMethodStatus, ["none", "active"], "limits.paymentMethodStatus");
+  assertOneOf(admissionState, BILLING_ADMISSION_STATES, "limits.admissionState");
+  assertOneOf(accountType, ["standard", "internal"], "limits.accountType");
   return {
     maxConcurrentSessions: value.maxConcurrentSessions as number,
     submitRatePerMinute: value.submitRatePerMinute as number,
@@ -1502,14 +1497,12 @@ function parseWhoAmILimits(value: unknown): WhoAmI["limits"] {
     monthSpendUsd: value.monthSpendUsd as number,
     balanceUsd: value.balanceUsd as number,
     balanceGraceFloorUsd: value.balanceGraceFloorUsd as number,
-    balanceGateActive: value.balanceGateActive,
+    llmTokenAllowanceRemainingUsd: value.llmTokenAllowanceRemainingUsd as number,
+    creditGateActive: value.creditGateActive as boolean,
     paymentMethodStatus,
-    planKey,
-    accountType,
-    subscriptionStatus,
-    subscriptionGate,
-    ...(typeof value.pastDueAt === "string" ? { pastDueAt: value.pastDueAt } : {}),
-    ...(typeof value.graceEndsAt === "string" ? { graceEndsAt: value.graceEndsAt } : {})
+    admissionState,
+    autoTopupEnabled: value.autoTopupEnabled as boolean,
+    accountType
   };
 }
 

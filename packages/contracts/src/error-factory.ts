@@ -69,7 +69,11 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "workspace_inactive":
     case "workspace_spend_cap_exceeded":
     case "workspace_cap_exceeded":
-    case "insufficient_balance":
+    // Both 402s stay on the base class. They carry OPPOSITE remedies (buy credit
+    // / do not buy credit), so a shared subclass would invite exactly the
+    // conflation the two codes exist to prevent — branch on `apiCode`.
+    case "insufficient_credits":
+    case "account_blocked":
     case "subscription_past_due":
     case "quota_exhausted":
     case "depth_exceeded":

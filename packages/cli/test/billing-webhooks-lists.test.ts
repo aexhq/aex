@@ -75,8 +75,34 @@ const BILLING_SUMMARY = {
   balanceUsd: 12.5,
   monthSpendUsd: 0.42,
   spendCapUsd: 50,
-  planKey: "free",
-  subscriptionStatus: "none"
+  period: "2026-07",
+  admissionState: "carded_manual",
+  accountType: "standard",
+  paymentMethodStatus: "active",
+  autoTopupEnabled: false,
+  blocked: null,
+  paymentMethod: { present: true, brand: "visa", last4: "4242" },
+  autoTopup: { enabled: false, thresholdUsd: 5, amountUsd: 20, minimumAmountUsd: 10, maxPerDay: 4 },
+  allowances: [
+    {
+      dimension: "llm_token_usd",
+      quota: 2,
+      used: 0.5,
+      remaining: 1.5,
+      unit: "USD",
+      label: "model usage",
+      resetAt: "2026-08-01T00:00:00.000Z"
+    },
+    {
+      dimension: "egress_gb",
+      quota: 5,
+      used: 1.4,
+      remaining: 3.6,
+      unit: "GB",
+      label: "egress",
+      resetAt: "2026-08-01T00:00:00.000Z"
+    }
+  ]
 };
 
 describe("aex billing", () => {
@@ -97,11 +123,18 @@ describe("aex billing", () => {
     expect(cap.stdout).toContain("$12.50");
     expect(cap.stdout).toContain("$0.42");
     expect(cap.stdout).toContain("$50.00");
-    expect(cap.stdout).toContain("free");
+    // The allowance table, labelled and united by the SERVER — no plan line, and
+    // no unit string the CLI decided on its own.
+    expect(cap.stdout).toContain("Allowances (2026-07)");
+    expect(cap.stdout).toContain("model usage");
+    expect(cap.stdout).toContain("0.5 of 2 USD used");
+    expect(cap.stdout).toContain("1.4 of 5 GB used");
+    expect(cap.stdout).toContain("Auto top-up:  off");
+    expect(cap.stdout).not.toContain("Plan:");
   });
 
   it("prints the raw wire body with --json (additive fields included)", async () => {
-    const withExtra = { ...BILLING_SUMMARY, paymentMethodStatus: "active", accountType: "team" };
+    const withExtra = { ...BILLING_SUMMARY, statementsAvailable: true };
     const cap = makeHostIo({
       argv: ["billing", "--json", ...COMMON],
       fetchHandler: () =>
@@ -175,6 +208,140 @@ describe("aex billing ledger", () => {
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--limit");
     expect(cap.calls).toHaveLength(0);
+  });
+});
+
+describe("aex billing topup", () => {
+  it("POSTs /api/billing/topup/checkout with the amount and prints the hosted URL", async () => {
+    const cap = makeHostIo({
+      argv: [
+        "billing",
+        "topup",
+        "25",
+        "--success-url",
+        "https://aex.dev/billing?checkout=success",
+        "--cancel-url",
+        "https://aex.dev/billing?checkout=cancel",
+        "--idempotency-key",
+        "checkout-key",
+        ...COMMON,
+      ],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await executeCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(cap.stdout).toBe("https://checkout.stripe.test/session\n");
+    expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/topup/checkout");
+    expect(cap.calls[0]!.init.method).toBe("POST");
+    expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({
+      amountUsd: 25,
+      successUrl: "https://aex.dev/billing?checkout=success",
+      cancelUrl: "https://aex.dev/billing?checkout=cancel"
+    });
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toBe("checkout-key");
+  });
+
+  it("supports --json and rejects a non-positive amount before network", async () => {
+    const ok = makeHostIo({
+      argv: ["billing", "topup", "10", "--json", ...COMMON],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ url: "https://checkout.stripe.test/topup" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await executeCli(ok.io);
+    expect(ok.exitCode).toBe(0);
+    expect(JSON.parse(ok.stdout)).toEqual({ url: "https://checkout.stripe.test/topup" });
+
+    // The MINIMUM is the server's to enforce — it is billing policy and a second
+    // copy here would drift. What the CLI refuses is what cannot be an amount.
+    const bad = makeHostIo({ argv: ["billing", "topup", "zero", ...COMMON] });
+    await executeCli(bad.io);
+    expect(bad.exitCode).toBe(2);
+    expect(bad.stderr).toContain("amountUsd must be a positive amount");
+    expect(bad.calls).toHaveLength(0);
+  });
+
+  it("has no `upgrade` verb — there is no plan to move between", async () => {
+    const cap = makeHostIo({ argv: ["billing", "upgrade", "pro", ...COMMON] });
+    await executeCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    // It is rejected as an unknown argument, and the usage line it prints back
+    // offers no plan affordance to retry with.
+    expect(cap.stderr).toContain("unexpected arguments: upgrade pro");
+    const usage = cap.stderr.split("\n").find((line) => line.startsWith("usage: aex billing"))!;
+    expect(usage).toContain("topup <amountUsd>");
+    expect(usage).not.toContain("upgrade");
+    expect(usage).not.toMatch(/\b(pro|team)\b/);
+    expect(cap.calls).toHaveLength(0);
+  });
+});
+
+describe("aex billing autotopup", () => {
+  const AUTO_TOPUP = {
+    enabled: true,
+    thresholdUsd: 5,
+    amountUsd: 20,
+    minimumAmountUsd: 10,
+    maxPerDay: 4
+  };
+
+  it("PATCHes /api/billing/autotopup with only the fields the caller set", async () => {
+    const cap = makeHostIo({
+      argv: ["billing", "autotopup", "--enable", "--threshold", "5", "--amount", "20", ...COMMON],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ autoTopup: AUTO_TOPUP }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await executeCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/autotopup");
+    expect(cap.calls[0]!.init.method).toBe("PATCH");
+    expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({
+      enabled: true,
+      thresholdUsd: 5,
+      amountUsd: 20
+    });
+    expect(cap.stdout).toContain("on");
+    expect(cap.stdout).toContain("$5.00");
+    expect(cap.stdout).toContain("4/day");
+  });
+
+  it("omits `enabled` entirely when neither --enable nor --disable is given", async () => {
+    const cap = makeHostIo({
+      argv: ["billing", "autotopup", "--amount", "50", ...COMMON],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ autoTopup: { ...AUTO_TOPUP, amountUsd: 50 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await executeCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    // An omitted field keeps its stored value; sending `enabled: false` here
+    // would silently switch auto-recharge OFF for someone adjusting an amount.
+    expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({ amountUsd: 50 });
+  });
+
+  it("rejects --enable with --disable, and a non-positive threshold, before network", async () => {
+    const both = makeHostIo({ argv: ["billing", "autotopup", "--enable", "--disable", ...COMMON] });
+    await executeCli(both.io);
+    expect(both.exitCode).toBe(2);
+    expect(both.stderr).toContain("mutually exclusive");
+    expect(both.calls).toHaveLength(0);
+
+    const bad = makeHostIo({ argv: ["billing", "autotopup", "--threshold", "-1", ...COMMON] });
+    await executeCli(bad.io);
+    expect(bad.exitCode).toBe(2);
+    expect(bad.stderr).toContain("--threshold must be a positive amount");
+    expect(bad.calls).toHaveLength(0);
   });
 });
 

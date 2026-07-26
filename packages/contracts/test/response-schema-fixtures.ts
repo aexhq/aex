@@ -82,6 +82,53 @@ export const sessionFile = {
   sha256: "a".repeat(64)
 };
 
+/**
+ * A real `GET /billing` body. Quotas and units come from the server, so the
+ * fixture states plausible ones rather than importing the hosted table: the
+ * schema checks the SHAPE, and pinning the policy here would be the second copy
+ * the prepaid model exists to remove.
+ */
+export const billingSummary = {
+  balanceUsd: 5,
+  monthSpendUsd: 1.25,
+  spendCapUsd: 0,
+  period: "2026-07",
+  admissionState: "carded_manual",
+  accountType: "standard",
+  paymentMethodStatus: "active",
+  autoTopupEnabled: false,
+  blocked: null,
+  paymentMethod: { present: true, brand: "visa", last4: "4242" },
+  autoTopup: {
+    enabled: false,
+    thresholdUsd: 5,
+    amountUsd: 20,
+    minimumAmountUsd: 10,
+    maxPerDay: 4
+  },
+  allowances: [
+    {
+      dimension: "llm_token_usd",
+      quota: 2,
+      used: 0.5,
+      remaining: 1.5,
+      unit: "USD",
+      label: "model usage",
+      resetAt: TS,
+      approximateTokens: { model: "anthropic/claude-haiku-4-5", tokens: 1_200_000 }
+    },
+    {
+      dimension: "egress_gb",
+      quota: 5,
+      used: 1.4,
+      remaining: 3.6,
+      unit: "GB",
+      label: "egress",
+      resetAt: TS
+    }
+  ]
+};
+
 export const whoami = {
   ok: true,
   principalType: "api_key",

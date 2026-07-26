@@ -45,6 +45,20 @@ interface PlaneSpec {
 }
 
 /**
+ * Regex syntax that cannot occur in a path segment we would emit literally.
+ *
+ * A segment carrying any of it is a CONSTRAINED variable —
+ * `[0-9]{4}-(0[1-9]|1[0-2])` on `/billing/statements/…`, which admits a UTC
+ * month and nothing else. Those exist because refusing a malformed id at the
+ * route table is stronger than routing it into a handler to reject, and the
+ * table would lose that power if the only variable form this generator knew were
+ * the wide-open `[^/]+`. OpenAPI cannot express "this segment matches that
+ * regex" on a path template, so the template names the parameter and the route
+ * table keeps the constraint.
+ */
+const CONSTRAINED_SEGMENT = /[[\]{}()|+*?]/;
+
+/**
  * Turn a dispatch RegExp into an OpenAPI path template.
  *
  * `/^\/sessions\/[^/]+\/messages$/` -> `/sessions/{sessionId}/messages`. A
@@ -55,9 +69,9 @@ export function toPathTemplate(pattern: RegExp): {
   readonly path: string;
   readonly parameters: readonly string[];
 } {
-  // Collapse variable segments to a marker BEFORE splitting: `[^/]+` contains a
-  // literal `/` inside its character class, so splitting first tears it in two
-  // and yields paths like `/assets/{assetId}/]+`.
+  // Collapse the unconstrained variable segment to a marker BEFORE splitting:
+  // `[^/]+` contains a literal `/` inside its character class, so splitting first
+  // tears it in two and yields paths like `/assets/{assetId}/]+`.
   const VARIABLE = "__PARAM__";
   const source = pattern.source
     .replace(/^\^/, "")
@@ -67,7 +81,7 @@ export function toPathTemplate(pattern: RegExp): {
   const parameters: string[] = [];
   const segments = source.split("/").filter((segment) => segment.length > 0);
   const rendered = segments.map((segment, index) => {
-    if (segment !== VARIABLE) {
+    if (segment !== VARIABLE && !CONSTRAINED_SEGMENT.test(segment)) {
       return segment;
     }
     const name = parameterName(segments[index - 1], parameters.length);

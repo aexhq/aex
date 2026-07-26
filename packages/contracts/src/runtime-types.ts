@@ -4,6 +4,7 @@ import type { RuntimeSize } from "./runtime-sizes.js";
 import type { RuntimeKind } from "./runtime-kind.js";
 import type { SessionCostProviderUsage } from "./session-cost.js";
 import type { ProviderFault } from "./provider-fault.js";
+import type { BillingAdmissionState } from "./billing-admission.js";
 import type {
   PlatformInlineSecrets,
   PlatformSubmission,
@@ -696,26 +697,24 @@ export interface WhoAmI {
     readonly spendCapUsd: number;
     /** Accrued spend in the current UTC calendar month — the value the spend gate compares. */
     readonly monthSpendUsd: number;
-    /** Prepaid balance read-model — the value the balance gate compares. */
+    /** Prepaid credit balance in USD — one of the two things the credit gate compares. */
     readonly balanceUsd: number;
-    /** Submit floor used when {@link balanceGateActive} is true. */
+    /** Submit floor the balance is compared against; only meaningful when {@link creditGateActive}. */
     readonly balanceGraceFloorUsd: number;
-    /** Whether the allowance-balance gate applies to this workspace. */
-    readonly balanceGateActive: boolean;
-    readonly paymentMethodStatus: "none" | "active";
-    readonly planKey: "free" | "pro" | "team";
-    readonly accountType: "standard" | "internal";
-    readonly subscriptionStatus: "none" | "active" | "past_due" | "canceled";
-    readonly subscriptionGate: "ok" | "past_due_grace" | "past_due_suspended";
     /**
-     * ISO-8601 with a `Z` — this route formats the timestamp. The SAME concept
-     * on {@link BillingSummary.pastDueAt} is the Aurora Data API's raw
-     * `"YYYY-MM-DD HH:MM:SS"` text. Present only when the subscription gate is
-     * not `ok` AND the underlying timestamp exists.
+     * The OTHER half of the credit predicate: free model-usage allowance left
+     * this UTC month, in USD. A submit is admitted while EITHER this or
+     * {@link balanceUsd} is positive; both at zero is `402 insufficient_credits`.
      */
-    readonly pastDueAt?: string;
-    /** ISO-8601 with a `Z`. Same presence rule as {@link WhoAmI.limits.pastDueAt}. */
-    readonly graceEndsAt?: string;
+    readonly llmTokenAllowanceRemainingUsd: number;
+    /** Whether the prepaid credit gate applies to this workspace. */
+    readonly creditGateActive: boolean;
+    readonly paymentMethodStatus: "none" | "active";
+    /** What the gates sized this workspace at — card presence is the lever, not a plan. */
+    readonly admissionState: BillingAdmissionState;
+    /** True when auto-recharge is on, i.e. exhaustion triggers a top-up instead of a 402. */
+    readonly autoTopupEnabled: boolean;
+    readonly accountType: "standard" | "internal";
   };
 }
 
