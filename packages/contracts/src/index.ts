@@ -137,5 +137,6 @@ export * from "./schemas/index.js";
 // The data-plane route table. Declared here rather than in the platform so the
 // spec generator, the platform dispatcher and any future non-TypeScript SDK all
 // read one statement of the HTTP surface. A subpath export is not available:
-// public-contracts-snapshot.mjs asserts the exports map is exactly four entries.
+// public-contracts-snapshot.mjs pins the code entrypoints to a fixed set, and
+// this is not one of them.
 export * from "./api-routes.js";
