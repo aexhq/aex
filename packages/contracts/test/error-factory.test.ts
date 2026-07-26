@@ -117,6 +117,55 @@ describe("apiErrorFromResponse (WS4)", () => {
     expect(AEX_API_ERROR_REMEDIES.workspace_inactive).toMatch(/active workspace/i);
   });
 
+  it("decodes the 402 insufficient_credits body, exhausted dimension and allowances intact", () => {
+    const body = {
+      error: "insufficient_credits",
+      message: "Free model-usage allowance exhausted ($0.00 of $2.00 left this month) and the prepaid balance is $0.00.",
+      balanceUsd: 0,
+      balanceGraceFloorUsd: 0,
+      paymentMethodStatus: "none",
+      admissionState: "free",
+      exhaustedDimension: "llm_token_usd",
+      allowanceRemaining: { llm_token_usd: 0, egress_gb: 4.2 },
+      requestId: "req-402"
+    };
+    const err = apiErrorFromResponse({ status: 402, body });
+
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(err.apiCode).toBe("insufficient_credits");
+    expect(err.status).toBe(402);
+    expect(err.requestId).toBe("req-402");
+    // The whole payload survives decoding — the SDK/CLI renders the allowance
+    // panel from it rather than reprinting a bare code.
+    expect(err.body).toEqual(body);
+    expect(AEX_API_ERROR_REMEDIES.insufficient_credits).toMatch(/top up/i);
+  });
+
+  it("decodes the 402 account_blocked body as a DISTINCT code whose remedy is not a top-up", () => {
+    const body = {
+      error: "account_blocked",
+      message: "This organization cannot start new work because a disputed payment is under review.",
+      reason: "dispute",
+      blockedAt: "2026-07-20T00:00:00.000Z",
+      admissionState: "carded_manual"
+    };
+    const err = apiErrorFromResponse({ status: 402, body });
+
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(err.apiCode).toBe("account_blocked");
+    expect(err.apiCode).not.toBe("insufficient_credits");
+    expect(err.body).toEqual(body);
+    // Credit does not lift a block: pointing a blocked customer at the payment
+    // form takes their money and leaves them just as blocked.
+    expect(AEX_API_ERROR_REMEDIES.account_blocked).not.toMatch(/top up/i);
+    expect(AEX_API_ERROR_REMEDIES.account_blocked).toMatch(/support/i);
+  });
+
+  it("no longer recognizes the retired insufficient_balance spelling", () => {
+    const err = apiErrorFromResponse({ status: 402, body: { error: "insufficient_balance" } });
+    expect(err.apiCode).toBeUndefined();
+  });
+
   it("does not misclassify checkpoint availability as an idempotency conflict", () => {
     const body = { error: "checkpoint_not_available", requestId: "req-checkpoint" };
     const err = apiErrorFromResponse({ status: 409, body });
@@ -205,7 +254,8 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "workspace_inactive":
         case "workspace_spend_cap_exceeded":
         case "workspace_cap_exceeded":
-        case "insufficient_balance":
+        case "insufficient_credits":
+        case "account_blocked":
         case "subscription_past_due":
         case "quota_exhausted":
         case "depth_exceeded":
