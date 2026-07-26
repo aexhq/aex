@@ -7,10 +7,13 @@
  * fails rather than the value quietly reaching a log.
  *
  * Divergence from the declared `SecretRecord`: that interface makes `createdAt`
- * and `updatedAt` optional and adds `deletedAt?: string | null` plus an index
- * signature. The server sends all six fields unconditionally and never a
- * `deletedAt`. `deletedAt` is kept (our own type declares it); the index
- * signature is deliberately NOT honoured — see `response-common.ts`.
+ * and `updatedAt` optional and adds `deletedAt?: string | null`. The server
+ * sends all six fields unconditionally and never a `deletedAt`. `deletedAt` is
+ * kept (our own type declares it). The index signature that interface also
+ * carried is gone — see `response-common.ts`.
+ *
+ * `createdAt` / `updatedAt` are ISO-8601 with a `Z`, unlike the billing
+ * timestamps, which are raw Data-API text.
  */
 import * as z from "zod/mini";
 import {

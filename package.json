@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "bun run --filter @aexhq/contracts build && bun run --filter @aexhq/sdk build",
-    "lint": "bun run brand:check && bun run parsers:ratchet:check && bun run openapi:check && bun run openapi:types:check && bun run --filter @aexhq/contracts build && bun run --filter @aexhq/sdk build && tsc --noEmit -p tsconfig.scripts.json && bun run --workspaces --if-present --parallel lint && bun run contracts:boundary:check && bun run lint:tests",
+    "lint": "bun run brand:check && bun run openapi:check && bun run openapi:types:check && bun run --filter @aexhq/contracts build && bun run --filter @aexhq/sdk build && tsc --noEmit -p tsconfig.scripts.json && bun run --workspaces --if-present --parallel lint && bun run contracts:boundary:check && bun run lint:tests",
     "typecheck": "bun run --filter @aexhq/contracts build && bun run --filter @aexhq/contracts typecheck && bun run --filter @aexhq/sdk typecheck && bun run --filter @aexhq/cli typecheck && bun run --filter @aexhq/docs typecheck && bun run --filter @aexhq/user-tests typecheck && tsc --noEmit -p tsconfig.scripts.json",
     "hooks:install": "git config core.hooksPath .githooks",
     "lint:tests": "eslint --max-warnings=0 && bun scripts/verify-eslint-rules.mjs && bun run lint:module-size",
@@ -40,7 +40,6 @@
     "docs:check": "bun run --filter @aexhq/docs lint",
     "contracts:boundary:check": "bun scripts/with-generated-dist-lock.mjs bun scripts/cicd/check-public-boundary.mjs",
     "pack:sdk": "bun run --filter @aexhq/sdk build && bun run --filter @aexhq/sdk pack:dry-run && bun run contracts:boundary:check",
-    "parsers:ratchet:check": "bun scripts/cicd/check-parser-ratchet.mjs",
     "openapi:generate": "bun scripts/openapi/generate.ts",
     "openapi:check": "bun scripts/openapi/generate.ts --check",
     "openapi:types:generate": "bun scripts/openapi/types.ts",

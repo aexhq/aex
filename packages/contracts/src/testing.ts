@@ -30,8 +30,11 @@ export {
 export {
   installWireConformance,
   formatWireConformanceReport,
+  mergeWireConformanceReports,
   pathMatches,
+  wireOrigin,
   type ResponseSchemaBinding,
+  type WireConformanceOptions,
   type WireConformanceReport,
   type WireConformanceViolation
 } from "./testing/wire-conformance.js";
@@ -42,4 +45,10 @@ export {
   formatResponseSchemaCoverage,
   type UnschemadRoute
 } from "./testing/response-bindings.js";
+/**
+ * The error envelope C4 checks every non-2xx body against. Exported so a suite
+ * can name it in an assertion, and so the shape a violation was measured
+ * against is reachable from the same import as the harness.
+ */
+export { ApiErrorEnvelopeSchema } from "./schemas/response-common.js";
 export { observeWireResponses, type WireResponse } from "./wire-observer.js";

@@ -82,160 +82,19 @@ import {
   WorkspaceSkillResponseSchema,
   WorkspaceToolResponseSchema
 } from "../src/schemas/response-workspace.js";
-
-const TS = "2026-07-25T12:00:00.000Z";
-
-function validate(schema: StandardSchemaV1, value: unknown): StandardSchemaV1.Result<unknown> {
-  const result = schema["~standard"].validate(value);
-  if (result instanceof Promise) {
-    throw new Error("response schemas must validate synchronously — the harness cannot await");
-  }
-  return result;
-}
-
-// ===========================================================================
-// Fixtures
-// ===========================================================================
-
-const checkpoint = {
-  checkpointId: "cp_01",
-  runId: "sess_1:turn:1",
-  turnSeq: 1,
-  committedAt: TS,
-  throughSeq: 42
-};
-
-/** A session exactly as `publicSessionFromItem` emits it: FLAT runtime fields. */
-const sessionWire = {
-  id: "sess_1",
-  status: "idle",
-  acceptsMessages: true,
-  lastRun: {
-    sessionId: "sess_1",
-    turnSeq: 1,
-    runId: "sess_1:turn:1",
-    phase: "finished",
-    outcome: "succeeded",
-    startedAt: TS,
-    finishedAt: TS,
-    checkpoint
-  },
-  runtimeSize: "0.25cpu-1gb",
-  runtimeKind: "lambda",
-  workspaceId: "wsp_abc",
-  createdAt: TS,
-  updatedAt: TS,
-  activeDurationMs: 4200,
-  provider: "anthropic",
-  model: "anthropic/claude-sonnet-4",
-  retainedStorageBytes: 1024,
-  costUsd: 0.0123,
-  costTelemetry: {
-    schemaVersion: 1,
-    billedCostUsd: 0.0123,
-    costBasis: { currency: "USD", status: "estimated" },
-    basis: "session_turn",
-    durationMs: 4200,
-    turnSeq: 1,
-    provider: "anthropic",
-    model: "anthropic/claude-sonnet-4",
-    providerUsage: [{ provider: "anthropic", inputTokens: 10, outputTokens: 20, totalTokens: 30 }],
-    files: { capturedBytes: 1024, capturedFiles: 1 },
-    storage: { storedBytes: 1024, storedFiles: 1, byteMilliseconds: 0 }
-  },
-  dataState: "active"
-};
-
-const sessionFile = {
-  id: "file_1",
-  checkpointId: "cp_01",
-  filename: "out/report.md",
-  sizeBytes: 128,
-  contentType: "text/markdown",
-  createdAt: TS,
-  sha256: "a".repeat(64)
-};
-
-const whoami = {
-  ok: true,
-  principalType: "api_key",
-  workspaceId: "wsp_abc",
-  scopes: ["sessions:read", "sessions:write"],
-  limits: {
-    maxConcurrentSessions: 10,
-    submitRatePerMinute: 60,
-    spendCapUsd: 0,
-    monthSpendUsd: 1.25,
-    balanceUsd: 5,
-    balanceGraceFloorUsd: 0,
-    balanceGateActive: true,
-    paymentMethodStatus: "none",
-    planKey: "free",
-    accountType: "standard",
-    subscriptionStatus: "none",
-    subscriptionGate: "ok"
-  },
-  runtimeCapabilities: {
-    schemaVersion: 1,
-    capabilityVersion: "runtime-capabilities.v1",
-    capabilityHash: `sha256:${"b".repeat(64)}`,
-    availableRuntimeKinds: ["lambda"],
-    sizesByRuntimeKind: { lambda: ["0.25cpu-1gb", "1cpu-6gb"] },
-    unavailable: {
-      container: { code: "runtime_unavailable" },
-      spot_container: { code: "runtime_unavailable" }
-    }
-  }
-};
-
-const workspaceResourceCommon = {
-  resourceId: "wres_1",
-  name: "notes",
-  version: 1,
-  assetId: `asset_${"c".repeat(64)}`,
-  contentHash: `sha256:${"c".repeat(64)}`,
-  sizeBytes: 12,
-  contentType: "text/markdown",
-  createdAt: TS
-};
-
-const secret = {
-  id: "sec_1",
-  name: "OPENAI_KEY",
-  version: 2,
-  state: "ready",
-  createdAt: TS,
-  updatedAt: TS
-};
-
-const mcpServer = {
-  id: "mcp_abcdefghi",
-  workspaceId: "wsp_abc",
-  name: "linear",
-  url: "https://mcp.linear.app/sse",
-  headerShape: ["authorization"],
-  createdAt: TS,
-  updatedAt: TS
-};
-
-const delivery = {
-  id: "whd_sess_1:turn:1",
-  runId: "sess_1:turn:1",
-  turnSeq: 1,
-  eventType: "run.finished",
-  status: "delivered",
-  attemptCount: 1,
-  createdAt: TS
-};
-
-interface Case {
-  readonly name: string;
-  readonly schema: StandardSchemaV1;
-  readonly accepts: unknown;
-  readonly rejects: unknown;
-  /** What the rejection must say — proof it failed for the intended reason. */
-  readonly because: string;
-}
+import {
+  TS,
+  checkpoint,
+  delivery,
+  mcpServer,
+  secret,
+  sessionFile,
+  sessionWire,
+  validate,
+  whoami,
+  workspaceResourceCommon,
+  type Case
+} from "./response-schema-fixtures.js";
 
 const cases: readonly Case[] = [
   {
@@ -347,8 +206,8 @@ const cases: readonly Case[] = [
       expiresAtMs: 1_800_000_000_000,
       region: "eu-west-1"
     },
-    // The declared `CoordinatorTicket` interface stops at these three keys; the
-    // server sends five. Dropping `region` would be a real change.
+    // `CoordinatorTicket` used to stop at these three keys while the server sent
+    // five; it now declares all five. Dropping `region` would be a real change.
     rejects: { wsUrl: "wss://x/y", ticket: "abc.def", expiresAtMs: 1_800_000_000_000 },
     because: "ok"
   },
@@ -715,24 +574,22 @@ const cases: readonly Case[] = [
     schema: BillingSummaryResponseSchema,
     accepts: {
       balanceUsd: 5,
-      monthSpendUsd: 1.25,
-      spendCapUsd: 0,
-      planKey: "free",
-      subscriptionStatus: "none",
+      admissionState: "free",
+      autoTopupEnabled: false,
       paymentMethodStatus: "none",
       accountType: "standard",
-      pastDueAt: null
+      monthSpendUsd: 1.25,
+      spendCapUsd: 0
     },
     // `accountType` is on the wire and NOT on the declared `BillingSummary`.
     // Its absence is the drift the declared type cannot express.
     rejects: {
       balanceUsd: 5,
-      monthSpendUsd: 1.25,
-      spendCapUsd: 0,
-      planKey: "free",
-      subscriptionStatus: "none",
+      admissionState: "free",
+      autoTopupEnabled: false,
       paymentMethodStatus: "none",
-      pastDueAt: null
+      monthSpendUsd: 1.25,
+      spendCapUsd: 0
     },
     because: "accountType"
   },

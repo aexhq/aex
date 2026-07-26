@@ -8,7 +8,13 @@
  * Human view: header → timeline → footer. `--json` emits one machine document
  * `{ session, events }`. Exit is 0 for a succeeded run, 1 otherwise, or 3 on timeout.
  */
-import { isReplayableEvent, type AexEvent, type AexStreamEvent, type Session } from "@aexhq/contracts";
+import {
+  isReplayableEvent,
+  usageFromProviderUsage,
+  type AexEvent,
+  type AexStreamEvent,
+  type Session
+} from "@aexhq/contracts";
 import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
@@ -158,25 +164,41 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
   if (json) {
     io.stdout(JSON.stringify({ session: finalSession, events: collected }) + "\n");
   } else {
-    // Footer: jump-to-failure + cost/usage.
-    if (runErrorEvent) {
-      const d = runErrorEvent.data as Record<string, unknown>;
-      const failureMessage = typeof d.failureMessage === "string" ? d.failureMessage : (runErrorEvent.message ?? "run error");
-      const failureClass = typeof d.failureClass === "string" ? ` [${d.failureClass}]` : "";
-      io.stdout(`\n✗ ${failureMessage}${failureClass}\n`);
-    }
-    const costUsd = finalSession.costUsd;
-    const usage = finalSession.usage;
-    if (costUsd !== undefined || usage) {
-      const parts: string[] = [`status=${finalSession.status}`];
-      if (costUsd !== undefined) parts.push(`costUsd=${costUsd}`);
-      if (usage?.inputTokens !== undefined) parts.push(`in=${usage.inputTokens}`);
-      if (usage?.outputTokens !== undefined) parts.push(`out=${usage.outputTokens}`);
-      if (usage?.totalTokens !== undefined) parts.push(`total=${usage.totalTokens}`);
-      io.stdout(`\n— ${parts.join(" · ")}\n`);
-    }
+    renderInspectFooter(io, finalSession, runErrorEvent);
   }
 
   if (isSessionNonProgressing(finalSession.status) && terminalOutcome === "succeeded") return SUCCESS;
   return RUNTIME_ERR;
+}
+
+/**
+ * The human footer: jump-to-failure, then the cost/usage line.
+ *
+ * Its own function because it is the one part of `inspect` that reads the
+ * FINAL session record rather than driving the stream — everything above is
+ * argv, transport and event plumbing. `--json` skips it entirely; the machine
+ * document carries the same session object for a caller to read itself.
+ */
+function renderInspectFooter(io: CliIO, finalSession: Session, runErrorEvent: AexEvent | null): void {
+  if (runErrorEvent) {
+    const d = runErrorEvent.data as Record<string, unknown>;
+    const failureMessage = typeof d.failureMessage === "string" ? d.failureMessage : (runErrorEvent.message ?? "run error");
+    const failureClass = typeof d.failureClass === "string" ? ` [${d.failureClass}]` : "";
+    io.stdout(`\n✗ ${failureMessage}${failureClass}\n`);
+  }
+  const costUsd = finalSession.costUsd;
+  // Token counts come from `costTelemetry.providerUsage` — the ONE server
+  // source. This read used to be `finalSession.usage`, a top-level field the
+  // data plane has never emitted, so the footer's `in=`/`out=`/`total=` were
+  // unreachable in practice.
+  const providerUsage = finalSession.costTelemetry?.providerUsage;
+  const usage = providerUsage ? usageFromProviderUsage(providerUsage) : undefined;
+  if (costUsd !== undefined || usage) {
+    const parts: string[] = [`status=${finalSession.status}`];
+    if (costUsd !== undefined) parts.push(`costUsd=${costUsd}`);
+    if (usage?.inputTokens !== undefined) parts.push(`in=${usage.inputTokens}`);
+    if (usage?.outputTokens !== undefined) parts.push(`out=${usage.outputTokens}`);
+    if (usage?.totalTokens !== undefined) parts.push(`total=${usage.totalTokens}`);
+    io.stdout(`\n— ${parts.join(" · ")}\n`);
+  }
 }

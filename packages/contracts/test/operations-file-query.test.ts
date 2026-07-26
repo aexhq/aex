@@ -240,7 +240,7 @@ describe("operations file links", () => {
     expect(link.expiresInSeconds).toBe(86400);
   });
 
-  it("synthesizes the documented expiresAt when the server omits it", async () => {
+  it("synthesizes expiresAt, which the server never sends", async () => {
     const { http } = clientFor({
       "/api/sessions/session-1/files?checkpointId=cp_1": () => json(snapshot([files[1]!])),
       "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
@@ -257,14 +257,26 @@ describe("operations file links", () => {
     expect(at).toBeLessThanOrEqual(after + 900_000);
   });
 
-  it("keeps a server-provided expiresAt untouched", async () => {
+  it("ignores an expiresAt the server has no contract to send", async () => {
+    // `fileLink` answers `{ url, expiresInSeconds, file }` — there is no
+    // absolute timestamp on the wire, and `SessionFileLinkResponseSchema` is
+    // strict, so a body carrying one FAILS C4 rather than being honoured. This
+    // used to assert the opposite ("keeps a server-provided expiresAt
+    // untouched"), which made a field the server cannot send look optional.
     const { http } = clientFor({
       "/api/sessions/session-1/files?checkpointId=cp_1": () => json(snapshot([files[1]!])),
       "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
-        json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
+        json({
+          url: "https://storage.example/direct.txt",
+          expiresInSeconds: 3600,
+          expiresAt: "2026-06-18T12:00:00.000Z"
+        })
     });
 
+    const before = Date.now();
     const link = await operations.sessionFileLink(http, "session-1", { id: "txt", checkpointId: "cp_1" });
-    expect(link.expiresAt).toBe("2026-06-18T12:00:00.000Z");
+
+    expect(link.expiresAt).not.toBe("2026-06-18T12:00:00.000Z");
+    expect(new Date(link.expiresAt).getTime()).toBeGreaterThanOrEqual(before + 3_600_000);
   });
 });

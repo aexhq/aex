@@ -8,9 +8,11 @@
  *
  * The CONTROL plane serves a different body at the same path — an
  * `account_token` principal, parsed by `parseAccountWhoAmI`. It is declared here
- * too, and the two are NOT unioned: the harness matches on method and path only,
- * so a suite that talks to both planes needs to know which table it installed.
- * See `testing/response-bindings.ts`.
+ * too, and the two are NOT unioned: unioning them would let a data-plane whoami
+ * pass while carrying a control-plane body. They are kept apart by ORIGIN
+ * instead — `WireResponse` carries the origin it came from, and the harness is
+ * installed with the plane its bindings describe. See
+ * `testing/response-bindings.ts`.
  */
 import * as z from "zod/mini";
 import { RUNTIME_KINDS } from "./runtime-kind.js";
@@ -69,14 +71,17 @@ export const WhoAmILimitsSchema = describeResponse(
     monthSpendUsd: wireNumber,
     balanceUsd: wireNumber,
     balanceGraceFloorUsd: wireNumber,
-    balanceGateActive: wireBoolean,
+    // Billing WS5 replaced the subscription gate with a credit gate and the plan
+    // catalog with card-driven admission: `balanceGateActive` became
+    // `creditGateActive`, and `planKey` / `subscriptionStatus` / `subscriptionGate`
+    // / `pastDueAt` / `graceEndsAt` are gone. A strict schema still expecting them
+    // fails C4 against the current server.
+    llmTokenAllowanceRemainingUsd: wireNumber,
+    creditGateActive: wireBoolean,
     paymentMethodStatus: wireEnum(["none", "active"]),
-    planKey: wireEnum(["free", "pro", "team"]),
-    accountType: wireEnum(["standard", "internal"]),
-    subscriptionStatus: wireEnum(["none", "active", "past_due", "canceled"]),
-    subscriptionGate: wireEnum(["ok", "past_due_grace", "past_due_suspended"]),
-    pastDueAt: optional(wireTimestamp),
-    graceEndsAt: optional(wireTimestamp)
+    admissionState: wireNonEmptyString,
+    autoTopupEnabled: wireBoolean,
+    accountType: wireEnum(["standard", "internal"])
   })
 );
 

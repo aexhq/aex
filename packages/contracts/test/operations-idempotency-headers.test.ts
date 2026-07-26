@@ -90,7 +90,16 @@ describe("lifecycle controls are not advertised as idempotent", () => {
       fetch: async (_input, init) => {
         seenHeader = new Headers(init?.headers).get("Idempotency-Key");
         return new Response(
-          JSON.stringify({ session: { id: "sess_1", status: "idle", acceptsMessages: true } }),
+          JSON.stringify({
+            session: { id: "sess_1", status: "idle", acceptsMessages: true },
+            // DELETE alone answers with the footprint-cleanup counters beside
+            // the session; the six state-change routes answer `{ session }` and
+            // nothing else. One body serves both cases here because the extra
+            // keys are ignored by the state-change reads and REQUIRED by the
+            // delete read, which no longer treats a bodyless 204 as possible.
+            purgedSessionFileObjects: 0,
+            cleanupComplete: true
+          }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
@@ -103,7 +112,6 @@ describe("lifecycle controls are not advertised as idempotent", () => {
 
 describe("billing mutation identities", () => {
   it.each([
-    ["checkout", operations.createBillingCheckout, { planKey: "pro" }],
     ["portal", operations.createBillingPortal, { returnUrl: "https://aex.dev/billing" }]
   ] as const)("%s sends identity only as a header", async (_name, operation, request) => {
     let seenHeader: string | null = null;
@@ -142,10 +150,10 @@ describe("billing mutation identities", () => {
       }
     });
 
-    await operations.createBillingCheckout(capture, { planKey: "team" });
+    await operations.createBillingPortal(capture, { returnUrl: "https://aex.dev/billing" });
     expect(isId("idempotency", seenHeader)).toBe(true);
     await expect(
-      operations.createBillingCheckout(capture, { planKey: "pro", idempotencyKey: "legacy" } as never)
+      operations.createBillingPortal(capture, { returnUrl: "https://aex.dev/b", idempotencyKey: "legacy" } as never)
     ).rejects.toBeInstanceOf(SessionConfigValidationError);
     await expect(
       operations.createBillingPortal(capture, {}, { idempotencyKey: "x".repeat(256) })

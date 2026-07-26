@@ -240,6 +240,13 @@ export default tseslint.config(
       "_platform/**",
       // Skipped/sample / template files committed for offline tests.
       "**/test/fixtures/**",
+      // GENERATED artefacts that happen to live outside `dist/`: the OpenAPI
+      // document is emitted from the schemas and the declarations from the
+      // document. A module-size budget is a readability rule aimed at code
+      // somebody maintains by hand; "split this 3 000-line generated .d.ts" is
+      // not an instruction anyone can act on, and baselining it would freeze a
+      // number that changes every time a route does.
+      "packages/contracts/openapi/**",
       // Self-test fixture for the rules themselves — intentionally trips
       // every rule; verified through `bun run lint:tests:verify`. Ignored
       // from the normal lint so the main pipeline stays green.

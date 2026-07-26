@@ -11,7 +11,12 @@ describe("public session run taxonomy source ownership", () => {
   });
 
   it("makes the operation normalizer consume both canonical owners", () => {
-    expect(operations).toMatch(/import \{ SESSION_RUN_PHASES \} from "\.\/runtime-types\.js"/u);
+    // The invariant is that the normalizer imports the phase tuple FROM its
+    // canonical owner — not that the import statement names nothing else.
+    // `runtime-types.js` also owns `RUNTIME_CAPABILITY_NAMES`, and pinning the
+    // exact import form made this fail on a combined import that satisfies the
+    // rule perfectly well.
+    expect(operations).toMatch(/import \{[^}]*\bSESSION_RUN_PHASES\b[^}]*\} from "\.\/runtime-types\.js"/u);
     expect(operations).toMatch(/SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES/u);
     expect(operations).toMatch(/new Set<string>\(SESSION_RUN_PHASES\)/u);
     expect(operations).toMatch(/new Set<string>\(SESSION_TERMINAL_OUTCOMES\)/u);

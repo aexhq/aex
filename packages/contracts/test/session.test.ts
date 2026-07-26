@@ -27,7 +27,8 @@ function httpStub(): { readonly http: HttpClient; readonly calls: Array<{ readon
                 timestamp: "2026-07-02T12:00:00.000Z",
                 turnSeq: 1,
                 sequence: 1,
-                messageId: "provider-msg-1"
+                messageId: "provider-msg-1",
+        content: []
               }
             ],
             nextCursor: "cursor-2"
@@ -210,7 +211,8 @@ describe("session contracts", () => {
       timestamp: "2026-07-02T12:00:00.000Z",
       turnSeq: 1,
       sequence: 1,
-      messageId: "provider-msg-1"
+      messageId: "provider-msg-1",
+        content: []
     });
     expect(page.nextCursor).toBe("cursor-2");
   });

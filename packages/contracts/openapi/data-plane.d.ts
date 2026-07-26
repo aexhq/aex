@@ -163,23 +163,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/billing/checkout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** billing.checkout */
-        post: operations["billing.checkout"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/billing/ledger": {
         parameters: {
             query?: never;
@@ -1333,33 +1316,6 @@ export interface operations {
         };
     };
     "billing.get": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            "2XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Error envelope. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorEnvelope"];
-                };
-            };
-        };
-    };
-    "billing.checkout": {
         parameters: {
             query?: never;
             header?: never;

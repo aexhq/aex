@@ -71,7 +71,6 @@
     "sourcePackage": "@aexhq/contracts",
     "sdkPackedPrefix": "dist/_contracts/",
     "allowedModuleFiles": [
-      "./allowed-keys.js",
       "./api-key.js",
       "./api-routes.js",
       "./archive-limits.js",
@@ -161,10 +160,13 @@
       "./workflow-status.js",
       "./workspace-resources.js",
       "./failure-class.js",
-      "./ids.js"
+      "./ids.js",
+      "./account-types.js",
+      "./account-operations.js",
+      "./operation-core.js",
+      "./session-cost-types.js"
     ],
     "privateModuleMaxBytes": {
-      "allowed-keys.js": 1024,
       "session-archive.js": 8192,
       "session-file-query.js": 12288,
       "contract-parse-error.js": 2048,
@@ -206,7 +208,8 @@
       "./schemas/index.js",
       "./api-routes.js",
       "./failure-class.js",
-      "./ids.js"
+      "./ids.js",
+      "./account-types.js"
     ]
   }
 }

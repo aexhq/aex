@@ -50,6 +50,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LIVE_TEST_SHARD_CONFIG, collectTestFiles } from "./shard-files.mjs";
+import { assertParallelBunFloor, prepareLaneInvocation } from "./lane-invocation.mjs";
+
+// The side-effect-free half of the runner lives in `lane-invocation.mjs`.
+// Re-exported here because this module is the runner's entry point and the one
+// `scripts/validate/user-bun-test-spawn.test.ts` imports.
+export { assertParallelBunFloor, prepareLaneInvocation } from "./lane-invocation.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -58,20 +64,6 @@ const sdkRoot = join(repoRoot, "packages", "sdk");
 const generatedDistLockScript = join(repoRoot, "scripts", "with-generated-dist-lock.mjs");
 const noSkipsGateScript = join(repoRoot, "scripts", "cicd", "assert-no-skips.mjs");
 const thisFile = fileURLToPath(import.meta.url);
-
-// `bun test --parallel` before this floor could exit 0 after a worker crash.
-const PARALLEL_SAFE_BUN_FLOOR = "1.3.14";
-
-// Forwarded `bun test` flags that take their value as the NEXT argv element.
-// Needed to tell flag values apart from file selections; `=`-joined forms are
-// self-contained and need no entry here.
-const VALUE_TAKING_BUN_TEST_FLAGS = new Set([
-  "-t",
-  "--test-name-pattern",
-  "--timeout",
-  "--reporter",
-  "--reporter-outfile"
-]);
 
 const env = { ...process.env };
 let packDir;
@@ -126,6 +118,12 @@ export async function main() {
   const invocation = buildUserBunTestSpawnInvocation(bunTestArgs);
   const runTempRoot = createUserTestTempRoot();
   env.AEX_USER_TEST_TEMP_ROOT = runTempRoot;
+  // C4: one fragment directory per lane, emptied first so the aggregate below
+  // describes THIS run and cannot inherit an earlier one's coverage.
+  const wireConformanceDir = join(appRoot, ".tmp", "wire-conformance");
+  rmSync(wireConformanceDir, { recursive: true, force: true });
+  mkdirSync(wireConformanceDir, { recursive: true });
+  env.AEX_WIRE_CONFORMANCE_DIR = wireConformanceDir;
 
   let outcome;
   let runFailure;
@@ -167,7 +165,13 @@ export async function main() {
     console.error(`bun test exited with signal ${outcome.signal}`);
     return 1;
   }
+  // C4 runs whatever the lane's exit code was: a failing lane still produced
+  // real bytes, and the coverage picture is exactly what a reader needs in order
+  // to know how much of the surface that run actually covered.
+  const wireConformanceCode = await reportWireConformance(wireConformanceDir);
+
   if ((outcome.code ?? 1) !== 0) return outcome.code ?? 1;
+  if (wireConformanceCode !== 0) return wireConformanceCode;
 
   if (lane.gateArgs) {
     const gateCode = await runNoSkipsGate(lane.gateArgs);
@@ -177,132 +181,60 @@ export async function main() {
 }
 
 /**
- * Pure lane-argv processing: split wrapper-owned flags from the `bun test`
- * argv, resolve --parallel-env, and derive the junit + no-skips gate wiring.
- * Throws on any ambiguous or selection-free invocation.
+ * C4 — the lane's wire-conformance verdict.
+ *
+ * Per-file failures already happen in `test/preload.ts`; this is the only place
+ * that can state COVERAGE, because coverage is a property of the run and no
+ * single test process sees more than a handful of routes. Per `04-gates.md`,
+ * both halves are printed unconditionally — what could have been checked
+ * (`formatResponseSchemaCoverage`) and what actually was
+ * (`formatWireConformanceReport`) — so a green lane over a dozen routes cannot
+ * be read as a verified surface.
  */
-export function prepareLaneInvocation(argv, envLike = env) {
-  let reportPath = null;
-  let parallelSpec = null;
-  let sweep = false;
-  let smoke = false;
-  const forwarded = [];
+async function reportWireConformance(wireConformanceDir) {
+  const { readWireConformanceFragments } = await import(
+    join(appRoot, "test", "_fixtures", "wire-conformance.ts")
+  );
+  const { formatResponseSchemaCoverage, formatWireConformanceReport } = await import(
+    "@aexhq/contracts/testing"
+  );
+  const harvest = readWireConformanceFragments(wireConformanceDir);
 
-  for (const arg of argv) {
-    if (arg === "--sweep") {
-      sweep = true;
-    } else if (arg === "--smoke") {
-      smoke = true;
-    } else if (arg === "--report" || arg.startsWith("--report=")) {
-      const value = arg.startsWith("--report=") ? arg.slice("--report=".length) : "";
-      if (!value) throw new Error("user-bun-test: --report requires =<junit-report-path>");
-      if (reportPath !== null) throw new Error("user-bun-test: duplicate --report");
-      reportPath = value;
-    } else if (arg === "--parallel-env" || arg.startsWith("--parallel-env=")) {
-      const value = arg.startsWith("--parallel-env=") ? arg.slice("--parallel-env=".length) : "";
-      const match = /^([A-Z][A-Z0-9_]*):([0-9]+)$/.exec(value);
-      if (!match) throw new Error("user-bun-test: --parallel-env requires =ENV_NAME:FALLBACK");
-      if (parallelSpec !== null) throw new Error("user-bun-test: duplicate --parallel-env");
-      parallelSpec = { name: match[1], fallback: Number(match[2]) };
-      if (!Number.isInteger(parallelSpec.fallback) || parallelSpec.fallback < 1) {
-        throw new Error("user-bun-test: --parallel-env fallback must be a positive integer");
-      }
-    } else {
-      forwarded.push(arg);
-    }
+  console.error("");
+  console.error("=== C4 wire conformance ===");
+  console.error(formatResponseSchemaCoverage());
+  for (const reason of harvest.notArmed) {
+    console.error(`  NOT ARMED: ${reason}`);
   }
-
-  if (sweep && smoke) throw new Error("user-bun-test: choose only one of --sweep or --smoke");
-  const suite = sweep ? "sweep" : smoke ? "smoke" : null;
-
-  // Classify forwarded args: find file selections and any bun -t filter.
-  let namePattern = null;
-  let positionals = 0;
-  for (let i = 0; i < forwarded.length; i += 1) {
-    const arg = forwarded[i];
-    if (arg === "-t" || arg === "--test-name-pattern") {
-      namePattern = forwarded[i + 1] ?? null;
-      i += 1;
-      continue;
-    }
-    if (arg.startsWith("-t=")) {
-      namePattern = arg.slice("-t=".length);
-      continue;
-    }
-    if (arg.startsWith("--test-name-pattern=")) {
-      namePattern = arg.slice("--test-name-pattern=".length);
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      if (VALUE_TAKING_BUN_TEST_FLAGS.has(arg)) i += 1;
-      continue;
-    }
-    positionals += 1;
-  }
-
-  if (suite && positionals > 0) {
-    throw new Error("user-bun-test: pass either a suite selector or explicit files, not both");
-  }
-  if (!suite && positionals === 0) {
-    throw new Error(
-      "user-bun-test: refusing to spawn `bun test` without an explicit file selection " +
-        "(a bare `bun test` here would collect every live suite); pass test files/directories or --sweep/--smoke"
+  if (harvest.fragments === 0) {
+    // Never read as a pass. A lane may legitimately observe nothing, but saying
+    // so out loud is the difference between "nothing was checked" and "checked
+    // and clean" — and only the first of those is true here.
+    console.error(
+      "wire conformance: NO PROCESS REPORTED. Nothing was checked against the wire in this lane."
     );
+    return 0;
+  }
+  console.error(
+    `wire conformance: folded ${harvest.reports} report(s) from ${harvest.fragments} process(es)`
+  );
+  console.error(formatWireConformanceReport(harvest.report));
+  for (const failure of harvest.armFailures) {
+    console.error(`  ARM FAILURE: ${failure}`);
   }
 
-  if (reportPath !== null && forwarded.some((arg) => arg === "--reporter" || arg.startsWith("--reporter="))) {
-    throw new Error("user-bun-test: --report owns the junit reporter flags; do not also pass --reporter");
-  }
-
-  const bunTestArgs = [...forwarded];
-  if (parallelSpec) {
-    bunTestArgs.unshift(`--parallel=${resolveWorkerCount(parallelSpec.name, parallelSpec.fallback, envLike)}`);
-  }
-  if (reportPath !== null) {
-    bunTestArgs.push("--reporter=junit", `--reporter-outfile=${reportPath}`);
-  }
-
-  const gateArgs =
-    reportPath === null ? null : namePattern === null ? [reportPath] : ["--name-pattern", namePattern, reportPath];
-
-  return { bunTestArgs, reportPath, gateArgs, suite };
-}
-
-// Same contract the retired vitest.worker-count.ts had: unset -> fallback,
-// anything but a positive integer -> hard error.
-function resolveWorkerCount(name, fallback, envLike) {
-  const raw = envLike[name];
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
-  }
-  return parsed;
-}
-
-/**
- * `bun test --parallel` may only run on a bun with the crashed-worker fix;
- * older buns could report a crashed parallel worker as a passing shard.
- */
-export function assertParallelBunFloor(bunTestArgs, bunVersion) {
-  const usesParallel = bunTestArgs.some((arg) => arg === "--parallel" || arg.startsWith("--parallel="));
-  if (!usesParallel) return;
-  const parsed = bunVersion === undefined ? null : /^(\d+)\.(\d+)\.(\d+)/.exec(bunVersion);
-  const meetsFloor =
-    parsed !== null &&
-    (() => {
-      const [major, minor, patch] = [Number(parsed[1]), Number(parsed[2]), Number(parsed[3])];
-      const [floorMajor, floorMinor, floorPatch] = PARALLEL_SAFE_BUN_FLOOR.split(".").map(Number);
-      if (major !== floorMajor) return major > floorMajor;
-      if (minor !== floorMinor) return minor > floorMinor;
-      return patch >= floorPatch;
-    })();
-  if (!meetsFloor) {
-    throw new Error(
-      `user-bun-test: --parallel requires bun >= ${PARALLEL_SAFE_BUN_FLOOR} (crashed-worker fix); ` +
-        `executing runtime reports ${bunVersion ?? "no bun version"}`
+  if (harvest.armFailures.length > 0) {
+    console.error(
+      `C4 FAILED: ${harvest.armFailures.length} process(es) could not attach the harness — ` +
+        `their responses were never checked.`
     );
+    return 1;
   }
+  if (harvest.report.violations.length > 0) {
+    console.error(`C4 FAILED: ${harvest.report.violations.length} wire-conformance violation(s).`);
+    return 1;
+  }
+  return 0;
 }
 
 /**

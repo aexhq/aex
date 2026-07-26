@@ -82,7 +82,11 @@ const CostBasisSchema = responseObject({
 });
 
 const ProviderUsageSchema = responseObject({
-  provider: wireNonEmptyString,
+  // Optional because the BUILDER makes it optional: `providerUsageFromManifestUsage`
+  // spreads `...(provider ? { provider } : {})`, so an entry with no provider is
+  // constructible and reaches the wire. Requiring it here would fail C4 on a real
+  // response — the schema describes what the server sends, not what we wish it sent.
+  provider: optional(wireNonEmptyString),
   model: optional(wireString),
   inputTokens: optional(wireNonNegativeNumber),
   outputTokens: optional(wireNonNegativeNumber),
@@ -122,6 +126,12 @@ export const CostTelemetrySchema = describeResponse(
     basis: optional(wireString),
     durationMs: optional(wireNonNegativeNumber),
     turnSeq: optional(wireNonNegativeInteger),
+    // Written by `telemetryFromManifest` whenever the runner manifest carries
+    // one, and served on the CHILD session read via `finalizeChildSession`.
+    // Undeclared here until now, which would have failed C4 on the first child
+    // session settled from such a manifest — a strict schema is only as good as
+    // its agreement with what the server actually writes.
+    throughSeq: optional(wireNonNegativeInteger),
     runtimeSize: optional(wireString),
     runtimeKind: optional(wireString),
     billedCostUsd: optional(wireNonNegativeNumber),
@@ -220,14 +230,19 @@ export const SessionRunSchema = describeResponse(
 /**
  * The session projection every `{ session }` envelope carries.
  *
- * Three disagreements with the declared `Session` interface, all deliberate:
+ * This schema is the SOURCE of the `SessionWire` type in `runtime-types.ts`
+ * (`z.infer`), and `Session` — the client shape — is pinned to it by a key-set
+ * assertion in that module. The one deliberate difference between them:
  *
- * - **`runtime` is absent.** The wire carries flat `runtimeKind` + `runtimeSize`;
- *   `runtime: { kind, size }` is built client-side by `normalizeSessionRuntime`.
- * - **`provider` is present** and the declared interface does not have it.
- * - **`usage` and `runtimeManifest` are declared but never emitted** by the
- *   current server. They stay in the schema because they are in our own
- *   published type: a deployment that starts sending them is not drift.
+ * - **`runtime` is absent here.** The wire carries flat `runtimeKind` +
+ *   `runtimeSize`; `runtime: { kind, size }` is built client-side by
+ *   `normalizeSessionRuntime`.
+ *
+ * `usage` and `runtimeManifest` USED to be declared on both sides and are
+ * emitted by neither `publicSessionFromItem` nor anything downstream of it.
+ * They were kept "because our own published type declares them"; the type no
+ * longer does (token counts live under `costTelemetry.providerUsage`), so the
+ * justification went with it and both are gone from here too.
  */
 export const SessionWireSchema = describeResponse(
   "Session",
@@ -244,7 +259,6 @@ export const SessionWireSchema = describeResponse(
     idleTtlMs: optional(wireNonNegativeNumber),
     runtimeSize: wireEnum(RUNTIME_SIZES),
     runtimeKind: wireEnum(RUNTIME_KINDS),
-    runtimeManifest: optional(openObject),
     workspaceId: optional(wireNonEmptyString),
     createdAt: optional(wireTimestamp),
     updatedAt: optional(wireTimestamp),
@@ -256,15 +270,6 @@ export const SessionWireSchema = describeResponse(
     retainedStorageBytes: optional(wireNonNegativeNumber),
     costUsd: optional(wireNonNegativeNumber),
     costTelemetry: optional(CostTelemetrySchema),
-    usage: optional(
-      responseObject({
-        inputTokens: optional(wireNonNegativeNumber),
-        outputTokens: optional(wireNonNegativeNumber),
-        cacheReadInputTokens: optional(wireNonNegativeNumber),
-        cacheCreationInputTokens: optional(wireNonNegativeNumber),
-        totalTokens: optional(wireNonNegativeNumber)
-      })
-    ),
     errorMessage: optional(z.nullable(wireString)),
     failureClass: optional(z.nullable(wireString)),
     dataState: wireEnum(["active", "metadata_only"]),
@@ -292,16 +297,19 @@ export const SessionFileSchema = describeResponse(
 // Route responses
 // ===========================================================================
 
-/** `POST /sessions`, and every state-change route that answers `{ session }`. */
+/**
+ * `POST /sessions`, `GET /sessions/{id}`, and every state-change route.
+ *
+ * ONE key. `run` and `eventCursor` were declared optional here because
+ * `SessionStateChangeAccepted` declared them; no handler on any of these eight
+ * routes emits either — each answers `json(200, { session })` — and the client
+ * type no longer claims otherwise. The run-bearing envelope is
+ * {@link SessionMessageAcceptedResponseSchema}, a different route.
+ */
 export const SessionEnvelopeResponseSchema = describeResponse(
   "SessionEnvelopeResponse",
-  "A single session. `run` and `eventCursor` are declared by " +
-    "`SessionStateChangeAccepted` but the current server sends neither on a state change.",
-  responseObject({
-    session: SessionWireSchema,
-    run: optional(SessionRunSchema),
-    eventCursor: optional(wireNonNegativeInteger)
-  })
+  "A single session, and nothing else.",
+  responseObject({ session: SessionWireSchema })
 );
 
 export const SessionListResponseSchema = describeResponse(
@@ -327,9 +335,10 @@ export const SessionMessageAcceptedResponseSchema = describeResponse(
 /**
  * `DELETE /sessions/{id}` — a 200 with a body, not a 204.
  *
- * `purgedSessionFileObjects` and `cleanupComplete` are on the wire and are NOT
- * on `SessionStateChangeAccepted`, which is what `deleteSession()` declares it
- * returns.
+ * `purgedSessionFileObjects` and `cleanupComplete` are on the wire.
+ * `deleteSession()` used to declare it returned `SessionStateChangeAccepted |
+ * void`, which carries neither and made the body look optional; it now returns
+ * `SessionDeleteAccepted`, pinned to this schema by a key-set assertion.
  */
 export const SessionDeleteResponseSchema = describeResponse(
   "SessionDeleteResponse",
@@ -353,7 +362,8 @@ export const SessionMessagesPageResponseSchema = describeResponse(
         timestamp: wireString,
         sequence: wireNonNegativeInteger,
         content: z.array(z.unknown()),
-        turnSeq: optional(wireNonNegativeInteger)
+        turnSeq: optional(wireNonNegativeInteger),
+        messageId: optional(wireString)
       })
     ),
     nextCursor: optional(wireNonEmptyString)
@@ -408,9 +418,9 @@ export const SessionEventsPageResponseSchema = describeResponse(
 /**
  * `POST /sessions/{id}/events/ticket`.
  *
- * `ok` and `region` are on the wire and are NOT on the declared
- * `CoordinatorTicket` interface, which lists only `wsUrl`, `ticket` and
- * `expiresAtMs`.
+ * `ok` and `region` are on the wire. The declared `CoordinatorTicket` interface
+ * in `operations.ts` used to stop at `wsUrl` / `ticket` / `expiresAtMs`, hiding
+ * the region the grant is only valid against; it now carries all five.
  */
 export const CoordinatorTicketResponseSchema = describeResponse(
   "CoordinatorTicketResponse",

@@ -1,5 +1,3 @@
-import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
-import { idPatternSource } from "./ids.js";
 import {
   MOUNT_PATH_MAX_LENGTH,
   MOUNT_PATH_PATTERN,
@@ -39,14 +37,49 @@ type AssetCollection = (typeof ASSET_COLLECTIONS)[number];
 type ResourceDescriptorMap = {
   readonly [Collection in AssetCollection]: {
     readonly kind: SubmissionAssets[Collection][number]["kind"];
-    readonly allowedKeys: readonly string[];
-    readonly requiredKeys: readonly string[];
-    readonly properties: Readonly<Record<string, JsonValue>>;
+    /**
+     * The JSON-schema property map, required to name EVERY key of the ref type
+     * and no others.
+     *
+     * This mapped type is what the retired `allowed-keys` helper used to
+     * provide — a compile-time proof that a runtime key list matches the
+     * interface — except it proves it about the list that already had to exist.
+     * The allow-list and the required-key list are now read off this one
+     * declaration rather than restated beside it, so the three cannot disagree.
+     */
+    readonly properties: { readonly [Key in keyof SubmissionAssets[Collection][number]]-?: JsonValue };
   };
 };
 
+/** The permitted keys of a resource ref, in declaration order. */
+function descriptorKeys(collection: AssetCollection): readonly string[] {
+  return Object.keys(RESOURCE_DESCRIPTORS[collection].properties);
+}
+
+/**
+ * Reject the first key the caller sent that the allow-list does not name.
+ *
+ * Local rather than shared with the wire schemas: this validates a MODEL tool
+ * argument against a JSON Schema this module also advertises, not an HTTP wire
+ * object, and its diagnostics are prose for a model rather than the wire's
+ * `permitted: …` form. What matters is that the key list it checks against is
+ * derived from the advertised `properties` — so the schema the model is shown
+ * and the rule it is held to are one declaration.
+ */
+function rejectUnknownKeys(
+  record: Readonly<Record<string, unknown>>,
+  permitted: readonly string[],
+  message: (key: string) => string
+): void {
+  for (const key of Object.keys(record)) {
+    if (!permitted.includes(key)) {
+      throw new Error(message(key));
+    }
+  }
+}
+
 const COMMON_PROPERTIES = {
-  resourceId: { type: "string", pattern: idPatternSource("resource") },
+  resourceId: { type: "string", pattern: "^wres_[0-9a-f]{32}$" },
   version: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
   assetId: { type: "string", pattern: "^asset_[0-9a-f]{64}$" },
   contentHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }
@@ -55,10 +88,6 @@ const COMMON_PROPERTIES = {
 const RESOURCE_DESCRIPTORS = {
   files: {
     kind: "file",
-    allowedKeys: defineAllowedKeys<WorkspaceFileRef>()(
-      "kind", "resourceId", "version", "assetId", "contentHash", "name", "mountPath"
-    ),
-    requiredKeys: ["kind", "resourceId", "version", "assetId", "contentHash", "name", "mountPath"],
     properties: {
       kind: { const: "file" },
       ...COMMON_PROPERTIES,
@@ -77,10 +106,6 @@ const RESOURCE_DESCRIPTORS = {
   },
   skills: {
     kind: "skill",
-    allowedKeys: defineAllowedKeys<WorkspaceSkillRef>()(
-      "kind", "resourceId", "version", "assetId", "contentHash", "name", "description"
-    ),
-    requiredKeys: ["kind", "resourceId", "version", "assetId", "contentHash", "name", "description"],
     properties: {
       kind: { const: "skill" },
       ...COMMON_PROPERTIES,
@@ -90,12 +115,6 @@ const RESOURCE_DESCRIPTORS = {
   },
   tools: {
     kind: "tool",
-    allowedKeys: defineAllowedKeys<WorkspaceToolRef>()(
-      "kind", "resourceId", "version", "assetId", "contentHash", "name", "description", "input_schema", "entry"
-    ),
-    requiredKeys: [
-      "kind", "resourceId", "version", "assetId", "contentHash", "name", "description", "input_schema", "entry"
-    ],
     properties: {
       kind: { const: "tool" },
       ...COMMON_PROPERTIES,
@@ -115,10 +134,6 @@ const RESOURCE_DESCRIPTORS = {
   },
   instructions: {
     kind: "instruction",
-    allowedKeys: defineAllowedKeys<WorkspaceInstructionRef>()(
-      "kind", "resourceId", "version", "assetId", "contentHash", "name"
-    ),
-    requiredKeys: ["kind", "resourceId", "version", "assetId", "contentHash", "name"],
     properties: {
       kind: { const: "instruction" },
       ...COMMON_PROPERTIES,
@@ -141,7 +156,7 @@ export function buildSubagentAssetsInputSchema(): SubagentInputSchema {
       items: {
         type: "object",
         properties: descriptor.properties,
-        required: [...descriptor.requiredKeys],
+        required: [...descriptorKeys(collection)],
         additionalProperties: false
       }
     };
@@ -174,7 +189,7 @@ export function parseSubagentAssetsInput(input: unknown): SubmissionAssets | und
   if (!isRecord(input)) {
     throw new Error("subagent: `assets` must contain files, skills, tools, and instructions arrays");
   }
-  assertAllowedKeys(input, ASSET_COLLECTIONS, (key) => new Error(`subagent: assets.${key} is not allowed`));
+  rejectUnknownKeys(input, ASSET_COLLECTIONS, (key) => `subagent: assets.${key} is not allowed`);
 
   const parsed = {
     files: parseResourceCollection(input.files, "files"),
@@ -232,7 +247,7 @@ function parseResource(
   const descriptor = RESOURCE_DESCRIPTORS[collection];
   const path = `subagent: assets.${collection}[${index}]`;
   if (!isRecord(input)) throw new Error(`${path} must be an object`);
-  assertAllowedKeys(input, descriptor.allowedKeys, (key) => new Error(`${path}.${key} is not allowed`));
+  rejectUnknownKeys(input, descriptorKeys(collection), (key) => `${path}.${key} is not allowed`);
   if (input.kind !== descriptor.kind) throw new Error(`${path}.kind must be '${descriptor.kind}'`);
 
   const base = {

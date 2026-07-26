@@ -106,6 +106,10 @@ export * from "./canonical-sha256.js";
 export * from "./session-config.js";
 export * from "./bundle-manifest.js";
 export * from "./runtime-types.js";
+// Split out of `runtime-types.js` and re-exported here so the account /
+// workspace-management record types keep the exact root-barrel surface they had
+// when the two families shared one file.
+export * from "./account-types.js";
 export * from "./webhook-verify.js";
 export * from "./http.js";
 export * from "./session-artifacts.js";

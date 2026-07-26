@@ -24,11 +24,10 @@
  *    "unexercised", and reading that as thin test coverage would be wrong: no
  *    `HttpClient` call site produces them at all.
  *
- * ## One limitation worth knowing before trusting a green run
+ * ## The plane collision — closed, but only if the caller says which plane
  *
- * {@link import("./wire-conformance.js").WireResponse} carries a method and a
- * PATH — no origin. The control plane serves different bodies at two of the same
- * paths as the data plane:
+ * A method and a PATH do not identify a route. The control plane serves
+ * different bodies at two of the same paths as the data plane:
  *
  * - `GET /api/whoami` — an `account_token` principal, not an `api_key` one.
  * - `DELETE /api/workspaces/{id}` — the control-plane workspace delete, not the
@@ -36,9 +35,19 @@
  *
  * A suite that drives BOTH planes in one process (the CLI does: `aex login` is
  * control-plane) would validate a control-plane body against a data-plane schema
- * and report a violation that is not one. Installing this table in a
- * data-plane-only suite is safe; a mixed suite needs `WireResponse` to carry the
- * origin first.
+ * and report a violation that is not one.
+ *
+ * {@link import("../wire-observer.js").WireResponse} now carries the ORIGIN it
+ * came from, so this table is safe in a mixed process — provided it is installed
+ * with the data plane's origin:
+ *
+ * ```ts
+ * installWireConformance(DATA_PLANE_RESPONSE_SCHEMAS, { origin: process.env.AEX_API_URL });
+ * ```
+ *
+ * Installed without one, the harness matches on path alone and the collision is
+ * back. It stays legal because a data-plane-only process has nothing to collide
+ * with, and the printed report always states which of the two runs it was.
  */
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
@@ -273,9 +282,10 @@ export const ROUTES_OFF_THE_SDK_SEAM: readonly UnschemadRoute[] = [
   {
     name: "sessions.otel",
     reason:
-      "`getSessionOtlpPage` reads the body through `HttpClient.download()`, and only " +
-      "`HttpClient.request()` reports to the wire observer. Extending the seam to `download()` " +
-      "is what would make this observable."
+      "`getSessionOtlpPage` reads the body through `HttpClient.download()`, which reports only " +
+      "its FAILURES to the wire observer — its 2xx body is handed back as a `Response` for the " +
+      "caller to read, and reporting it would mean cloning every download. Its error envelope " +
+      "IS checked; its success body is what stays unobserved."
   },
   {
     name: "sessions.childResult",

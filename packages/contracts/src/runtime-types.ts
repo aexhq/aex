@@ -1,3 +1,4 @@
+import type * as z from "zod/mini";
 import type { SessionStatus, SessionTerminalOutcome } from "./status.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
 import type { RuntimeKind } from "./runtime-kind.js";
@@ -9,6 +10,38 @@ import type {
   SessionLimits,
   SessionWebhookSpec
 } from "./submission.js";
+// TYPE-ONLY, and deliberately so: `schemas/response-sessions.ts` imports
+// `SESSION_RUN_PHASES` from this module, so a value import would close a runtime
+// cycle. `import type` is erased, and `typeof Schema` is a type position, so the
+// wire types below are derived from the schemas that validate the actual bytes
+// without either module depending on the other at run time.
+import type {
+  CoordinatorTicketResponseSchema,
+  SessionDeleteResponseSchema,
+  SessionFileSchema,
+  SessionFileLinkResponseSchema,
+  SessionWireSchema
+} from "./schemas/response-sessions.js";
+
+// ===========================================================================
+// Wire-vs-client drift guards
+//
+// Several types below are the CLIENT shape: what the SDK hands a caller after
+// `operations.ts` has normalised the response. A client type is legitimately
+// hand-written (it carries `readonly`, richer nested types, and the fields the
+// SDK synthesises), but hand-written is exactly how it drifted from the wire in
+// the first place. So every hand-written client shape that mirrors a response
+// schema is pinned to it by a KEY-SET equality check: adding or removing a field
+// on either side is a compile error, while the deliberate differences
+// (`readonly`, nested type identity, optionality) stay expressible.
+// ===========================================================================
+
+/** `true` only when `A` and `B` are the same set of keys. */
+type KeysEqual<A extends PropertyKey, B extends PropertyKey> =
+  [Exclude<A, B>] extends [never] ? ([Exclude<B, A>] extends [never] ? true : false) : false;
+
+/** Fails to compile unless `T` is `true`. */
+type Assert<T extends true> = T;
 
 /** Public run phases. Internal finalization remains behind the consistency barrier. */
 export const SESSION_RUN_PHASES = [
@@ -48,14 +81,40 @@ export interface SessionRuntime {
   readonly size?: RuntimeSize;
 }
 
+/**
+ * The session projection **exactly as the data plane serves it**.
+ *
+ * Derived from `SessionWireSchema`, the schema the C4 harness validates real
+ * bytes against, so this type and that schema cannot disagree. The wire carries
+ * FLAT `runtimeKind` + `runtimeSize`; there is no grouped `runtime` object on
+ * it. `normalizeSessionRuntime` in `operations.ts` folds the pair into
+ * {@link Session} before any SDK caller sees a session, which is why both shapes
+ * are declared: they are two different things, and calling them both `Session`
+ * is what let three fields disagree with the server unnoticed.
+ *
+ * Nobody outside `operations.ts` should consume this. It exists so the
+ * transform is a named, checkable step instead of an undocumented mutation.
+ */
+export type SessionWire = z.infer<typeof SessionWireSchema>;
+
+/**
+ * A session as the SDK hands it to a caller — {@link SessionWire} with the flat
+ * `runtimeKind`/`runtimeSize` pair folded into {@link SessionRuntime}. Nothing
+ * else is added, removed or renamed by the fold.
+ */
 export interface Session {
   readonly id: string;
   readonly status: SessionStatus;
   readonly workspaceId?: string;
   readonly model?: PlatformSubmission["model"];
-  /** Execution runtime: the backend (`kind`) and box size (`size`) it runs on. */
+  /** The upstream model provider the session ran on, when the server records one. */
+  readonly provider?: string;
+  /**
+   * Execution runtime: the backend (`kind`) and box size (`size`) it runs on.
+   * CLIENT-SIDE SHAPE — the server sends `runtimeKind` and `runtimeSize` as two
+   * top-level fields (see {@link SessionWire}); the SDK groups them here.
+   */
   readonly runtime?: SessionRuntime;
-  readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;
   readonly acceptsMessages: boolean;
   readonly currentRun?: SessionRun;
   readonly lastRun?: SessionRun;
@@ -68,8 +127,13 @@ export interface Session {
   readonly suspendedAt?: string | null;
   readonly activeDurationMs?: number;
   readonly retainedStorageBytes?: number;
-  readonly usage?: UsageSummary;
   readonly costUsd?: number;
+  /**
+   * Cost and usage telemetry for the settled session. **This is where token
+   * counts live** — `costTelemetry.providerUsage`, projected by
+   * {@link usageFromProviderUsage}. There is no top-level `usage` field; the
+   * server has never sent one.
+   */
   readonly costTelemetry?: import("./session-cost.js").SessionCostTelemetry;
   readonly errorMessage?: string | null;
   /**
@@ -95,6 +159,14 @@ export interface Session {
   /** What triggered the content purge: `"retention"` (window elapsed) or `"user"` (explicit delete). */
   readonly contentDeletedBy?: "retention" | "user";
 }
+
+/**
+ * The fold is exactly `runtimeKind` + `runtimeSize` → `runtime`, and nothing
+ * else. A field appearing on one side only is a compile error here.
+ */
+type _SessionFoldIsTotal = Assert<
+  KeysEqual<Exclude<keyof SessionWire, "runtimeKind" | "runtimeSize"> | "runtime", keyof Session>
+>;
 
 export interface SessionSummary {
   readonly id: string;
@@ -159,18 +231,35 @@ export interface SessionMessageAccepted {
   readonly eventCursor?: number;
 }
 
-export type SessionMessageSender = "user" | "assistant" | "system" | "tool";
+/**
+ * The senders the projected transcript actually carries.
+ *
+ * Narrowed from a four-member union that also listed `system` and `tool`. The
+ * message projection emits only these two — tool activity and system text reach
+ * a caller as events, not transcript messages — and
+ * `SessionMessagesPageResponseSchema` is strict, so a third value would fail C4
+ * rather than pass unnoticed.
+ */
+export type SessionMessageSender = "user" | "assistant";
 
+/**
+ * One projected transcript message.
+ *
+ * Required-ness follows the wire rather than caution: the projection always
+ * emits `timestamp`, `sequence` and `content`, and declaring them optional made
+ * callers guard a case the server does not produce. The index signature is gone
+ * for the same reason the other twelve went — it let an undeclared field pass
+ * unnoticed, which is the thing the response schemas exist to catch.
+ */
 export interface SessionMessage {
   readonly id: string;
   readonly sender: SessionMessageSender;
   readonly text: string;
-  readonly timestamp?: string;
+  readonly timestamp: string;
+  readonly sequence: number;
+  readonly content: readonly unknown[];
   readonly turnSeq?: number;
-  readonly sequence?: number;
   readonly messageId?: string;
-  readonly content?: unknown;
-  readonly [key: string]: unknown;
 }
 
 export interface SessionMessagesQuery {
@@ -184,11 +273,43 @@ export interface SessionMessagesPage {
   readonly nextCursor?: string;
 }
 
+/**
+ * The body every session state-change route answers with: suspend, cancel,
+ * resume, approve, deny and request-approval.
+ *
+ * The envelope is `{ session }` and NOTHING ELSE. It used to declare an optional
+ * `run` and `eventCursor`; no state-change handler has ever emitted either, and
+ * a declared-but-never-sent field is indistinguishable from a field the server
+ * dropped. The run-bearing envelope is {@link SessionMessageAccepted}, which is
+ * a different route.
+ */
 export interface SessionStateChangeAccepted {
   readonly session: Session;
-  readonly run?: SessionRun;
-  readonly eventCursor?: number;
 }
+
+/**
+ * `DELETE /api/sessions/{id}` — a 200 **with a body**, not a 204.
+ *
+ * Beyond the deleted session the server reports the footprint cleanup it
+ * attempted. That cleanup is best-effort: `cleanupComplete: false` means the
+ * session row is gone but some stored objects were not purged and a later sweep
+ * must finish the job, so a caller that needs the bytes actually gone has to
+ * read it.
+ */
+export interface SessionDeleteAccepted {
+  readonly session: Session;
+  /** How many stored session-file objects the delete purged. */
+  readonly purgedSessionFileObjects: number;
+  /** False when a cleanup leg failed and the footprint is only partly purged. */
+  readonly cleanupComplete: boolean;
+}
+
+/** The wire form of {@link SessionDeleteAccepted} (flat runtime fields on `session`). */
+export type SessionDeleteResponseWire = z.infer<typeof SessionDeleteResponseSchema>;
+
+type _SessionDeleteMatchesWire = Assert<
+  KeysEqual<keyof SessionDeleteResponseWire, keyof SessionDeleteAccepted>
+>;
 
 export interface UsageSummary {
   readonly inputTokens?: number;
@@ -363,13 +484,24 @@ export interface SessionWebhookDelivery {
 }
 
 /**
- * One captured session file. Use `session.files.link(...)` to mint a temporary
- * direct download URL.
+ * One captured session file, as `GET /api/sessions/{id}/files` and the file-link
+ * route project it. Use `session.files.link(...)` to mint a temporary direct
+ * download URL.
+ *
+ * The workspace-relative path is `filename` here. The writer-token
+ * {@link ChildResultFile} projection of the same concept calls it `path` — two
+ * server projections of one thing that differ in exactly that key name.
+ *
+ * `filename`, `contentType` and `createdAt` are declared optional but the server
+ * sends all three unconditionally. They stay optional because this type doubles
+ * as a caller-supplied {@link SessionFileSelector}, where requiring metadata a
+ * caller does not have would make the selector unusable.
  */
 export interface SessionFile {
   readonly id: string;
   /** Checkpoint this file record is pinned to. */
   readonly checkpointId: string;
+  /** Workspace-relative path. Always sent by the server; see the note above. */
   readonly filename?: string;
   /** Exact byte length recorded by the committed checkpoint. */
   readonly sizeBytes: number;
@@ -377,8 +509,12 @@ export interface SessionFile {
   readonly sha256: string;
   readonly contentType?: string;
   readonly createdAt?: string;
-  readonly [key: string]: unknown;
 }
+
+/** The wire form of {@link SessionFile}: every field unconditional. */
+export type SessionFileWire = z.infer<typeof SessionFileSchema>;
+
+type _SessionFileMatchesWire = Assert<KeysEqual<keyof SessionFileWire, keyof SessionFile>>;
 
 /** A complete file listing and the immutable checkpoint it was read from. */
 export interface SessionFilesSnapshot {
@@ -489,13 +625,27 @@ export interface SessionFileLinkOptions {
   readonly checkpointId?: string;
 }
 
+/**
+ * A minted direct-download link, as the SDK returns it.
+ *
+ * `expiresAt` is NOT on the wire: the server sends `{ url, expiresInSeconds }`
+ * (plus `file` on the file-link route) and `sessionFileLink()` synthesises the
+ * absolute timestamp from the mint time — which is why it is required here and
+ * absent from {@link SessionFileLinkWire}. `file` is optional because the event
+ * archive link (`POST .../events/link`) mints a URL for a generated archive that
+ * has no file record.
+ */
 export interface SessionFileLink {
   readonly url: string;
-  readonly expiresAt?: string;
-  readonly expiresInSeconds?: number;
+  /** Synthesised client-side from the mint time; the server sends no absolute time. */
+  readonly expiresAt: string;
+  readonly expiresInSeconds: number;
+  /** The file the URL points at. Absent on the event-archive link. */
   readonly file?: SessionFile;
-  readonly [key: string]: unknown;
 }
+
+/** `POST /api/sessions/{id}/files/{fileId}/link` exactly as served. */
+export type SessionFileLinkWire = z.infer<typeof SessionFileLinkResponseSchema>;
 
 /**
  * Identity of a CONTROL-plane account principal (a PAT / device session),
@@ -522,6 +672,12 @@ export interface AccountWhoAmI {
 export interface WhoAmI {
   readonly ok: true;
   readonly principalType: "api_key";
+  /**
+   * The PUBLIC workspace id, `wsp_<32 hex>` — the handler renders it through
+   * `publicWorkspaceId`. {@link McpServerRecord.workspaceId} matches this;
+   * {@link BillingLedgerEntry.workspaceId} and {@link WorkspaceEraseResult} do
+   * NOT — they carry the raw id. One concept, two renderings on the same API.
+   */
   readonly workspaceId: string;
   readonly scopes: readonly string[];
   /**
@@ -551,7 +707,14 @@ export interface WhoAmI {
     readonly accountType: "standard" | "internal";
     readonly subscriptionStatus: "none" | "active" | "past_due" | "canceled";
     readonly subscriptionGate: "ok" | "past_due_grace" | "past_due_suspended";
+    /**
+     * ISO-8601 with a `Z` — this route formats the timestamp. The SAME concept
+     * on {@link BillingSummary.pastDueAt} is the Aurora Data API's raw
+     * `"YYYY-MM-DD HH:MM:SS"` text. Present only when the subscription gate is
+     * not `ok` AND the underlying timestamp exists.
+     */
     readonly pastDueAt?: string;
+    /** ISO-8601 with a `Z`. Same presence rule as {@link WhoAmI.limits.pastDueAt}. */
     readonly graceEndsAt?: string;
   };
 }
@@ -621,274 +784,7 @@ export interface RuntimeCapabilities {
   readonly profilesByRuntimeKind: Record<RuntimeKind, RuntimeProfile>;
 }
 
-/**
- * Wire-level record for a workspace secret as returned by the BFF.
- *
- * Workspace secrets share the lifecycle semantic of skills/files: a
- * `Secret.value(...)` is per-session and gone at terminal, while
- * `aex.workspace.secrets.set(...)` persists a named reusable value. Use
- * `Secret.ref(name)` to bind that persisted value to a session. The
- * identity is the `name` (the handle a `Secret.ref` points at); the value
- * rotates under that stable name, bumping `version`.
- *
- * This record is METADATA ONLY — it never carries the secret value. Persisted
- * values are write-only through the public workspace-secret API.
- */
-export interface SecretRecord {
-  readonly id: string;
-  readonly name: string;
-  readonly version: number;
-  readonly state: "ready";
-  readonly createdAt?: string;
-  readonly updatedAt?: string;
-  readonly deletedAt?: string | null;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Customer-facing billing summary — `GET /api/billing` (scope `billing:read`).
- * All money fields are USD numbers. The index signature keeps the shape tolerant
- * of ADDITIVE server fields (e.g. a deployment newer than this SDK reporting
- * extra plan attributes) — unknown keys are preserved, never rejected.
- */
-export interface BillingSummary {
-  /** Prepaid balance (authoritative ledger sum). */
-  readonly balanceUsd: number;
-  /** Accrued spend for the current calendar month. */
-  readonly monthSpendUsd: number;
-  /** Monthly spend cap enforced on new sessions. */
-  readonly spendCapUsd: number;
-  readonly planKey: string;
-  readonly subscriptionStatus: string;
-  /** `"active"` once a payment method is bound; older deployments omit it. */
-  readonly paymentMethodStatus?: string;
-  readonly [key: string]: unknown;
-}
-
-/** Self-serve paid plans exposed through hosted checkout. */
-export type BillingCheckoutPlanKey = "pro" | "team";
-
-export interface BillingCheckoutRequest {
-  readonly planKey: BillingCheckoutPlanKey;
-  /** Optional return URL after successful hosted checkout. */
-  readonly successUrl?: string;
-  /** Optional return URL after checkout cancellation. */
-  readonly cancelUrl?: string;
-}
-
-export interface BillingPortalRequest {
-  /** Optional return URL after leaving the hosted billing portal. */
-  readonly returnUrl?: string;
-}
-
-/** Hosted checkout/portal session. The client should open `url`. */
-export interface BillingHostedSession {
-  readonly url: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * One row of the workspace credit ledger as returned by
- * `GET /api/billing/ledger` (newest first). `amountUsd` is signed: top-ups are
- * positive, run charges negative. Tolerant of additive server fields.
- */
-export interface BillingLedgerEntry {
-  readonly id: string;
-  /** e.g. `top_up`, `session_charge`. Open server vocabulary. */
-  readonly entryType: string;
-  readonly amountUsd: number;
-  readonly currency: string;
-  /** The session this entry charges, `null` for non-run entries. */
-  readonly sessionId?: string | null;
-  readonly description?: string | null;
-  readonly createdBy?: string;
-  readonly createdAt: string;
-  readonly [key: string]: unknown;
-}
-
-/** Query for the billing ledger read. `limit` is clamped server-side to [1, 100] (default 25). */
-export interface BillingLedgerQuery {
-  readonly limit?: number;
-}
-
-/** One page of recent ledger rows (newest first). Not cursor-paged — `limit` bounds the read. */
-export interface BillingLedgerPage {
-  readonly entries: readonly BillingLedgerEntry[];
-}
-
-/**
- * The workspace webhook signing secret reveal — `POST /api/webhook/signing-secret`.
- * `whsec` is the Standard-Webhooks style `whsec_<base64>` string that
- * `verifyAexWebhook` accepts as `secret`. The endpoint reveals the current
- * secret, CREATING one on first use; it does not rotate (a repeat call returns
- * the same value). POST (not GET) so every reveal is a logged action.
- */
-export interface WebhookSigningSecret {
-  readonly whsec: string;
-}
-
-// ===========================================================================
-// Control-plane resources (orgs / workspaces / API keys / members)
-//
-// These describe the ACCOUNT/control-plane surface served by the dashboard BFF
-// (distinct from the data-plane, which self-routes on a workspace key). An org
-// owns workspaces and is the billing/roles/cap boundary; a workspace stays the
-// runtime tenant. Records are metadata-only and additive-tolerant (an unknown
-// key from a newer deployment passes through, never rejected) — matching the
-// `SecretRecord` / `BillingSummary` precedent. The value-bearing one-time
-// reveals ({@link NewWorkspace} / {@link NewApiKey}) carry the freshly minted
-// key exactly once; the SDK wraps that field in a redacted `SecretString`.
-// ===========================================================================
-
-/**
- * One org the caller belongs to — the ownership / billing / roles wrapper ABOVE
- * workspaces. `role` is the caller's own membership role in this org
- * (`admin | member`); billing and the per-org workspace cap live at this level.
- */
-export interface OrgRecord {
-  readonly id: string;
-  readonly name: string;
-  /** Globally-unique org slug (`/org/<slug>`); omitted by older deployments. */
-  readonly slug?: string;
-  /** Plan key that governs billing + the per-org workspace cap (e.g. `free`). */
-  readonly planKey?: string;
-  /** The caller's role in this org: `admin` or `member`. */
-  readonly role?: string;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-}
-
-/** Request body for {@link createOrg} — a display name; the server assigns id/slug. */
-export interface CreateOrgRequest {
-  readonly name: string;
-}
-
-/**
- * A workspace as seen from the CONTROL plane (management view): its id, name,
- * and owning org. Distinct from the data-plane view — this never carries the
- * workspace's files/skills/secrets, only the row a dashboard/CLI lists.
- */
-export interface WorkspaceRecord {
-  readonly id: string;
-  readonly name: string;
-  /** Globally-unique workspace slug (`/workspace/<slug>`); omitted by older deployments. */
-  readonly slug?: string;
-  /** The org that owns this workspace. */
-  readonly orgId: string;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-}
-
-/** Request body for {@link createWorkspace}. Free tier caps at 3 workspaces per org. */
-export interface CreateWorkspaceRequest {
-  /** The org to create the workspace under. */
-  readonly orgId: string;
-  readonly name: string;
-}
-
-/**
- * One-time reveal returned by {@link createWorkspace}: the new workspace's id
- * plus its FIRST workspace-scoped, data-plane API key. The key is shown exactly
- * once at creation — the creating (account) principal has no other data-plane
- * access to it, though the owning user can see/delete it in the dashboard
- * (orphan recovery). The SDK wraps `apiKey` in a redacted `SecretString`.
- */
-export interface NewWorkspace {
-  readonly workspaceId: string;
-  /** The workspace-scoped API key (`aex_<plane>_…`), revealed ONCE. */
-  readonly apiKey: string;
-  /** Globally-unique workspace slug, when the server assigns one. */
-  readonly slug?: string;
-  /** The org that owns the new workspace. */
-  readonly orgId?: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Metadata for one API key (data-plane workspace key OR account PAT). NEVER
- * carries the secret value — the value is write-only and revealed only once via
- * {@link NewApiKey}. `kind` distinguishes a `workspace` key from an `account`
- * PAT; `workspaceId` is present only for workspace keys.
- */
-export interface ApiKeyRecord {
-  readonly id: string;
-  readonly name?: string;
-  /** `workspace` (data-plane) or `account` (control-plane PAT). */
-  readonly kind?: string;
-  /** Present for workspace keys; absent for account PATs. */
-  readonly workspaceId?: string;
-  readonly scopes?: readonly string[];
-  readonly createdAt?: string;
-  readonly lastUsedAt?: string | null;
-  readonly revokedAt?: string | null;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Request body for {@link createApiKey}. Mint EITHER a workspace-scoped
- * data-plane key (pass `workspaceId`) or an account PAT (`account: true`) — the
- * two are mutually exclusive. Anti-escalation: an account PAT can mint workspace
- * keys but not another PAT (enforced server-side).
- */
-export interface CreateApiKeyRequest {
-  /** Mint a WORKSPACE-scoped data-plane key for this workspace. */
-  readonly workspaceId?: string;
-  /** Mint an ACCOUNT PAT (control-plane) instead. Mutually exclusive with `workspaceId`. */
-  readonly account?: boolean;
-  /** Optional human label for the key. */
-  readonly name?: string;
-  /** Optional scope restriction; defaults server-side. */
-  readonly scopes?: readonly string[];
-}
-
-/**
- * One-time reveal returned by {@link createApiKey}: the key id plus the freshly
- * minted secret value, shown exactly once. The SDK wraps `apiKey` in a redacted
- * `SecretString`.
- */
-export interface NewApiKey {
-  readonly id: string;
-  /** The freshly minted key value, revealed ONCE. */
-  readonly apiKey: string;
-  readonly name?: string;
-  readonly kind?: string;
-  readonly workspaceId?: string;
-  readonly scopes?: readonly string[];
-  readonly [key: string]: unknown;
-}
-
-/** One member of an org (from {@link listOrgMembers}). Never carries credentials. */
-export interface OrgMemberRecord {
-  /** The member's stable account (app-user) id. */
-  readonly appUserId: string;
-  readonly email?: string;
-  /** `admin` or `member`. */
-  readonly role: string;
-  /** `active` or `pending` (an unaccepted invite). */
-  readonly status?: string;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-}
-
-/** Request body for {@link createOrgInvite} — invite an email at a role. */
-export interface CreateOrgInviteRequest {
-  readonly email: string;
-  /** `admin` or `member`; defaults server-side to `member`. */
-  readonly role?: string;
-}
-
-/**
- * A pending team invite created by {@link createOrgInvite}. Metadata only — the
- * invite token itself is delivered out-of-band (email), never returned here.
- */
-export interface OrgInvite {
-  readonly id: string;
-  readonly orgId: string;
-  readonly email: string;
-  readonly role: string;
-  /** `pending` until accepted. */
-  readonly status?: string;
-  readonly expiresAt?: string;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-}
+// The ACCOUNT and WORKSPACE-MANAGEMENT record types — workspace secret
+// metadata, billing, the control-plane org/workspace/API-key surface, and the
+// response-derived route families — live in `account-types.ts`. Same public
+// barrel, different file: this module stays about the session lifecycle.

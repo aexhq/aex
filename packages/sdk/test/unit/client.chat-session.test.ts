@@ -132,6 +132,15 @@ function makeClient(options: {
         }]
       });
     }
+    if (url.endsWith("/api/sessions/sess_1") && (init?.method ?? "GET").toString() === "DELETE") {
+      // DELETE answers with its own body. This stub used to reply with the GET
+      // one, which made the two counters the server always sends look optional.
+      return json({
+        session: { id: "sess_1", status: "deleted", acceptsMessages: false },
+        purgedSessionFileObjects: 0,
+        cleanupComplete: true
+      });
+    }
     if (url.endsWith("/api/sessions/sess_1")) {
       // Terminal billing is committed on the first read; a `running` override
       // deliberately exercises an inconsistent post-terminal response.

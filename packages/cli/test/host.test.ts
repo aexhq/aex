@@ -4,8 +4,11 @@ import { createHash } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import { executeCli } from "../src/main.js";
 import { parseDuration, takeOptionFlag } from "../src/host/common.js";
-import type { CliIO } from "../src/internal.js";
 import { canonicalWhoami } from "./canonical-whoami.js";
+// The DI IO harness is shared with the other CLI verb suites rather than
+// re-declared here: this file used to carry a near-identical private copy, and
+// two harnesses is how a fixture and the behaviour it stands for drift apart.
+import { makeIo, type FetchCall } from "./support.js";
 
 const CWD = "/tmp/cli-test";
 const EMPTY_SHA256 = createHash("sha256").update("").digest("hex");
@@ -16,81 +19,6 @@ function resolvedFromCwd(p: string): string {
   return resolvePath(CWD, p);
 }
 
-interface FetchCall {
-  url: string;
-  init: RequestInit;
-  body: unknown;
-}
-
-function makeHostIo(opts: {
-  argv: readonly string[];
-  fetchHandler?: (call: FetchCall) => Response;
-  files?: Record<string, string>;
-  writes?: Map<string, Uint8Array>;
-}): {
-  io: CliIO;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  calls: FetchCall[];
-} {
-  const state = {
-    stdout: "",
-    stderr: "",
-    exitCode: null as number | null,
-    calls: [] as FetchCall[]
-  };
-  const files = opts.files ?? {};
-  const writes = opts.writes ?? new Map<string, Uint8Array>();
-
-  const io: CliIO = {
-    argv: ["bun", "/aex/aex", ...opts.argv],
-    readFile: async (path) => {
-      if (!(path in files)) {
-        throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
-      }
-      return files[path]!;
-    },
-    writeFile: async (path, data) => {
-      writes.set(path, data);
-    },
-    cwd: () => CWD,
-    fetchImpl: (async (input, init) => {
-      const reqInit: RequestInit = init ?? {};
-      let body: unknown;
-      if (typeof reqInit.body === "string") {
-        try {
-          body = JSON.parse(reqInit.body);
-        } catch {
-          body = reqInit.body;
-        }
-      }
-      const url = String(input);
-      const call: FetchCall = { url, init: reqInit, body };
-      state.calls.push(call);
-      const handler = opts.fetchHandler ?? (() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
-      return handler(call);
-    }) as typeof fetch,
-    stdout: (chunk) => {
-      state.stdout += chunk;
-    },
-    stderr: (chunk) => {
-      state.stderr += chunk;
-    },
-    exit: (code) => {
-      state.exitCode = code;
-    }
-  };
-
-  return {
-    io,
-    get stdout() { return state.stdout; },
-    get stderr() { return state.stderr; },
-    get exitCode() { return state.exitCode; },
-    get calls() { return state.calls; }
-  };
-}
-
 const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
 function undiciFetchFailed(code = "UND_ERR_CONNECT_TIMEOUT"): TypeError {
@@ -99,7 +27,7 @@ function undiciFetchFailed(code = "UND_ERR_CONNECT_TIMEOUT"): TypeError {
 
 describe("aex whoami", () => {
   it("calls GET /api/whoami without a workspace query and prints the body", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["whoami", "--api-key", "tok-1", "--aex-url", "https://dash.example/"],
       fetchHandler: () =>
         new Response(JSON.stringify(canonicalWhoami("ws-7", ["sessions.write"])), {
@@ -118,14 +46,14 @@ describe("aex whoami", () => {
   });
 
   it("rejects when --api-key is missing", async () => {
-    const cap = makeHostIo({ argv: ["whoami", "--aex-url", "https://dash.example/"] });
+    const cap = makeIo({ argv: ["whoami", "--aex-url", "https://dash.example/"] });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--api-key");
   });
 
   it("defaults --aex-url to https://api.aex.dev when omitted", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["whoami", "--api-key", "tok-1"],
       fetchHandler: () =>
         new Response(JSON.stringify(canonicalWhoami("ws-9")), {
@@ -141,7 +69,7 @@ describe("aex whoami", () => {
 
 describe("aex status", () => {
   it("does not send a workspaceId query parameter (derived from token server-side)", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["status", "session-42", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ session: { id: "session-42", status: "idle", acceptsMessages: true } }), {
@@ -157,7 +85,7 @@ describe("aex status", () => {
   });
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["status", "session-1", "--workspace", "ws-1", "--api-key", "tok", "--aex-url", "https://x"]
     });
     await executeCli(cap.io);
@@ -166,7 +94,7 @@ describe("aex status", () => {
   });
 
   it("rejects unknown flags before making a network call", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["status", "session-1", "--typo-flag", ...COMMON],
       fetchHandler: () => {
         throw new Error("status should not fetch after an unknown flag");
@@ -194,7 +122,7 @@ describe("aex deliveries", () => {
         createdAt: "2026-06-21T00:00:00.000Z"
       }
     ];
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["deliveries", "session-42", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ deliveries: rows }), {
@@ -210,7 +138,7 @@ describe("aex deliveries", () => {
   });
 
   it("requires exactly one session-id positional", async () => {
-    const cap = makeHostIo({ argv: ["deliveries", ...COMMON] });
+    const cap = makeIo({ argv: ["deliveries", ...COMMON] });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex deliveries");
@@ -219,7 +147,7 @@ describe("aex deliveries", () => {
 
 describe("aex events", () => {
   it("lists events as NDJSON", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["events", "session-9", ...COMMON],
       fetchHandler: () =>
         new Response(
@@ -241,7 +169,7 @@ describe("aex events", () => {
   });
 
   it("--follow polls /events and emits NDJSON until terminal (never opens an SSE stream)", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["events", "session-poll", "--follow", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events/stream")) {
@@ -268,7 +196,7 @@ describe("aex events", () => {
   });
 
   it("--follow stops when RUN_FINISHED carries outcome=timed_out", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["events", "session-timeout", "--follow", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events")) {
@@ -328,7 +256,7 @@ describe("takeOptionFlag", () => {
 describe("aex wait", () => {
   it("polls GET /api/sessions/{id} until non-progressing, prints the final session, and exits 0 on idle", async () => {
     let polls = 0;
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["wait", "session-w", "--interval", "1ms", ...COMMON],
       fetchHandler: () => {
         polls++;
@@ -348,7 +276,7 @@ describe("aex wait", () => {
   });
 
   it("exits 1 (RUNTIME_ERR) when the session stops progressing with error", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["wait", "session-f", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ session: { id: "session-f", status: "error", acceptsMessages: true } }), {
@@ -362,7 +290,7 @@ describe("aex wait", () => {
   });
 
   it("retains status and remedy when a session poll fails", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["wait", "session-denied", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({
@@ -391,7 +319,7 @@ describe("aex wait", () => {
   });
 
   it("exits 3 (TIMEOUT_ERR) with a JSON error when --timeout elapses before parked", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["wait", "session-slow", "--timeout", "0ms", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ session: { id: "session-slow", status: "running", acceptsMessages: false } }), {
@@ -408,14 +336,14 @@ describe("aex wait", () => {
   });
 
   it("rejects a malformed --timeout with USAGE_ERR", async () => {
-    const cap = makeHostIo({ argv: ["wait", "session-x", "--timeout", "soon", ...COMMON] });
+    const cap = makeIo({ argv: ["wait", "session-x", "--timeout", "soon", ...COMMON] });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--timeout");
   });
 
   it("rejects a trailing --timeout instead of silently disabling the deadline", async () => {
-    const cap = makeHostIo({ argv: ["wait", "session-x", ...COMMON, "--timeout"] });
+    const cap = makeIo({ argv: ["wait", "session-x", ...COMMON, "--timeout"] });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--timeout requires a value");
@@ -423,7 +351,7 @@ describe("aex wait", () => {
   });
 
   it("requires exactly one session-id positional", async () => {
-    const cap = makeHostIo({ argv: ["wait", ...COMMON] });
+    const cap = makeIo({ argv: ["wait", ...COMMON] });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex wait");
@@ -432,7 +360,7 @@ describe("aex wait", () => {
 
 describe("aex events --follow --timeout", () => {
   it("exits 3 with a JSON error when the follow deadline elapses before terminal", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["events", "session-ev", "--follow", "--timeout", "0ms", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events")) {
@@ -455,7 +383,7 @@ describe("aex events --follow --timeout", () => {
 
 describe("aex files", () => {
   it("lists files as NDJSON", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["files", "session-9", ...COMMON],
       fetchHandler: () =>
         new Response(
@@ -486,7 +414,7 @@ describe("aex files", () => {
 
 describe("aex cancel + delete", () => {
   it("cancel POSTs and prints the result", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["cancel", "session-x", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ session: { id: "session-x", status: "cancelling", acceptsMessages: false } }), {
@@ -502,10 +430,14 @@ describe("aex cancel + delete", () => {
   });
 
   it("delete DELETEs and prints the result", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["delete", "session-x", ...COMMON],
+      // The delete route answers with both counters on every call; a stub that
+      // omits them models a response the server does not send.
       fetchHandler: () => new Response(JSON.stringify({
-        session: { id: "session-x", status: "deleted", acceptsMessages: false }
+        session: { id: "session-x", status: "deleted", acceptsMessages: false },
+        purgedSessionFileObjects: 0,
+        cleanupComplete: true
       }), { status: 200, headers: { "content-type": "application/json" } })
     });
     await executeCli(cap.io);
@@ -517,7 +449,7 @@ describe("aex cancel + delete", () => {
 
   it("delete-asset DELETEs a normalized workspace asset id and prints the result", async () => {
     const hex = "a".repeat(64);
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["delete-asset", `sha256:${hex}`, ...COMMON],
       fetchHandler: () => new Response(null, { status: 204 })
     });
@@ -530,7 +462,7 @@ describe("aex cancel + delete", () => {
   });
 
   it("delete-asset rejects missing hashes without calling the API", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["delete-asset", ...COMMON]
     });
     await executeCli(cap.io);
@@ -541,7 +473,7 @@ describe("aex cancel + delete", () => {
 
   it("delete-asset emits a structured error with the requested hash on API failure", async () => {
     const hex = "c".repeat(64);
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["delete-asset", hex, ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ error: "asset_not_found", message: "asset not found" }), {
@@ -608,7 +540,7 @@ describe("aex download", () => {
 
   it("assembles the public whole-run zip client-side and writes it to --out", async () => {
     const writes = new Map<string, Uint8Array>();
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-1", "--out", "session-1.zip", ...COMMON],
       writes,
       fetchHandler: wholeSessionHandler("session-1")
@@ -638,7 +570,7 @@ describe("aex download", () => {
 
   it("defaults the output path to aex-session-<session-id>.zip when --out is omitted", async () => {
     const writes = new Map<string, Uint8Array>();
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-2", ...COMMON],
       writes,
       fetchHandler: wholeSessionHandler("session-2")
@@ -651,7 +583,7 @@ describe("aex download", () => {
 
   it("--only files zips just the deliverables (no logs, no metadata/events)", async () => {
     const writes = new Map<string, Uint8Array>();
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-1", "--only", "files", ...COMMON],
       writes,
       fetchHandler: wholeSessionHandler("session-1")
@@ -667,7 +599,7 @@ describe("aex download", () => {
   });
 
   it("rejects --only logs with a usage error", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-1", "--only", "logs", ...COMMON],
       fetchHandler: wholeSessionHandler("session-1")
     });
@@ -679,7 +611,7 @@ describe("aex download", () => {
 
   it("--only metadata reads the session record and manifest", async () => {
     const writes = new Map<string, Uint8Array>();
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-1", "--only", "metadata", ...COMMON],
       writes,
       fetchHandler: wholeSessionHandler("session-1")
@@ -701,7 +633,7 @@ describe("aex download", () => {
   it("retries transient transport failures for idempotent event download reads", async () => {
     const writes = new Map<string, Uint8Array>();
     let eventReads = 0;
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-retry", "--only", "events", "--out", "retry.zip", ...COMMON],
       writes,
       fetchHandler: (call) => {
@@ -721,7 +653,7 @@ describe("aex download", () => {
   });
 
   it("rejects an unknown --only namespace with a usage error", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-1", "--only", "bogus", ...COMMON],
       fetchHandler: wholeSessionHandler("session-1")
     });
@@ -732,7 +664,7 @@ describe("aex download", () => {
   });
 
   it("rejects Object.prototype names as --only namespaces", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["download", "session-1", "--only", "toString", ...COMMON],
       fetchHandler: wholeSessionHandler("session-1")
     });
@@ -778,7 +710,7 @@ describe("aex start", () => {
         }
       ]
     };
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--config",
@@ -834,7 +766,7 @@ describe("aex start", () => {
   });
 
   it("opens a session from --model/--prompt/--mcp/--mcp-auth flags", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -875,7 +807,7 @@ describe("aex start", () => {
 
   it("retries a transient create-session transport failure with the same idempotency key", async () => {
     let creates = 0;
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -923,7 +855,7 @@ describe("aex start", () => {
   });
 
   it("opens a DeepSeek session from its gateway slug with no provider selector or key", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -945,7 +877,7 @@ describe("aex start", () => {
   });
 
   it("threads --webhook into the request body as webhook.url", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -967,7 +899,7 @@ describe("aex start", () => {
   });
 
   it("opens a session from a model slug alone (managed keys — no provider key)", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["start", "--model", "anthropic/claude-haiku-4-5", "--prompt", "p", ...COMMON],
       fetchHandler: sessionStartHandler("sess-managed")
     });
@@ -985,7 +917,7 @@ describe("aex start", () => {
       allowMethods: ["GET"],
       allowPathPrefixes: ["/v1"]
     };
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -1007,7 +939,7 @@ describe("aex start", () => {
   });
 
   it("rejects removed proxy auth flags even without a proxy endpoint", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -1025,7 +957,7 @@ describe("aex start", () => {
   });
 
   it("rejects --mcp-auth that does not match a declared --mcp", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -1045,7 +977,7 @@ describe("aex start", () => {
   });
 
   it("merges multiple --mcp-auth flags for the same server (does not collapse)", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -1076,7 +1008,7 @@ describe("aex start", () => {
   });
 
   it("rejects duplicate --mcp-auth header names for the same server", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
@@ -1098,7 +1030,7 @@ describe("aex start", () => {
   });
 
   it("rejects positional arguments (no session-config positional)", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: ["start", "/some/session.json", ...COMMON]
     });
     await executeCli(cap.io);
@@ -1107,7 +1039,7 @@ describe("aex start", () => {
   });
 
   it("treats @@literal as a literal '@literal' on --prompt", async () => {
-    const cap = makeHostIo({
+    const cap = makeIo({
       argv: [
         "start",
         "--model",
