@@ -13,7 +13,7 @@ import type { FetchLike } from "@aexhq/contracts";
 import { Aex, Tool } from "../../../src/index.js";
 import { formatApiKey } from "@aexhq/contracts";
 
-const WORKSPACE_ID = "0f9a1b2c-3d4e-5f60-7182-93a4b5c6d7e8";
+const WORKSPACE_ID = "wsp_0f9a1b2c3d4e5f60718293a4b5c6d7e8";
 const SECRET = "deadbeefcafef00dfeedface00c0ffee11223344556677";
 const whoami = {
   ok: true,

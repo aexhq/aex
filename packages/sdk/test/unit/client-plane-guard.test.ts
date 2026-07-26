@@ -10,12 +10,13 @@ import type { FetchLike } from "@aexhq/contracts";
 import { AEX_DEFAULT_BASE_URL, formatApiKey, PLANE_BASE_URLS } from "@aexhq/contracts";
 import { Aex, CredentialValidationError } from "../../src/index.js";
 
-const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: "ws123", secret: "s3cr3tvalue" });
-const prdKey = formatApiKey({ plane: "prd", region: "eu-west-1", workspaceId: "ws123", secret: "s3cr3tvalue" });
+const WORKSPACE_ID = "wsp_00000000000000000000000000000001";
+const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: WORKSPACE_ID, secret: "s3cr3tvalue" });
+const prdKey = formatApiKey({ plane: "prd", region: "eu-west-1", workspaceId: WORKSPACE_ID, secret: "s3cr3tvalue" });
 const whoami = {
   ok: true,
   principalType: "api_key",
-  workspaceId: "ws123",
+  workspaceId: WORKSPACE_ID,
   scopes: [],
   limits: {
     maxConcurrentSessions: 1,

@@ -119,22 +119,20 @@ function reassemble(bodies: Map<number, Uint8Array>): Uint8Array {
 }
 
 describe("uploadAssetMultipart — part boundaries", () => {
-  it("stops the first pass at the compressed cap without requesting a multipart plan", async () => {
+  it("streams beyond the runtime archive cap through the multipart plan", async () => {
     const rec: Recorder = { presignBodies: [], finalizeBodies: [], aborts: 0, refreshes: 0 };
     const http = makeHttp({ rec });
-    const chunk = new Uint8Array(1024 * 1024);
-    let pushes = 0;
-    const drive: ZipStreamDriver = async (sink) => {
-      for (;;) {
-        pushes += 1;
-        await sink(chunk);
-      }
-    };
+    const bodies = new Map<number, Uint8Array>();
+    const fetch = makeFetch({ bodies, attempts: new Map() });
+    const { drive, payload, hashHex } = driverOf(ASSET_ARCHIVE_LIMITS.maxCompressedBytes + 1, 1024 * 1024);
 
-    await expect(uploadAssetMultipart({ http, drive, partSize: 1024 * 1024 }))
-      .rejects.toThrow(/64 MiB compressed limit/);
-    expect(pushes).toBe(ASSET_ARCHIVE_LIMITS.maxCompressedBytes / chunk.byteLength + 1);
-    expect(rec.presignBodies).toEqual([]);
+    const result = await uploadAssetMultipart({ http, drive, fetch, partSize: 1024 * 1024, partConcurrency: 3 });
+
+    expect(result.exists).toBe(false);
+    expect(result.contentHash).toBe(`sha256:${hashHex}`);
+    expect(rec.presignBodies[0]).toMatchObject({ sizeBytes: payload.byteLength, multipart: true });
+    expect([...reassemble(bodies)]).toEqual([...payload]);
+    expect(rec.aborts).toBe(0);
   });
 
   const P = 1024;
