@@ -167,6 +167,25 @@ describe("redactSecrets — structured values", () => {
     const redacted = redactSecrets({ password: "shortpw" });
     expect(redacted.password).toBe(REDACTED);
   });
+
+  it("keeps the llm_token_usd allowance readable — it is a quantity, not a credential", () => {
+    // The `402 insufficient_credits` body is read for exactly this number. The
+    // key-name heuristic matches `token` inside the metering dimension, and
+    // blanking it would leave a customer with "[REDACTED] of $2.00 left".
+    const redacted = redactSecrets({
+      error: "insufficient_credits",
+      allowanceRemaining: { llm_token_usd: 0, egress_gb: 4.2 }
+    });
+    expect(redacted.allowanceRemaining.llm_token_usd).toBe(0);
+    expect(redacted.allowanceRemaining.egress_gb).toBe(4.2);
+  });
+
+  it("still redacts every other token-named key", () => {
+    const redacted = redactSecrets({ accessToken: "value", refresh_token: "value", token: "value" });
+    expect(redacted.accessToken).toBe(REDACTED);
+    expect(redacted.refresh_token).toBe(REDACTED);
+    expect(redacted.token).toBe(REDACTED);
+  });
 });
 
 describe("SecretString", () => {
