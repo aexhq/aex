@@ -561,6 +561,6 @@ describe("aex inspect", () => {
     await done;
     expect(cap.exit()).toBe(1);
     expect(cap.out()).toContain("✗ kaboom");
-    expect(cap.out()).toContain("[timeout]");
+    expect(cap.out()).toContain("[wall_clock_exceeded]");
   });
 });
