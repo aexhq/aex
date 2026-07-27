@@ -37,13 +37,13 @@ type Assert<T extends true> = T;
 const SESSION_CREATE_KEYS = [
   "model", "system", "assets", "mcpServers", "fileCapture",
   "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
-  "idempotencyKey", "environment", "runtime", "overrides", "webhook"
+  "environment", "runtime", "overrides", "webhook"
 ] as const satisfies readonly (keyof SessionCreateOptions)[];
 type SessionCreateKeysAreExact = Assert<ExactKeySet<SessionCreateOptions, typeof SESSION_CREATE_KEYS>>;
 
 const SESSION_START_KEYS = [
   ...SESSION_CREATE_KEYS,
-  "message", "deleteAfter", "messageIdempotencyKey", "stream"
+  "message", "deleteAfter", "stream"
 ] as const satisfies readonly (keyof SessionStartOptions)[];
 type SessionStartKeysAreExact = Assert<ExactKeySet<SessionStartOptions, typeof SESSION_START_KEYS>>;
 
@@ -52,16 +52,12 @@ const START_CONTROL_KEYS = [
 ] as const satisfies readonly (keyof StartSessionOptions)[];
 type StartControlKeysAreExact = Assert<ExactKeySet<StartSessionOptions, typeof START_CONTROL_KEYS>>;
 
+// Send and stream now accept the SAME fields: the idempotency key is SDK-owned,
+// so there is no longer a key to allow on one and withhold from the other.
 const SESSION_SEND_KEYS = [
-  "webSocketFactory", "idleTimeoutMs", "pingIntervalMs", "idempotencyKey"
+  "webSocketFactory", "idleTimeoutMs", "pingIntervalMs"
 ] as const satisfies readonly (keyof SessionSendOptions)[];
 type SessionSendKeysAreExact = Assert<ExactKeySet<SessionSendOptions, typeof SESSION_SEND_KEYS>>;
-
-type SessionStreamOptions = Omit<SessionSendOptions, "idempotencyKey">;
-const SESSION_STREAM_KEYS = [
-  "webSocketFactory", "idleTimeoutMs", "pingIntervalMs"
-] as const satisfies readonly (keyof SessionStreamOptions)[];
-type SessionStreamKeysAreExact = Assert<ExactKeySet<SessionStreamOptions, typeof SESSION_STREAM_KEYS>>;
 
 const SESSION_OVERRIDE_KEYS = [
   "idleTtl", "timeout", "maxSpendUsd", "maxTurns"
@@ -147,7 +143,6 @@ export type SessionOptionKeyAssertions = readonly [
   SessionStartKeysAreExact,
   StartControlKeysAreExact,
   SessionSendKeysAreExact,
-  SessionStreamKeysAreExact,
   SessionOverrideKeysAreExact,
   SessionRuntimeKeysAreExact,
   FileCaptureKeysAreExact,
@@ -164,6 +159,15 @@ export type SessionOptionKeyAssertions = readonly [
   AssetToolKeysAreExact,
   AssetInstructionKeysAreExact
 ];
+
+/**
+ * The idempotency key is no longer a caller concern. The SDK mints one per
+ * logical mutation and reuses it across its own automatic retries, which is what
+ * keeps a lost response from becoming a second session and a second bill. A
+ * hand-rolled caller retry loop is NOT covered by that guarantee.
+ */
+const IDEMPOTENCY_KEY_GUIDANCE =
+  "the SDK now owns idempotency — it mints a key per request and reuses it across its automatic retries, so remove this option";
 
 const VALIDATION_DIAGNOSTIC_MAX_LENGTH = 512;
 const VALIDATION_DIAGNOSTIC_SOURCE_MAX_LENGTH = 4_096;
@@ -305,6 +309,8 @@ export function assertSupportedSessionFields(
   const record = options as unknown as Record<string, unknown>;
   const allowed = new Set<string>(allowStartFields ? SESSION_START_KEYS : SESSION_CREATE_KEYS);
   const guidance: Readonly<Record<string, string>> = {
+    idempotencyKey: IDEMPOTENCY_KEY_GUIDANCE,
+    messageIdempotencyKey: IDEMPOTENCY_KEY_GUIDANCE,
     runtimeSize: "use runtime.size",
     runtimeKind: "use runtime.kind",
     secretEnv: "use environment.secrets",
@@ -350,21 +356,19 @@ export function assertSupportedSessionFields(
   assertStructuredSessionFields(record, surface, allowStartFields);
 }
 
-export function assertSupportedSessionSendOptions(
-  options: unknown,
-  surface: string,
-  allowIdempotencyKey = true
-): void {
+export function assertSupportedSessionSendOptions(options: unknown, surface: string): void {
   const record = options as Record<string, unknown> | undefined;
   if (!record || typeof record !== "object") return;
-  const allowed = new Set<string>(allowIdempotencyKey ? SESSION_SEND_KEYS : SESSION_STREAM_KEYS);
+  const allowed = new Set<string>(SESSION_SEND_KEYS);
   for (const field of Object.keys(record)) {
     if (allowed.has(field)) continue;
     const guidance = field === "from"
       ? "use session.events.list(), stream(), or streamEnvelopes() for replay"
       : field === "signal"
         ? "use session.cancel() / session.suspend() for remote control"
-        : undefined;
+        : field === "idempotencyKey"
+          ? IDEMPOTENCY_KEY_GUIDANCE
+          : undefined;
     throw configError(
       surface,
       field,
@@ -412,7 +416,7 @@ function assertStructuredSessionFields(
       record.stream,
       surface,
       "stream",
-      SESSION_STREAM_KEYS
+      SESSION_SEND_KEYS
     );
   }
 }

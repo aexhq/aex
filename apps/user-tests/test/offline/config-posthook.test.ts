@@ -48,8 +48,7 @@ describe("user/SDK: postHook is rejected at the public boundary", () => {
           model: "deepseek/deepseek-v4-flash",
           message: "This should never be submitted.",
           builtinTools: "none",
-          postHook: { command: "bun test" },
-          idempotencyKey: "removed-posthook"
+          postHook: { command: "bun test" }
         });
       } catch (err) {
         message = err && err.message ? err.message : String(err);

@@ -5,8 +5,8 @@ title: Session configuration
 # Session configuration
 
 `aex.sessions.create(...)` accepts the durable session configuration. The
-one-shot `aex.start(...)` accepts the same fields plus `message`,
-`messageIdempotencyKey`, `deleteAfter`, and stream options.
+one-shot `aex.start(...)` accepts the same fields plus `message`, `deleteAfter`,
+and stream options.
 
 Core fields include:
 
@@ -19,7 +19,9 @@ Core fields include:
 - `fileCapture`
 - `runtime`, `metadata`, and `overrides`
 - `outputMode`, `responseFormat`, `approvalGate`, and `webhook`
-- `idempotencyKey`
+
+There is no `idempotencyKey`: the SDK mints the mutation identity itself and
+reuses it across its automatic retries. See [Retries](retries.md).
 
 Secrets are never part of a reusable JSON config. Model access needs no provider
 key; supply runtime secrets through `environment.secrets` at the call site.

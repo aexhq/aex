@@ -96,7 +96,6 @@ export interface CliSessionSubmitOptions {
     readonly maxTurns?: number;
   };
   readonly webhook?: { readonly url: string };
-  readonly idempotencyKey?: string;
 }
 
 export interface CliSessionEnvironmentOptions extends Omit<PlatformEnvironmentInput, "envVars"> {
@@ -110,11 +109,15 @@ export async function submitCliRun(
 ): Promise<SessionMessageAccepted> {
   const request = await buildSessionCreateRequest(http, fetchImpl, options);
   const input = normaliseSessionInput(options.message);
+  // The CLI mints the mutation identity itself, exactly like the SDK: a submit
+  // whose response is lost to the API's 29-second ceiling is de-duplicated on
+  // retry instead of creating a second session and a second bill. The first
+  // message key is derived from this one inside `createSessionWithMessage`.
   const submitted = await operations.createSessionWithMessage(
     http,
     request,
     input,
-    { idempotencyKey: operations.resolveIdempotencyKey(options.idempotencyKey) }
+    { idempotencyKey: operations.resolveIdempotencyKey() }
   );
   return submitted;
 }

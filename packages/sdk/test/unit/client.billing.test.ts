@@ -111,7 +111,7 @@ describe("aex.billingTopup", () => {
       amountUsd: 25,
       successUrl: "https://aex.dev/billing?checkout=success",
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
-    }, { idempotencyKey: "checkout-key" });
+    });
 
     expect(result).toEqual({ url: "https://checkout.stripe.test/session" });
     expect(calls).toHaveLength(1);
@@ -123,7 +123,8 @@ describe("aex.billingTopup", () => {
       successUrl: "https://aex.dev/billing?checkout=success",
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
-    expect(calls[0]!.headers.get("idempotency-key")).toBe("checkout-key");
+    // SDK-minted: the caller never supplied one, but the wire still carries it.
+    expect(calls[0]!.headers.get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
   });
 
   it("reuses one generated identity across transport retries", async () => {
@@ -190,17 +191,14 @@ describe("aex.billingPortal", () => {
   it("POSTs /api/billing/portal and returns the hosted URL", async () => {
     const { client, calls } = billingClient({ url: "https://billing.stripe.test/session" });
 
-    const result = await client.billingPortal(
-      { returnUrl: "https://aex.dev/billing" },
-      { idempotencyKey: "portal-key" }
-    );
+    const result = await client.billingPortal({ returnUrl: "https://aex.dev/billing" });
 
     expect(result).toEqual({ url: "https://billing.stripe.test/session" });
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/api/billing/portal");
     expect(calls[0]!.method).toBe("POST");
     expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ returnUrl: "https://aex.dev/billing" });
-    expect(calls[0]!.headers.get("idempotency-key")).toBe("portal-key");
+    expect(calls[0]!.headers.get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
   });
 });
 

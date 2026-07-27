@@ -1,7 +1,20 @@
 /**
- * WS4 — empty/whitespace `idempotencyKey` is a FAIL-FAST throw (it used to
- * silently disable dedup: `?? generate()` kept `''`, then a downstream truthy
- * header-drop shipped no `Idempotency-Key`). Omitted keys auto-generate.
+ * The idempotency key is SDK-OWNED. Callers neither supply nor manage one.
+ *
+ * This file used to pin the caller-supplied key's validation (WS4 fail-fast on
+ * an empty/whitespace key). That surface is gone: the SDK mints the key, so
+ * there is no caller value left to validate. The key POLICY itself still lives
+ * in `@aexhq/contracts` and is covered by
+ * `packages/contracts/test/operations-idempotency-headers.test.ts`.
+ *
+ * What is asserted here instead:
+ *   1. Every mutation still ships a well-formed `Idempotency-Key` — the wire
+ *      contract is UNCHANGED, only its owner moved.
+ *   2. Passing the retired option is REJECTED loudly rather than ignored
+ *      silently, with guidance that says the SDK now handles it.
+ *
+ * Stability of that key across automatic retries — the property the whole
+ * mechanism exists for — is pinned in `client.idempotency-retry-stability.test.ts`.
  */
 import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "@aexhq/contracts";
@@ -24,49 +37,59 @@ function makeClient(): { client: Aex; keys: (string | undefined)[] } {
   return { client: new Aex({ apiKey: "tk", baseUrl: "https://x", fetch }), keys };
 }
 
-describe("empty idempotencyKey fail-fast (WS4)", () => {
+/** The minted identifier's canonical form, per `@aexhq/contracts` `newId`. */
+const MINTED_KEY = /^idem_[0-9a-f]{32}$/;
+
+describe("the SDK owns the idempotency key", () => {
   const base = { model: "anthropic/claude-haiku-4-5" } as const;
 
-  it("sessions.create throws synchronously on an empty key (no HTTP)", async () => {
+  it("mints a well-formed key for every create without the caller doing anything", async () => {
     const { client, keys } = makeClient();
-    await expect(client.sessions.create({ ...base, idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
-    await expect(client.sessions.create({ ...base, idempotencyKey: "   " })).rejects.toBeInstanceOf(SessionConfigValidationError);
-    expect(keys).toEqual([]);
-  });
-
-  it("Aex.start throws synchronously on an empty key", async () => {
-    const { client } = makeClient();
-    await expect(client.start({ ...base, message: "hi", idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
-    await expect(client.start({ ...base, message: "hi", idempotencyKey: "\t" })).rejects.toBeInstanceOf(
-      SessionConfigValidationError
-    );
-  });
-
-  it("a valid key ships the Idempotency-Key header; an omitted key auto-generates one", async () => {
-    const { client, keys } = makeClient();
-    await client.sessions.create({ ...base, idempotencyKey: "my-key" });
     await client.sessions.create(base);
-    expect(keys[0]).toBe("my-key");
-    expect(keys[1]).toBeTruthy();
-    expect(keys[1]).not.toBe("my-key");
+    await client.sessions.create(base);
+
+    expect(keys).toHaveLength(2);
+    for (const key of keys) expect(key).toMatch(MINTED_KEY);
+    // Two SEPARATE logical creates are two separate identities.
+    expect(keys[0]).not.toBe(keys[1]);
   });
 
-  it("accepts 255 characters and rejects 256 before HTTP", async () => {
+  it("rejects a caller-supplied idempotencyKey on sessions.create, before any HTTP", async () => {
     const { client, keys } = makeClient();
-    await client.sessions.create({ ...base, idempotencyKey: "k".repeat(255) });
-    await expect(client.sessions.create({ ...base, idempotencyKey: "k".repeat(256) }))
-      .rejects.toBeInstanceOf(SessionConfigValidationError);
-    expect(keys).toEqual(["k".repeat(255)]);
-  });
-
-  it("rejects an oversized Aex.start message key before creating a session", async () => {
-    const { client, keys } = makeClient();
-    await expect(client.start({
-      ...base,
-      message: "hello",
-      idempotencyKey: "create-key",
-      messageIdempotencyKey: "m".repeat(256)
-    })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    await expect(
+      client.sessions.create({ ...base, idempotencyKey: "my-key" } as never)
+    ).rejects.toBeInstanceOf(SessionConfigValidationError);
     expect(keys).toEqual([]);
+  });
+
+  it("rejects a caller-supplied idempotencyKey on Aex.start", async () => {
+    const { client, keys } = makeClient();
+    await expect(
+      client.start({ ...base, message: "hi", idempotencyKey: "my-key" } as never)
+    ).rejects.toBeInstanceOf(SessionConfigValidationError);
+    expect(keys).toEqual([]);
+  });
+
+  it("rejects the retired messageIdempotencyKey on Aex.start", async () => {
+    const { client, keys } = makeClient();
+    await expect(
+      client.start({ ...base, message: "hi", messageIdempotencyKey: "m" } as never)
+    ).rejects.toBeInstanceOf(SessionConfigValidationError);
+    expect(keys).toEqual([]);
+  });
+
+  it("explains that the SDK now owns the key rather than just naming the field", async () => {
+    const { client } = makeClient();
+    const error: unknown = await client.sessions
+      .create({ ...base, idempotencyKey: "my-key" } as never)
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(SessionConfigValidationError);
+    const failure = error as SessionConfigValidationError;
+    expect(failure.details.field).toBe("idempotencyKey");
+    expect(failure.message).toContain("the SDK now owns idempotency");
+    // The guidance names the automatic retries, because that is the reason a
+    // caller-managed key is no longer needed.
+    expect(failure.message).toContain("automatic retries");
   });
 });

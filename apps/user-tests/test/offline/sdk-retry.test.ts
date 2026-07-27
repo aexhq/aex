@@ -103,14 +103,12 @@ function client(fetch) {
 // 1) A 429 then a 500 then success — retried, and EVERY attempt reuses the one
 //    Idempotency-Key, so a retry never creates a duplicate billable session turn.
 const a = makeFetch([429, 500, 201]);
-const session = await client(a.fetch).sessions.create({
-  model: "anthropic/claude-haiku-4-5",
-  idempotencyKey: "stable-key"
-});
+const session = await client(a.fetch).sessions.create({ model: "anthropic/claude-haiku-4-5" });
 strictEqual(session.id, "sess_retry");
 strictEqual(a.attempts.length, 3);
 const keys = a.attempts.map((x) => x.headers["idempotency-key"]);
-strictEqual(keys.every((k) => k === "stable-key"), true, "every retry reuses the same idempotency key");
+ok(/^idem_[0-9a-f]{32}$/.test(keys[0]), "the SDK mints the key; the caller supplies none");
+strictEqual(new Set(keys).size, 1, "every retry reuses the SAME minted idempotency key");
 
 // 2) A transient network error is retried, then succeeds.
 const b = makeFetch(["network", 201]);

@@ -58,20 +58,16 @@ returned URL in a browser; the same flow saves the card on first use, and the
 balance moves once the charge settles.
 
 ```ts
-const { url } = await aex.billingTopup({
-  amountUsd: 25
-}, {
-  idempotencyKey: crypto.randomUUID()
-});
+const { url } = await aex.billingTopup({ amountUsd: 25 });
 console.log(url);
 ```
 
 Amounts below the published minimum are refused — read it from
 `billing.autoTopup.minimumAmountUsd` rather than hard-coding a figure.
 
-The optional second argument identifies the mutation and is sent only as the
-`Idempotency-Key` header. When omitted, the SDK generates one before transport
-retries begin and reuses it for every attempt.
+The mutation identity is handled for you: the SDK mints an `Idempotency-Key`
+before transport retries begin and reuses it for every attempt, so a checkout
+whose response is lost is not charged twice. There is no key to pass.
 
 ## Auto-recharge
 
@@ -96,19 +92,16 @@ it rather than draining the card.
 `aex.billingPortal()` creates a hosted billing portal session for the workspace:
 
 ```ts
-const { url } = await aex.billingPortal(
-  { returnUrl: "https://aex.dev/billing" },
-  { idempotencyKey: crypto.randomUUID() }
-);
+const { url } = await aex.billingPortal({ returnUrl: "https://aex.dev/billing" });
 console.log(url);
 ```
 
 CLI equivalents:
 
 ```bash
-aex billing topup 25 --idempotency-key "$KEY"
+aex billing topup 25
 aex billing autotopup --enable --threshold 5 --amount 20
-aex billing portal --idempotency-key "$KEY"
+aex billing portal
 ```
 
 ## Read the credit ledger

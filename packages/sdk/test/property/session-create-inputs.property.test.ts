@@ -70,7 +70,6 @@ const outputMode = fc.constantFrom<OutputMode>("buffered", "stream");
 const safeToken = fc.stringMatching(/^[A-Za-z0-9_-]{1,24}$/);
 const shortText = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{1,64}$/);
 const envValue = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{0,64}$/);
-const idempotencyKey = fc.stringMatching(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/);
 const duration = fc.constantFrom("1m", "90s", "5m", "30m", "1h", "3600s", "6h");
 const webhook = fc
   .tuple(fc.integer({ min: 1, max: 999_999 }), fc.integer({ min: 1, max: 999_999 }))
@@ -212,7 +211,6 @@ const richValidCase = modelName.chain((model) =>
       outputMode,
       builtinTools: fc.oneof(fc.constant("default" as const), fc.constant("none" as const), nonEmptyBuiltinTools),
       webhook,
-      idempotencyKey,
     })
     .map((parts): ValidCase => ({
       surface: parts.surface,
@@ -226,7 +224,6 @@ const richValidCase = modelName.chain((model) =>
         outputMode: parts.outputMode,
         builtinTools: parts.builtinTools,
         webhook: parts.webhook,
-        idempotencyKey: parts.idempotencyKey,
       })
     }))
 );
@@ -248,7 +245,6 @@ const sparseValidCase = modelName.chain((model) =>
           { nil: undefined }
         ),
         webhook: fc.option(webhook, { nil: undefined }),
-        idempotencyKey: fc.option(idempotencyKey, { nil: undefined }),
       },
       { requiredKeys: ["surface"] }
     )
@@ -264,7 +260,6 @@ const sparseValidCase = modelName.chain((model) =>
         outputMode: parts.outputMode,
         builtinTools: parts.builtinTools,
         webhook: parts.webhook,
-        idempotencyKey: parts.idempotencyKey,
       })
     }))
 );
@@ -375,13 +370,11 @@ function validateAcceptedCreate({ calls }: CaptureHarness, testCase: ValidCase):
   expect(call.url).toBe("https://example.test/api/sessions");
   expect(call.method).toBe("POST");
   expect(call.headers.authorization).toBe("Bearer tkn_property");
+  // The key is SDK-minted for every create — callers cannot supply one — so it
+  // is always present and always well-formed, whatever the rest of the options.
   const idempotencyHeader = call.headers["idempotency-key"];
   expect(typeof idempotencyHeader).toBe("string");
-  if (testCase.options.idempotencyKey !== undefined) {
-    expect(idempotencyHeader).toBe(testCase.options.idempotencyKey);
-  } else {
-    expect(idempotencyHeader).not.toBe("");
-  }
+  expect(idempotencyHeader).toMatch(/^idem_[0-9a-f]{32}$/);
 
   const body = requireRecord(call.body, "session create body");
   expect("idempotencyKey" in body).toBe(false);
@@ -426,7 +419,6 @@ function buildSessionOptions(
     readonly outputMode?: OutputMode | undefined;
     readonly builtinTools?: "default" | "none" | readonly BuiltinToolName[] | undefined;
     readonly webhook?: { readonly url: string } | undefined;
-    readonly idempotencyKey?: string | undefined;
   }
 ): SessionCreateOptions {
   const options: Mutable<SessionCreateOptions> = { model };
@@ -439,7 +431,6 @@ function buildSessionOptions(
   if (parts.outputMode !== undefined) options.outputMode = parts.outputMode;
   if (parts.builtinTools !== undefined) options.builtinTools = parts.builtinTools;
   if (parts.webhook !== undefined) options.webhook = parts.webhook;
-  if (parts.idempotencyKey !== undefined) options.idempotencyKey = parts.idempotencyKey;
   return options;
 }
 

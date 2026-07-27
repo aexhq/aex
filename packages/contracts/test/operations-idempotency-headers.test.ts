@@ -47,6 +47,23 @@ describe("idempotency key fail-closed (WS4)", () => {
     expect(() => operations.resolveIdempotencyKey("k".repeat(256))).toThrow(SessionConfigValidationError);
   });
 
+  /**
+   * `deriveMessageIdempotencyKey` owns both branches of the first-message
+   * identity. The SDK can only ever hand it a freshly minted `idem_<32 hex>`
+   * (37 characters), so the long-key DIGEST branch is unreachable from there —
+   * it is pinned here, at the layer that still accepts an arbitrary key.
+   */
+  it("derives a readable message key for short keys and a digest for long ones", () => {
+    expect(operations.deriveMessageIdempotencyKey("k-123")).toBe("k-123:message");
+
+    const longKey = "k".repeat(255);
+    const derived = operations.deriveMessageIdempotencyKey(longKey);
+    expect(derived).toMatch(/^aex-message-sha256-[a-f0-9]{64}$/);
+    expect(derived.length).toBeLessThanOrEqual(255);
+    // Deterministic: the same create key always yields the same message key.
+    expect(operations.deriveMessageIdempotencyKey(longKey)).toBe(derived);
+  });
+
   it("idempotencyHeaders fails closed on an empty create key before any fetch", async () => {
     await expect(
       operations.createSession(http, createRequest, { idempotencyKey: "" })

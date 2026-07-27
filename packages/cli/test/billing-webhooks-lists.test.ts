@@ -222,8 +222,6 @@ describe("aex billing topup", () => {
         "https://aex.dev/billing?checkout=success",
         "--cancel-url",
         "https://aex.dev/billing?checkout=cancel",
-        "--idempotency-key",
-        "checkout-key",
         ...COMMON,
       ],
       fetchHandler: () =>
@@ -242,7 +240,8 @@ describe("aex billing topup", () => {
       successUrl: "https://aex.dev/billing?checkout=success",
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
-    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toBe("checkout-key");
+    // CLI-minted: no flag exists, but the wire still carries the identity.
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
   });
 
   it("supports --json and rejects a non-positive amount before network", async () => {
@@ -353,8 +352,6 @@ describe("aex billing portal", () => {
         "portal",
         "--return-url",
         "https://aex.dev/billing",
-        "--idempotency-key",
-        "portal-key",
         ...COMMON
       ],
       fetchHandler: () =>
@@ -369,7 +366,7 @@ describe("aex billing portal", () => {
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/portal");
     expect(cap.calls[0]!.init.method).toBe("POST");
     expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({ returnUrl: "https://aex.dev/billing" });
-    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toBe("portal-key");
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
   });
 
   it("supports --json", async () => {
