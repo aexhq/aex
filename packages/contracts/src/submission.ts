@@ -913,39 +913,23 @@ function normalizeSubmissionAssets(value: SubmissionWire["assets"]): SubmissionA
         entry: normaliseSkillBundlePath(raw.entry)
       };
     }),
-    instructions: projectWorkspaceResources(value.instructions, "instructions", (raw, path) => {
-      assertWorkspaceInstructionResourceName(raw.name, `${path}.name`);
-      return {
-        kind: "instruction",
-        resourceId: raw.resourceId,
-        version: raw.version,
-        name: raw.name,
-        textHash: raw.textHash
-      };
+    instructions: projectWorkspaceResources(value.instructions, "instructions", ({ resourceId, version, name, textHash }, path) => {
+      assertWorkspaceInstructionResourceName(name, `${path}.name`);
+      return { kind: "instruction", resourceId, version, name, textHash };
     })
   };
 }
 
-/**
- * The immutable identity of an ASSET-BACKED pinned resource.
- *
- * Only three of the four kinds have one. An `instruction` is pinned to its text
- * and spreads `textHash` instead, which is why this is a helper rather than a
- * `base` argument every projector receives — a shared parameter would have to
- * be widened to optional to accommodate the one kind that has no asset, and an
- * optional `assetId` on a file ref is exactly the fail-open shape the pinned
- * identity exists to prevent.
- */
-function assetPin(raw: PinnedAssetWire): Pick<WorkspaceFileRef, "resourceId" | "version" | "assetId" | "contentHash"> {
-  return {
-    resourceId: raw.resourceId,
-    version: raw.version,
-    assetId: raw.assetId,
-    contentHash: raw.contentHash
-  };
-}
-
 type PinnedAssetWire = Pick<WorkspaceFileRef, "resourceId" | "version" | "assetId" | "contentHash">;
+/**
+ * The immutable identity of an ASSET-BACKED pinned resource. Only three kinds
+ * have one (an `instruction` is pinned to its text), so the three call this
+ * rather than every projector taking a shared `base` widened to an OPTIONAL
+ * `assetId` — the fail-open shape a pinned identity exists to stop.
+ */
+function assetPin({ resourceId, version, assetId, contentHash }: PinnedAssetWire): PinnedAssetWire {
+  return { resourceId, version, assetId, contentHash };
+}
 
 type PinnedResourceWire = Pick<WorkspaceFileRef, "resourceId" | "version">;
 

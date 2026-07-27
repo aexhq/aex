@@ -124,9 +124,18 @@ describe("aex start workspace resource flags", () => {
 
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/api/assets/presign")).toHaveLength(4);
-    expect(cap.calls.filter((call) => new URL(call.url).hostname === "object-storage.example.test")).toHaveLength(4);
-    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/api/assets/finalize")).toHaveLength(4);
+    // THREE, not four: `--instructions` publishes TEXT and stages no asset, so
+    // it does not touch the presign / direct-PUT / finalize legs at all.
+    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/api/assets/presign")).toHaveLength(3);
+    expect(cap.calls.filter((call) => new URL(call.url).hostname === "object-storage.example.test")).toHaveLength(3);
+    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/api/assets/finalize")).toHaveLength(3);
+    const publishedInstruction = cap.calls.find(
+      (call) => new URL(call.url).pathname === "/api/workspace/instructions"
+    );
+    expect(publishedInstruction?.body).toEqual({
+      name: "ax",
+      text: ["# Agent brief", "Be concise."].join("\n")
+    });
     for (const kind of ["files", "skills", "tools", "instructions"]) {
       expect(cap.calls.some((call) => new URL(call.url).pathname === `/api/workspace/${kind}`)).toBe(true);
     }

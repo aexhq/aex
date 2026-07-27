@@ -2,6 +2,8 @@ import {
   BUILTIN_TOOL_NAMES,
   DEFAULT_FILE_MOUNT_PATH,
   assertWorkspaceInstructionResourceName,
+  hashWorkspaceInstructionText,
+  normalizeWorkspaceInstructionText,
   parseModelSlug,
   parseSessionLimits,
   parseSessionTimeout,
@@ -43,7 +45,6 @@ import {
 } from "@aexhq/contracts/internal";
 import { StartValidationError, startValidationError, type StartFlag } from "./start-validation.js";
 
-const TEXT = new TextEncoder();
 const UPLOAD_CONCURRENCY = 5;
 
 export interface CliSkillDraft {
@@ -58,10 +59,19 @@ export interface CliToolDraft {
   readonly bytes: Uint8Array;
 }
 
+/**
+ * An instruction draft carries TEXT.
+ *
+ * It used to carry a ZIP built by `bundleSingleFile("AGENTS.md", ..., false)` --
+ * that trailing `false` opted the CLI OUT of the compressed-size check the SDK's
+ * identical call opted IN to, so which limit a customer's instructions faced
+ * depended on whether they used the SDK or the CLI, and nothing documented it.
+ * One text path removes the divergence by removing the second path.
+ */
 export interface CliInstructionsDraft {
   readonly name: string;
-  readonly contentHash: string;
-  readonly bytes: Uint8Array;
+  readonly text: string;
+  readonly textHash: string;
 }
 
 export interface CliFileDraft {
@@ -171,8 +181,8 @@ export async function buildCliInstructions(
     throw new Error(`${source}: content must be a non-empty string`);
   }
   assertWorkspaceInstructionResourceName(name, `${source}: name`);
-  const bytes = bundleSingleFile("AGENTS.md", TEXT.encode(content), source, false);
-  return { name, contentHash: await hashSkillBundle(bytes, "cli"), bytes };
+  const text = normalizeWorkspaceInstructionText(content, `${source}: content`);
+  return { name, text, textHash: await hashWorkspaceInstructionText(text) };
 }
 
 export async function buildCliFile(
@@ -236,7 +246,7 @@ async function buildSessionCreateRequest(
 
   const preparedTools = await prepareTools(http, fetchImpl, options.tools ?? []);
   const skills = await prepareSkills(http, fetchImpl, options.skills ?? []);
-  const instructions = await prepareInstructions(http, fetchImpl, options.instructions ?? []);
+  const instructions = await prepareInstructions(http, options.instructions ?? []);
   const files = await prepareFiles(http, fetchImpl, options.files ?? []);
   const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(options.mcpServers ?? []);
   const environment = sessionEnvironmentForWire(options.environment);
@@ -358,25 +368,17 @@ async function prepareSkills(
   });
 }
 
+/**
+ * Instructions are the one attachment kind with no asset to stage: the text is
+ * the resource, so publication is a single POST and `fetchImpl` (the
+ * direct-to-storage PUT leg) is not needed at all.
+ */
 async function prepareInstructions(
   http: HttpClient,
-  fetchImpl: FetchLike | undefined,
   instructions: readonly CliInstructionsDraft[]
 ): Promise<readonly WorkspaceInstructionRef[]> {
-  return mapWithConcurrency(instructions, UPLOAD_CONCURRENCY, async (entry) => {
-    const uploaded = await stageAsset(http, fetchImpl, {
-      bytes: entry.bytes,
-      hash: entry.contentHash,
-      contentType: "application/zip"
-    });
-    return operations.publishWorkspaceInstruction(http, {
-      assetId: uploaded.assetId,
-      contentHash: uploaded.contentHash,
-      sizeBytes: uploaded.sizeBytes,
-      contentType: "application/zip",
-      name: entry.name
-    });
-  });
+  return mapWithConcurrency(instructions, UPLOAD_CONCURRENCY, async (entry) =>
+    operations.publishWorkspaceInstruction(http, { name: entry.name, text: entry.text }));
 }
 
 async function prepareFiles(

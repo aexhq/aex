@@ -127,9 +127,11 @@ const ASSET_ITEM_KEYS = {
     "kind", "resourceId", "version", "assetId", "contentHash", "createdAt", "updatedAt",
     "sizeBytes", "contentType", "name", "description", "input_schema", "entry"
   ],
+  // Pinned to TEXT: no assetId/contentHash pair naming bytes, no contentType,
+  // and `textHash` in their place.
   instructions: [
-    "kind", "resourceId", "version", "assetId", "contentHash", "createdAt", "updatedAt",
-    "sizeBytes", "contentType", "name"
+    "kind", "resourceId", "version", "textHash", "createdAt", "updatedAt",
+    "sizeBytes", "name"
   ]
 } as const satisfies {
   readonly files: readonly (keyof WorkspaceFileRecord)[];

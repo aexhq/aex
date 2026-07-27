@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { unzipSync } from "fflate";
 import {
   CANONICAL_SHA256_DIGEST_PATTERN,
   WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN,
@@ -40,10 +39,12 @@ describe("Instructions persisted resource names", () => {
 
     const draft = await Instructions.fromContent("Follow the repository guide.", { name });
     expect(draft.name).toBe(name);
-    const bundle = draft._takeDraftBundle();
-    expect(bundle.name).toBe(name);
-    expect(Object.keys(unzipSync(bundle.bytes))).toEqual(["AGENTS.md"]);
-    expect(CANONICAL_SHA256_DIGEST_PATTERN.test(bundle.contentHash)).toBe(true);
+    const published = draft._takeDraftInstruction();
+    expect(published.name).toBe(name);
+    // Was `Object.keys(unzipSync(bundle.bytes))).toEqual(["AGENTS.md"])`: the
+    // draft no longer builds a ZIP for the control plane to unzip back out.
+    expect(published.text).toBe("Follow the repository guide.");
+    expect(CANONICAL_SHA256_DIGEST_PATTERN.test(published.textHash)).toBe(true);
   });
 
   it.each([...rejectedNames])("rejects invalid name %j with SDK provenance", async (name) => {
