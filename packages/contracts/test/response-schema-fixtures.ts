@@ -8,6 +8,7 @@
  * find it. The suite still owns every assertion — nothing here calls `expect`.
  */
 import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { runtimeProfilesFixture } from "./runtime-profile-fixture.js";
 
 export const TS = "2026-07-25T12:00:00.000Z";
 
@@ -149,15 +150,16 @@ export const whoami = {
     accountType: "standard"
   },
   runtimeCapabilities: {
-    schemaVersion: 1,
-    capabilityVersion: "runtime-capabilities.v1",
+    schemaVersion: 2,
+    capabilityVersion: "runtime-capabilities.v2",
     capabilityHash: `sha256:${"b".repeat(64)}`,
     availableRuntimeKinds: ["lambda"],
     sizesByRuntimeKind: { lambda: ["0.25cpu-1gb", "1cpu-6gb"] },
     unavailable: {
       container: { code: "runtime_unavailable" },
       spot_container: { code: "runtime_unavailable" }
-    }
+    },
+    profilesByRuntimeKind: runtimeProfilesFixture()
   }
 };
 

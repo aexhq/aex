@@ -40,17 +40,54 @@ function byRuntimeKind<Schema extends z.core.$ZodType>(value: Schema) {
   });
 }
 
+const RuntimeProfileSchema = responseObject({
+  schemaVersion: wireLiteral(1),
+  runtimeKind: wireEnum(RUNTIME_KINDS),
+  capabilities: responseObject({
+    toolExecution: wireEnum(["supported", "unsupported"]),
+    workspaceCheckpoint: wireEnum(["supported", "unsupported"]),
+    workspaceFileCapture: wireEnum(["supported", "unsupported"]),
+    streamingDeltas: wireEnum(["supported", "unsupported"]),
+    approvalGate: wireEnum(["supported", "unsupported"]),
+    postHook: wireEnum(["supported", "unsupported"]),
+    mcpTools: wireEnum(["supported", "unsupported"]),
+    scheduledWait: wireEnum(["supported", "unsupported"]),
+    customerSecrets: wireEnum(["supported", "unsupported"]),
+    containedEgress: wireEnum(["supported", "unsupported"])
+  }),
+  limits: responseObject({
+    maxSessionMs: wireNumber,
+    maxSingleEffectMs: wireNumber,
+    maxWorkspaceBytes: wireNumber,
+    maxConcurrentToolCalls: wireNumber
+  }),
+  delivery: responseObject({
+    toolExecution: wireEnum(["at-least-once", "exactly-once"]),
+    coldStartClass: wireEnum(["warm", "cold-seconds", "cold-tens-of-seconds"]),
+    idleBilling: wireEnum(["wall-clock", "zero"])
+  }),
+  computeBasis: wireEnum(["wall_clock", "microvm_running"])
+});
+
+const RuntimeProfilesSchema = responseObject({
+  container: RuntimeProfileSchema,
+  spot_container: RuntimeProfileSchema,
+  lambda: RuntimeProfileSchema
+});
+
 export const RuntimeCapabilitiesSchema = describeResponse(
   "RuntimeCapabilities",
-  "Authenticated runtime availability for the workspace. `sizesByRuntimeKind` and " +
-    "`unavailable` are complementary partial maps over the runtime kinds.",
+  "Authenticated runtime availability and behavior profiles for the workspace. " +
+    "`sizesByRuntimeKind` and `unavailable` are complementary partial maps over " +
+    "the runtime kinds; `profilesByRuntimeKind` is total.",
   responseObject({
-    schemaVersion: wireLiteral(1),
+    schemaVersion: wireLiteral(2),
     capabilityVersion: wireNonEmptyString,
     capabilityHash: wireNonEmptyString,
     availableRuntimeKinds: z.array(wireEnum(RUNTIME_KINDS)),
     sizesByRuntimeKind: byRuntimeKind(z.array(wireEnum(RUNTIME_SIZES))),
-    unavailable: byRuntimeKind(responseObject({ code: wireNonEmptyString }))
+    unavailable: byRuntimeKind(responseObject({ code: wireNonEmptyString })),
+    profilesByRuntimeKind: RuntimeProfilesSchema
   })
 );
 
