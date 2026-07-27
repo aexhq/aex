@@ -6,4 +6,4 @@
  *
  * Used by the (future) User-Agent header on outbound SDK requests.
  */
-export const SDK_VERSION = "1.0.6";
+export const SDK_VERSION = "1.0.7";
