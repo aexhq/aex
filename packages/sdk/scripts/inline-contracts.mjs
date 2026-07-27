@@ -50,13 +50,21 @@ const RUNNER_ONLY_CONTRACT_MODULES = new Set([
   "subagent-runtime.js"
 ]);
 // `@aexhq/contracts/testing` is the cross-package test kit (FakeWebSocket,
-// test-platform, stub-env, fake clocks). NO SDK source path imports it — only
-// test files do — so copying it in shipped the fakes to customers as dead
-// weight and silently widened the published surface. Excluded for the same
-// reason as RUNNER_ONLY_CONTRACT_MODULES above: not reachable from the
-// package's own entry points. Tests still import it from the workspace
-// package, which is unaffected by what the SDK packs.
+// test-platform, stub-env, fake clocks). NO SDK source path imports the full
+// test kit — only test files do — so it must stay out of the customer tarball.
+// C4 is the one deliberate exception: live user tests need a small hidden
+// entrypoint in the installed SDK's own module graph so it can observe the
+// SDK's inlined HttpClient responses. The entrypoint imports only the two C4
+// modules below; the rest of the test kit remains excluded.
 const TEST_ONLY_CONTRACT_MODULE_PREFIX = "testing";
+const C4_CONTRACT_MODULES = new Set([
+  "testing/wire-conformance-entry.d.ts",
+  "testing/wire-conformance-entry.js",
+  "testing/wire-conformance.d.ts",
+  "testing/wire-conformance.js",
+  "testing/response-bindings.d.ts",
+  "testing/response-bindings.js"
+]);
 
 async function fileExists(path) {
   try {
@@ -85,8 +93,9 @@ await cp(contractsDistDir, inlinedDir, {
     const rel = relative(contractsDistDir, src).replaceAll("\\", "/");
     if (rel === "") return true;
     if (RUNNER_ONLY_CONTRACT_MODULES.has(rel)) return false;
-    if (rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}` || rel.startsWith(`${TEST_ONLY_CONTRACT_MODULE_PREFIX}/`)) {
-      return false;
+    if (rel === TEST_ONLY_CONTRACT_MODULE_PREFIX) return true;
+    if (rel.startsWith(`${TEST_ONLY_CONTRACT_MODULE_PREFIX}/`)) {
+      return C4_CONTRACT_MODULES.has(rel);
     }
     if (rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}.js` || rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}.d.ts`) {
       return false;

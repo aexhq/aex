@@ -361,7 +361,7 @@ describe("edge: session-path admission gates", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           submission: {
-            model: "anthropic/claude-haiku-4-5",
+            model: "claude-haiku-4-5",
             builtinTools: "none",
             assets: { files: [], skills: [], tools: [], instructions: [] }
           },

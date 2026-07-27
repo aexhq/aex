@@ -165,7 +165,10 @@
       "./account-types.js",
       "./account-operations.js",
       "./operation-core.js",
-      "./session-cost-types.js"
+      "./session-cost-types.js",
+      "./testing/response-bindings.js",
+      "./testing/wire-conformance-entry.js",
+      "./testing/wire-conformance.js"
     ],
     "privateModuleMaxBytes": {
       "session-archive.js": 8192,

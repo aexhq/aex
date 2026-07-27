@@ -138,7 +138,16 @@ export function armWireConformance(
   const outputDir = overrides.outputDir ?? ownDirectory();
   const harness =
     overrides.harnessPath ??
-    join(installDir, "node_modules", "@aexhq", "sdk", "dist", "_contracts", "testing.js");
+    join(
+      installDir,
+      "node_modules",
+      "@aexhq",
+      "sdk",
+      "dist",
+      "_contracts",
+      "testing",
+      "wire-conformance-entry.js"
+    );
 
   writeFileSync(join(installDir, "aex-wire-conformance.mjs"), childPreloadSource(harness, outputDir, origin));
   // Bun reads `bunfig.toml` from the process cwd, and every child in this suite
