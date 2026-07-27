@@ -50,6 +50,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { finishedRunReadinessSource } from "../_fixtures/finished-run-readiness.js";
+import { requireLiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -62,6 +63,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
+const runtimeKind = requireLiveRuntimeKind("user-tests live (comprehensive)");
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
@@ -211,6 +213,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
       },
       mcpServers: [mcpPrimary, mcpSecondary],
       fileCapture: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
+      runtime: { kind: ${JSON.stringify(runtimeKind)} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
     const sessionResult = await client.start(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
@@ -219,7 +222,8 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
     const session = await client.sessions.open(sessionId);
     const run = {
       status: sessionResult.status,
-      runtime: "managed",
+      runtime: session.record.runtime && session.record.runtime.kind,
+      provider: session.record.provider,
     };
     const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
     const files = (await session.files.list()).files;
@@ -458,7 +462,7 @@ describe("live hosted API — comprehensive end-to-end via installed SDK", () =>
         install.installDir
       );
       assertManagedShape(result, [managedSkillName("alpha", "deepseek"), managedSkillName("beta", "deepseek")]);
-      expect(result.runtime).toBe("managed");
+      expect(result.runtime).toBe(runtimeKind);
       expect(result.provider).toBe("deepseek");
     },
     11 * 60_000

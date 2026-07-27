@@ -1,16 +1,21 @@
 /**
  * Live edge-case sweep: per-session LIMIT / OVERRIDE surface.
  *
- * Surface under test (public @aexhq/sdk, dev plane):
- *   - `runtime` (RuntimeSize preset token) on submission.
- *   - `overrides.maxSpendUsd` (the ONLY SessionLimits field the SDK exposes).
- *   - `overrides.timeout` (session deadline duration string).
- *   - Unsupported `maxConcurrentChildSessions` / `maxSubagentDepth` override
- *     keys, which the SDK rejects instead of silently dropping.
+ * Surface under test (public @aexhq/sdk, dev plane) — only what a PLANE can
+ * answer, i.e. which values the SERVER accepts at submit:
+ *   - every `runtime` RuntimeSize preset token is accepted (create-only).
+ *   - a huge-but-positive `overrides.maxSpendUsd` and an in-range
+ *     `overrides.timeout` are accepted; clamping is the server resolver's job.
+ *   - a tiny turn actually runs at a non-default runtime size.
  *
- * Cost discipline: almost every case is a CLIENT-SIDE validation rejection or a
- * create-only (no billable turn) submit probe. Exactly ONE case sends a billable
- * turn (a tiny run at a non-default runtime size to prove a size actually works).
+ * The mirror-image REJECTIONS (bad maxSpendUsd, bad size token, unsupported
+ * `maxConcurrentChildSessions`/`maxSubagentDepth`, malformed/out-of-range
+ * timeout) are a client-side gate that never issues an HTTP request, so they
+ * moved to `test/offline/session-limits-validation.test.ts` on 2026-07-27 rather
+ * than paying a live runtime-matrix job to prove the network was not used.
+ *
+ * Cost discipline: two create-only (no billable turn) submit probes plus exactly
+ * ONE billable turn (a tiny run at a non-default runtime size).
  *
  * Each case runs a small .mjs script in the installed-SDK dir that performs the
  * SDK action, catches any error, and prints a structured JSON verdict the test
@@ -94,16 +99,6 @@ interface Verdict {
   readonly [k: string]: unknown;
 }
 
-function expectConfigError(verdict: Verdict, field: string, label: string): void {
-  expect(verdict.thrown, `${label} should reject`).toBe(true);
-  expect(verdict.name, `${label} error name`).toBe("SessionConfigValidationError");
-  expect(verdict.code, `${label} error code`).toBe("SESSION_CONFIG_INVALID");
-  expect(verdict.status ?? null, `${label} should not carry an HTTP status`).toBeNull();
-  expect(verdict.hasMessage, `${label} should retain human guidance`).toBe(true);
-  expect(verdict.detailsField, `${label} stable field`).toBe(field);
-  expect(verdict.sessionId, `${label} minted a session`).toBeUndefined();
-}
-
 describe("live dev — per-session limit / override edge cases (installed SDK)", () => {
   let install: InstallResult;
 
@@ -138,55 +133,29 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
   }
 
   // -------------------------------------------------------------------------
-  // maxSpendUsd (the one SessionLimits field the SDK exposes) — client-side gate.
-  // parseSessionLimits runs inside #buildSessionCreateRequest BEFORE any network,
-  // so these reject with zero cost and no billable session turn.
+  // What only a PLANE can answer: which override values the server ACCEPTS at
+  // submit. The mirror-image rejections are a client-side gate that never
+  // reaches HTTP, so they live in test/offline/session-limits-validation.test.ts.
   // -------------------------------------------------------------------------
   it(
-    "rejects invalid maxSpendUsd values client-side (0, negative, string, Infinity, NaN)",
-    async () => {
-      const result = await probe<{
-        zero: Verdict;
-        negative: Verdict;
-        stringy: Verdict;
-        infinity: Verdict;
-        nan: Verdict;
-      }>(`
-        async function attempt(v) {
-          try {
-            await client.sessions.create({ ...BASE, overrides: { maxSpendUsd: v } });
-            return { thrown: false };
-          } catch (e) { return asErr(e); }
-        }
-        out({
-          zero: await attempt(0),
-          negative: await attempt(-2.5),
-          stringy: await attempt("5"),
-          infinity: await attempt(Number.POSITIVE_INFINITY),
-          nan: await attempt(Number.NaN)
-        });
-      `);
-
-      for (const key of ["zero", "negative", "stringy", "infinity", "nan"] as const) {
-        const v = result[key];
-        expectConfigError(v, "overrides.maxSpendUsd", `maxSpendUsd=${key}`);
-      }
-    },
-    120_000
-  );
-
-  it(
-    "accepts a huge (but positive) maxSpendUsd at submit — clamping is the server resolver's job",
+    "accepts a huge maxSpendUsd and an in-range timeout at submit — clamping is the server resolver's job",
     async () => {
       // Contract: parseSessionLimits only checks shape+positivity; the workspace/
       // platform ceiling is applied by resolveSessionLimits server-side. So a huge
       // value must be ACCEPTED at submit, not rejected. (We cannot cheaply
       // observe the effective clamped ceiling without a billable session turn — noted.)
-      const v = await probe(`out(await createOnly({ ...BASE, overrides: { maxSpendUsd: 1000000000 } }));`);
-      expect(v.thrown, `huge maxSpendUsd verdict: ${JSON.stringify(v)}`).toBe(false);
-      expect(typeof v.sessionId).toBe("string");
+      const result = await probe<{ spend: Verdict; timeout: Verdict }>(`
+        const spend = await createOnly({ ...BASE, overrides: { maxSpendUsd: 1000000000 } });
+        const timeout = await createOnly({ ...BASE, overrides: { timeout: "5m" } });
+        out({ spend, timeout });
+      `, { timeoutMs: 120_000 });
+
+      expect(result.spend.thrown, `huge maxSpendUsd verdict: ${JSON.stringify(result.spend)}`).toBe(false);
+      expect(typeof result.spend.sessionId).toBe("string");
+      expect(result.timeout.thrown, `in-range timeout verdict: ${JSON.stringify(result.timeout)}`).toBe(false);
+      expect(typeof result.timeout.sessionId).toBe("string");
     },
-    90_000
+    140_000
   );
 
   // -------------------------------------------------------------------------
@@ -214,113 +183,6 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
     200_000
   );
 
-  it(
-    "rejects invalid runtime-size tokens client-side with SessionConfigValidationError",
-    async () => {
-      // Evidence-gathering: for each token, submit and capture whether it was
-      // accepted, plus what the server RECORDED for the size, so we can tell
-      // reject vs. silent-default vs. ignored.
-      const result = await probe<{ results: Array<Verdict & { size: unknown; reflect: unknown }> }>(`
-        async function probeSize(size) {
-          try {
-            const h = await client.sessions.create({ ...BASE, runtime: { size } });
-            const rm = h.record.runtimeManifest ?? null;
-            const reflect = {
-              recordRuntime: h.record.runtime?.size ?? null,
-              runtimeManifestResources: rm && (rm.resources ?? rm.runtime ?? rm.size ?? null)
-            };
-            let deleted = false;
-            try { await h.delete(); deleted = true; } catch {}
-            return { size, thrown: false, sessionId: h.id, status: (h.record && h.record.status) ?? null, deleted, reflect };
-          } catch (e) { return { size, ...asErr(e), reflect: null }; }
-        }
-        const results = [];
-        // "lite" = plausible friendly-name guess; "shared-8x-999gb" = fake
-        // preset shaped like a real token; 4096 = wrong TYPE (number).
-        for (const s of ["lite", "shared-8x-999gb", 4096]) results.push(await probeSize(s));
-        out({ results });
-      `, { timeoutMs: 150_000 });
-
-      // eslint-disable-next-line no-console
-      console.log("[edge-session-limits] invalid-size verdicts:", JSON.stringify(result.results, null, 2));
-
-      // The public RuntimeSize preset set is closed. The SDK now validates this
-      // before issuing HTTP, so bad tokens and wrong types must fail without
-      // minting a billable session.
-      for (const v of result.results) {
-        expectConfigError(v, "runtime.size", `runtime=${JSON.stringify(v.size)}`);
-        expect(v.reflect, `runtime=${JSON.stringify(v.size)} should not reach unit reflection`).toBeNull();
-      }
-    },
-    170_000
-  );
-
-  // -------------------------------------------------------------------------
-  // Concurrency / depth are not public SessionOverrides fields. JavaScript callers
-  // still receive a typed, field-addressable error instead of silent omission.
-  // -------------------------------------------------------------------------
-  it(
-    "rejects unsupported concurrency/depth override keys before submission",
-    async () => {
-      const result = await probe<{
-        spend: Verdict;
-        concurrency: Verdict;
-        depth: Verdict;
-      }>(`
-        // Control: an invalid supported override also rejects client-side.
-        const spend = await createOnly({ ...BASE, overrides: { maxSpendUsd: -1 } });
-        // These keys are deliberately absent from SessionOverrides. Probe from
-        // untyped JavaScript to prove they are rejected rather than ignored.
-        const concurrency = await createOnly({ ...BASE, overrides: { maxConcurrentChildSessions: -1 } });
-        const depth = await createOnly({ ...BASE, overrides: { maxSubagentDepth: -1 } });
-        out({ spend, concurrency, depth });
-      `, { timeoutMs: 120_000 });
-
-      expectConfigError(result.spend, "overrides.maxSpendUsd", "control maxSpendUsd=-1");
-      expectConfigError(
-        result.concurrency,
-        "overrides.maxConcurrentChildSessions",
-        "unsupported concurrency override"
-      );
-      expectConfigError(result.depth, "overrides.maxSubagentDepth", "unsupported depth override");
-    },
-    140_000
-  );
-
-  // -------------------------------------------------------------------------
-  // timeout override (server-validated duration string).
-  // -------------------------------------------------------------------------
-  it(
-    "rejects malformed and out-of-range timeout overrides client-side; accepts valid timeout",
-    async () => {
-      const result = await probe<{
-        malformed: Verdict;
-        tooShort: Verdict;
-        tooLong: Verdict;
-        valid: Verdict;
-      }>(`
-        const malformed = await createOnly({ ...BASE, overrides: { timeout: "banana" } });
-        const tooShort  = await createOnly({ ...BASE, overrides: { timeout: "10s" } });   // < 1m floor
-        const tooLong   = await createOnly({ ...BASE, overrides: { timeout: "99h" } });   // > 8h ceiling
-        const valid     = await createOnly({ ...BASE, overrides: { timeout: "5m" } });
-        out({ malformed, tooShort, tooLong, valid });
-      `, { timeoutMs: 120_000 });
-
-      // eslint-disable-next-line no-console
-      console.log("[edge-session-limits] timeout verdicts:", JSON.stringify(result));
-
-      // The public timeout contract is validated before HTTP: malformed values
-      // and values outside the 1m..8h bounds must fail without creating a
-      // session. A valid in-range duration is the control.
-      expectConfigError(result.malformed, "overrides.timeout", "malformed timeout");
-      expectConfigError(result.tooShort, "overrides.timeout", "too-short timeout");
-      expectConfigError(result.tooLong, "overrides.timeout", "too-long timeout");
-
-      // A valid in-range duration is (also) accepted — the control.
-      expect(result.valid.thrown, `valid timeout: ${JSON.stringify(result.valid)}`).toBe(false);
-    },
-    140_000
-  );
 
   // -------------------------------------------------------------------------
   // ONE billable turn: prove a non-default runtime size actually runs successfully,

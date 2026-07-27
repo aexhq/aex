@@ -1,22 +1,11 @@
 /**
  * EDGE-CASE SWEEP — SDK event-stream surface (customer perspective).
  *
- * Surface under test:
- *   - `session.messages.send(...)` live async-iteration over the coordinator WebSocket.
- *   - `session.events.streamEnvelopes({ from, signal })`
- *     (live AexEvent WS, exactly-once cursor resume).
- *   - `session.events.stream({ intervalMs, signal })` (TurnEvent HTTP polling).
- *   - Reconnect / replay-from-seq (the key reliability property): forced
- *     mid-turn socket drops must resume with NO duplicates and NO lost events.
- *   - `idleTimeoutMs` / `pingIntervalMs` keep-alive on a live turn.
- *   - AbortSignal mid-session: clean stop, no unhandled rejection.
- *   - Stream a session that already reached terminal (replay then end, no hang).
+ * Covers live async iteration, WS and HTTP event streams, exactly-once cursor
+ * resume after forced drops, keep-alive, abort, and post-terminal replay.
  *
- * All cases drive the INSTALLED @aexhq/sdk in a child bun process, exactly like
- * the sibling live tests. One live run is created in `beforeAll` and REUSED by
- * every read-side case (replay/polling/abort-on-replay); only the reconnect,
- * keep-alive, and abort-mid-live cases each cost one extra live run. Model is
- * deepseek/deepseek-v4-flash with tiny prompts.
+ * All cases drive the installed SDK in a child process. One run is reused by
+ * every read-side case; reconnect, keep-alive, and abort-mid-live add one each.
  *
  * Required env: AEX_API_URL, AEX_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION.
@@ -26,6 +15,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { gateModel } from "../_fixtures/provider.js";
+import { requireLiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -38,6 +28,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
+const runtimeKind = requireLiveRuntimeKind("edge event-stream live test");
 
 /**
  * Shared script preamble: build the client + declare helpers every case uses.
@@ -53,6 +44,7 @@ import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
 const SESSION_ID = process.env.SESSION_ID;
+const RUNTIME_KIND = process.env.RUNTIME_KIND;
 let __childSessionId = null;
 
 let __unhandled = null;
@@ -68,6 +60,9 @@ function errorText(e) {
 function trackRun(value) {
   if (value && typeof value.id === "string") __childSessionId = value.id;
   if (value && typeof value.sessionId === "string") __childSessionId = value.sessionId;
+  const record = value && (value.record || value.session);
+  const observed = record && record.runtime && record.runtime.kind;
+  if (observed !== RUNTIME_KIND) throw new Error("runtime identity mismatch: requested=" + RUNTIME_KIND + " observed=" + String(observed));
   return value;
 }
 
@@ -240,6 +235,7 @@ async function spawnScriptOnce<T>(
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
     MODEL: model,
+    RUNTIME_KIND: runtimeKind,
     ...(opts.extraEnv ?? {})
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -308,6 +304,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       `
       const session = trackRun(await client.sessions.create({
         model: MODEL,
+        runtime: { kind: RUNTIME_KIND },
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-base-")} + Date.now(),
       }));
@@ -672,6 +669,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const factory = makeFactory({ dropAfterFrames: 1, maxDrops: 2 });
       const result = trackRun(await client.start({
         model: MODEL,
+        runtime: { kind: RUNTIME_KIND },
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-chaos-")} + Date.now(),
         message: "Write four short sentences about mountains. Keep each under 12 words."
@@ -763,6 +761,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const factory = makeFactory({});
       const result = trackRun(await client.start({
         model: MODEL,
+        runtime: { kind: RUNTIME_KIND },
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-keepalive-")} + Date.now(),
         message: "Write five short sentences about forests. Keep each under 14 words."
@@ -806,6 +805,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       `
       const session = trackRun(await client.sessions.create({
         model: MODEL,
+        runtime: { kind: RUNTIME_KIND },
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-abortlive-")} + Date.now(),
       }));

@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { gateModel } from "../_fixtures/provider.js";
+import { requireLiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -38,6 +39,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
+const runtimeKind = requireLiveRuntimeKind("edge files live test");
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -116,6 +118,16 @@ const CHILD_PRELUDE = `
   });
   const debugTail = () => HTTP_DEBUG_LINES.slice(-80);
   const MODEL = process.env.MODEL;
+  const RUNTIME_KIND = process.env.RUNTIME_KIND;
+
+  const openSelectedSession = async (sessionId) => {
+    const session = await client.sessions.open(sessionId);
+    const observed = session.record && session.record.runtime && session.record.runtime.kind;
+    if (observed !== RUNTIME_KIND) {
+      throw new Error("runtime identity mismatch: requested=" + RUNTIME_KIND + " observed=" + String(observed));
+    }
+    return session;
+  };
 
   const PROBE_TIMEOUT_MS = 45000;
   const errorStringField = (error, key) => {
@@ -213,7 +225,8 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_KEY: apiKey,
-      MODEL: model
+      MODEL: model,
+      RUNTIME_KIND: runtimeKind
     })
   });
   if (child.exitCode !== 0) {
@@ -271,6 +284,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const body = `
         const sessionResult = await client.start({
           model: MODEL,
+          runtime: { kind: RUNTIME_KIND },
           message: ${JSON.stringify(prompt)},
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
@@ -278,7 +292,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
-        const session = await client.sessions.open(sessionId);
+        const session = await openSelectedSession(sessionId);
         const outs = session.files;
 
         // list (sessions endpoint) and find({}) (sessions endpoint) — cross-check parity.
@@ -459,6 +473,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const body = `
         const sessionResult = await client.start({
           model: MODEL,
+          runtime: { kind: RUNTIME_KIND },
           message: ${JSON.stringify(prompt)},
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
@@ -466,7 +481,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
-        const session = await client.sessions.open(sessionId);
+        const session = await openSelectedSession(sessionId);
         const outs = session.files;
         const listed = (await outs.list()).files;
         const big = listed.find((o) => (o.filename || "").endsWith("big.txt")) || null;
@@ -543,6 +558,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const body = `
         const sessionResult = await client.start({
           model: MODEL,
+          runtime: { kind: RUNTIME_KIND },
           message: ${JSON.stringify(prompt)},
           builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
@@ -550,7 +566,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
-        const session = await client.sessions.open(sessionId);
+        const session = await openSelectedSession(sessionId);
         const outs = session.files;
         const listed = (await outs.list()).files;
         const listNames = listed.map((o) => o.filename ?? null);
@@ -606,12 +622,13 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
       const body = `
         const sessionResult = await client.start({
           model: MODEL,
+          runtime: { kind: RUNTIME_KIND },
           message: ${JSON.stringify(prompt)},
           idempotencyKey: "edge-files-D-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
-        const session = await client.sessions.open(sessionId);
+        const session = await openSelectedSession(sessionId);
         const outs = session.files;
 
         const probes = [];

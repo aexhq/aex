@@ -24,6 +24,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { requireLiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -36,15 +37,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek/deepseek-v4-flash";
-const runtimeKind = requireRuntimeKind();
-
-function requireRuntimeKind(): "container" | "spot_container" | "lambda" {
-  const value = requireEnv("AEX_USER_TEST_RUNTIME_KIND");
-  if (value !== "container" && value !== "spot_container" && value !== "lambda") {
-    throw new Error(`user-tests live (event-stream): invalid AEX_USER_TEST_RUNTIME_KIND ${JSON.stringify(value)}.`);
-  }
-  return value;
-}
+const runtimeKind = requireLiveRuntimeKind("user-tests live (event-stream)");
 
 interface StreamResult {
   readonly sessionId: string;

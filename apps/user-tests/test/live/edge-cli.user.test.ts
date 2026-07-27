@@ -2,12 +2,13 @@
  * Live edge-case sweep for the installed `aex` CLI binary against the DEV plane.
  *
  * Blackbox: installs the packed/published SDK artifact and spawns the shipped
- * `aex` bin against the real API. Focuses on the CLI's real-world day-one
- * surface that the happy-path `live-cli-installed.test.ts` does not
- * cover:
+ * `aex` bin against the real API. This is the CLI entry point for the runtime
+ * parity matrix — the whole day-one surface in one file, since the separate
+ * happy-path `live-cli-installed.test.ts` was a near-verbatim duplicate of the
+ * round-trip below and was retired into it (2026-07-27):
  *   - a real one-shot `aex start --follow` reaches a clean terminal + prints the
  *     assistant text and session id (with a UNICODE prompt round-trip),
- *   - the read verbs (status/events/files/download) work on that session,
+ *   - the read verbs (status/wait/events/files/download) work on that session,
  *   - the auth/error paths (bad token -> 401, missing run -> 404) return a clean
  *     JSON error envelope + non-zero exit, NOT a stack trace or a hang,
  *   - no workspace API key is ever echoed to stdout/stderr.
@@ -24,6 +25,7 @@ import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
 import { gateModel } from "../_fixtures/provider.js";
+import { requireLiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -34,15 +36,7 @@ function requireEnv(name: string): string {
 const apiBase = requireEnv("AEX_API_URL").replace(/\/+$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
-const runtimeKind = requireRuntimeKind();
-
-function requireRuntimeKind(): "container" | "spot_container" | "lambda" {
-  const value = requireEnv("AEX_USER_TEST_RUNTIME_KIND");
-  if (value !== "container" && value !== "spot_container" && value !== "lambda") {
-    throw new Error(`edge-cli live: invalid AEX_USER_TEST_RUNTIME_KIND ${JSON.stringify(value)}`);
-  }
-  return value;
-}
+const runtimeKind = requireLiveRuntimeKind("edge-cli live");
 
 // RUN_FINISHED is a consistency barrier: the session is immediately idle and
 // ready for another message on every subsequent read.
@@ -236,6 +230,17 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         expect((observedRuntime as Record<string, unknown>)["kind"], diag("aex status", status)).toBe(runtimeKind);
         assertNoSecretLeak("status", status);
 
+        // wait: polls to a ready status and prints the same identity. `--follow`
+        // already reached a terminal above, so this is the verb's idempotent
+        // re-read path — the one case the retired live-cli-installed.test.ts
+        // covered that `--follow` does not.
+        const waited = await executeCli(["wait", id, "--timeout", "1m", "--interval", "1s", ...common()], 90_000);
+        expect(waited.exitCode, diag("aex wait", waited)).toBe(0);
+        const waitDoc = JSON.parse(waited.stdout.trim()) as Record<string, unknown>;
+        expect(waitDoc["id"], diag("aex wait", waited)).toBe(id);
+        expect(SESSION_READY, diag("aex wait", waited)).toContain(String(waitDoc["status"]));
+        assertNoSecretLeak("wait", waited);
+
         // events: RUN_STARTED + clean terminal + the assistant echoed the markers
         const events = await executeCli(["events", id, ...common()]);
         expect(events.exitCode, diag("aex events", events)).toBe(0);
@@ -264,7 +269,15 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         expect(JSON.parse(download.stdout.trim())).toMatchObject({ sessionId: id, namespace: "events", path: zipPath });
         expect(existsSync(zipPath), diag("aex download --only events", download)).toBe(true);
         const entries = unzipSync(new Uint8Array(readFileSync(zipPath)));
-        expect(Object.keys(entries)).toContain("events.jsonl");
+        // Exact membership, not `toContain`: an events archive that grew a third
+        // entry would be a public-surface change, and the archived log must carry
+        // the same clean terminal the live stream did.
+        expect(Object.keys(entries).sort(), diag("aex download --only events", download)).toEqual([
+          "events.jsonl",
+          "manifest.json"
+        ]);
+        const archivedEvents = parseJsonLines(new TextDecoder().decode(entries["events.jsonl"]!));
+        expect(hasCleanTerminal(archivedEvents), diag("aex download --only events", download)).toBe(true);
         assertNoSecretLeak("download", download);
 
         // A passing parity verdict includes remote cleanup, not just disposal

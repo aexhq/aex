@@ -125,7 +125,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 // from the install tempdir (so workspace symlinks cannot leak), runs one live
 // managed DeepSeek run, then reduces the raw event stream to a JSON
 // `Observation` on stdout. Raw-event iteration mirrors the proven sibling
-// harnesses (live-sdk-skill-invocation / live-sdk-tool-capability-fuzz):
+// harness (live-sdk-tool-capability-fuzz):
 //   - TOOL_CALL_START names/args → which tools were invoked, including `skills` loads
 //   - TOOL_CALL_RESULT content → deterministic tool files
 //   - CUSTOM aex.skill_loaded → which skills were staged into the container

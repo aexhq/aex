@@ -78,8 +78,14 @@ export const PUBLIC_RUNTIME_PARITY_SCENARIOS: readonly PublicRuntimeParityScenar
     runtimes: PARITY_RUNTIME_KINDS,
     layers: BOTH_LAYERS,
     sourceFiles: [
-      "test/live/live-sdk-chat-session.test.ts",
+      // live-sdk-chat-session.test.ts was retired 2026-07-27: its two cases were
+      // suspend/resume + follow-up + delete, and message idempotency + concurrent
+      // busy — already owned by the edge-chat-* shards below and by the platform
+      // ledger's live.aws.message-idempotency.v1.
+      "test/live/edge-chat-multiturn.user.test.ts",
+      "test/live/edge-chat-suspend.user.test.ts",
       "test/live/edge-chat-concurrency.user.test.ts",
+      "test/live/edge-chat-replay.user.test.ts",
       "test/live/edge-event-stream.user.test.ts",
       "test/live/live-sdk-event-stream.test.ts"
     ]
@@ -90,8 +96,12 @@ export const PUBLIC_RUNTIME_PARITY_SCENARIOS: readonly PublicRuntimeParityScenar
     runtimes: PARITY_RUNTIME_KINDS,
     layers: BOTH_LAYERS,
     sourceFiles: [
+      // live-sdk-download-namespaces.test.ts was retired 2026-07-27: edge-files
+      // already probes download_files_zip / download_all_zip /
+      // download_metadata_zip with the same PK-magic and no-diagnostics-leak
+      // checks, and test/offline/download-namespaces.test.ts pins the verb set.
       "test/live/edge-files.user.test.ts",
-      "test/live/live-sdk-download-namespaces.test.ts",
+      "test/offline/download-namespaces.test.ts",
       "test/live/live-sdk-files-and-failures.test.ts"
     ]
   },
@@ -113,9 +123,11 @@ export const PUBLIC_RUNTIME_PARITY_SCENARIOS: readonly PublicRuntimeParityScenar
     layers: BOTH_LAYERS,
     sourceFiles: [
       "test/live/config-envvars.user.test.ts",
-      "test/live/config-instructions.user.test.ts",
-      "test/live/config-networking.user.test.ts",
       "test/live/config-packages.user.test.ts",
+      // config-instructions and config-networking were retired 2026-07-27:
+      // edge-instructions-files case 5 composes two files PLUS instructions, and
+      // edge-mcp-egress proves the same networking:limited allowlist as well as
+      // cloud-metadata blocking.
       "test/live/edge-instructions-files.user.test.ts",
       "test/live/edge-mcp-egress.user.test.ts",
       // Secrets reach the runtime: the BYOK-named suite was deleted with the
@@ -143,7 +155,9 @@ export const PUBLIC_RUNTIME_PARITY_SCENARIOS: readonly PublicRuntimeParityScenar
     runtimes: PARITY_RUNTIME_KINDS,
     layers: BOTH_LAYERS,
     sourceFiles: [
-      "test/live/config-posthook.user.test.ts",
+      // postHook rejection asserts `calls === 0` against an injected fetch, so it
+      // moved to test/offline/ on 2026-07-27 rather than pay a live runtime arm.
+      "test/offline/config-posthook.test.ts",
       "test/live/edge-builtin-web-tools.user.test.ts",
       "test/live/edge-skills-tools.user.test.ts",
       "test/live/live-sdk-builtin-tools.test.ts",

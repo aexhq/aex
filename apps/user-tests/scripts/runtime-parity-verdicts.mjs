@@ -3,6 +3,19 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+/**
+ * Which live files emit a runtime-parity verdict, and for what.
+ *
+ * These are exactly the `runtime-spotcheck` files in `LIVE_TEST_COVERAGE`
+ * (scripts/shard-files.mjs) — one per public entry point. The standalone
+ * authenticated live workflow fans both runtime-sensitive tiers over every
+ * advertised runtime; spotcheck is the narrower ownership marker that says
+ * these two files also emit parity verdict cells. Runtime-agnostic files run on
+ * one arm and never emit parity verdicts.
+ * `test/offline/live-coverage-manifest.test.ts` asserts the two stay in step;
+ * the tie is not re-imported here because shard-files.mjs already imports this
+ * module for `parityCellsForFile`.
+ */
 export const PARITY_SCENARIO_OWNERSHIP = Object.freeze({
   "test/live/edge-cli.user.test.ts": Object.freeze({
     layer: "user",

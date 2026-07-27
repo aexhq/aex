@@ -5,9 +5,6 @@
  * container EGRESS ALLOWLIST enforcement (security-critical for launch).
  *
  * Surface under test:
- *   - SDK `McpServer.remote(...)` / `McpServer.fromId(...)` construction guards
- *     (offline: missing/empty fields, stdio rejection, header/secret split,
- *     workspace-id pattern).
  *   - A session declaring a private/metadata/duplicate/bad-name MCP ref must FAIL
  *     CLOSED without ever dialing the target and without leaking any cloud
  *     metadata. (On the dev plane this is enforced as a session error at the
@@ -20,6 +17,11 @@
  *
  * Invalid MCP refs may be rejected at submission or by a RUN_ERROR during setup.
  * Both paths must fail closed without dialing the target or leaking metadata.
+ *
+ * The `McpServer` construction guards (missing/empty fields, stdio rejection,
+ * header/secret split, workspace-id pattern) make no network call and were split
+ * into `test/offline/mcp-construction.test.ts` on 2026-07-27 so they run on every
+ * push rather than once per live runtime arm.
  *
  * Required env (wired by the live runner):
  *   AEX_API_URL, AEX_API_KEY,
@@ -78,16 +80,11 @@ async function runChild(install: InstallResult, scriptName: string, script: stri
 }
 
 // ---------------------------------------------------------------------------
-// Construction guards (pure offline) + bad-submission fail-closed probes
-// (submitted in PARALLEL so all resolve within one ~45s window). The child
-// ALWAYS exits 0 and prints one JSON blob the `it`s assert on.
+// Bad-submission fail-closed probes (submitted in PARALLEL so all resolve within
+// one ~45s window). The child ALWAYS exits 0 and prints one JSON blob the `it`s
+// assert on. The `McpServer` construction guards that used to share this child
+// are pure client-side checks and live in test/offline/mcp-construction.test.ts.
 // ---------------------------------------------------------------------------
-interface ConstructionCase {
-  readonly label: string;
-  readonly threw: boolean;
-  readonly message: string;
-  readonly extra?: unknown;
-}
 interface SubmissionCase {
   readonly label: string;
   readonly resolveMs: number;
@@ -102,43 +99,12 @@ interface SubmissionCase {
   readonly metaLeak: readonly string[];
 }
 interface ValidationResult {
-  readonly construction: readonly ConstructionCase[];
   readonly submission: readonly SubmissionCase[];
 }
 
 function validationChildScript(): string {
   return `
-    import { Aex, McpServer, MCP_SERVER_NAME_PATTERN } from "@aexhq/sdk";
-
-    const construction = [];
-    function attempt(label, fn) {
-      try {
-        const value = fn();
-        construction.push({ label, threw: false, message: "", extra: value ?? null });
-      } catch (err) {
-        construction.push({ label, threw: true, message: err && err.message ? String(err.message) : String(err) });
-      }
-    }
-
-    // --- pure construction guards (no network) ---
-    attempt("valid-remote-with-headers", () => {
-      const m = McpServer.remote({ name: "deepwiki", url: "https://mcp.deepwiki.com/mcp", headers: { Authorization: "Bearer XYZ" } });
-      return { sub: m.toSubmissionEntry(), sec: m.toSecretEntry() ?? null };
-    });
-    attempt("missing-url", () => McpServer.remote({ name: "noturl" }));
-    attempt("missing-name", () => McpServer.remote({ url: "https://example.com/mcp" }));
-    attempt("empty-name", () => McpServer.remote({ name: "", url: "https://example.com/mcp" }));
-    attempt("stdio-transport", () => new McpServer({ kind: "inline", name: "x", url: "https://x.com/mcp", transport: "stdio" }));
-    attempt("stdio-command-field", () => new McpServer({ name: "x", url: "https://x.com/mcp", command: "node" }));
-    attempt("bad-name-uppercase", () => {
-      const m = McpServer.remote({ name: "UPPER_CASE", url: "https://example.com/mcp" });
-      return { patternMatches: MCP_SERVER_NAME_PATTERN.test("UPPER_CASE"), constructedName: m.name };
-    });
-    attempt("fromId-bad", () => McpServer.fromId("not-a-valid-id"));
-    attempt("fromId-good", () => {
-      const m = McpServer.fromId("mcp_abcdefgh12345678");
-      return { kind: m.kind, id: m.id };
-    });
+    import { Aex, McpServer } from "@aexhq/sdk";
 
     // --- bad-submission fail-closed probes (parallel; no LLM is invoked) ---
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
@@ -188,7 +154,7 @@ function validationChildScript(): string {
       submitBad("duplicate-names",    [McpServer.remote({ name: "dup", url: "https://mcp.deepwiki.com/mcp" }), McpServer.remote({ name: "dup", url: "https://mcp.deepwiki.com/mcp" })])
     ]);
 
-    process.stdout.write(JSON.stringify({ construction, submission }));
+    process.stdout.write(JSON.stringify({ submission }));
     process.exit(0);
   `;
 }
@@ -330,11 +296,6 @@ function mcpSecretChildScript(marker: string): string {
 let install: InstallResult;
 let validation: ValidationResult;
 
-function ctor(label: string): ConstructionCase {
-  const c = validation.construction.find((x) => x.label === label);
-  if (!c) throw new Error(`construction case ${label} missing; got: ${validation.construction.map((x) => x.label).join(", ")}`);
-  return c;
-}
 function sub(label: string): SubmissionCase {
   const s = validation.submission.find((x) => x.label === label);
   if (!s) throw new Error(`submission case ${label} missing; got: ${validation.submission.map((x) => x.label).join(", ")}`);
@@ -364,46 +325,6 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
     validation = JSON.parse(out) as ValidationResult;
   }, 300_000);
   afterAll(() => install?.cleanup());
-
-  // ---- Construction guards (offline) ----
-  it("valid McpServer.remote(+headers) constructs; submission entry omits the header", () => {
-    const withHeaders = ctor("valid-remote-with-headers");
-    expect(withHeaders.threw, withHeaders.message).toBe(false);
-    const e = withHeaders.extra as { sub: Record<string, unknown>; sec: Record<string, unknown> | null };
-    // Non-secret wire entry must be {name,url} only — never carry the header.
-    expect(Object.keys(e.sub).sort()).toEqual(["name", "url"]);
-    expect(JSON.stringify(e.sub)).not.toContain("Authorization");
-    // Secret entry carries the header out-of-band.
-    expect(e.sec && JSON.stringify(e.sec)).toContain("Authorization");
-  });
-
-  it("missing url / missing name / empty name throw clear construction errors", () => {
-    expect(ctor("missing-url").threw).toBe(true);
-    expect(ctor("missing-url").message).toMatch(/url is required/i);
-    expect(ctor("missing-name").threw).toBe(true);
-    expect(ctor("missing-name").message).toMatch(/name is required/i);
-    expect(ctor("empty-name").threw).toBe(true);
-  });
-
-  it("stdio-shaped MCP inputs are rejected at construction (transport + command field)", () => {
-    expect(ctor("stdio-transport").threw).toBe(true);
-    expect(ctor("stdio-command-field").threw).toBe(true);
-  });
-
-  it("McpServer.fromId validates the workspace id pattern", () => {
-    expect(ctor("fromId-bad").threw).toBe(true);
-    expect(ctor("fromId-good").threw, ctor("fromId-good").message).toBe(false);
-  });
-
-  it("DX note: SDK constructor does NOT pre-validate the MCP name pattern (server enforces it)", () => {
-    // Documents the client-side gap: an invalid name constructs fine; the
-    // canonical pattern is only enforced server-side (asserted below).
-    const c = ctor("bad-name-uppercase");
-    expect(c.threw).toBe(false);
-    const e = c.extra as { patternMatches: boolean; constructedName: string };
-    expect(e.patternMatches).toBe(false);
-    expect(e.constructedName).toBe("UPPER_CASE");
-  });
 
   // ---- Bad-submission fail-closed (security) ----
   it("SECURITY: an MCP url at cloud metadata 169.254.169.254 fails closed and is never dialed", () => {

@@ -243,8 +243,12 @@ async function reportWireConformance(wireConformanceDir) {
  * collected. Kept glob-driven (not a hardcoded list) so a NEW test file lands
  * in the sweep automatically — a silent drop from the sweep is dead coverage.
  *
- * Dedicated explicit lanes stay out of the sweep so they never run implicitly:
+ * Dedicated explicit lanes stay out of the sweep so they never run implicitly.
+ * The live half of that list is DERIVED from the `on-demand` tier of
+ * `scripts/live-coverage.mjs`, so a lane cannot be excluded here while the
+ * coverage manifest still claims it gates:
  *   - edge-admission-gates (cap-saturating; isolated low-cap workspace lane);
+ *   - edge-concurrency-scale (10 declared session slots; load-shaped failures);
  *   - live-sdk-heavy-session (run only AFTER the rest pass);
  *   - live-api-fuzz + live-sdk-tool-capability-fuzz (own paid gates);
  *   - test/live/providers/** (on-demand; keeps non-gate provider billing out

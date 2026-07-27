@@ -45,7 +45,7 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
         timeoutMs: 9 * 60_000
       });
 
-      expect(result.runtime).toBe("managed");
+      expect(result.runtime).toBe(env.runtimeKind);
       expect(result.status).toBe("succeeded");
       const text = observedSessionText(result);
       // Pre-installed: the shell result found the binary without installing it.
@@ -78,7 +78,7 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
         timeoutMs: 9 * 60_000
       });
 
-      expect(result.runtime).toBe("managed");
+      expect(result.runtime).toBe(env.runtimeKind);
       expect(result.status).toBe("succeeded");
       const text = observedSessionText(result);
       // apt: jq pre-installed system-wide by the runtime setup path.

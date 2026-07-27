@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "./install.js";
 import { gateModel } from "./provider.js";
 import { formatChildFailure, redactKnownValues } from "./live-diagnostics.js";
+import { requireLiveRuntimeKind } from "./runtime-kind.js";
 import type { EdgeChatSessionShard } from "./edge-chat-session-manifest.js";
 
 function requireEnv(name: string): string {
@@ -37,6 +38,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
+const runtimeKind = requireLiveRuntimeKind("edge chat live test");
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -67,13 +69,23 @@ import { Aex } from "@aexhq/sdk";
 const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
 const apiKey = process.env.AEX_API_KEY;
 const model = process.env.MODEL;
+const runtimeKind = process.env.RUNTIME_KIND;
 const client = new Aex({ baseUrl, apiKey });
 const CREATE = {
   model,
+  runtime: { kind: runtimeKind },
   builtinTools: "none",
   system: "You are a terse assistant. Follow the user's instructions exactly and reply with as few words as possible.",
   overrides: { idleTtl: "10m" }
 };
+async function createSession() {
+  const session = await client.sessions.create(CREATE);
+  const observed = session.record && session.record.runtime && session.record.runtime.kind;
+  if (observed !== runtimeKind) {
+    throw new Error("runtime identity mismatch: requested=" + runtimeKind + " observed=" + String(observed));
+  }
+  return session;
+}
 function errInfo(e){
   return {
     name: e && e.name ? String(e.name) : null,
@@ -109,7 +121,12 @@ async function runChild(scriptName: string, body: string, timeoutMs = 8 * 60_000
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model })
+    env: buildPassEnv({
+      AEX_API_URL: apiUrl,
+      AEX_API_KEY: apiKey,
+      MODEL: model,
+      RUNTIME_KIND: runtimeKind
+    })
   });
   if (child.exitCode !== 0) {
     throw new Error(formatChildFailure(scriptName, child, [apiKey]));
@@ -137,7 +154,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-multiturn.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
     const sessionId = session.id;
 
     const t1 = await session.messages.send("My name is Zed. Reply with exactly: ok", { idleTimeoutMs: 180000 }).finished();
@@ -211,7 +228,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-replaylast.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
     const replayKey = "edge-replay-" + Date.now() + "-" + Math.random().toString(36).slice(2);
     const t1 = await session.messages.send("Reply with exactly: alpha", { idempotencyKey: replayKey, idleTimeoutMs: 180000 }).finished();
     const turn1Seq = t1.run && typeof t1.run.turnSeq === "number" ? t1.run.turnSeq : -1;
@@ -232,7 +249,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
     } catch (e) { replayFresh = { error: errInfo(e) }; }
 
     // replayLast before any send must throw a clear client-side error.
-    const s2 = await client.sessions.create(CREATE);
+    const s2 = await createSession();
     let replayNoSend;
     try {
       await s2.messages.replayLast().finished();
@@ -277,7 +294,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-concurrent.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
     const mk = (label, key) => session.messages.send("Reply with exactly: " + label, { idempotencyKey: key, idleTimeoutMs: 180000 }).finished()
       .then((r) => ({ ok: true, status: r.status, turnSeq: r.run && r.run.turnSeq, text: String(r.text).slice(0, 40) }))
       .catch((e) => ({ ok: false, ...errInfo(e) }));
@@ -314,7 +331,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-suspend-send.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
     const t1 = await session.messages.send("Reply with exactly: ready", { idleTimeoutMs: 180000 }).finished();
     const afterRunStatus = (await client.sessions.get(session.id)).status;
 
@@ -377,7 +394,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-cancel-send.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
 
     // Kick a turn off but do not await; try to cancel while it is in flight.
     const inflight = session.messages.send("Reply with exactly: gamma", { idleTimeoutMs: 120000 }).finished()
@@ -437,7 +454,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-cancel-at-launch.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
 
     // Kick a slow turn and cancel the moment the record leaves idle (launch /
     // container-boot phase — before any assistant output exists).
@@ -511,7 +528,7 @@ export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wra
       const result = await runChild(
         "edge-delete-open.mjs",
         `
-    const session = await client.sessions.create(CREATE);
+    const session = await createSession();
     const sid = session.id;
     await session.delete();
 

@@ -43,6 +43,24 @@ Never call the remote dev plane `local`. Keep real values in gitignored
 6. For release changes, verify workflow/candidate integrity tests; do not
    publish or promote manually outside the approved workflows.
 
+## Live user tests
+
+Every file under `apps/user-tests/test/live/` must declare a coverage tier in
+`apps/user-tests/scripts/live-coverage.mjs`. A new live file with no entry fails
+the sweep, both CI matrix builders, and lint — there is no default tier.
+
+| Tier | Runs on | Pick it when |
+| --- | --- | --- |
+| `runtime-spotcheck` | every full-coverage arm | The file is one of the two per-entry-point parity anchors (one CLI, one SDK) and emits parity verdict cells. |
+| `runtime-matrix` | every full-coverage arm (`lambda` + `spot_container` on dev) | The execution runtime decides the outcome: workspace materialization, in-runtime tool execution, journal/park semantics, capacity. |
+| `runtime-agnostic` | one arm, duration-packed into shared bins | The control plane, the SDK client, or the API boundary decides the outcome and the runtime is incidental. |
+| `on-demand` | never in the default live sweep; an explicit dedicated workflow lane | Provider-family, cap-saturating, load-shaped, or otherwise probabilistic coverage. |
+
+Default to `runtime-agnostic` and justify anything higher — each promotion to
+`runtime-matrix` multiplies by the number of arms. Before adding a live file,
+check whether the assertion needs a plane at all: a case that injects a fetch, or
+asserts no HTTP request was made, belongs in `test/offline/`.
+
 Contributor branch, review, and CI procedure lives in
 [`contributing.md`](contributing.md). Repository-wide artifact cleanup follows
 [`repository-hygiene.md`](repository-hygiene.md).

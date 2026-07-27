@@ -11,6 +11,7 @@
     "test:user:admission-gates": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-admission-gates.xml --isolate --timeout=600000 test/live/edge-admission-gates.user.test.ts",
     "test:user:offline": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-offline.xml --isolate --timeout=180000 --parallel-env=AEX_USER_TEST_OFFLINE_MAX_WORKERS:4 test/offline",
     "test:user:heavy": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-heavy.xml --isolate --timeout=900000 test/live/live-sdk-heavy-session.test.ts",
+    "test:user:concurrency-scale": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-concurrency-scale.xml --isolate --timeout=900000 test/live/edge-concurrency-scale.user.test.ts",
     "test:user:providers": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-providers.xml --isolate --timeout=180000 test/live/providers",
     "test:user:fuzz": "mkdir -p .tmp && rm -f .tmp/junit-test-user-fuzz.xml && bun test --isolate --timeout=300000 --reporter=junit --reporter-outfile=.tmp/junit-test-user-fuzz.xml test/live/live-api-fuzz.test.ts && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-user-fuzz.xml",
     "test:user:e2e": "bun run --filter @aexhq/contracts --filter @aexhq/cli build && mkdir -p .tmp && rm -f .tmp/junit-test-user-e2e.xml && bun test --isolate --timeout=120000 --reporter=junit --reporter-outfile=.tmp/junit-test-user-e2e.xml test/e2e && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-user-e2e.xml",

@@ -157,7 +157,7 @@ jobs:
           echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"
 
   live-user-tests:
-    name: Live user tests file ${{ matrix.shard }}/${{ matrix.count }}
+    name: Live user tests ${{ matrix.shard }}/${{ matrix.count }} (${{ matrix.tier }}, ${{ matrix.runtimeKind || 'default' }})
     needs:
       - prepare-artifact
       - live-user-tests-preflight
@@ -167,8 +167,12 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      # Full file-level fanout with no max-parallel cap. The preflight sums each
-      # file's declared peak session-slot demand from this discovered matrix.
+      # Fanout is the hand-picked coverage matrix, not one job per file: the
+      # runtime-sensitive tiers get a job per runtime arm and the
+      # runtime-agnostic tier is duration-packed into bins. Declared per file in
+      # apps/user-tests/scripts/shard-files.mjs LIVE_TEST_COVERAGE. No
+      # max-parallel cap; the preflight sums each entry's declared peak
+      # session-slot demand from this discovered matrix.
       matrix:
         include: ${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}
     steps:
@@ -235,7 +239,11 @@ jobs:
             exit 1
           fi
           set +e
-          bun run test:user:files -- "$TEST_FILE" --reporter=junit --reporter-outfile="$REPORT" > "$RAW_LOG" 2>&1
+          # Deliberately UNQUOTED: the runtime-agnostic tier packs several files
+          # into one entry as a space-separated argv list. Test paths are
+          # repo-relative and never contain spaces.
+          # shellcheck disable=SC2086
+          bun run test:user:files -- $TEST_FILE --reporter=junit --reporter-outfile="$REPORT" > "$RAW_LOG" 2>&1
           test_status=$?
           node scripts/cicd/assert-no-skips.mjs "$REPORT" >> "$RAW_LOG" 2>&1
           assertion_status=$?
@@ -245,8 +253,12 @@ jobs:
           fi
           exit "$assertion_status"
 
+      # Only the runtime-spotcheck tier owns parity cells. Every other entry
+      # carries an empty parityCells list, and the
+      # emitter fails closed on an empty list rather than writing a hollow
+      # verdict — so gate on the cells, not on the runtime kind.
       - name: Emit runtime parity verdicts
-        if: ${{ always() && matrix.runtimeKind != null }}
+        if: ${{ always() && toJSON(matrix.parityCells) != '[]' }}
         shell: bash
         env:
           PARITY_CELLS: ${{ toJSON(matrix.parityCells) }}
@@ -263,7 +275,7 @@ jobs:
             --out "$VERDICT"
 
       - name: Upload runtime parity verdict
-        if: ${{ always() && matrix.runtimeKind != null }}
+        if: ${{ always() && toJSON(matrix.parityCells) != '[]' }}
         uses: actions/upload-artifact@v4
         with:
           name: runtime-parity-verdict-${{ matrix.shard }}

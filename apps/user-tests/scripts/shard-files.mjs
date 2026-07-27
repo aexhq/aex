@@ -1,29 +1,44 @@
-// CI file discovery and duration-balanced sharding for the live user-test suite.
+// CI file discovery, release-matrix construction, and duration-balanced sharding
+// for the live user-test suite.
 //
-// A count-based `--shard=i/N` split is a poor fit here: per-file wall
-// times here span ~1s to ~6.5min (live tests wait on remote sessions), so
-// count-based shards were observed at 1m42s..12m7s. This script instead
-// LPT bin-packs the collected live files using recorded durations
-// (shard-durations.json; unknown files get the median) and prints the file
-// list for shard i of N. The hosted workflow uses `--matrix` for full
-// one-file-per-job fanout; the duration-balanced modes remain useful when a
-// caller intentionally chooses fewer jobs.
+// The per-file coverage TIERS (which files fan out over which runtime arms, and
+// why) live in ./live-coverage.mjs and are re-exported here so callers have one
+// import. The runtime KINDS live in the platform scenario ledger and are passed
+// in by the caller. This module owns only the mechanics: walk the tree, assert
+// the manifest, bin-pack, and emit matrix entries.
+//
+// SHARDING
+// --------
+// A count-based split is a poor fit: per-file wall times span ~1s to ~6.5min
+// (live tests wait on remote sessions), so count-based shards were observed at
+// 1m42s..12m7s. The runtime-agnostic tier is LPT bin-packed using recorded
+// durations (shard-durations.json; unknown files get the median).
 //
 // Guarantees:
 //   - deterministic: same files + same durations => same partition;
-//   - every collected file lands in exactly one shard;
+//   - every collected file lands in exactly one matrix entry;
 //   - an empty shard (or an out-of-range shard index) fails loudly, so a
 //     matrix job can never silently pass with zero coverage.
 //
 // Usage:
-//   node scripts/shard-files.mjs --matrix --runtime-capabilities-json <json> [--exclude-file <rel>]...
+//   node scripts/shard-files.mjs --matrix --full-coverage-kinds <json> [--agnostic-shards <n>]
+//   node scripts/shard-files.mjs --matrix --runtime-capabilities-json <json> [--agnostic-shards <n>]
 //   node scripts/shard-files.mjs --shard <i>/<N> [--exclude-file <rel>]...
 //   node scripts/shard-files.mjs --summary <N> [--exclude-file <rel>]...
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseRuntimeCapabilities } from "../../../scripts/cicd/runtime-capabilities.mjs";
+import {
+  COVERAGE_TIERS,
+  LIVE_TEST_COVERAGE,
+  ON_DEMAND_FILES,
+  assertCoverageManifest,
+  coverageFor
+} from "./live-coverage.mjs";
 import { parityCellsForFile } from "./runtime-parity-verdicts.mjs";
+
+export { COVERAGE_TIERS, LIVE_TEST_COVERAGE, ON_DEMAND_FILES, assertCoverageManifest, coverageFor };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -33,46 +48,55 @@ const appRoot = resolve(here, "..");
 // do not drift into separate test inventories.
 export const LIVE_TEST_SHARD_CONFIG = Object.freeze({
   // Cap-saturating suites run in dedicated workflow lanes with isolated
-  // workspaces so they cannot starve unrelated live assertions.
-  excludedFiles: Object.freeze([
-    "test/live/edge-admission-gates.user.test.ts",
-    "test/live/live-sdk-heavy-session.test.ts",
-    "test/live/live-api-fuzz.test.ts",
-    "test/live/live-sdk-tool-capability-fuzz.test.ts"
-  ]),
-  excludedDirectories: Object.freeze(["node_modules", "providers"]),
+  // workspaces so they cannot starve unrelated live assertions. Derived from the
+  // coverage manifest so the tier and the exclusion cannot disagree.
+  excludedFiles: ON_DEMAND_FILES,
+  excludedDirectories: Object.freeze(["node_modules"]),
   // Most live files run at most one active session at a time. Values here are
   // the declared peak for files that start sessions concurrently in a test.
   sessionSlotOverrides: Object.freeze({
     "test/live/edge-concurrency-scale.user.test.ts": 10
   }),
-  // Only these files explicitly submit the selected runtime and assert the
-  // returned session identity. Other files must remain container-only.
-  runtimePairedFiles: Object.freeze([
-    "test/live/edge-cli.user.test.ts",
-    "test/live/live-sdk-event-stream.test.ts"
-  ])
+  // How many duration-balanced jobs the runtime-agnostic tier is packed into.
+  // Four keeps each shard near the longest single matrix file, so the agnostic
+  // tier stops being the critical path without hiding many files behind one red.
+  defaultAgnosticShards: 4
 });
 
 const EXCLUDED = new Set(LIVE_TEST_SHARD_CONFIG.excludedFiles);
 const EXCLUDED_DIRS = new Set(LIVE_TEST_SHARD_CONFIG.excludedDirectories);
 const SESSION_SLOT_OVERRIDES = new Map(Object.entries(LIVE_TEST_SHARD_CONFIG.sessionSlotOverrides));
-export const RUNTIME_PAIRED_FILES = new Set(LIVE_TEST_SHARD_CONFIG.runtimePairedFiles);
 
-export function collectTestFiles(root = appRoot) {
+/** Every live test file on disk, including the on-demand lanes. */
+export function collectAllLiveFiles(root = appRoot) {
   const out = [];
   const walk = (rel) => {
     for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
       const relPath = `${rel}/${entry.name}`;
       if (entry.isDirectory()) {
         if (!EXCLUDED_DIRS.has(entry.name)) walk(relPath);
-      } else if (entry.name.endsWith(".test.ts") && !EXCLUDED.has(relPath)) {
+      } else if (entry.name.endsWith(".test.ts")) {
         out.push(relPath);
       }
     }
   };
   walk("test/live");
   return out.sort();
+}
+
+/**
+ * The live files the release gate sweeps: everything on disk minus the
+ * on-demand tier. Classification is asserted here rather than at the matrix
+ * builder, so a new unclassified file fails the sweep too.
+ */
+export function collectTestFiles(root = appRoot) {
+  return assertCoverageManifest(collectAllLiveFiles(root)).filter((file) => !EXCLUDED.has(file));
+}
+
+/** The sweep files in one coverage tier, sorted. */
+export function filesInTier(tier, files = collectTestFiles()) {
+  if (!COVERAGE_TIERS.includes(tier)) throw new Error(`unknown coverage tier: ${tier}`);
+  return files.filter((file) => coverageFor(file).tier === tier);
 }
 
 export function sessionSlotsForFile(file) {
@@ -150,28 +174,77 @@ export function excludeFiles(files, excludedFiles) {
   return files.filter((file) => !excluded.has(file));
 }
 
-export function buildFileMatrix(files, runtimeKinds = ["spot_container"]) {
+function assertKindList(kinds, label, { allowEmpty = false } = {}) {
+  if (!Array.isArray(kinds)) throw new Error(`${label} must be an array`);
+  if (!allowEmpty && kinds.length === 0) throw new Error(`${label} must be a non-empty array`);
+  if (new Set(kinds).size !== kinds.length) throw new Error(`${label} must be unique`);
+  return kinds;
+}
+
+/**
+ * The release matrix for one plane.
+ *
+ * Each entry is one CI job. `files` is a LIST because the runtime-agnostic tier
+ * is duration-packed: a job runs one file on a runtime arm, or a bin of files on
+ * the plane's primary arm.
+ *
+ * @param files            the swept live files (on-demand already removed)
+ * @param coverage.fullCoverage    runtime kinds owing full ledger coverage
+ * @param coverage.agnosticShards  bins for the runtime-agnostic tier
+ */
+export function buildFileMatrix(files, coverage = {}) {
   if (files.length === 0) throw new Error("no test files collected");
-  if (!Array.isArray(runtimeKinds) || runtimeKinds.length === 0) {
-    throw new Error("runtime kinds must be a non-empty array");
+  const fullCoverage = assertKindList(coverage.fullCoverage ?? ["spot_container"], "full-coverage runtime kinds");
+  const agnosticShards = coverage.agnosticShards ?? LIVE_TEST_SHARD_CONFIG.defaultAgnosticShards;
+
+  // The plane's PRIMARY arm carries the runtime-agnostic tier. Prefer the
+  // shipped default explicitly: authenticated runtime capabilities use public
+  // contract order (container, spot_container, lambda), while the deploy
+  // ledger uses failure-cost order (lambda first, containers after). "Last"
+  // therefore silently selected Lambda in the standalone live workflow.
+  const primaryRuntimeKind = fullCoverage.includes("spot_container")
+    ? "spot_container"
+    : fullCoverage.includes("container")
+      ? "container"
+      : fullCoverage[fullCoverage.length - 1];
+
+  const entries = [];
+  for (const file of files) {
+    const { tier } = coverageFor(file);
+    if (tier === "on-demand") throw new Error(`on-demand file reached the release matrix: ${file}`);
+    if (tier === "runtime-agnostic") continue;
+    for (const runtimeKind of fullCoverage) entries.push({ files: [file], runtimeKind });
   }
-  if (new Set(runtimeKinds).size !== runtimeKinds.length) {
-    throw new Error("runtime kinds must be unique");
+
+  const agnostic = filesInTier("runtime-agnostic", files);
+  if (agnostic.length > 0) {
+    // Fewer files than bins would fail loudly in lptPartition; clamp instead so
+    // deleting agnostic files never breaks the build, only shrinks the fan-out.
+    const bins = lptPartition(agnostic, loadDurations(), Math.min(agnosticShards, agnostic.length));
+    for (const bin of bins) entries.push({ files: bin.files, runtimeKind: primaryRuntimeKind });
   }
-  const entries = files.flatMap((file) =>
-    RUNTIME_PAIRED_FILES.has(file)
-      ? runtimeKinds.map((runtimeKind) => ({ file, runtimeKind }))
-      : [{ file, runtimeKind: null }]
-  );
+
   const count = entries.length;
-  return entries.map(({ file, runtimeKind }, index) => ({
+  return entries.map(({ files: entryFiles, runtimeKind }, index) => ({
     shard: index + 1,
     count,
-    file,
+    // `file` stays a single space-joined argv string so the workflow's
+    // `test:user:files -- $AEX_USER_TEST_FILE` invocation is unchanged.
+    file: entryFiles.join(" "),
+    files: entryFiles,
     runtimeKind,
-    parityCells: parityCellsForFile(file, runtimeKind),
-    sessionSlots: sessionSlotsForFile(file)
+    tier: coverageFor(entryFiles[0]).tier,
+    parityCells: entryFiles.flatMap((entryFile) => parityCellsForFile(entryFile, runtimeKind)),
+    sessionSlots: Math.max(...entryFiles.map((entryFile) => sessionSlotsForFile(entryFile)))
   }));
+}
+
+function parseJsonArg(raw, flag) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`${flag} must be valid JSON`);
+  }
 }
 
 function parseArgs(argv) {
@@ -179,6 +252,13 @@ function parseArgs(argv) {
   let value;
   const excludedFiles = [];
   let runtimeCapabilitiesJson;
+  let fullCoverageKindsJson;
+  let agnosticShards;
+  const requireValue = (flag, i) => {
+    const next = argv[i];
+    if (next === undefined || next === "") throw new Error(`${flag} requires a value`);
+    return next;
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--matrix") {
@@ -194,32 +274,61 @@ function parseArgs(argv) {
       if (file === undefined || file === "") throw new Error("--exclude-file requires a relative test path");
       excludedFiles.push(file);
     } else if (arg === "--runtime-capabilities-json") {
-      runtimeCapabilitiesJson = argv[++i];
-      if (runtimeCapabilitiesJson === undefined || runtimeCapabilitiesJson === "") {
-        throw new Error("--runtime-capabilities-json requires a JSON value");
+      runtimeCapabilitiesJson = requireValue(arg, ++i);
+    } else if (arg === "--full-coverage-kinds") {
+      fullCoverageKindsJson = requireValue(arg, ++i);
+    } else if (arg === "--agnostic-shards") {
+      agnosticShards = Number(requireValue(arg, ++i));
+      if (!Number.isInteger(agnosticShards) || agnosticShards < 1) {
+        throw new Error("--agnostic-shards requires a positive integer");
       }
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { mode, value, excludedFiles, runtimeCapabilitiesJson };
+  return {
+    mode,
+    value,
+    excludedFiles,
+    runtimeCapabilitiesJson,
+    fullCoverageKindsJson,
+    agnosticShards
+  };
 }
 
 function main(argv) {
-  const { mode, value, excludedFiles, runtimeCapabilitiesJson } = parseArgs(argv);
+  const {
+    mode,
+    value,
+    excludedFiles,
+    runtimeCapabilitiesJson,
+    fullCoverageKindsJson,
+    agnosticShards
+  } = parseArgs(argv);
   const files = excludeFiles(collectTestFiles(), excludedFiles);
   if (mode === "--matrix") {
-    if (!runtimeCapabilitiesJson) {
-      throw new Error("--matrix requires authenticated --runtime-capabilities-json");
+    if (runtimeCapabilitiesJson && fullCoverageKindsJson) {
+      throw new Error("choose only one of --runtime-capabilities-json or --full-coverage-kinds");
     }
-    let rawCapabilities;
-    try {
-      rawCapabilities = JSON.parse(runtimeCapabilitiesJson);
-    } catch {
-      throw new Error("--runtime-capabilities-json must be valid JSON");
+    let fullCoverage;
+    if (fullCoverageKindsJson) {
+      // The deploy gate resolves both lists from the platform scenario ledger
+      // and passes them in; this script never re-derives them.
+      fullCoverage = parseJsonArg(fullCoverageKindsJson, "--full-coverage-kinds");
+    } else if (runtimeCapabilitiesJson) {
+      // The aex-owned manual lane has no ledger, only what the authenticated
+      // workspace reports. Every available kind is treated as full coverage and
+      // the container spot-check stays a deploy-gate concept, so this lane can
+      // never disagree with the ledger — it simply does not model the subset.
+      const capabilities = parseRuntimeCapabilities(
+        parseJsonArg(runtimeCapabilitiesJson, "--runtime-capabilities-json")
+      );
+      fullCoverage = capabilities.availableRuntimeKinds;
+    } else {
+      throw new Error("--matrix requires --full-coverage-kinds or authenticated --runtime-capabilities-json");
     }
-    const capabilities = parseRuntimeCapabilities(rawCapabilities);
-    process.stdout.write(`${JSON.stringify(buildFileMatrix(files, capabilities.availableRuntimeKinds))}\n`);
+    const matrix = buildFileMatrix(files, { fullCoverage, agnosticShards });
+    process.stdout.write(`${JSON.stringify(matrix)}\n`);
     return;
   }
   const durations = loadDurations();
@@ -241,7 +350,9 @@ function main(argv) {
     }
     return;
   }
-  throw new Error("usage: shard-files.mjs --matrix --runtime-capabilities-json <json> [--exclude-file <rel>]... | --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]...");
+  throw new Error(
+    "usage: shard-files.mjs --matrix (--full-coverage-kinds <json> | --runtime-capabilities-json <json>) [--agnostic-shards <n>] [--exclude-file <rel>]... | --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]..."
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

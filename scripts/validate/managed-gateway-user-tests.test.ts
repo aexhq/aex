@@ -43,7 +43,9 @@ describe("managed-gateway user-test policy", () => {
   });
 
   it("keeps the installed CLI live path free of removed provider flags", () => {
-    const source = readFileSync(join(liveRoot, "live-cli-installed.test.ts"), "utf8");
+    // edge-cli.user.test.ts absorbed live-cli-installed.test.ts on 2026-07-27 and
+    // is the CLI entry point for the runtime-spotcheck tier.
+    const source = readFileSync(join(liveRoot, "edge-cli.user.test.ts"), "utf8");
     expect(source).not.toMatch(/--provider\b|--[a-z0-9-]+-api-key\b/);
   });
 });

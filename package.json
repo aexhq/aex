@@ -29,6 +29,7 @@
     "test:user:admission-gates": "bun run --filter @aexhq/user-tests test:user:admission-gates",
     "test:user:offline": "bun run --filter @aexhq/user-tests test:user:offline",
     "test:user:heavy": "bun run --filter @aexhq/user-tests test:user:heavy",
+    "test:user:concurrency-scale": "bun run --filter @aexhq/user-tests test:user:concurrency-scale",
     "test:user:providers": "bun run --filter @aexhq/user-tests test:user:providers",
     "test:user:fuzz": "bun run --filter @aexhq/user-tests test:user:fuzz",
     "test:user:e2e": "bun run --filter @aexhq/user-tests test:user:e2e",

@@ -9,16 +9,25 @@ import { listJunitTestcases } from "../cicd/junit-report.mjs";
 import { EDGE_CHAT_SESSION_SHARDS } from "../../apps/user-tests/test/_fixtures/edge-chat-session-manifest.js";
 import {
   buildFileMatrix,
+  collectAllLiveFiles,
   collectTestFiles,
+  coverageFor,
   declaredPeakSessionSlots,
   excludeFiles,
+  filesInTier,
   loadDurations,
   lptPartition,
+  LIVE_TEST_COVERAGE,
   LIVE_TEST_SHARD_CONFIG,
-  RUNTIME_PAIRED_FILES,
+  ON_DEMAND_FILES,
   sessionSlotsForFile
 } from "../../apps/user-tests/scripts/shard-files.mjs";
 import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
+
+/** The dev plane's declared arms, per the platform scenario ledger. */
+const DEV_COVERAGE = {
+  fullCoverage: ["lambda", "spot_container"]
+} as const;
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const userTestsRoot = resolve(repoRoot, "apps/user-tests");
@@ -52,55 +61,91 @@ function expectBin(bins: ShardBin[], index: number): ShardBin {
 }
 
 describe("shard-files duration-balanced bin packing", () => {
-  it("builds one complete, unique matrix entry per collected file", () => {
+  it("covers every collected file exactly once, with contiguous shard numbering", () => {
     const files = collectTestFiles(userTestsRoot);
-    const matrix = buildFileMatrix(files);
+    const matrix = buildFileMatrix(files, DEV_COVERAGE);
+    const covered = matrix.flatMap((entry) => entry.files);
 
-    expect(matrix).toHaveLength(files.length);
-    expect(matrix.map((entry) => entry.file)).toEqual(files);
-    expect(new Set(matrix.map((entry) => entry.file)).size).toBe(files.length);
-    expect(matrix.map((entry) => entry.shard)).toEqual(files.map((_, index) => index + 1));
-    expect(matrix.every((entry) => entry.count === files.length)).toBe(true);
-    expect(matrix.every((entry) => entry.sessionSlots === sessionSlotsForFile(entry.file))).toBe(true);
-    expect(matrix.filter((entry) => entry.runtimeKind !== null).map((entry) => entry.file).sort()).toEqual(
-      [...RUNTIME_PAIRED_FILES].sort()
-    );
-    expect(matrix.filter((entry) => entry.runtimeKind !== null).every((entry) => entry.runtimeKind === "spot_container"))
-      .toBe(true);
+    expect([...new Set(covered)].sort()).toEqual([...files].sort());
+    expect(matrix.map((entry) => entry.shard)).toEqual(matrix.map((_, index) => index + 1));
+    expect(matrix.every((entry) => entry.count === matrix.length)).toBe(true);
+    // `file` is the argv string CI forwards; `files` is the structured list.
+    expect(matrix.every((entry) => entry.file === entry.files.join(" "))).toBe(true);
+    expect(
+      matrix.every(
+        (entry) => entry.sessionSlots === Math.max(...entry.files.map((file) => sessionSlotsForFile(file)))
+      )
+    ).toBe(true);
   });
 
-  it("fans out only runtime-aware files across the authenticated available runtime set", () => {
+  it("fans each file over exactly the arms its declared tier owes", () => {
     const files = collectTestFiles(userTestsRoot);
-    const runtimeKinds = ["container", "spot_container", "lambda"] as const;
-    const matrix = buildFileMatrix(files, runtimeKinds);
-    const expectedCount = files.length + RUNTIME_PAIRED_FILES.size * (runtimeKinds.length - 1);
+    const matrix = buildFileMatrix(files, DEV_COVERAGE);
+    const armsFor = (file: string): string[] =>
+      matrix
+        .filter((entry) => entry.files.includes(file))
+        .map((entry) => String(entry.runtimeKind))
+        .sort();
 
-    expect(matrix).toHaveLength(expectedCount);
-    expect(matrix.every((entry) => entry.count === expectedCount)).toBe(true);
-    for (const file of files) {
-      const entries = matrix.filter((entry) => entry.file === file);
-      if (RUNTIME_PAIRED_FILES.has(file)) {
-        expect(entries.map((entry) => entry.runtimeKind)).toEqual([...runtimeKinds]);
-        for (const entry of entries) {
-          expect(entry.parityCells).toHaveLength(3);
-          expect(entry.parityCells.every((cell) => cell.runtime === entry.runtimeKind)).toBe(true);
-          expect(new Set(entry.parityCells.map((cell) => cell.scenarioId))).toEqual(new Set([
-            "public.admission-and-identity",
-            "public.conversation",
-            "public.files-and-checkpoints"
-          ]));
-        }
-      } else {
-        expect(entries).toHaveLength(1);
-        expect(entries[0]?.runtimeKind).toBeNull();
-        expect(entries[0]?.parityCells).toEqual([]);
+    for (const file of filesInTier("runtime-spotcheck", files)) {
+      expect(armsFor(file), file).toEqual(["lambda", "spot_container"]);
+      for (const entry of matrix.filter((candidate) => candidate.files.includes(file))) {
+        expect(entry.parityCells).toHaveLength(3);
+        expect(entry.parityCells.every((cell) => cell.runtime === entry.runtimeKind)).toBe(true);
+        expect(new Set(entry.parityCells.map((cell) => cell.scenarioId))).toEqual(new Set([
+          "public.admission-and-identity",
+          "public.conversation",
+          "public.files-and-checkpoints"
+        ]));
       }
+    }
+    for (const file of filesInTier("runtime-matrix", files)) {
+      expect(armsFor(file), file).toEqual(["lambda", "spot_container"]);
+    }
+    for (const file of filesInTier("runtime-agnostic", files)) {
+      expect(armsFor(file), file).toEqual(["spot_container"]);
+    }
+    // Only spotcheck files carry parity cells; everything else emits none, and
+    // the verdict emitter fails closed on an empty cell list.
+    const spotcheck = new Set(filesInTier("runtime-spotcheck", files));
+    for (const entry of matrix) {
+      if (entry.files.some((file) => spotcheck.has(file))) continue;
+      expect(entry.parityCells, entry.file).toEqual([]);
     }
   });
 
-  it("fails closed when the authenticated runtime set is empty or duplicated", () => {
-    expect(() => buildFileMatrix(["a.ts"], [])).toThrow(/non-empty/);
-    expect(() => buildFileMatrix(["a.ts"], ["container", "container"])).toThrow(/unique/);
+  it("pins agnostic bins to the shipped container default regardless of capability order", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const publicCapabilityOrder = ["container", "spot_container", "lambda"] as const;
+    const matrix = buildFileMatrix(files, { fullCoverage: publicCapabilityOrder });
+    for (const entry of matrix.filter((candidate) => candidate.tier === "runtime-agnostic")) {
+      expect(entry.runtimeKind, entry.file).toBe("spot_container");
+    }
+  });
+
+  it("stays materially smaller than one job per file per arm", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const naive = files.length * DEV_COVERAGE.fullCoverage.length;
+    expect(buildFileMatrix(files, DEV_COVERAGE).length).toBeLessThan(naive / 2);
+  });
+
+  it("fails closed on an empty or duplicated runtime set", () => {
+    const files = collectTestFiles(userTestsRoot);
+    expect(() => buildFileMatrix(files, { fullCoverage: [] })).toThrow(/non-empty/);
+    expect(() => buildFileMatrix(files, { fullCoverage: ["container", "container"] })).toThrow(/unique/);
+  });
+
+  it("requires every live file to declare a coverage tier, and every declaration to resolve", () => {
+    const onDisk = collectAllLiveFiles(userTestsRoot);
+    expect(Object.keys(LIVE_TEST_COVERAGE).sort()).toEqual([...onDisk].sort());
+    for (const file of onDisk) {
+      const entry = coverageFor(file);
+      expect(["sdk", "cli"], file).toContain(entry.entryPoint);
+      expect(entry.reason.trim().length, file).toBeGreaterThanOrEqual(40);
+    }
+    // The on-demand tier and the sweep exclusion list are the same set, derived
+    // from one declaration rather than kept in step by hand.
+    expect([...LIVE_TEST_SHARD_CONFIG.excludedFiles].sort()).toEqual([...ON_DEMAND_FILES].sort());
   });
 
   it("collects only gating live tests", () => {
@@ -120,9 +165,9 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(files.some((file) => file.includes("/providers/"))).toBe(false);
   });
 
-  it("keeps independent chat-session scenarios in independent matrix jobs", () => {
+  it("keeps every chat-session scenario collected and uniquely registered", () => {
     const files = collectTestFiles(userTestsRoot);
-    const matrix = buildFileMatrix(files);
+    const matrix = buildFileMatrix(files, DEV_COVERAGE);
     const shards = Object.values(EDGE_CHAT_SESSION_SHARDS);
     const shardFiles = shards.map(({ file }) => file).sort();
     const shardScenarios = shards.map(({ scenario }) => scenario);
@@ -131,8 +176,11 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(new Set(shardScenarios).size).toBe(shards.length);
     expect(files.filter((file) => file.startsWith("test/live/edge-chat-")).sort()).toEqual(shardFiles);
     for (const { file } of shards) {
-      expect(matrix.filter((entry) => entry.file === file)).toHaveLength(1);
-      expect(matrix.find((entry) => entry.file === file)?.sessionSlots).toBe(1);
+      const entries = matrix.filter((entry) => entry.files.includes(file));
+      expect(entries.length, file).toBeGreaterThan(0);
+      // A shard is never duplicated on one arm, whatever tier it sits in.
+      expect(new Set(entries.map((entry) => entry.runtimeKind)).size, file).toBe(entries.length);
+      expect(entries.every((entry) => entry.sessionSlots === 1), file).toBe(true);
     }
   });
 
@@ -226,12 +274,18 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(sessionSlotsForFile(overriddenFile)).toBe(overriddenSlots);
     expect(declaredPeakSessionSlots([ordinary, overriddenFile])).toBe(1 + overriddenSlots);
 
+    // A matrix entry's declared demand is its peak, not its sum: files inside a
+    // duration-packed bin run serially, so a bin never holds more concurrent
+    // sessions than its greediest member.
     const files = collectTestFiles(userTestsRoot);
-    const matrix = buildFileMatrix(files);
-    expect(declaredPeakSessionSlots(files)).toBe(
-      matrix.reduce((total, entry) => total + entry.sessionSlots, 0)
-    );
-    expect(declaredPeakSessionSlots(files)).toBeGreaterThan(files.length);
+    const matrix = buildFileMatrix(files, DEV_COVERAGE);
+    for (const entry of matrix) {
+      expect(entry.sessionSlots, entry.file).toBe(
+        Math.max(...entry.files.map((file) => sessionSlotsForFile(file)))
+      );
+    }
+    const peak = matrix.reduce((total, entry) => total + entry.sessionSlots, 0);
+    expect(peak).toBe(matrix.length);
   });
 
   it("balances by duration, not file count", () => {

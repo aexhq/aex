@@ -2,12 +2,17 @@ name: Live On-Demand Tests
 
 # Consolidated, manually-dispatched pipeline for the OPTIONAL live suites that
 # are deliberately kept out of the default Live User Tests sweep. One trigger
-# runs them both:
+# runs them all:
 #   1. Managed-gateway model-family matrix
 #      (apps/user-tests/test/live/providers/) — one minimal round-trip per
 #      additional model family, with no customer-supplied provider keys.
 #   2. Heavy full-feature long session (test:user:heavy) — one maximal-submission
 #      DeepSeek-managed session exercising the entire feature surface.
+#   3. Larger-scale SDK concurrency (test:user:concurrency-scale) — a fan of
+#      concurrent submits, idempotency races, and stream consumers. It declares
+#      10 concurrent session slots and its failures are load-shaped, so it
+#      informs rather than gates; it left the release sweep on 2026-07-27 when
+#      the per-file coverage tiers landed.
 #
 # Feature depth on the two wire shapes (openai-chat via DeepSeek,
 # anthropic-messages via Anthropic) is covered on every dispatch by the default
@@ -198,3 +203,53 @@ jobs:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
         run: bun run test:user:heavy
+
+  concurrency-scale:
+    name: Larger-scale SDK concurrency
+    needs: prepare-artifact
+    runs-on: ubuntu-latest
+    environment: live-user-tests
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Download SDK tarball
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: live-on-demand-sdk-tarball
+          path: ${{ runner.temp }}/aex-pack
+
+      - name: Use selected SDK artifact
+        shell: bash
+        env:
+          ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
+          PACKAGE_VERSION: ${{ needs['prepare-artifact'].outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
+            echo "AEX_USER_TEST_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          else
+            tarball="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
+            if [ -z "$tarball" ]; then
+              echo "No downloaded @aexhq/sdk tarball was found." >&2
+              exit 1
+            fi
+            echo "AEX_USER_TEST_TARBALL=${tarball}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Larger-scale SDK concurrency
+        env:
+          AEX_API_URL: ${{ vars.AEX_API_URL }}
+          AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
+          AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
+        run: bun run test:user:concurrency-scale

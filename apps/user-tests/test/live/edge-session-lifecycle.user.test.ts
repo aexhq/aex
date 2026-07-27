@@ -6,7 +6,8 @@
  * Each `it` installs the packed SDK (shared per worker) and drives a real session in
  * a child Bun process that `import { Aex } from "@aexhq/sdk"`, then asserts on the
  * printed JSON. Prompts are tiny and the model is deepseek/deepseek-v4-flash to keep spend
- * and time low. Cases that only exercise CLIENT-side validation make no HTTP call.
+ * and time low. Every case here reaches the plane; the option-validation cases
+ * that make no HTTP call live in test/offline/session-options-validation.test.ts.
  *
  * Required env (wired by the shared live runner):
  *   AEX_API_URL, AEX_API_KEY, AEX_USER_TEST_TARBALL
@@ -149,57 +150,10 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     return parsed;
   }
 
-  function expectConfigError(value: unknown, field: string): void {
-    expect(value).toMatchObject({
-      name: "SessionConfigValidationError",
-      code: "SESSION_CONFIG_INVALID",
-      hasMessage: true,
-      detailsField: field,
-      detailsOnlyField: true
-    });
-  }
-
-  // ── Case 0: pure CLIENT-side validation (no HTTP, no billable session turn) ──────────
-  it(
-    "rejects malformed session options at the SDK boundary before any HTTP call",
-    async () => {
-      const body = `
-        let httpCalls = 0;
-        const validationClient = new Aex({
-          baseUrl: process.env.AEX_API_URL,
-          apiKey: process.env.AEX_API_KEY,
-          retry: false,
-          fetch: async () => { httpCalls += 1; throw new Error("CLIENT_VALIDATION_MADE_HTTP"); }
-        });
-        async function rej(fn){
-          try {
-            await fn();
-            return { name:"Resolved", hasMessage:false, status:null, code:null, detailsField:null, detailsOnlyField:false, apiCode:null, hasRequestId:false };
-          } catch(e) {
-            return errInfo(e);
-          }
-        }
-        const emptyMsg     = await rej(() => validationClient.start({ model:MODEL, message:"" }));
-        const emptyArr     = await rej(() => validationClient.start({ model:MODEL, message:[] }));
-        const emptySegment = await rej(() => validationClient.start({ model:MODEL, message:["ok",""] }));
-        const whitespaceMsg = await rej(() => validationClient.start({ model:MODEL, message:"  \\n\\t " }));
-        const whitespaceArray = await rej(() => validationClient.start({ model:MODEL, message:["  ","\\n"] }));
-        const legacyPrompt = await rej(() => validationClient.start({ model:MODEL, message:"hi", prompt:"x" }));
-        const unknownOption = await rej(() => validationClient.start({ model:MODEL, message:"hi", totallyUnknownOption:{nope:true} }));
-        print({ emptyMsg, emptyArr, emptySegment, whitespaceMsg, whitespaceArray, legacyPrompt, unknownOption, httpCalls });
-      `;
-      const r = await runChild("edge-clientside-validation.mjs", body, { childTimeoutMs: 120_000, waitMs: 60_000 });
-      expectConfigError(r.emptyMsg, "message");
-      expectConfigError(r.emptyArr, "message");
-      expectConfigError(r.emptySegment, "message");
-      expectConfigError(r.whitespaceMsg, "message");
-      expectConfigError(r.whitespaceArray, "message");
-      expectConfigError(r.legacyPrompt, "prompt");
-      expectConfigError(r.unknownOption, "totallyUnknownOption");
-      expect(r.httpCalls).toBe(0);
-    },
-    150_000
-  );
+  // Case 0 was pure CLIENT-side option validation with an injected fetch and an
+  // `httpCalls === 0` assertion. It proved the network was never touched while
+  // consuming a live runtime-matrix job to do it, so it moved to
+  // test/offline/session-options-validation.test.ts on 2026-07-27.
 
   // ── Case 1: baseline success + settled SessionResult fields ────────────────
   it(

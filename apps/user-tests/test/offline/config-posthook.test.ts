@@ -1,10 +1,12 @@
 /**
  * USER TEST (SDK-driven) — postHook is removed from the public SDK surface.
  *
- * This is intentionally a live-suite user test even though it must not dispatch
- * a live run: a fresh installed SDK should reject `postHook` before the first
- * HTTP request. Validation scripts that used to be post hooks now belong in a
- * follow-up session/chat message after the turn idles.
+ * A fresh installed SDK must reject `postHook` BEFORE the first HTTP request.
+ * The injected fetch counts calls and the assertion is `calls === 0`, so this
+ * proves a client-side boundary and never reaches a plane. It lived in
+ * `test/live/` and so paid a runtime-matrix job per arm to make zero network
+ * calls; offline is where it belongs. Validation scripts that used to be post
+ * hooks now belong in a follow-up session/chat message after the turn idles.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

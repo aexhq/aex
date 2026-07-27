@@ -191,7 +191,7 @@ describe("user-bun-test lane argument processing", () => {
     expect(new Set(files).size).toBe(files.length);
     expect(files).toContain("test/_fixtures/install.test.ts");
     expect(files).toContain("test/offline/install.test.ts");
-    expect(files).toContain("test/live/live-sdk-deepseek.test.ts");
+    expect(files).toContain("test/live/live-sdk-comprehensive.test.ts");
     for (const file of files) {
       expect(file).toMatch(/^test\/.*\.test\.ts$/);
       expect(file).not.toMatch(/^test\/e2e\//);

@@ -39,6 +39,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { gateModel } from "../_fixtures/provider.js";
+import { requireLiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -51,6 +52,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
+const runtimeKind = requireLiveRuntimeKind("edge instructions/files live test");
 
 const SESSION_TIMEOUT_MS = 5 * 60_000;
 const CHILD_TIMEOUT_MS = 7 * 60_000;
@@ -100,6 +102,7 @@ import { Aex, Instructions, BuiltinTools, File } from "@aexhq/sdk";
 
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
+const RUNTIME_KIND = process.env.RUNTIME_KIND;
 
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
 function customName(e) { const d = eventData(e); return typeof d.name === "string" ? d.name : null; }
@@ -121,6 +124,10 @@ async function observe(result, threw) {
   const sessionId = typeof result.sessionId === "string" ? result.sessionId : null;
   if (!sessionId) throw new Error("finished session result is missing sessionId");
   const session = await client.sessions.open(sessionId);
+  const observedRuntimeKind = session.record && session.record.runtime && session.record.runtime.kind;
+  if (observedRuntimeKind !== RUNTIME_KIND) {
+    throw new Error("runtime identity mismatch: requested=" + RUNTIME_KIND + " observed=" + String(observedRuntimeKind));
+  }
   const events = await session.events.list();
 
   const nameById = new Map();
@@ -165,6 +172,7 @@ async function runOne({ fileDrafts = [], instructionDrafts = [], ...submission }
     );
     result = await client.start({
       ...submission,
+      runtime: { kind: RUNTIME_KIND },
       assets: {
         ...(submission.assets ?? {}),
         files: [...(submission.assets?.files ?? []), ...files],
@@ -182,7 +190,12 @@ async function runOne({ fileDrafts = [], instructionDrafts = [], ...submission }
 async function runScenario(install: InstallResult, scriptName: string, body: string): Promise<{ observation: Observation; stdout: string }> {
   const scriptPath = join(install.installDir, scriptName);
   writeFileSync(scriptPath, `${SCRIPT_PREAMBLE}\n${body}\n`);
-  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, MODEL: model });
+  const passEnv = buildPassEnv({
+    AEX_API_URL: apiUrl,
+    AEX_API_KEY: apiKey,
+    MODEL: model,
+    RUNTIME_KIND: runtimeKind
+  });
   const child = await runCommand(getBunCommand(), [scriptPath], { cwd: install.installDir, timeoutMs: CHILD_TIMEOUT_MS, env: passEnv });
   if (child.exitCode !== 0) {
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);

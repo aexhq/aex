@@ -47,7 +47,7 @@ describe("user/SDK: environment.envVars reaches the agent on managed sessions", 
         timeoutMs: 9 * 60_000
       });
 
-      expect(result.runtime).toBe("managed");
+      expect(result.runtime).toBe(env.runtimeKind);
       expect(result.status).toBe("succeeded");
       // dense() guards against a streamed canary fragmented by spaces.
       expect(dense(result.assistantText)).toContain(canary);

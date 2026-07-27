@@ -17,11 +17,13 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getBunCommand, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { requireLiveRuntimeKind, type LiveRuntimeKind } from "../_fixtures/runtime-kind.js";
 
 export interface UserEnv {
   readonly apiBase: string;
   readonly apiKey: string;
   readonly deepseekModel: string;
+  readonly runtimeKind: LiveRuntimeKind;
 }
 
 function req(name: string): string {
@@ -38,7 +40,8 @@ export function requireUserEnv(_opts: { deepseek?: boolean } = {}): UserEnv {
   return {
     apiBase: req("AEX_API_URL").replace(/\/$/, ""),
     apiKey: req("AEX_API_KEY"),
-    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL?.trim() || "deepseek/deepseek-v4-flash"
+    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL?.trim() || "deepseek/deepseek-v4-flash",
+    runtimeKind: requireLiveRuntimeKind("SDK config live test")
   };
 }
 
@@ -88,6 +91,7 @@ const PREAMBLE = `
 import { Aex, Instructions } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
+const RUNTIME_KIND = process.env.RUNTIME_KIND;
 `;
 
 /**
@@ -98,6 +102,10 @@ const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 const TAIL = `
 if (!Array.isArray(result.events)) throw new Error("start() result.events must be an array");
 if (!Array.isArray(result.files)) throw new Error("start() result.files must be an array");
+const observedRuntimeKind = result.session && result.session.runtime && result.session.runtime.kind;
+if (observedRuntimeKind !== RUNTIME_KIND) {
+  throw new Error("runtime identity mismatch: requested=" + RUNTIME_KIND + " observed=" + String(observedRuntimeKind));
+}
 const events = result.events;
 const files = result.files;
 const text = typeof result.text === "string" ? result.text : "";
@@ -131,7 +139,7 @@ const status = typeof result.status === "string" && result.status ? result.statu
 process.stdout.write(JSON.stringify({
   sessionId: result.sessionId,
   status,
-  runtime: "managed",
+  runtime: result.session && result.session.runtime ? result.session.runtime.kind : null,
   provider: (result.session && typeof result.session.provider === "string") ? result.session.provider : null,
   terminalKind: terminal.type,
   terminalData: terminal.data,
@@ -152,7 +160,7 @@ process.stdout.write(JSON.stringify({
  * usual composition inputs. Model access needs no key — the managed gateway serves it.
  */
 export function sdkRunnerScript(parts: { readonly setup?: string; readonly session: string }): string {
-  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst result = await client.start(${parts.session}, { timeoutMs: Number(process.env.WAIT_MS || "240000") });\n${TAIL}`;
+  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst result = await client.start({ ...${parts.session}, runtime: { kind: RUNTIME_KIND } }, { timeoutMs: Number(process.env.WAIT_MS || "240000") });\n${TAIL}`;
 }
 
 /** Write + run a runner script in the install dir; parse the result JSON. */
@@ -169,6 +177,7 @@ export async function runSdkScript(
     AEX_API_URL: env.apiBase,
     AEX_API_KEY: env.apiKey,
     MODEL_DEEPSEEK: env.deepseekModel,
+    RUNTIME_KIND: env.runtimeKind,
     WAIT_MS: String(opts.waitMs ?? 240_000)
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";

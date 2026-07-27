@@ -58,8 +58,8 @@ interface LiveResult {
   // Per-file filenames + sizes returned by GET /api/sessions/:id/files.
   // Captured for diagnostic dumps so a deliverable-related failure is
   // self-describing without a retry. Namespace separation is covered by
-  // live-sdk-download-namespaces.test.ts; this simple text round-trip does not
-  // assert that the model/runtime produced no user deliverables.
+  // edge-files.user.test.ts; this simple text round-trip does not assert that
+  // the model/runtime produced no user deliverables.
   readonly files: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
   readonly leakedApiKey: boolean;
 }
