@@ -55,10 +55,21 @@ describe("instruction drafts carry text", () => {
     expect("bytes" in published).toBe(false);
   });
 
-  it("rejects text over the instruction byte bound at authoring time", async () => {
-    await expect(
-      Instructions.fromContent("x".repeat(128_001), { name: "repo-rules" })
-    ).rejects.toThrow(/Instructions\.fromContent: content exceeds/);
+  /**
+   * §5a of the archive-registration redesign: the 128,000-byte rejection was OUR
+   * limit, not a real one, and `a8f34eb9` deleted it. This test asserted the
+   * opposite and had been failing ever since -- the SDK half of the same stale
+   * assertion that stayed GREEN on the platform side only because its
+   * `public-contracts-snapshot` was a stale build of this package.
+   *
+   * A model's context window is real and is a per-SESSION fact, so the platform
+   * PLACES an over-large instruction (staged to a workspace file, prompt carries
+   * a pointer) instead of refusing to author it.
+   */
+  it("imposes NO length bound at authoring time: a model limit is worked around, not refused", async () => {
+    const huge = "x".repeat(1_000_000);
+    const draft = await Instructions.fromContent(huge, { name: "repo-rules" });
+    expect(draft._takeDraftInstruction().text).toHaveLength(1_000_000);
   });
 });
 
