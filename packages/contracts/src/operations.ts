@@ -1311,7 +1311,7 @@ const RUNTIME_SIZE_SET = new Set<string>(RUNTIME_SIZES);
 function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"] {
   const field = "whoami response runtimeCapabilities";
   if (!isRecord(value)) throw new SessionStateError(`${field} must be an object`);
-  if (value.schemaVersion !== 2) throw new SessionStateError(`${field}.schemaVersion must be 2`);
+  if (value.schemaVersion !== 1) throw new SessionStateError(`${field}.schemaVersion must be 1`);
   if (typeof value.capabilityVersion !== "string" || value.capabilityVersion.length === 0) {
     throw new SessionStateError(`${field}.capabilityVersion must be a non-empty string`);
   }
@@ -1373,7 +1373,7 @@ function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"]
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     capabilityVersion: value.capabilityVersion,
     capabilityHash: value.capabilityHash as `sha256:${string}`,
     availableRuntimeKinds,

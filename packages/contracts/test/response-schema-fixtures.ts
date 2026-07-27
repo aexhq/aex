@@ -150,8 +150,8 @@ export const whoami = {
     accountType: "standard"
   },
   runtimeCapabilities: {
-    schemaVersion: 2,
-    capabilityVersion: "runtime-capabilities.v2",
+    schemaVersion: 1,
+    capabilityVersion: "runtime-capabilities.v1",
     capabilityHash: `sha256:${"b".repeat(64)}`,
     availableRuntimeKinds: ["lambda"],
     sizesByRuntimeKind: { lambda: ["0.25cpu-1gb", "1cpu-6gb"] },

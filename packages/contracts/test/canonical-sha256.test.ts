@@ -12,8 +12,8 @@ import { runtimeProfilesFixture } from "./runtime-profile-fixture.js";
 const canonicalDigest = `sha256:${"0123456789abcdef".repeat(4)}`;
 
 const runtimeCapabilities = {
-  schemaVersion: 2,
-  capabilityVersion: "runtime-capabilities.v2",
+  schemaVersion: 1,
+  capabilityVersion: "runtime-capabilities.v1",
   capabilityHash: canonicalDigest,
   availableRuntimeKinds: ["container"],
   sizesByRuntimeKind: { container: [RUNTIME_SIZES[0]!] },

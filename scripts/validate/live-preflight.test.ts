@@ -30,7 +30,7 @@ function runtimeProfile(runtimeKind: string): Record<string, unknown> {
 }
 
 const runtimeCapabilities = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   capabilityVersion: "dev-2026-07-20",
   capabilityHash: `sha256:${"a".repeat(64)}`,
   availableRuntimeKinds: ["container", "spot_container", "lambda"],

@@ -81,7 +81,7 @@ export const RuntimeCapabilitiesSchema = describeResponse(
     "`sizesByRuntimeKind` and `unavailable` are complementary partial maps over " +
     "the runtime kinds; `profilesByRuntimeKind` is total.",
   responseObject({
-    schemaVersion: wireLiteral(2),
+    schemaVersion: wireLiteral(1),
     capabilityVersion: wireNonEmptyString,
     capabilityHash: wireNonEmptyString,
     availableRuntimeKinds: z.array(wireEnum(RUNTIME_KINDS)),

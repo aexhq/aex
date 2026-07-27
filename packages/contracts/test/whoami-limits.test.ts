@@ -50,8 +50,8 @@ const RETIRED_PLAN_LIMITS = {
 };
 
 const RUNTIME_CAPABILITIES: WhoAmI["runtimeCapabilities"] = {
-  schemaVersion: 2,
-  capabilityVersion: "runtime-capabilities.v2",
+  schemaVersion: 1,
+  capabilityVersion: "runtime-capabilities.v1",
   capabilityHash: `sha256:${"a".repeat(64)}`,
   availableRuntimeKinds: ["container", "spot_container"],
   sizesByRuntimeKind: {
@@ -119,7 +119,7 @@ describe("whoami limits typing", () => {
   });
 
   it.each([
-    { ...RUNTIME_CAPABILITIES, schemaVersion: 1 },
+    { ...RUNTIME_CAPABILITIES, schemaVersion: 0 },
     { ...RUNTIME_CAPABILITIES, schemaVersion: 3 },
     { ...RUNTIME_CAPABILITIES, capabilityHash: "sha256:not-a-digest" },
     { ...RUNTIME_CAPABILITIES, availableRuntimeKinds: ["container", "container"] },

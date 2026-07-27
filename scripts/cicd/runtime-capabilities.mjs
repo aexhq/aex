@@ -26,7 +26,7 @@ export function parseRuntimeCapabilities(value) {
     throw new Error(`invalid runtimeCapabilities: ${message}`);
   };
   if (!isRecord(value)) fail("expected an object");
-  if (value.schemaVersion !== 2) fail("schemaVersion must be 2");
+  if (value.schemaVersion !== 1) fail("schemaVersion must be 1");
   if (!isNonEmptyString(value.capabilityVersion)) fail("capabilityVersion must be a non-empty string");
   if (typeof value.capabilityHash !== "string" || !CANONICAL_SHA256_DIGEST_PATTERN.test(value.capabilityHash)) {
     fail("capabilityHash must be a lowercase sha256 digest");
@@ -87,7 +87,7 @@ export function parseRuntimeCapabilities(value) {
   }
 
   return Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: 1,
     capabilityVersion: value.capabilityVersion,
     capabilityHash: value.capabilityHash,
     availableRuntimeKinds: Object.freeze([...availableRuntimeKinds]),

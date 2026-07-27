@@ -769,7 +769,7 @@ export interface RuntimeProfile {
 }
 
 export interface RuntimeCapabilities {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 1;
   readonly capabilityVersion: string;
   readonly capabilityHash: `sha256:${string}`;
   readonly availableRuntimeKinds: readonly RuntimeKind[];

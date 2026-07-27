@@ -31,8 +31,8 @@ function profiles(): Record<string, unknown> {
 
 function projection(capabilityHash: unknown = VALID_HASH): Record<string, unknown> {
   return {
-    schemaVersion: 2,
-    capabilityVersion: "runtime-capabilities.v2",
+    schemaVersion: 1,
+    capabilityVersion: "runtime-capabilities.v1",
     capabilityHash,
     availableRuntimeKinds: ["container", "spot_container"],
     sizesByRuntimeKind: {
@@ -48,8 +48,8 @@ describe("authenticated runtime-capability parser", () => {
   it("preserves the complete validated frozen projection", () => {
     const parsed = parseRuntimeCapabilities(projection());
     expect(parsed).toEqual({
-      schemaVersion: 2,
-      capabilityVersion: "runtime-capabilities.v2",
+      schemaVersion: 1,
+      capabilityVersion: "runtime-capabilities.v1",
       capabilityHash: VALID_HASH,
       availableRuntimeKinds: ["container", "spot_container"],
       sizesByRuntimeKind: {
@@ -101,8 +101,8 @@ describe("authenticated runtime-capability parser", () => {
   });
 
   it("keeps field validation ordered before capabilityHash", () => {
-    expect(() => parseRuntimeCapabilities({ ...projection("bad"), schemaVersion: 1 })).toThrowError(
-      "invalid runtimeCapabilities: schemaVersion must be 2"
+    expect(() => parseRuntimeCapabilities({ ...projection("bad"), schemaVersion: 0 })).toThrowError(
+      "invalid runtimeCapabilities: schemaVersion must be 1"
     );
     expect(() => parseRuntimeCapabilities({ ...projection("bad"), capabilityVersion: "" })).toThrowError(
       "invalid runtimeCapabilities: capabilityVersion must be a non-empty string"
