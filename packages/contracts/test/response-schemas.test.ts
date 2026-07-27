@@ -94,6 +94,7 @@ import {
   sessionWire,
   validate,
   whoami,
+  workspaceInstructionRecord,
   workspaceResourceCommon,
   type Case
 } from "./response-schema-fixtures.js";
@@ -507,9 +508,18 @@ const cases: readonly Case[] = [
   {
     name: "workspace.instructions.get",
     schema: WorkspaceInstructionResponseSchema,
-    accepts: { resource: { kind: "instruction", ...workspaceResourceCommon } },
-    rejects: { resource: { kind: "instruction", ...workspaceResourceCommon, mountPath: "/x" } },
-    because: "mountPath"
+    accepts: { resource: { kind: "instruction", ...workspaceInstructionRecord } },
+    // The retired asset pair, not a foreign kind's metadata: an instruction
+    // record that still names bytes in the asset store is the exact drift this
+    // schema exists to reject.
+    rejects: {
+      resource: {
+        kind: "instruction",
+        ...workspaceInstructionRecord,
+        assetId: `asset_${"c".repeat(64)}`
+      }
+    },
+    because: "assetId"
   },
   {
     name: "workspace.files.list",

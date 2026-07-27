@@ -47,12 +47,12 @@ function allAssets() {
       },
       entry: "src/index.mjs"
     }],
+    // Pinned to TEXT: an instruction carries a textHash and no asset pair.
     instructions: [{
       kind: "instruction",
       resourceId: `wres_${"4".repeat(32)}`,
       version: 4,
-      assetId: `asset_${HEX_B}`,
-      contentHash: `sha256:${HEX_B}`,
+      textHash: `sha256:${HEX_B}`,
       name: "AGENTS.md"
     }]
   };

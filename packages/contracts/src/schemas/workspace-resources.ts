@@ -60,7 +60,53 @@ export function workspaceResourceNameSchema(path: string, pattern: RegExp) {
 }
 
 /**
- * The immutable identity fields common to every submitted workspace resource.
+ * The two identity fields every workspace resource carries, whatever it is
+ * pinned TO. Split out because the `instruction` kind is pinned to text and the
+ * other three to content-addressed bytes, so only these two are shared.
+ */
+function logicalResourceKeys(path: string) {
+  const resourceId = `${path}.resourceId must match wres_<32 lowercase hex>`;
+  const version = `${path}.version must be a positive integer`;
+  return {
+    resourceId: z.string({ error: resourceId }).check(
+      z.refine((value: string) => WORKSPACE_RESOURCE_ID_PATTERN.test(value), {
+        error: resourceId,
+        abort: true
+      })
+    ),
+    version: z.number({ error: version }).check(
+      z.refine((value: number) => Number.isSafeInteger(value) && value >= 1, {
+        error: version,
+        abort: true
+      })
+    )
+  } as const;
+}
+
+/**
+ * The immutable identity of a pinned INSTRUCTION: the logical resource version
+ * plus a digest of its text.
+ *
+ * There is no asset agreement check to run here — that check exists because an
+ * `assetId` and a `contentHash` are two names for the same bytes and can
+ * disagree. A `textHash` has no second name.
+ */
+export function pinnedWorkspaceInstructionSchema(path: string, digestPattern: RegExp) {
+  const textHash = `${path}.textHash must be a sha256 digest`;
+  return z.object({
+    ...logicalResourceKeys(path),
+    textHash: z.string({ error: textHash }).check(
+      z.refine((value: string) => digestPattern.test(value), {
+        error: textHash,
+        abort: true
+      })
+    )
+  });
+}
+
+/**
+ * The immutable identity fields common to every ASSET-BACKED submitted
+ * workspace resource.
  *
  * Field order is the order the sequential assertions this replaces ran in, and
  * `errorFromZod` reports the shallowest issue, so a field complaint still wins
@@ -68,24 +114,11 @@ export function workspaceResourceNameSchema(path: string, pattern: RegExp) {
  * every field has parsed (measured), exactly as the original ladder did.
  */
 export function pinnedWorkspaceResourceSchema(path: string, digestPattern: RegExp) {
-  const resourceId = `${path}.resourceId must match wres_<32 lowercase hex>`;
-  const version = `${path}.version must be a positive integer`;
   const assetId = `${path}.assetId must be a non-empty string`;
   const contentHash = `${path}.contentHash must be a sha256 digest`;
   return z
     .object({
-      resourceId: z.string({ error: resourceId }).check(
-        z.refine((value: string) => WORKSPACE_RESOURCE_ID_PATTERN.test(value), {
-          error: resourceId,
-          abort: true
-        })
-      ),
-      version: z.number({ error: version }).check(
-        z.refine((value: number) => Number.isSafeInteger(value) && value >= 1, {
-          error: version,
-          abort: true
-        })
-      ),
+      ...logicalResourceKeys(path),
       assetId: z
         .string({ error: assetId })
         .check(z.minLength(1, { error: assetId, abort: true })),

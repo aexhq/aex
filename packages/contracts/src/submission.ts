@@ -891,21 +891,21 @@ function normalizeSubmission(value: SubmissionWire): PlatformSubmission {
 
 function normalizeSubmissionAssets(value: SubmissionWire["assets"]): SubmissionAssets {
   return {
-    files: projectWorkspaceResources(value.files, "files", (raw, base, path) => {
+    files: projectWorkspaceResources(value.files, "files", (raw, path) => {
       assertWorkspaceFileResourceName(raw.name, `${path}.name`);
       assertValidMountPath(raw.mountPath, `${path}.mountPath`);
-      return { ...base, kind: "file", name: raw.name, mountPath: raw.mountPath };
+      return { ...assetPin(raw), kind: "file", name: raw.name, mountPath: raw.mountPath };
     }),
-    skills: projectWorkspaceResources(value.skills, "skills", (raw, base, path) => {
+    skills: projectWorkspaceResources(value.skills, "skills", (raw, path) => {
       assertValidSkillName(raw.name, `${path}.name`);
-      return { ...base, kind: "skill", name: raw.name, description: raw.description };
+      return { ...assetPin(raw), kind: "skill", name: raw.name, description: raw.description };
     }),
-    tools: projectWorkspaceResources(value.tools, "tools", (raw, base, path) => {
+    tools: projectWorkspaceResources(value.tools, "tools", (raw, path) => {
       if (!TOOL_NAME_PATTERN.test(raw.name) || raw.name.includes("__")) {
         throw new Error(`${path}.name must be a non-reserved tool name matching ${TOOL_NAME_PATTERN.source}`);
       }
       return {
-        ...base,
+        ...assetPin(raw),
         kind: "tool",
         name: raw.name,
         description: raw.description,
@@ -913,19 +913,41 @@ function normalizeSubmissionAssets(value: SubmissionWire["assets"]): SubmissionA
         entry: normaliseSkillBundlePath(raw.entry)
       };
     }),
-    instructions: projectWorkspaceResources(value.instructions, "instructions", (raw, base, path) => {
+    instructions: projectWorkspaceResources(value.instructions, "instructions", (raw, path) => {
       assertWorkspaceInstructionResourceName(raw.name, `${path}.name`);
-      return { ...base, kind: "instruction", name: raw.name };
+      return {
+        kind: "instruction",
+        resourceId: raw.resourceId,
+        version: raw.version,
+        name: raw.name,
+        textHash: raw.textHash
+      };
     })
   };
 }
 
-type PinnedResourceBase = Pick<
-  WorkspaceFileRef,
-  "resourceId" | "version" | "assetId" | "contentHash"
->;
+/**
+ * The immutable identity of an ASSET-BACKED pinned resource.
+ *
+ * Only three of the four kinds have one. An `instruction` is pinned to its text
+ * and spreads `textHash` instead, which is why this is a helper rather than a
+ * `base` argument every projector receives — a shared parameter would have to
+ * be widened to optional to accommodate the one kind that has no asset, and an
+ * optional `assetId` on a file ref is exactly the fail-open shape the pinned
+ * identity exists to prevent.
+ */
+function assetPin(raw: PinnedAssetWire): Pick<WorkspaceFileRef, "resourceId" | "version" | "assetId" | "contentHash"> {
+  return {
+    resourceId: raw.resourceId,
+    version: raw.version,
+    assetId: raw.assetId,
+    contentHash: raw.contentHash
+  };
+}
 
-type PinnedResourceWire = PinnedResourceBase;
+type PinnedAssetWire = Pick<WorkspaceFileRef, "resourceId" | "version" | "assetId" | "contentHash">;
+
+type PinnedResourceWire = Pick<WorkspaceFileRef, "resourceId" | "version">;
 
 /**
  * Project one validated list onto its parsed refs.
@@ -943,19 +965,13 @@ function projectWorkspaceResources<
 >(
   entries: readonly Wire[] | undefined,
   field: "files" | "skills" | "tools" | "instructions",
-  project: (raw: Wire, base: PinnedResourceBase, path: string) => T
+  project: (raw: Wire, path: string) => T
 ): readonly T[] {
   if (entries === undefined) return [];
   const seen = new Set<string>();
   return entries.map((raw, index) => {
     const path = `submission.assets.${field}[${index}]`;
-    const base: PinnedResourceBase = {
-      resourceId: raw.resourceId,
-      version: raw.version,
-      assetId: raw.assetId,
-      contentHash: raw.contentHash
-    };
-    const result = project(raw, base, path);
+    const result = project(raw, path);
     assertPinnedWorkspaceResource(result, path);
     const identity = `${result.resourceId}:${result.version}`;
     if (seen.has(identity)) throw new Error(`${path} duplicates resource version ${identity}`);

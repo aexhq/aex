@@ -2,12 +2,13 @@
  * Response schemas for the versioned `workspace.*` resource families and for the
  * GDPR workspace erase.
  *
- * The four resource kinds share one server projection (`publicResource`) plus a
- * per-kind metadata spread, so they are built here from one shared shape rather
- * than written out four times. The per-kind extras are exactly the whitelist the
- * publish path stores: `mountPath` for a file, `description` for a skill,
- * `description` + `entry` + `input_schema` for a tool, and nothing at all for an
- * instruction.
+ * The three ASSET-BACKED kinds share one server projection (`publicResource`)
+ * plus a per-kind metadata spread, so they are built here from one shared shape
+ * rather than written out three times. The per-kind extras are exactly the
+ * whitelist the publish path stores: `mountPath` for a file, `description` for
+ * a skill, `description` + `entry` + `input_schema` for a tool. The
+ * `instruction` kind is published as text and shares nothing — see the note on
+ * its schema below.
  *
  * Divergence from the declared types: `WorkspaceResourceRecordFields` declares
  * `updatedAt?`, and the server projection never emits one. It stays optional
@@ -27,7 +28,7 @@ import {
 
 const optional = z.optional;
 
-/** The nine keys every workspace resource record carries, whatever its kind. */
+/** The nine keys every ASSET-BACKED workspace resource record carries. */
 const commonResourceShape = {
   resourceId: wireNonEmptyString,
   name: wireNonEmptyString,
@@ -73,12 +74,29 @@ export const WorkspaceToolRecordSchema = describeResponse(
   })
 );
 
+/**
+ * The one kind that is NOT asset-backed, and so the one kind that cannot share
+ * {@link commonResourceShape}.
+ *
+ * An instruction is published as text. `assetId`, `contentHash` and
+ * `contentType` name bytes in the content-addressed asset store and there are
+ * none; `textHash` pins the trimmed UTF-8 text instead, and `sizeBytes` is that
+ * text's byte length rather than a compressed archive size. The divergence from
+ * the other three records is the honest encoding of that difference — see
+ * references/modular-open-source-2026-07-27/11-archive-registration-redesign.md.
+ */
 export const WorkspaceInstructionRecordSchema = describeResponse(
   "WorkspaceInstructionRecord",
-  "An immutable published workspace instruction version. No per-kind extras.",
+  "An immutable published workspace instruction version, pinned to its text rather than to asset bytes.",
   responseObject({
     kind: wireLiteral("instruction"),
-    ...commonResourceShape
+    resourceId: wireNonEmptyString,
+    name: wireNonEmptyString,
+    version: wirePositiveInteger,
+    textHash: wireNonEmptyString,
+    sizeBytes: wireNonNegativeInteger,
+    createdAt: wireNonEmptyString,
+    updatedAt: optional(wireString)
   })
 );
 

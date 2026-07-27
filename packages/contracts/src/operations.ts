@@ -1735,8 +1735,17 @@ export type PublishWorkspaceToolInput = WorkspacePublishBase & {
   readonly entry: string;
 };
 
-export type PublishWorkspaceInstructionInput = WorkspacePublishBase & {
+/**
+ * Publishing an instruction sends its TEXT, not an asset reference.
+ *
+ * Deliberately NOT a {@link WorkspacePublishBase}: there is nothing to stage
+ * through `/api/assets/presign` first, so `assets:write` is no longer exercised
+ * by this call. The platform trims the text, hashes it, and returns the
+ * resulting `textHash` on the record.
+ */
+export type PublishWorkspaceInstructionInput = {
   readonly name: string;
+  readonly text: string;
 };
 
 export async function publishWorkspaceFile(

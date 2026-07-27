@@ -1098,8 +1098,7 @@ export interface components {
                 kind: "instruction";
                 resourceId: string;
                 version: number;
-                assetId: string;
-                contentHash: string;
+                textHash: string;
                 name: string;
             }[];
         };

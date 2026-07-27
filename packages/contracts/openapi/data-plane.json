@@ -3112,11 +3112,7 @@
                 "version": {
                   "type": "number"
                 },
-                "assetId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "contentHash": {
+                "textHash": {
                   "type": "string",
                   "minLength": 1
                 },
@@ -3129,8 +3125,7 @@
                 "kind",
                 "resourceId",
                 "version",
-                "assetId",
-                "contentHash",
+                "textHash",
                 "name"
               ],
               "additionalProperties": false

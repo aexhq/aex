@@ -154,9 +154,19 @@ export const WorkspaceToolRefSchema = refObject(TOOLS, {
   entry: refString(TOOLS)
 });
 
-/** `submission.assets.instructions[i]` — an injected instruction document. */
+/**
+ * `submission.assets.instructions[i]` — an injected instruction document.
+ *
+ * Pinned to TEXT, not to bytes, so it deliberately does not share
+ * {@link pinnedRefKeys}: no `assetId`, no `contentHash`, and `textHash` in
+ * their place. The key set is strict, so a caller still sending the retired
+ * asset pair is rejected by name rather than having it silently ignored.
+ */
 export const WorkspaceInstructionRefSchema = refObject(INSTRUCTIONS, {
-  ...pinnedRefKeys(INSTRUCTIONS, "instruction"),
+  kind: refKind(INSTRUCTIONS, "instruction"),
+  resourceId: refString(INSTRUCTIONS),
+  version: refVersion(INSTRUCTIONS),
+  textHash: refString(INSTRUCTIONS),
   name: refString(INSTRUCTIONS)
 });
 
