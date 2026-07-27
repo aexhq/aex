@@ -13,7 +13,6 @@ import { describe, expect, it } from "bun:test";
 import * as z from "zod/mini";
 import {
   CANONICAL_SHA256_DIGEST_PATTERN,
-  WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES,
   assertPinnedWorkspaceResource,
   assertWorkspaceInstructionText,
   hashWorkspaceInstructionText,
@@ -85,17 +84,28 @@ describe("instruction text hashing", () => {
   });
 });
 
-describe("instruction text has its own size bound", () => {
-  it("is not borrowed from the archive caps", () => {
-    expect(WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES).toBe(128_000);
+describe("instruction text carries NO size bound of ours", () => {
+  /**
+   * The retired bound was 128,000 UTF-8 bytes, derived as a quarter of the
+   * smallest served context window. That was OUR limit, not a real constraint —
+   * the same mistake as the archive compressed cap this workstream exists to
+   * remove. A model's context window is real; a rejection at AUTHORING time is
+   * not, because authoring cannot know which model a future submission will
+   * name. Overflow is WORKED AROUND at compose time (staged to a workspace file,
+   * pointed at from the system prompt), never refused at registration.
+   */
+  const RETIRED_BOUND = 128_000;
+
+  it("admits text the retired 128,000-byte bound rejected", () => {
+    const multibyte = "é".repeat(RETIRED_BOUND / 2 + 1);
+    expect(multibyte.length).toBeLessThan(RETIRED_BOUND);
+    expect(new TextEncoder().encode(multibyte).byteLength).toBeGreaterThan(RETIRED_BOUND);
+    expect(() => assertWorkspaceInstructionText(multibyte, "instructions.text")).not.toThrow();
   });
 
-  it("rejects text over the bound by UTF-8 BYTES, not characters", () => {
-    const multibyte = "é".repeat(WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES / 2 + 1);
-    expect(multibyte.length).toBeLessThan(WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES);
-    expect(() => assertWorkspaceInstructionText(multibyte, "instructions.text")).toThrow(
-      /instructions\.text exceeds/
-    );
+  it("exports no instruction size constant for the cap to come back under", async () => {
+    const surface = (await import("../src/index.js")) as Record<string, unknown>;
+    expect(Object.keys(surface).filter((key) => /INSTRUCTION.*(MAX|LIMIT|CAP)/.test(key))).toEqual([]);
   });
 
   it("rejects empty and whitespace-only text", () => {

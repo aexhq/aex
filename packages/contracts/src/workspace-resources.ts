@@ -40,35 +40,33 @@ export function assertWorkspaceInstructionResourceName(
 }
 
 /**
- * Maximum UTF-8 byte length of ONE published workspace instruction document.
+ * Canonicalise instruction text: trimmed and non-empty. There is NO byte bound.
  *
- * Instruction text is not an archive and deliberately does not inherit an
- * archive cap. Those caps bound a DEFLATE inflate, they are measured in
- * mebibytes, and they are being removed; neither their magnitude nor their
- * reason transfers to a system-prompt document.
+ * WHY NO BOUND. The first cut of this contract carried
+ * `WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES = 128_000`, a hard rejection at
+ * authoring time derived as a quarter of the smallest served context window.
+ * That was OUR limit, not a real constraint — the same mistake as the archive
+ * compressed cap this workstream exists to remove. Two things were wrong with
+ * it:
  *
- * VALUE (128,000 bytes): the same arithmetic the inline free-text admission cap
- * uses (`SESSION_MAX_INPUT_TEXT_BYTES`, 512,000 bytes = the whole of the
- * smallest served 128,000-token context window at the standard ~4-bytes/token
- * heuristic), taken at a QUARTER of that window — about 32,000 tokens. An
- * instruction is not in-band free text: it is re-injected into the system
- * prompt on every turn of the session, and it sits alongside the platform
- * prompt, the tool schemas, the customer's own prompt (bounded separately at
- * 512,000 bytes) and the completion. A quarter of the smallest window is the
- * loosest per-document bound under which one instruction cannot, by itself,
- * crowd all four of those out. As with the inline cap this is a CORRECTNESS
- * gate, not a product cap: text over it produces a session that can only fail
- * at the provider, after the customer has been billed for the boot.
+ *   1. It was a PROMPT budget enforced at a point that cannot know the prompt.
+ *      A context window is a per-SESSION fact of the model a submission names;
+ *      publication happens before any submission exists, so the bound could
+ *      only be the smallest window and it charged every customer for the
+ *      weakest model they might never use.
+ *   2. A model limit is worked around, not refused. Text that does not fit the
+ *      session's inline budget is STAGED to a workspace file at compose time
+ *      and pointed at from the system prompt (see the platform's
+ *      `instructionInlineBudgetBytes` / `platform-runtime-agent` manifest
+ *      builder). Refusing publication removes the customer's only path to a
+ *      large instruction; staging keeps it.
  *
- * Declared here, once, and imported by every enforcement site. The archive caps
- * this replaces were duplicated by hand across the publication and submit
- * paths, drifted 4x apart, and the drift survived because the copy carried a
- * comment asserting they agreed.
- */
-export const WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES = 128_000;
-
-/**
- * Canonicalise instruction text: trimmed, non-empty, within the byte bound.
+ * The only bound that survives is a STORAGE/TRANSPORT one, and it is imposed by
+ * infrastructure rather than declared here: the publish request body itself is
+ * capped by API Gateway (10 MB) and the Lambda synchronous payload limit
+ * (6 MB), which reject an oversized document at the edge with their own error
+ * before any of this code runs. That is a real constraint about moving bytes,
+ * stated as such — not a prompt budget wearing a storage name.
  *
  * Trimming is part of the contract rather than a courtesy — the stored text,
  * its `textHash`, and its `sizeBytes` all describe the trimmed form, so a
@@ -82,12 +80,6 @@ export function normalizeWorkspaceInstructionText(value: unknown, path: string):
   const text = value.trim();
   if (text.length === 0) {
     throw new Error(`${path} must be non-empty after trimming`);
-  }
-  const bytes = utf8ByteLength(text);
-  if (bytes > WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES) {
-    throw new Error(
-      `${path} exceeds the ${WORKSPACE_INSTRUCTION_MAX_TEXT_BYTES}-byte instruction limit (got ${bytes})`
-    );
   }
   return text;
 }
