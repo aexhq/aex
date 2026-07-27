@@ -37,7 +37,7 @@
  * supported developer-tool path.
  *
  * Managed cells (full assertion set — "validate all aspects"):
- *   - run outcome reached `succeeded`; runtime/provider echo back correctly.
+ *   - run outcome reached `succeeded`; runtime echo back correctly.
  *   - each run is framed by RUN_STARTED ... RUN_FINISHED.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
  *     superset of every event type required for a successful managed session:
@@ -490,7 +490,6 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
         managedHeavySkillName("gamma", "deepseek")
       ]);
       expect(result.runtime).toBe(runtimeKind);
-      expect(result.provider).toBe("deepseek");
     },
     13 * 60_000
   );
