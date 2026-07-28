@@ -6,6 +6,7 @@ import {
   buildCanaryManifest,
   parseCanaryManifest
 } from "../cicd/canary-manifest.mjs";
+import { readModuleGraph } from "../cicd/public-module-graph.mjs";
 import { selectManifestEntry, verifyCanarySelection } from "../cicd/verify-canary-selection.mjs";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
@@ -52,9 +53,14 @@ describe("the canary manifest is release identity, not lockfile data", () => {
       { module: "contracts", name: "@aexhq/contracts", version: "0.34.0-canary" }
     ]);
     const sdk = manifest.packages.find((entry) => entry.module === "sdk")!;
-    // The SDK embeds contracts at build time, so a canary built against a
-    // different contracts is a different artifact at the same commit.
-    expect(sdk.upstream).toEqual({ "@aexhq/contracts": "0.34.0-canary" });
+    // The SDK embeds contracts AND the CLI bundle at build time, so a canary
+    // built against a different one of either is a different artifact at the
+    // same commit. `@aexhq/cli` was not published in this release, so it pins to
+    // the version the workspace built against.
+    expect(sdk.upstream).toEqual({
+      "@aexhq/cli": readModuleGraph(repoRoot).byId.get("cli")!.version,
+      "@aexhq/contracts": "0.34.0-canary"
+    });
   });
 
   it("pins an unaffected upstream to the version the workspace built against", () => {

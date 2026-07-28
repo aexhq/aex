@@ -1,0 +1,127 @@
+name: Contract parity
+
+# The public half of a cross-repo gate.
+#
+# WHAT IS BEING GATED. `scripts/cicd/check-contract-parity.mjs` compares the
+# SSRF host deny-list in packages/contracts/src/session-config.ts against
+# platform's packages/shared/src/blueprint.ts. That region is imperative
+# validation logic, so the Zod -> OpenAPI -> generated-types pipeline cannot see
+# it, and nothing else in either repository asserts it.
+#
+# WHY IT NEEDS ITS OWN WORKFLOW. The gate runs inside `bun run lint`, and the
+# `lint` job checks out only this repository — a public repository cannot check
+# out a private one — so the gate has always taken its SKIP path in CI. It has
+# never run there. Making the skip louder does not fix that; something has to
+# actually reach a tree that has both.
+#
+# THE SHAPE, AND WHY THIS ONE. Verification runs on the PRIVATE side, which
+# already has both trees, and this workflow only asks it to. `pull_request_target`
+# is what makes that work for a FORK pull request: it runs in the base-repository
+# context with access to secrets, using the workflow file from the BASE branch,
+# so a fork PR can trigger private verification while never being able to read a
+# secret or change what this job does.
+#
+# The corresponding invariant is that this job must never execute code from the
+# pull request. It does not check the repository out at all. It mints a token,
+# posts one API call, and exits. Adding a checkout of the PR head, a `bun
+# install`, or any script invocation here would hand a fork write-scoped
+# credentials, which is the standard `pull_request_target` compromise.
+#
+# WHAT IS SENT. The pull request's MERGE commit — the exact tree that would be
+# published as a canary if this PR landed — not `main` and not the PR head. The
+# private side checks that object out beside its own commit, sets
+# AEX_REQUIRE_PARITY=1 and PLATFORM_REF to its own 40-character commit, and runs
+# the gate from there. AEX_REQUIRE_PARITY turns the "no platform tree" skip into
+# a failure, and PLATFORM_REF pins WHICH platform object was compared, so the
+# result names two exact commits rather than two moving branches.
+#
+# PROVISIONING (not yet done — this job fails closed until it is):
+#   - a GitHub App installed on aexhq/platform with `contents: write` (the scope
+#     `POST /repos/{owner}/{repo}/dispatches` requires) and nothing else;
+#   - repository variable AEX_PARITY_APP_ID;
+#   - repository secret AEX_PARITY_APP_PRIVATE_KEY;
+#   - a `repository_dispatch` receiver in platform on type `aex-contract-parity`
+#     that posts its verdict back as a commit status on `aex_sha`.
+# A missing App is a red job, deliberately: a gate that goes quiet when it is
+# unconfigured is the failure this workflow exists to end.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch private verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No checkout. See the header: this job runs with base-repository
+      # privileges on a fork's pull request and must never execute PR code.
+      - name: Mint a token scoped to the private repository
+        id: token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.AEX_PARITY_APP_ID }}
+          private-key: ${{ secrets.AEX_PARITY_APP_PRIVATE_KEY }}
+          owner: aexhq
+          repositories: platform
+
+      - name: Resolve the object under test
+        id: subject
+        shell: bash
+        env:
+          # For a pull request this is the MERGE commit, which is what the canary
+          # would be built from. `github.sha` on pull_request_target is the BASE
+          # commit, so using it would verify a tree that is already merged.
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            subject="$MERGE_SHA"
+          else
+            subject="$PUSH_SHA"
+          fi
+          if ! printf '%s' "$subject" | grep -Eq '^[0-9a-f]{40}$'; then
+            # GitHub computes the merge commit asynchronously and reports null
+            # until it exists, and for an unmergeable PR it never does. Either
+            # way there is no object to verify, and reporting success would be a
+            # verification that did not happen.
+            echo "::error::No mergeable commit to verify (got '${subject}'). Rebase the pull request and re-run."
+            exit 1
+          fi
+          echo "sha=$subject" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch verification to platform
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          AEX_SHA: ${{ steps.subject.outputs.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/aexhq/platform/dispatches \
+            -f "event_type=aex-contract-parity" \
+            -F "client_payload[aex_repository]=${GITHUB_REPOSITORY}" \
+            -F "client_payload[aex_sha]=${AEX_SHA}" \
+            -F "client_payload[pull_request]=${PR_NUMBER}" \
+            -F "client_payload[public_run_id]=${GITHUB_RUN_ID}"
+          {
+            echo "### Contract parity"
+            echo
+            echo "Dispatched \`aex-contract-parity\` to \`aexhq/platform\` for \`${AEX_SHA}\`."
+            echo
+            echo "The verdict arrives as a commit status on that SHA, posted by the private run."
+          } >> "$GITHUB_STEP_SUMMARY"
