@@ -53,10 +53,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
         with:
           node-version: 22
 
@@ -64,7 +64,7 @@ jobs:
         run: npm install -g npm@11.17.0
 
       - name: Download the recorded canary manifest
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: aex-canary-manifest-${{ inputs.manifest_run_id }}
           run-id: ${{ inputs.manifest_run_id }}
