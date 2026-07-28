@@ -116,10 +116,10 @@
       "functions": [
         {
           "label": "Async generator function 'streamCoordinatorEvents'",
-          "lines": 258
+          "lines": 256
         }
       ],
-      "reason": "frozen 2026-07-25: 1 function(s) over 120 lines, worst Async generator function 'streamCoordinatorEvents' at 258"
+      "reason": "frozen 2026-07-25: 1 function(s) over 120 lines, worst Async generator function 'streamCoordinatorEvents' at 256"
     },
     "packages/contracts/src/operations.ts": {
       "kind": "source",
