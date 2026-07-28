@@ -135,8 +135,20 @@ export function hasRunTerminalType<T extends AexEventBase>(event: T): event is R
  * the coordinator's pair (platform `packages/shared/src/event-stream-client.ts`).
  */
 const COORDINATOR_PING = "aex:ping";
-/** Post-open replay request; $connect cannot safely PostToConnection before the handshake completes. */
-const COORDINATOR_REPLAY = JSON.stringify({ action: "replay" });
+/**
+ * Pull request for everything from `nextSequence` onward.
+ *
+ * Sent on open ($connect cannot safely PostToConnection before the handshake
+ * completes) and again whenever a frame declares a predecessor this client has
+ * not reached. Catch-up is PULL-based because the connection row holds only the
+ * server's BELIEF about what reached the socket: a frame that was posted but
+ * never arrived leaves the client behind that belief with no way for the server
+ * to notice. Naming the cursor makes the client authoritative about what it
+ * actually holds. An older coordinator ignores the extra field and falls back to
+ * its own high-water, so sending it is safe against any deployed server.
+ */
+const replayFrom = (nextSequence: number): string =>
+  JSON.stringify({ action: "replay", from: nextSequence });
 /** Default half-open watchdog window — 3× the ping cadence, so 2 pongs can be lost. */
 const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 /** Default client keep-alive ping cadence. */
@@ -193,6 +205,7 @@ export async function* streamCoordinatorEvents(
 
     const pending: AexStreamEvent[] = [];
     const seenSequences = new Set<number>();
+    const catchUp = createCatchUp(ws, cursor);
     let closed = false;
     let disconnectReason = "";
     let resolveNext: (() => void) | null = null;
@@ -289,14 +302,7 @@ export async function* streamCoordinatorEvents(
 
     ws.addEventListener("open", () => {
       armIdle();
-      if (typeof ws.send === "function") {
-        try {
-          ws.send(COORDINATOR_REPLAY);
-        } catch {
-          // socket not open / send unsupported — the DDB-stream replay kicker and
-          // quiet-reconnect path still cover replay.
-        }
-      }
+      catchUp.request();
       if (pingIntervalMs > 0 && typeof ws.send === "function") {
         pingTimer = timerPort.setInterval(() => {
           try {
@@ -317,6 +323,10 @@ export async function* streamCoordinatorEvents(
         armQuiet(); // a real event frame proves the delivery pipeline, not just the socket
         if (isReplayableEvent(evt)) {
           if (evt.sequence <= cursor || seenSequences.has(evt.sequence)) return;
+          // A frame the client cannot chain is refused, leaving both the cursor
+          // and `seenSequences` untouched so the pull's copy of it is not later
+          // suppressed as a duplicate.
+          if (!catchUp.chains(evt)) return;
           seenSequences.add(evt.sequence);
         } else if (!rememberLiveId(evt.id)) {
           return;
@@ -410,6 +420,77 @@ export async function* streamCoordinatorEvents(
     }
     await sleep(reconnectDelayMs, timerPort, opts.signal);
   }
+}
+
+/**
+ * The exclusive lower bound the coordinator declared for a durable frame: the
+ * sequence of the public event immediately preceding it in journal projection
+ * order (`-1` when the frame opens the session).
+ *
+ * Transport-only — it describes this frame's position in the stream, not the
+ * event, so it is never part of the durable {@link AexEvent} the archive returns.
+ * Absent means the producer made no claim (an older coordinator, or a path that
+ * cannot prove what came before it), and an unproven link is not a gap: the
+ * frame is accepted exactly as it was before this check existed.
+ */
+function declaredPredecessor(frame: AexStreamEvent): number | undefined {
+  const value = (frame as { prevSequence?: unknown }).prevSequence;
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+}
+
+/** One connection's gap detector and the pull it owes when it finds one. */
+interface CatchUp {
+  /** Ask the coordinator for everything from this connection's next-wanted sequence. */
+  readonly request: () => void;
+  /**
+   * True when the frame chains onto what this connection already holds — which
+   * also admits it, advancing the receipt-side high-water. False means the frame
+   * declared a predecessor beyond that high-water: taking it would snap the
+   * cursor over the missing range and lose it for good, so it is refused and a
+   * pull is requested instead.
+   */
+  readonly chains: (frame: AexEvent) => boolean;
+}
+
+/**
+ * Per-connection catch-up bookkeeping.
+ *
+ * The high-water is RECEIPT-side — the highest durable sequence admitted on this
+ * connection, including frames still queued for the consumer. The gap check has
+ * to run against that and not against the yield-side cursor, which lags while
+ * the consumer drains: a contiguous burst landing in one turn would otherwise
+ * report every frame after the first as a hole.
+ *
+ * One pull is outstanding per high-water position, so a run of unchainable
+ * frames costs one request rather than one per frame; it re-arms by
+ * construction, since the next gap at a moved position names a different one.
+ */
+function createCatchUp(ws: WebSocketLike, cursor: number): CatchUp {
+  let accepted = cursor;
+  let pulledFrom: number | null = null;
+  const request = (): void => {
+    const from = accepted + 1;
+    if (pulledFrom === from || typeof ws.send !== "function") return;
+    pulledFrom = from;
+    try {
+      ws.send(replayFrom(from));
+    } catch {
+      // socket not open / send unsupported — the idle + quiet watchdogs still
+      // reconnect, and a reconnect resumes from the cursor anyway.
+    }
+  };
+  return {
+    request,
+    chains: (frame) => {
+      const predecessor = declaredPredecessor(frame);
+      if (predecessor !== undefined && predecessor > accepted) {
+        request();
+        return false;
+      }
+      if (frame.sequence > accepted) accepted = frame.sequence;
+      return true;
+    }
+  };
 }
 
 function isCoordinatorStreamEvent(value: unknown): value is AexStreamEvent {

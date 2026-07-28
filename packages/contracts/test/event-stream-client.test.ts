@@ -172,7 +172,9 @@ describe("streamCoordinatorEvents — live fanout", () => {
 
     await flush();
     ws!.open();
-    expect(ws!.sent).toEqual([JSON.stringify({ action: "replay" })]);
+    // The request names the client's own cursor: the connection row holds only
+    // the server's belief about what reached the socket.
+    expect(ws!.sent).toEqual([JSON.stringify({ action: "replay", from: 0 })]);
     ws!.message(evt(0, "RUN_FINISHED"));
     await consume;
   });
