@@ -18,9 +18,29 @@
  * platform-internal infra references). Each baseline entry carries a `why`.
  * NEW divergence that isn't in the baseline fails — that's the tripwire.
  *
- * The gate SKIPS (exit 0, loud notice) when the platform tree isn't checked
- * out, so public-only CI and forks without the platform PAT still pass; it
- * only enforces when both trees are present.
+ * WHERE THIS RUNS. It is wired into `lint` (package.json), so it executes in
+ * `.github/workflows/ci.yml` job `lint` and on every local pre-push
+ * (`.githooks/pre-push` -> `scripts/pre-push.mjs`). The two behave differently
+ * on purpose, and the difference is the whole design:
+ *
+ *   - PUBLIC CI can never see the private repo, so it SKIPS (exit 0) with a
+ *     notice naming the exact path probed. That is a reported absence, not a
+ *     silent pass.
+ *   - A checkout that HAS the platform tree beside it — the canonical local
+ *     workspace, and any private-side job that checks out both — ENFORCES.
+ *
+ * Because of that split, an explicitly configured `PLATFORM_DIR` that does not
+ * resolve is a FAILURE, not a skip. Only an unconfigured, genuinely absent
+ * sibling skips. A misconfigured enforcement path that looked like an absent
+ * one would turn every consumer of this gate green for the wrong reason.
+ *
+ * Why the contract pipeline does not cover this: the Zod -> OpenAPI ->
+ * generated-types chain describes WIRE SHAPES. The deny-list is imperative
+ * validation logic that never reaches the document — grep
+ * `packages/contracts/openapi/data-plane.json` for a deny reason and it is
+ * absent. Platform's `scripts/validate/egress-cidr-ssot.test.ts` covers the
+ * CIDR TABLE (reason vocabulary + specific ranges); it does not compare these
+ * three classifier bodies. This gate is the only check that does.
  *
  * Run `bun scripts/cicd/check-contract-parity.mjs --update` after an
  * intentional, reviewed divergence to refresh the baseline.
@@ -35,27 +55,40 @@ const publicRoot = resolve(here, "..", ".."); // aex/ (the public repo)
 const baselinePath = join(here, "contract-parity-baseline.json");
 const UPDATE = process.argv.includes("--update");
 
-function findPlatformRoot() {
-  const candidates = process.env.PLATFORM_DIR
-    ? [resolve(process.env.PLATFORM_DIR)]
-    : [
-        resolve(publicRoot, "..", "platform"), // sibling checkout of aexhq/platform (CI + local workspace)
-        resolve(publicRoot, "..", "platform"), // legacy: pre-rename local checkout name
-      ];
-  for (const c of candidates) {
-    // Require the tree the gate reads (the SSRF deny-list SoT), so a
-    // misconfigured override skips (loud notice) rather than crashing mid-read.
-    if (existsSync(join(c, "packages", "shared", "src", "blueprint.ts"))) {
-      return c;
-    }
-  }
-  return null;
+/** The tree this gate reads. Its presence is what "platform is available" means. */
+const PLATFORM_SSOT = join("packages", "shared", "src", "blueprint.ts");
+const configuredPlatformDir = process.env.PLATFORM_DIR?.trim();
+
+function show(path) {
+  return path.replaceAll("\\", "/");
 }
 
-const platformRoot = findPlatformRoot();
+// Explicit configuration is checked against exactly one candidate; absent
+// configuration probes the sibling checkout used by the local workspace and by
+// any job that checks out both repositories side by side.
+const platformCandidates = configuredPlatformDir
+  ? [resolve(configuredPlatformDir)]
+  : [resolve(publicRoot, "..", "platform")];
+
+const platformRoot =
+  platformCandidates.find((candidate) => existsSync(join(candidate, PLATFORM_SSOT))) ?? null;
+
 if (!platformRoot) {
+  const probed = platformCandidates.map(show).join(", ");
+  if (configuredPlatformDir) {
+    // Fails CLOSED: someone asked for enforcement and did not get it. Skipping
+    // here would report "no platform tree" for a tree that is meant to be there.
+    process.stderr.write(
+      `contract-parity FAILED: PLATFORM_DIR=${show(resolve(configuredPlatformDir))} holds no ` +
+        `${show(PLATFORM_SSOT)} — the platform checkout is missing or misconfigured. ` +
+        "Point PLATFORM_DIR at a platform checkout, or unset it to skip.\n"
+    );
+    process.exit(1);
+  }
   process.stdout.write(
-    "contract-parity: platform tree not found (set PLATFORM_DIR to enforce) — SKIPPED\n"
+    `contract-parity: SKIPPED — no platform tree at ${probed} (${show(PLATFORM_SSOT)} absent). ` +
+      "The public repo cannot check out the private one, so public CI and forks always take this " +
+      "path; set PLATFORM_DIR=<platform checkout> to enforce.\n"
   );
   process.exit(0);
 }
