@@ -8,7 +8,12 @@ export interface AppliedModuleCanary {
 }
 
 export function moduleNode(repoRoot: string, moduleId: string): PublicModuleNode;
-export function resolveModuleCanaryVersion(repoRoot: string, moduleId: string, sha: string): string;
+export function resolveModuleCanaryVersion(
+  repoRoot: string,
+  moduleId: string,
+  sha: string,
+  run: string
+): string;
 export function moduleSourceTag(moduleId: string, version: string): string;
 export function applyModuleCanary(
   repoRoot: string,

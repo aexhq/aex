@@ -21,12 +21,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { buildCanaryVersion, applySdkVersion } from "./canary-version.mjs";
+import { buildCanaryVersion, applySdkVersion, isCanaryVersion } from "./canary-version.mjs";
 import { applyReleaseSource } from "./release-source.mjs";
 import { readModuleGraph } from "./public-module-graph.mjs";
 
 const SOURCE_SHA = /^[0-9a-f]{40}$/;
-const CANARY_VERSION = /^\d+\.\d+\.\d+-canary$/;
 /** The one module whose source tag is flat, and the reason it is. See the header. */
 const FLAT_SOURCE_TAG_MODULE = "sdk";
 
@@ -38,19 +37,19 @@ export function moduleNode(repoRoot, moduleId) {
   return node;
 }
 
-export function resolveModuleCanaryVersion(repoRoot, moduleId, sha) {
+export function resolveModuleCanaryVersion(repoRoot, moduleId, sha, run) {
   const node = moduleNode(repoRoot, moduleId);
-  return buildCanaryVersion({ baseVersion: node.version, sha });
+  return buildCanaryVersion({ baseVersion: node.version, sha, run });
 }
 
 export function moduleSourceTag(moduleId, version) {
-  if (!CANARY_VERSION.test(String(version))) throw new Error(`invalid canary version: ${version}`);
+  if (!isCanaryVersion(version)) throw new Error(`invalid canary version: ${version}`);
   return moduleId === FLAT_SOURCE_TAG_MODULE ? `canary/${version}` : `canary/${moduleId}/${version}`;
 }
 
 /** Write the canary version and the exact source identity into a module manifest. */
 export function applyModuleCanary(repoRoot, moduleId, { version, sha }) {
-  if (!CANARY_VERSION.test(String(version))) {
+  if (!isCanaryVersion(version)) {
     throw new Error(`refusing to apply invalid canary version: ${version}`);
   }
   const normalizedSha = String(sha ?? "").toLowerCase();
@@ -118,7 +117,12 @@ export function main(argv = process.argv.slice(2)) {
   const repoRoot = resolve(args.repoRoot || defaultRepoRoot());
 
   if (args.command === "resolve") {
-    const version = resolveModuleCanaryVersion(repoRoot, required(args, "module"), required(args, "sha"));
+    const version = resolveModuleCanaryVersion(
+      repoRoot,
+      required(args, "module"),
+      required(args, "sha"),
+      required(args, "run")
+    );
     process.stdout.write(`${version}\n`);
     return version;
   }

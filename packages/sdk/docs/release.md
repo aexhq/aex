@@ -8,15 +8,26 @@ The public release path is intentionally small:
 
 1. Local pre-push runs lint and type checks only.
 2. A push to `main` runs lint, type checks, and unit tests.
-3. After those checks pass, CI tags the tested source as
-   `canary/<version>-canary`, records the exact 40-character source SHA, and
-   publishes `@aexhq/sdk@<version>-canary` to npm's `canary` dist-tag.
+3. After those checks pass, CI tags the tested source as `canary/<version>`,
+   records the exact 40-character source SHA, and publishes
+   `@aexhq/sdk@<version>` to npm's `canary` dist-tag.
 
 The workflow checks out and verifies `github.sha`, writes that SHA into the
 packed package's `aexRelease.sourceSha` metadata, and verifies the same value
-against npm after publication. The package version is the base SDK version with
-`-canary` appended, for example `0.45.0-canary`. A version is immutable: if it
-already exists, fix forward by bumping the base SDK version and pushing again.
+against npm after publication.
+
+The canary version is the base SDK version, the workflow run id, and the first
+seven characters of the source SHA:
+
+```
+0.46.4-canary.19876543210.gb1c3d5f
+```
+
+The SHA is what makes the version unique per commit, so two pushes at one base
+version resolve to two different versions and neither has to wait for the
+other. The run id is what keeps the channel ordered, because semver compares
+numeric prerelease identifiers numerically and a bare SHA suffix would sort
+arbitrarily.
 
 The private platform repository receives the canary version and source SHA as
 manual deploy inputs. It owns dev/prd deployment and runs the same SDK-as-a-real-
@@ -41,4 +52,5 @@ access:
 ## Roll-forward
 
 Published versions are immutable. A bad canary is fixed by correcting the
-source, bumping the base version, and publishing a new canary.
+source and pushing again: the new commit resolves to a new canary version on
+its own, and the base version only moves when the SDK's own semver does.

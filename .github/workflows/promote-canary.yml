@@ -19,7 +19,7 @@ on:
         required: true
         type: string
       version:
-        description: "Exact canary version to promote, for example 0.46.4-canary."
+        description: "Exact canary version to promote, for example 0.46.4-canary.19876543210.gb1c3d5f."
         required: true
         type: string
       manifest_run_id:

@@ -93,6 +93,19 @@ describe("each published canary records version, integrity, and source identity"
     expect(stepRun(publish, /git tag --annotate/)).toBe(true);
   });
 
+  it("feeds the resolver both identity inputs, so two pushes cannot collide", () => {
+    // The version is a function of (base, source sha, run id). Dropping either
+    // suffix input puts every push at one base back on one version string, which
+    // is the failure that reds the SECOND green push and nothing else catches
+    // until npm refuses the publish.
+    const resolve = workflowSteps(publish).find(
+      (step) => typeof step.run === "string" && /module-canary\.mjs resolve/.test(step.run)
+    );
+    expect(String(resolve?.run)).toContain('--sha "$RELEASE_HEAD_SHA"');
+    expect(String(resolve?.run)).toContain('--run "$RELEASE_RUN_ID"');
+    expect(String((resolve?.env as Record<string, string> | undefined)?.RELEASE_RUN_ID)).toContain("github.run_id");
+  });
+
   it("refuses to reuse a version npm already served", () => {
     expect(stepRun(publish, /assert-npm-version-available\.mjs/)).toBe(true);
   });

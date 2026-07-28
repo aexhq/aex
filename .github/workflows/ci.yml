@@ -269,19 +269,27 @@ jobs:
       - name: Install
         run: bun ci
 
+      # The version carries the source sha and this run id — see the header of
+      # scripts/cicd/canary-version.mjs. Two pushes at one base version are two
+      # commits and therefore two versions, so npm no longer refuses the second.
       - name: Resolve canary version
         id: version
         shell: bash
+        env:
+          RELEASE_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          version="$(bun scripts/cicd/module-canary.mjs resolve --module "$MODULE_ID" --sha "$RELEASE_HEAD_SHA")"
+          version="$(bun scripts/cicd/module-canary.mjs resolve --module "$MODULE_ID" --sha "$RELEASE_HEAD_SHA" --run "$RELEASE_RUN_ID")"
           source_tag="$(bun scripts/cicd/module-canary.mjs source-tag --module "$MODULE_ID" --version "$version")"
           remote_sha="$(git ls-remote origin "refs/tags/${source_tag}^{}" | awk 'NR == 1 { print $1 }')"
           if [ -z "$remote_sha" ]; then
             remote_sha="$(git ls-remote origin "refs/tags/${source_tag}" | awk 'NR == 1 { print $1 }')"
           fi
           if [ -n "$remote_sha" ]; then
-            echo "::error::Canary tag ${source_tag} already exists at ${remote_sha}. Bump the ${MODULE_ID} base version and fix forward."
+            # A tag can only pre-exist if this exact run already published, i.e. a
+            # re-run after success. The version is a function of (base, sha, run),
+            # so it is not reachable by a different commit.
+            echo "::error::Canary tag ${source_tag} already exists at ${remote_sha}; this run already published ${MODULE_ID}."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
