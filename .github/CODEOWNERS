@@ -1,0 +1,8 @@
+# Every path in this repository is owned by the maintainer. There is no team to
+# route to yet, so a single catch-all is the honest configuration: a CODEOWNERS
+# file with per-directory entries that all resolve to the same person implies a
+# review structure that does not exist.
+#
+# Replace the catch-all with real paths when a second reviewer exists, not
+# before.
+*       @weilueluo

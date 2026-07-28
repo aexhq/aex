@@ -1,6 +1,7 @@
 {
   "name": "@aexhq/repository",
   "version": "0.13.3",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Repository for the aex SDK, CLI, contracts, user tests, and docs.",
   "type": "module",

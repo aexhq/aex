@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a new capability or a change to an existing one.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user-facing problem first, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Optional. If you have a concrete idea, sketch it here.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      multiple: true
+      options:
+        - SDK (@aexhq/sdk)
+        - CLI (aex bin)
+        - Contracts (@aexhq/contracts)
+        - Agent runtime / tools
+        - Hosted platform (api.aex.dev)
+        - Docs

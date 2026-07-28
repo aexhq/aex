@@ -57,6 +57,8 @@
     "allowedPackedPathPrefixes": [
       "package.json",
       "README.md",
+      "LICENSE",
+      "NOTICE",
       "docs/",
       "dist/"
     ],

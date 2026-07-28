@@ -1,4 +1,8 @@
 ---
+# GENERATED FILE - do not edit.
+# Written by `scripts/docs/generate-all.mjs`.
+# Edit the source and run `bun run docs:generate`. A hand edit here is
+# reverted by the next `bun run lint`, which regenerates via `prelint`.
 title: "Overview"
 description: "aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI."
 ---

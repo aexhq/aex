@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in the aex SDK, CLI, contracts, or runtime isn't working as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check existing issues first. For security bugs, use
+        [private reporting](https://github.com/aexhq/aex/security/advisories/new)
+        instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: The version you're on — `npm ls @aexhq/sdk`, or `aex --version`.
+      placeholder: "0.46.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      multiple: true
+      options:
+        - SDK (@aexhq/sdk)
+        - CLI (aex bin)
+        - Contracts (@aexhq/contracts)
+        - Agent runtime / tools
+        - Hosted platform (api.aex.dev)
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimum code or commands needed to reproduce. Redact API keys and MCP tokens.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the session id (if applicable) and any error output. Redact secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Runtime version, OS, and anything else relevant.
+      placeholder: |
+        Bun: 1.3.x
+        Node: v22.x
+        OS: macOS / Linux / Windows
