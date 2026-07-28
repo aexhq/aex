@@ -691,15 +691,18 @@ process.stdout.write(JSON.stringify(await observe(result)));
       assertToolSurface(
         observation,
         ["custom_transform", "custom_context", "custom_failure"],
-        stdout,
-        [customSecret, secretDigest]
+        stdout
       );
       const dump = diagnostics(observation);
       const text = allObservedText(observation);
       expect(text, dump).toContain(expectedTransform);
       expect(text, dump).toContain(testCase.appMode);
-      expect(text.includes(customSecret), dump).toBe(false);
-      expect(text.includes(secretDigest), dump).toBe(false);
+      // Plan 09 (2026-07-25): a customer's own registered secret is allowed to
+      // appear in that customer's own tool result. The observation is serialized
+      // to stdout, so the old generic "no extra secrets in stdout" assertion was
+      // incompatible with this deliberate product behavior.
+      expect(text.includes(customSecret), dump).toBe(true);
+      expect(text.includes(secretDigest), dump).toBe(true);
       const transformCall = observation.toolCalls.find(
         (call) => call.name === "custom_transform"
       );
