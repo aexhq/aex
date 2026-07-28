@@ -540,8 +540,8 @@ process.stdout.write(JSON.stringify(await observe(result)));
       ].join(" ");
       const prompt = [
         "Use only the named tools.",
-        `1. Call subagent exactly once with model=${deepseekModel}, builtinTools=none,`,
-        `   tools=["write_file"], and prompt=${JSON.stringify(childPrompt)}.`,
+        `1. Call subagent exactly once with model=${deepseekModel}, builtinTools=["write_file"],`,
+        `   and prompt=${JSON.stringify(childPrompt)}.`,
         "2. Take the returned child session id and call subagent_result.",
         "3. If terminal is false, call subagent_result again with the same id until terminal is true.",
         `4. Confirm the output list contains ${childFile}.`,
