@@ -1,14 +1,34 @@
 {
   "name": "@aexhq/cli",
   "version": "0.33.0",
+  "description": "The aex command-line interface: session start, follow, files, and host commands. The same bundle ships inside @aexhq/sdk as the `aex` binary.",
+  "license": "Apache-2.0",
+  "keywords": [
+    "aex",
+    "agent",
+    "cli",
+    "autonomous-agents",
+    "agent-runtime"
+  ],
+  "homepage": "https://aex.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aexhq/aex.git"
+    "url": "git+https://github.com/aexhq/aex.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/aexhq/aex/issues"
   },
   "private": false,
   "publishConfig": {
     "access": "public"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "type": "module",
   "main": "./dist/cli.mjs",
   "types": "./dist/index.d.ts",
