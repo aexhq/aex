@@ -1779,20 +1779,18 @@ export class WorkspaceToolsClient {
   delete(resourceId: string): Promise<void> { return operations.deleteWorkspaceTool(this.http, resourceId); }
 }
 
+/**
+ * The one resource client with no {@link WorkspaceAssetPublisher}: instructions
+ * are published as text, so there is no asset to stage first and the
+ * `assets:write` scope is not exercised by publishing one.
+ */
 export class WorkspaceInstructionsClient {
-  constructor(private readonly http: HttpClient, private readonly publisher: WorkspaceAssetPublisher) {}
+  constructor(private readonly http: HttpClient) {}
 
   async publish(instructions: Instructions): Promise<WorkspaceInstructionRecord> {
-    const bundle = instructions._takeDraftBundle();
-    if (!bundle) throw new Error("workspace.instructions.publish requires draft instructions");
-    const uploaded = await this.publisher.upload({ bytes: bundle.bytes, hash: bundle.contentHash, contentType: "application/zip" });
-    return operations.publishWorkspaceInstruction(this.http, {
-      assetId: uploaded.assetId,
-      contentHash: uploaded.contentHash,
-      sizeBytes: uploaded.sizeBytes,
-      contentType: uploaded.contentType,
-      name: bundle.name
-    });
+    const draft = instructions._takeDraftInstruction();
+    if (!draft) throw new Error("workspace.instructions.publish requires draft instructions");
+    return operations.publishWorkspaceInstruction(this.http, { name: draft.name, text: draft.text });
   }
 
   list(query?: WorkspaceResourceListQuery): Promise<WorkspaceResourcePage<WorkspaceInstructionRecord>> {
@@ -1813,7 +1811,7 @@ export class WorkspaceClient {
     this.files = new WorkspaceFilesClient(http, publisher);
     this.skills = new WorkspaceSkillsClient(http, publisher);
     this.tools = new WorkspaceToolsClient(http, publisher);
-    this.instructions = new WorkspaceInstructionsClient(http, publisher);
+    this.instructions = new WorkspaceInstructionsClient(http);
     this.secrets = new SecretsClient(http);
   }
 }

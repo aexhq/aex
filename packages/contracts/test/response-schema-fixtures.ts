@@ -163,6 +163,20 @@ export const whoami = {
   }
 };
 
+/**
+ * An INSTRUCTION record is deliberately not asset-shaped: it is pinned to its
+ * text, so it carries a `textHash` in place of the `assetId`/`contentHash`
+ * pair and has no `contentType` to declare.
+ */
+export const workspaceInstructionRecord = {
+  resourceId: "wres_1",
+  name: "notes",
+  version: 1,
+  textHash: `sha256:${"c".repeat(64)}`,
+  sizeBytes: 12,
+  createdAt: TS
+};
+
 export const workspaceResourceCommon = {
   resourceId: "wres_1",
   name: "notes",

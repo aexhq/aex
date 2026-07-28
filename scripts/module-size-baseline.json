@@ -174,14 +174,14 @@
     },
     "packages/sdk/src/client.ts": {
       "kind": "source",
-      "lines": 1821,
+      "lines": 1819,
       "functions": [
         {
           "label": "Private async method #buildSessionCreateRequest",
           "lines": 185
         }
       ],
-      "reason": "frozen 2026-07-25: 1821 lines (budget 600); 1 function(s) over 120 lines, worst Private async method #buildSessionCreateRequest at 185"
+      "reason": "frozen 2026-07-25: 1819 lines (budget 600); 1 function(s) over 120 lines, worst Private async method #buildSessionCreateRequest at 185"
     },
     "scripts/cicd/check-public-boundary.mjs": {
       "kind": "source",
