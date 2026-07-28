@@ -1,0 +1,122 @@
+name: Promote canary
+
+# Stable promotion is NOT a consequence of green CI.
+#
+# `ci.yml` publishes a canary for every affected module on every green main push.
+# That is an artifact operation. Deciding that one of those artifacts is what
+# `npm install @aexhq/<module>` hands a customer is a separate, human decision, so
+# it lives in its own workflow with exactly one trigger: `workflow_dispatch`.
+# There is deliberately no `push`, no `release`, no `schedule`, and no
+# `workflow_run` trigger here — any of those would make promotion automatic again.
+#
+# The `npm-promote` environment is the second half of the gate: configure it with
+# required reviewers so the dispatch pauses for an approval it cannot grant itself.
+on:
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "Public module id to promote, for example sdk, contracts, or cli."
+        required: true
+        type: string
+      version:
+        description: "Exact canary version to promote, for example 0.46.4-canary."
+        required: true
+        type: string
+      manifest_run_id:
+        description: "CI run id whose canary manifest recorded this version."
+        required: true
+        type: string
+      dist_tag:
+        description: "npm dist-tag to move onto that version."
+        required: true
+        default: latest
+        type: string
+
+concurrency:
+  group: aex-promote-${{ inputs.module }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.3.14"
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.module }} ${{ inputs.version }} to ${{ inputs.dist_tag }}
+    runs-on: ubuntu-latest
+    environment: npm-promote
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11.17.0
+
+      - name: Download the recorded canary manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: aex-canary-manifest-${{ inputs.manifest_run_id }}
+          run-id: ${{ inputs.manifest_run_id }}
+          github-token: ${{ github.token }}
+          path: .canary-manifest
+
+      - name: Verify the selection against the registry
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/cicd/verify-canary-selection.mjs \
+            --manifest .canary-manifest/canary-manifest.json \
+            --module "${{ inputs.module }}" \
+            --version "${{ inputs.version }}" \
+            --dist-tag "${{ inputs.dist_tag }}" | tee verified.json
+          echo "package=$(node -e 'process.stdout.write(require("./verified.json").name)')" >> "$GITHUB_OUTPUT"
+
+      - name: Assert the manifest source commit is an ancestor of main
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(node -e 'process.stdout.write(require("./verified.json").sourceSha)')"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$source_sha" origin/main; then
+            echo "::error::${source_sha} is not an ancestor of main; refusing to promote an abandoned commit."
+            exit 1
+          fi
+
+      # Trusted publishing provisions the registry credential from the OIDC token
+      # for the duration of the job. It is exercised by `npm publish` in ci.yml;
+      # its behaviour for `npm dist-tag` has NOT been observed on a real run here.
+      # If this step fails to authenticate, fix it forward by promoting through a
+      # `npm publish --tag` of the same tested source rather than by reintroducing
+      # a long-lived NPM_TOKEN — the token path is the thing this design removed.
+      - name: Move the dist-tag
+        run: |
+          npm dist-tag add \
+            "${{ steps.verify.outputs.package }}@${{ inputs.version }}" \
+            "${{ inputs.dist_tag }}" \
+            --registry https://registry.npmjs.org
+
+      - name: Record the promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Promoted"
+            echo
+            echo '```json'
+            cat verified.json
+            echo '```'
+            echo
+            echo "dist-tag \`${{ inputs.dist_tag }}\` now points at \`${{ inputs.version }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
