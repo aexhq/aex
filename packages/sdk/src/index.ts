@@ -27,7 +27,6 @@ export type { NewWorkspaceResult, NewApiKeyResult } from "./client.js";
 export type {
   AexOptions,
   ChildSessionEvents,
-  IdempotencyOptions,
   IterateEventsOptions,
   Message,
   DownloadOptions,

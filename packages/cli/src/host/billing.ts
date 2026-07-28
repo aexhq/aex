@@ -115,14 +115,12 @@ async function runBillingTopup(
   const json = flags.json;
   const successFlag = takeOptionFlag(argv, "--success-url");
   const cancelFlag = takeOptionFlag(successFlag.remaining, "--cancel-url");
-  const idempotencyFlag = takeOptionFlag(cancelFlag.remaining, "--idempotency-key");
-  const optionError = successFlag.error ?? cancelFlag.error ?? idempotencyFlag.error;
+  const optionError = successFlag.error ?? cancelFlag.error;
   if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
   const { value: successUrl } = successFlag;
-  const { value: cancelUrl } = cancelFlag;
-  const { value: idempotencyKey, remaining } = idempotencyFlag;
+  const { value: cancelUrl, remaining } = cancelFlag;
   if (remaining.length !== 1) {
-    io.stderr("usage: aex billing topup <amountUsd> [--success-url URL] [--cancel-url URL] [--idempotency-key KEY] [--json] [common flags]\n");
+    io.stderr("usage: aex billing topup <amountUsd> [--success-url URL] [--cancel-url URL] [--json] [common flags]\n");
     return USAGE_ERR;
   }
   const amountUsd = parseUsdArg(io, remaining[0], "amountUsd");
@@ -134,7 +132,7 @@ async function runBillingTopup(
       amountUsd,
       ...(successUrl !== undefined ? { successUrl } : {}),
       ...(cancelUrl !== undefined ? { cancelUrl } : {}),
-    }, idempotencyKey !== undefined ? { idempotencyKey } : undefined);
+    });
     io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
     return SUCCESS;
   } catch (err) {
@@ -214,14 +212,12 @@ async function runBillingPortal(
 ): Promise<CliExitCode> {
   const json = flags.json;
   const returnFlag = takeOptionFlag(argv, "--return-url");
-  const idempotencyFlag = takeOptionFlag(returnFlag.remaining, "--idempotency-key");
-  const optionError = returnFlag.error ?? idempotencyFlag.error;
+  const optionError = returnFlag.error;
   if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
-  const { value: returnUrl } = returnFlag;
-  const { value: idempotencyKey, remaining } = idempotencyFlag;
+  const { value: returnUrl, remaining } = returnFlag;
   if (remaining.length > 0) {
     io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
-    io.stderr("usage: aex billing portal [--return-url URL] [--idempotency-key KEY] [--json] [common flags]\n");
+    io.stderr("usage: aex billing portal [--return-url URL] [--json] [common flags]\n");
     return USAGE_ERR;
   }
 
@@ -229,8 +225,7 @@ async function runBillingPortal(
   try {
     const session = await operations.createBillingPortal(
       http,
-      returnUrl !== undefined ? { returnUrl } : undefined,
-      idempotencyKey !== undefined ? { idempotencyKey } : undefined
+      returnUrl !== undefined ? { returnUrl } : undefined
     );
     io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
     return SUCCESS;

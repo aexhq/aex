@@ -715,8 +715,6 @@ describe("aex start", () => {
         "start",
         "--config",
         "/abs/session.json",
-        "--idempotency-key",
-        "idem-deterministic",
         ...COMMON
       ],
       files: { [resolvedFromCwd("/abs/session.json")]: JSON.stringify(runConfig) },
@@ -731,9 +729,11 @@ describe("aex start", () => {
     expect(create.init.method).toBe("POST");
     expect(message.url).toBe("https://dash.example/api/sessions/sess-1/messages");
     expect(message.init.method).toBe("POST");
-    // idempotency is header-carried on create (not in the body).
-    expect((create.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-deterministic");
-    expect((message.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-deterministic:message");
+    // Idempotency is header-carried on create (not in the body) and CLI-minted;
+    // the first-message key stays derived from the create key.
+    const createKey = (create.init.headers as Record<string, string>)["Idempotency-Key"]!;
+    expect(createKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect((message.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(`${createKey}:message`);
     const createBody = create.body as Record<string, unknown>;
     expect(createBody.workspaceId).toBeUndefined();
     expect("idempotencyKey" in createBody).toBe(false);
@@ -777,8 +777,6 @@ describe("aex start", () => {
         "github=https://example.com/mcp",
         "--mcp-auth",
         "github=Authorization:Bearer t",
-        "--idempotency-key",
-        "idem-flat",
         ...COMMON
       ],
       fetchHandler: sessionStartHandler("sess-flat")
@@ -814,8 +812,6 @@ describe("aex start", () => {
         "anthropic/claude-haiku-4-5",
         "--prompt",
         "hello",
-        "--idempotency-key",
-        "idem-retry",
         ...COMMON
       ],
       fetchHandler: (call) => {
@@ -848,8 +844,13 @@ describe("aex start", () => {
     const secondCreate = cap.calls[1]!;
     expect(firstCreate.url).toBe("https://dash.example/api/sessions");
     expect(secondCreate.url).toBe("https://dash.example/api/sessions");
-    expect((firstCreate.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-retry");
-    expect((secondCreate.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-retry");
+    // The CLI mints the key, so this compares the two attempts to EACH OTHER.
+    // A key re-minted per attempt would still produce two creates and would
+    // silently bill twice — only the equality catches it.
+    const firstKey = (firstCreate.init.headers as Record<string, string>)["Idempotency-Key"]!;
+    const secondKey = (secondCreate.init.headers as Record<string, string>)["Idempotency-Key"]!;
+    expect(firstKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(secondKey).toBe(firstKey);
     expect(secondCreate.body).toEqual(firstCreate.body);
     expect(cap.calls[2]!.url).toBe("https://dash.example/api/sessions/sess-retry/messages");
   });
@@ -862,8 +863,6 @@ describe("aex start", () => {
         "deepseek/deepseek-v4-flash",
         "--prompt",
         "hello",
-        "--idempotency-key",
-        "idem-ds",
         ...COMMON
       ],
       fetchHandler: sessionStartHandler("sess-ds")
@@ -886,8 +885,6 @@ describe("aex start", () => {
         "hello",
         "--webhook",
         "https://hooks.example.com/aex",
-        "--idempotency-key",
-        "idem-webhook",
         ...COMMON
       ],
       fetchHandler: sessionStartHandler("sess-webhook")

@@ -51,15 +51,14 @@ describe("aex.sessions.create", () => {
       model: "anthropic/claude-haiku-4-5",
       system: "Be concise.",
       assets: { tools: [tool] },
-      builtinTools: ["bash"],
-      idempotencyKey: "idem_1"
+      builtinTools: ["bash"]
     });
 
     expect(session.id).toBe("session_1");
     const call = calls[0]!;
     expect(call.url).toBe("https://api.example.test/api/sessions");
     expect(call.method).toBe("POST");
-    expect(call.headers.get("idempotency-key")).toBe("idem_1");
+    expect(call.headers.get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
     const submission = call.body.submission as Record<string, unknown>;
     expect(submission.assets).toEqual({ files: [], skills: [], tools: [tool], instructions: [] });
     expect(submission.builtinTools).toEqual(["bash"]);

@@ -14,7 +14,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const hostSource = resolve(here, "../src/host");
 
 const SINGLE_VALUE_FLAGS = [
-  "--idempotency-key",
   "--webhook",
   "--runtime-size",
   "--runtime",

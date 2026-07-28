@@ -316,7 +316,7 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     expect(readDoc("packages/contracts/src/submission.ts")).toContain("latest complete checkpoint");
   });
 
-  it("errors.md documents the typed hierarchy, idempotency conflict, and the empty-key throw", () => {
+  it("errors.md documents the typed hierarchy and the SDK-owned idempotency key", () => {
     const errors = readDoc("packages/sdk/docs/errors.md");
     for (const needle of [
       "apiCode",
@@ -327,8 +327,19 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     ]) {
       expect(errors).toContain(needle);
     }
-    // An empty idempotencyKey is a client-side fail-fast, not a wire round-trip.
-    expect(errors).toMatch(/empty[^.]*idempotencyKey[^.]*throws|idempotencyKey[^.]*throws[^.]*SessionConfigValidationError/i);
+    // The key is SDK-minted, so `idempotency_conflict` is documented as a bug
+    // signal rather than something a caller resolves by picking a new key.
+    expect(errors).toMatch(/SDK-owned|SDK-minted|SDK mints/i);
+  });
+
+  it("retries.md tells the caller they never manage an idempotency key", () => {
+    const retries = readDoc("packages/sdk/docs/retries.md");
+    // The customer-facing promise: no key to pass, and the SAME key replayed
+    // across the SDK's automatic retries so a lost response is not billed twice.
+    expect(retries).toMatch(/no idempotency key on the SDK or CLI surface/i);
+    expect(retries).toMatch(/same key/i);
+    // And the honest limit: a hand-rolled caller retry loop is NOT covered.
+    expect(retries).toMatch(/retry loop you write yourself/i);
   });
 
   it("events.md documents capability-honest streaming (typed reject, not silent downgrade)", () => {

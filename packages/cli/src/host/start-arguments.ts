@@ -19,7 +19,6 @@ import {
 } from "./start-validation.js";
 
 export interface StartArguments {
-  readonly idempotencyKey?: string;
   readonly webhookUrl?: string;
   readonly runtimeSize?: string;
   readonly runtimeKind?: string;
@@ -77,7 +76,6 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
   const failed = (): StartArgumentsResult | undefined =>
     state.error ? { ok: false, error: state.error } : undefined;
 
-  const idempotencyKey = option("--idempotency-key");
   const webhookUrl = option("--webhook");
   const runtimeSize = option("--runtime-size");
   if (state.error) return failed()!;
@@ -162,7 +160,6 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
   return {
     ok: true,
     value: {
-      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
       ...(webhookUrl !== undefined ? { webhookUrl } : {}),
       ...(runtimeSize !== undefined ? { runtimeSize } : {}),
       ...(runtimeKind !== undefined ? { runtimeKind } : {}),

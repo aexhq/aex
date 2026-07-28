@@ -194,10 +194,10 @@ function harness(
 }
 
 describe("Aex idempotency (sdk-dx-3)", () => {
-  it("start() derives the message key from the create key so a retried run never double-bills", async () => {
+  it("start() derives the message key from the SDK-minted create key so a retried run never double-bills", async () => {
     const h = harness();
     const promise = h.client.start(
-      { model: "anthropic/claude-haiku-4-5", message: "hello", idempotencyKey: "fixed-key" },
+      { model: "anthropic/claude-haiku-4-5", message: "hello" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -205,10 +205,11 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     const result = await promise;
     expect(result.ok).toBe(true);
 
-    // The create carries the caller's key; the billable turn carries the DERIVED
-    // key — so re-invoking start() with the same key de-duplicates BOTH.
-    expect(h.idempotencyKeys("/api/sessions")).toEqual(["fixed-key"]);
-    expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual(["fixed-key:message"]);
+    // The create carries the SDK-minted key; the billable turn carries the
+    // DERIVED key, so the two halves of one start() de-duplicate together.
+    const createKey = h.idempotencyKeys("/api/sessions")[0]!;
+    expect(createKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual([`${createKey}:message`]);
   });
 
   it("start() without a key still ties the message key to the create key", async () => {
@@ -227,37 +228,40 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     expect(messageKey).toBe(`${createKey}:message`);
   });
 
-  it("Aex.start() derives the message key the same way", async () => {
+  it("derives the message key the same way when the stream options are inline", async () => {
     const h = harness();
     const promise = h.client.start({
       model: "anthropic/claude-haiku-4-5",
       message: "hello",
-      idempotencyKey: "session-key",
       stream: { webSocketFactory: h.webSocketFactory }
     });
     await waitForSocket(h.sockets, 1);
     h.sockets[0]!.message(idleEvent());
     await promise;
-    expect(h.idempotencyKeys("/api/sessions")).toEqual(["session-key"]);
-    expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual(["session-key:message"]);
+
+    const createKey = h.idempotencyKeys("/api/sessions")[0]!;
+    expect(createKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual([`${createKey}:message`]);
   });
 
-  it("keeps the first-message key within 255 characters for a maximum-length create key", async () => {
+  // The long-create-key DIGEST branch of `deriveMessageIdempotencyKey` is no
+  // longer reachable from the SDK: a minted key is always `idem_<32 hex>`. That
+  // branch is pinned at its own layer, in
+  // `packages/contracts/test/operations-idempotency-headers.test.ts`.
+  it("keeps the minted create key and its derived message key within the 255-character limit", async () => {
     const h = harness();
-    const createKey = "k".repeat(255);
     const promise = h.client.start({
       model: "anthropic/claude-haiku-4-5",
       message: "hello",
-      idempotencyKey: createKey,
       stream: { webSocketFactory: h.webSocketFactory }
     });
     await waitForSocket(h.sockets, 1);
     h.sockets[0]!.message(idleEvent());
     await promise;
 
+    const createKey = h.idempotencyKeys("/api/sessions")[0]!;
     const messageKey = h.idempotencyKeys("/api/sessions/session-1/messages")[0]!;
-    expect(h.idempotencyKeys("/api/sessions")).toEqual([createKey]);
-    expect(messageKey).toMatch(/^aex-message-sha256-[a-f0-9]{64}$/);
+    expect(createKey.length).toBeLessThanOrEqual(255);
     expect(messageKey.length).toBeLessThanOrEqual(255);
   });
 });
@@ -266,7 +270,7 @@ describe("Aex built-in transport retry", () => {
   it("retries a throttled create with the SAME idempotency key (no duplicate billable session turn)", async () => {
     const h = harness({ id: "session-1", status: "idle" }, [429, 201]);
     const promise = h.client.start(
-      { model: "anthropic/claude-haiku-4-5", message: "hello", idempotencyKey: "K" },
+      { model: "anthropic/claude-haiku-4-5", message: "hello" },
       { webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
@@ -274,9 +278,13 @@ describe("Aex built-in transport retry", () => {
     const result = await promise;
     expect(result.ok).toBe(true);
 
-    // Two create attempts (429 then 201), both with the identical key.
+    // Two create attempts (429 then 201) carrying the identical MINTED key.
+    // Comparing the values matters more than counting them: a key re-minted per
+    // attempt would still produce two calls, and would double-bill silently.
     const createKeys = h.idempotencyKeys("/api/sessions");
-    expect(createKeys).toEqual(["K", "K"]);
+    expect(createKeys).toHaveLength(2);
+    expect(createKeys[0]).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(createKeys[0]).toBe(createKeys[1]);
   });
 
   it("surfaces AexRateLimitError when a create is throttled past the attempt budget", async () => {
@@ -291,8 +299,12 @@ describe("Aex built-in transport retry", () => {
     // The attempt budget is the ONE shared policy's — the same object the `aex`
     // CLI hands its transport (see cli/test/retry-policy-parity.test.ts).
     expect((err as AexRateLimitError).attempts).toBe(HTTP_RETRY_POLICY.maxAttempts);
-    // One create attempt per budgeted try, one shared key, NO WebSocket opened.
-    expect(h.idempotencyKeys("/api/sessions")).toHaveLength(HTTP_RETRY_POLICY.maxAttempts);
+    // One create attempt per budgeted try, ONE shared key, NO WebSocket opened.
+    // The key equality is asserted, not just the attempt count: counting alone
+    // cannot tell a stable key from a fresh one minted per attempt.
+    const createKeys = h.idempotencyKeys("/api/sessions");
+    expect(createKeys).toHaveLength(HTTP_RETRY_POLICY.maxAttempts);
+    expect(new Set(createKeys).size).toBe(1);
     expect(h.sockets).toHaveLength(0);
   });
 });
@@ -324,7 +336,11 @@ describe("SessionHandle.replayLast", () => {
     expect(() => session.messages.replayLast()).toThrow(/no message has been sent/);
   });
 
-  it("a fresh idempotency key forces a brand-new billable turn", async () => {
+  // A caller can no longer override the replay key to force a second billable
+  // turn — the key is SDK-owned. `session.messages.send(...)` is how you ask for
+  // a NEW turn; `replayLast()` re-presents the ORIGINAL identity, so a replay
+  // that reaches a server which already recorded it is de-duplicated.
+  it("rejects a caller-supplied idempotencyKey on replayLast", async () => {
     const h = harness();
     const session = await h.client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
     const first = session.messages.send("go", { webSocketFactory: h.webSocketFactory }).finished();
@@ -332,14 +348,29 @@ describe("SessionHandle.replayLast", () => {
     h.sockets[0]!.message(idleEvent());
     await first;
 
-    const replay = session.messages.replayLast({ idempotencyKey: "override", webSocketFactory: h.webSocketFactory }).finished();
+    expect(() =>
+      session.messages.replayLast({ idempotencyKey: "override" } as never)
+    ).toThrow(/idempotency/i);
+  });
+
+  it("a fresh send mints a NEW key, so it is a brand-new billable turn", async () => {
+    const h = harness();
+    const session = await h.client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
+    const first = session.messages.send("go", { webSocketFactory: h.webSocketFactory }).finished();
+    await waitForSocket(h.sockets, 1);
+    h.sockets[0]!.message(idleEvent());
+    await first;
+
+    const second = session.messages.send("go again", { webSocketFactory: h.webSocketFactory }).finished();
     await waitForSocket(h.sockets, 2);
     h.sockets[1]!.message(idleEvent());
-    await replay;
+    await second;
 
     const keys = h.idempotencyKeys("/api/sessions/session-1/messages");
-    expect(keys[1]).toBe("override");
-    expect(keys[0]).not.toBe("override");
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBeTruthy();
+    expect(keys[0]).not.toBe(keys[1]);
   });
 });
 

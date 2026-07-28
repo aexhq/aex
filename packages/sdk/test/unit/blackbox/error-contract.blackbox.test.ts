@@ -77,22 +77,21 @@ describe("blackbox: typed error dispatch", () => {
 });
 
 describe("blackbox: idempotency key is a real safety property", () => {
-  it("rejects an empty idempotencyKey BEFORE any request (no silent non-idempotent run)", async () => {
+  it("rejects a caller-supplied idempotencyKey BEFORE any request", async () => {
     const platform = new FakePlatform();
-    await expect(platform.start({ ...SESSION, idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    await expect(
+      platform.start({ ...SESSION, idempotencyKey: "my-stable-key" } as never)
+    ).rejects.toBeInstanceOf(SessionConfigValidationError);
     // Fail-closed: nothing was put on the wire.
     expect(platform.requestLog.length).toBe(0);
   });
 
-  it("rejects a whitespace-only idempotencyKey", async () => {
+  it("still ships an SDK-minted Idempotency-Key header on the create", async () => {
     const platform = new FakePlatform();
-    await expect(platform.start({ ...SESSION, idempotencyKey: "   " })).rejects.toBeInstanceOf(SessionConfigValidationError);
-  });
-
-  it("forwards a real idempotencyKey as the Idempotency-Key header on the create", async () => {
-    const platform = new FakePlatform();
-    await platform.start({ ...SESSION, idempotencyKey: "my-stable-key" }, { text: "ok", costUsd: 0.01 });
+    await platform.start(SESSION, { text: "ok", costUsd: 0.01 });
     const create = platform.requestLog.find((r) => r.method === "POST" && r.path.endsWith("/api/sessions"));
-    expect(create?.idempotencyKey).toBe("my-stable-key");
+    // The WIRE CONTRACT is unchanged by the public-surface removal — only the
+    // owner of the value moved from the caller to the SDK.
+    expect(create?.idempotencyKey).toMatch(/^idem_[0-9a-f]{32}$/);
   });
 });

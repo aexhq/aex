@@ -76,10 +76,10 @@
       "functions": [
         {
           "label": "Function 'parseStartArguments'",
-          "lines": 139
+          "lines": 137
         }
       ],
-      "reason": "frozen 2026-07-25: 1 function(s) over 120 lines, worst Function 'parseStartArguments' at 139"
+      "reason": "frozen 2026-07-25: 1 function(s) over 120 lines, worst Function 'parseStartArguments' at 137"
     },
     "packages/cli/src/host/start-config.ts": {
       "kind": "source",
@@ -103,8 +103,8 @@
     },
     "packages/cli/test/host.test.ts": {
       "kind": "test",
-      "lines": 1060,
-      "reason": "frozen 2026-07-25: 1060 lines (budget 800)"
+      "lines": 1057,
+      "reason": "frozen 2026-07-25: 1057 lines (budget 800)"
     },
     "packages/contracts/src/event-envelope.ts": {
       "kind": "source",

@@ -4,7 +4,6 @@ import { executeCli } from "../src/main.js";
 import { makeIo } from "./support.js";
 
 const COMMON = ["--api-key", "token", "--aex-url", "https://api.example.test"];
-const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 const VALID_START = [
   "--model", "anthropic/claude-haiku-4-5",
   "--prompt", "hello"
@@ -63,14 +62,6 @@ const cases: readonly ValidationCase[] = [
     code: "session_failed",
     flag: "--webhook",
     message: "aex start --webhook: webhook.url must use https (got http)"
-  },
-  {
-    label: "submission structured field",
-    argv: [...VALID_START, "--idempotency-key", "x".repeat(IDEMPOTENCY_KEY_MAX_LENGTH + 1)],
-    exitCode: 1,
-    code: "session_failed",
-    flag: "--idempotency-key",
-    message: `aex start --idempotency-key: idempotencyKey must be at most ${IDEMPOTENCY_KEY_MAX_LENGTH} characters`
   }
 ];
 

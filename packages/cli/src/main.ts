@@ -235,7 +235,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --runtime <kind>            execution runtime: spot_container | container | lambda (default spot_container)\n");
   io.stdout("  --runtime-size <size>       managed runtime size preset\n");
   io.stdout("  --session-timeout <dur>     Server-side session deadline (e.g. 1h, max 8h); distinct from --timeout\n");
-  io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");
   io.stdout("  --webhook <url>             Optional session callback URL (https); receives each run.finished/run.error event\n");
   io.stdout("  --follow                    Poll events to stdout until the current run finishes\n");
   io.stdout("  --timeout <dur>             With --follow: give up after this long (e.g. 8m, 30s, 500ms); exit code 3\n");

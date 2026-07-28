@@ -155,13 +155,8 @@ function messageCalls(harness: Harness): CapturedRequest[] {
   return harness.calls.filter((call) => call.method === "POST" && call.url.endsWith(`/api/sessions/${SESSION_ID}/messages`));
 }
 
-function runOptions(input: SessionInput, keys: IdempotencyCase = {}): SessionStartOptions {
-  return {
-    model: MODEL,
-    message: input,
-    ...(keys.createKey !== undefined ? { idempotencyKey: keys.createKey } : {}),
-    ...(keys.messageKey !== undefined ? { messageIdempotencyKey: keys.messageKey } : {})
-  };
+function runOptions(input: SessionInput): SessionStartOptions {
+  return { model: MODEL, message: input };
 }
 
 async function waitForSocket(sockets: readonly FakeWebSocket[], count: number): Promise<FakeWebSocket> {
@@ -222,24 +217,19 @@ function idleEvent(sequence: number): AexEvent {
   };
 }
 
-function expectSessionKeys(harness: Harness, keys: IdempotencyCase): void {
+/**
+ * The key is SDK-minted for every start, whatever the input: the create carries
+ * a fresh `idem_<32 hex>` and the first message carries the key DERIVED from it.
+ */
+function expectSessionKeys(harness: Harness): void {
   const create = createCalls(harness);
   const messages = messageCalls(harness);
   expect(create).toHaveLength(1);
   expect(messages).toHaveLength(1);
 
   const createKey = idempotencyKey(create[0]!);
-  const messageKey = idempotencyKey(messages[0]!);
-  if (keys.createKey !== undefined) {
-    expect(createKey).toBe(keys.createKey);
-  } else {
-    expect(createKey).toEqual(expect.stringMatching(/\S+/));
-  }
-  if (keys.messageKey !== undefined) {
-    expect(messageKey).toBe(keys.messageKey);
-  } else {
-    expect(messageKey).toBe(`${createKey}:message`);
-  }
+  expect(createKey).toEqual(expect.stringMatching(/^idem_[0-9a-f]{32}$/));
+  expect(idempotencyKey(messages[0]!)).toBe(`${createKey}:message`);
 }
 
 function expectedMessages(specs: readonly TextEventSpec[]): readonly Message[] {
@@ -324,11 +314,6 @@ function isValidSessionInput(value: unknown): value is SessionInput {
   );
 }
 
-interface IdempotencyCase {
-  readonly createKey?: string;
-  readonly messageKey?: string;
-}
-
 const idChar = fc.constantFrom(
   "a", "b", "c", "d", "e", "f", "g", "h",
   "i", "j", "k", "m", "n", "p", "q", "r",
@@ -340,13 +325,6 @@ const nonEmptyString = fc.string({ minLength: 1, maxLength: 80 });
 const validSessionInput: Arbitrary<SessionInput> = fc
   .oneof(nonEmptyString, fc.array(nonEmptyString, { minLength: 1, maxLength: 6 }))
   .filter(isValidSessionInput);
-const keyString = fc.array(idChar, { minLength: 1, maxLength: 24 }).map((chars) => `idem_${chars.join("")}`);
-const idempotencyCase: Arbitrary<IdempotencyCase> = fc.oneof(
-  fc.constant({}),
-  keyString.map((createKey) => ({ createKey })),
-  keyString.map((messageKey) => ({ messageKey })),
-  fc.tuple(keyString, keyString).map(([createKey, messageKey]) => ({ createKey, messageKey }))
-);
 const invalidArrayInput: Arbitrary<unknown> = fc.oneof(
   fc.constant([]),
   fc.array(
@@ -385,32 +363,31 @@ const textEventSequence = fc.array(textEventSpec, { minLength: 0, maxLength: 8 }
 setDefaultTimeout(30_000);
 
 describe("SDK run/send SessionInput properties", () => {
-  it("Aex.start serializes valid message inputs and uses predictable idempotency keys", async () => {
+  it("Aex.start serializes valid message inputs and mints predictable idempotency keys", async () => {
     await fc.assert(
-      fc.asyncProperty(validSessionInput, idempotencyCase, async (input, keys) => {
+      fc.asyncProperty(validSessionInput, async (input) => {
         const harness = makeHarness();
-        const promise = harness.client.start(runOptions(input, keys), { webSocketFactory: harness.webSocketFactory });
+        const promise = harness.client.start(runOptions(input), { webSocketFactory: harness.webSocketFactory });
         await finishTurn(harness);
         const result = await promise;
 
         expect(messageCalls(harness)[0]!.body).toEqual({ input });
-        expectSessionKeys(harness, keys);
+        expectSessionKeys(harness);
         expect(result.text).toBe("");
       }),
       PROPERTY_RUNS
     );
   });
 
-  it("session.send serializes valid inputs and preserves caller-supplied or generated message keys", async () => {
+  it("session.send serializes valid inputs and mints a message key for every send", async () => {
     await fc.assert(
-      fc.asyncProperty(validSessionInput, fc.option(keyString, { nil: undefined }), async (input, providedKey) => {
+      fc.asyncProperty(validSessionInput, async (input) => {
         const harness = makeHarness();
         const session = await harness.client.sessions.open(SESSION_ID);
         harness.calls.length = 0;
 
         const promise = session.messages.send(input, {
-          webSocketFactory: harness.webSocketFactory,
-          ...(providedKey !== undefined ? { idempotencyKey: providedKey } : {})
+          webSocketFactory: harness.webSocketFactory
         }).finished();
         await finishTurn(harness);
         const result = await promise;
@@ -418,7 +395,7 @@ describe("SDK run/send SessionInput properties", () => {
 
         expect(messages).toHaveLength(1);
         expect(messages[0]!.body).toEqual({ input });
-        expect(idempotencyKey(messages[0]!)).toEqual(providedKey ?? expect.stringMatching(/\S+/));
+        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(/^idem_[0-9a-f]{32}$/));
         expect(result.text).toBe("");
         expect(createCalls(harness)).toHaveLength(0);
       }),
@@ -459,7 +436,7 @@ describe("SDK run/send SessionInput properties", () => {
       fc.asyncProperty(validSessionInput, textEventSequence, async (input, specs) => {
         const harness = makeHarness();
         const promise = harness.client.start(
-          runOptions(input, { createKey: "create_key" }),
+          runOptions(input),
           { webSocketFactory: harness.webSocketFactory }
         );
         await finishTurn(harness, specs);
@@ -469,7 +446,7 @@ describe("SDK run/send SessionInput properties", () => {
         expect(posts[0]!.url).toBe(`${BASE_URL}/api/sessions`);
         expect(posts[1]!.url).toBe(`${BASE_URL}/api/sessions/${SESSION_ID}/messages`);
         expect(messageCalls(harness)[0]!.body).toEqual({ input });
-        expectSessionKeys(harness, { createKey: "create_key" });
+        expectSessionKeys(harness);
         assertTurnEventProjection(result, specs);
       }),
       EVENT_PROPERTY_RUNS
@@ -478,14 +455,13 @@ describe("SDK run/send SessionInput properties", () => {
 
   it("session.replayLast reuses the last send input and idempotency key for fuzzed valid inputs", async () => {
     await fc.assert(
-      fc.asyncProperty(validSessionInput, fc.option(keyString, { nil: undefined }), async (input, providedKey) => {
+      fc.asyncProperty(validSessionInput, async (input) => {
         const harness = makeHarness();
         const session = await harness.client.sessions.open(SESSION_ID);
         harness.calls.length = 0;
 
         const first = session.messages.send(input, {
-          webSocketFactory: harness.webSocketFactory,
-          ...(providedKey !== undefined ? { idempotencyKey: providedKey } : {})
+          webSocketFactory: harness.webSocketFactory
         }).finished();
         await finishTurn(harness);
         await first;
@@ -498,7 +474,8 @@ describe("SDK run/send SessionInput properties", () => {
         expect(messages).toHaveLength(2);
         expect(messages[0]!.body).toEqual({ input });
         expect(messages[1]!.body).toEqual({ input });
-        expect(idempotencyKey(messages[0]!)).toEqual(providedKey ?? expect.stringMatching(/\S+/));
+        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(/^idem_[0-9a-f]{32}$/));
+        // A replay re-presents the ORIGINAL identity, never a fresh one.
         expect(idempotencyKey(messages[1]!)).toBe(idempotencyKey(messages[0]!));
       }),
       PROPERTY_RUNS

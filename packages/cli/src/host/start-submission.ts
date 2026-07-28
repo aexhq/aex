@@ -40,7 +40,6 @@ export function buildStartSubmission(
       idleTtl: DEFAULT_SESSION_IDLE_TTL,
       ...(timeout ? { timeout } : {})
     },
-    ...(args.webhookUrl ? { webhook: { url: args.webhookUrl } } : {}),
-    ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {})
+    ...(args.webhookUrl ? { webhook: { url: args.webhookUrl } } : {})
   };
 }

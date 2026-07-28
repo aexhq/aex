@@ -8,7 +8,6 @@ import type {
   SessionClient,
   SessionHandle,
   SessionRunStream,
-  IdempotencyOptions,
   Message,
   SessionCreateOptions,
   SessionEnvironmentOptions,
@@ -26,7 +25,6 @@ import type {
   SessionResult
 } from "../../src/index.js";
 import type {
-  IdempotencyOptions as ClientIdempotencyOptions,
   Message as ClientMessage,
   SessionCreateOptions as ClientSessionCreateOptions,
   SessionEnvironmentOptions as ClientSessionEnvironmentOptions,
@@ -66,6 +64,8 @@ import type { ProviderEvent } from "../../src/index.js";
 import type { FileRecordWire } from "../../src/index.js";
 // @ts-expect-error SkillRecordWire is an obsolete wire alias.
 import type { SkillRecordWire } from "../../src/index.js";
+// @ts-expect-error The idempotency key is SDK-owned; callers no longer supply or manage one.
+import type { IdempotencyOptions } from "../../src/index.js";
 
 type ReturnSurface =
   | ChildSessionHandle
@@ -85,7 +85,8 @@ type RemovedSurface =
   | ObservableSessionRef
   | ProviderEvent
   | FileRecordWire
-  | SkillRecordWire;
+  | SkillRecordWire
+  | IdempotencyOptions;
 
 void (undefined as unknown as ReturnSurface);
 void (undefined as unknown as RemovedSurface);
@@ -113,6 +114,17 @@ const sessionSendHasNoReplayCursor: "from" extends keyof SessionSendOptions ? fa
 const sessionSendHasNoSignal: "signal" extends keyof SessionSendOptions ? false : true = true;
 const sessionStreamHasNoIdempotencyKey:
   "idempotencyKey" extends keyof NonNullable<SessionStartOptions["stream"]> ? false : true = true;
+// The idempotency key is SDK-owned. It must not reappear on ANY public option
+// shape: a caller-managed key is the bad-DX surface this release removed, and a
+// caller-driven retry loop is explicitly not covered by the dedup guarantee.
+const sessionCreateHasNoIdempotencyKey:
+  "idempotencyKey" extends keyof SessionCreateOptions ? false : true = true;
+const sessionSendHasNoIdempotencyKey:
+  "idempotencyKey" extends keyof SessionSendOptions ? false : true = true;
+const sessionStartHasNoIdempotencyKey:
+  "idempotencyKey" extends keyof SessionStartOptions ? false : true = true;
+const sessionStartHasNoMessageIdempotencyKey:
+  "messageIdempotencyKey" extends keyof SessionStartOptions ? false : true = true;
 const environmentHasNoWireEnvVars:
   "envVars" extends keyof SessionEnvironmentOptions ? false : true = true;
 type SessionPackageInput = NonNullable<SessionEnvironmentOptions["packages"]>[number];
@@ -125,7 +137,6 @@ type Equal<Left, Right> =
       : false
     : false;
 const movedTypeCompatibility: readonly true[] = [
-  true as Equal<IdempotencyOptions, ClientIdempotencyOptions>,
   true as Equal<Message, ClientMessage>,
   true as Equal<SessionCreateOptions, ClientSessionCreateOptions>,
   true as Equal<SessionEnvironmentOptions, ClientSessionEnvironmentOptions>,
@@ -147,6 +158,10 @@ void [
   sessionSendHasNoReplayCursor,
   sessionSendHasNoSignal,
   sessionStreamHasNoIdempotencyKey,
+  sessionCreateHasNoIdempotencyKey,
+  sessionSendHasNoIdempotencyKey,
+  sessionStartHasNoIdempotencyKey,
+  sessionStartHasNoMessageIdempotencyKey,
   environmentHasNoWireEnvVars,
   packageInputHasNoParsedEcosystem,
   movedTypeCompatibility

@@ -88,8 +88,6 @@ export function startParserValidationMessage(flag: StartFlag, message: string): 
 
 function startFlagForValidationField(field: string): StartFlag | undefined {
   switch (field) {
-    case "idempotencyKey":
-      return "--idempotency-key";
     case "input":
       return "--prompt";
     default:

@@ -53,7 +53,6 @@ export const START_FLAGS: readonly string[] = [
   "--runtime-size",
   "--runtime",
   "--session-timeout",
-  "--idempotency-key",
   "--webhook",
   "--follow",
   "--timeout"

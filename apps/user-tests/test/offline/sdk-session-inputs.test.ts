@@ -53,8 +53,7 @@ await client.sessions.create({
   },
   runtime: { size: "2cpu-8gb" },
   overrides: { idleTtl: "5m", timeout: "15m", maxSpendUsd: 2, maxTurns: 8 },
-  webhook: { url: "https://hooks.example/aex" },
-  idempotencyKey: "stable-create"
+  webhook: { url: "https://hooks.example/aex" }
 });
 
 strictEqual(calls.length, 1);

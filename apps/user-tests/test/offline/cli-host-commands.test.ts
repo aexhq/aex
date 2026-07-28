@@ -275,8 +275,6 @@ describe("installed CLI host commands", () => {
         "deepseek/deepseek-v4-flash",
         "--prompt",
         "hello_from_installed_cli",
-        "--idempotency-key",
-        "cli-host-installed-shape",
         ...common
       ],
       { cwd: install.installDir, timeoutMs: 30_000 }
@@ -376,7 +374,8 @@ describe("installed CLI host commands", () => {
     expect(submit).not.toHaveProperty("region");
     expect(submit).not.toHaveProperty("idempotencyKey");
     expect(submit).not.toHaveProperty("input");
-    expect(createReq.idempotencyKey).toBe("cli-host-installed-shape");
+    // CLI-minted: there is no flag to supply one.
+    expect(createReq.idempotencyKey).toMatch(/^idem_[0-9a-f]{32}$/);
     expect(submit.retention).toEqual({ idleTtl: "3m" });
     // `secrets` may still be present as an empty bag (envSecrets/mcpServers ride it);
     // what must never appear again is customer key material, under either name.
@@ -384,7 +383,7 @@ describe("installed CLI host commands", () => {
     expect(submit.secrets ?? {}).not.toHaveProperty("apiKey");
     expect(submit.submission).toMatchObject({ model: "deepseek/deepseek-v4-flash" });
     expect(submit.submission).not.toHaveProperty("prompt");
-    expect(messageReq.idempotencyKey).toBe("cli-host-installed-shape:message");
+    expect(messageReq.idempotencyKey).toBe(`${createReq.idempotencyKey}:message`);
     expect(messageReq.body).toEqual({ input: ["hello_from_installed_cli"] });
   });
   it("preserves described API error envelopes in the packed CLI binary", async () => {
@@ -579,7 +578,6 @@ describe("installed CLI host commands", () => {
       "--model", "deepseek/deepseek-v4-flash",
       "--prompt", "packed_equals_parity",
       "--metadata", "syntax=split",
-      "--idempotency-key", "packed-equals-parity",
       "--runtime", "container",
       "--runtime-size", "0.25cpu-1gb",
       "--api-key", "tok-installed-cli",
@@ -590,7 +588,6 @@ describe("installed CLI host commands", () => {
       "--model=deepseek/deepseek-v4-flash",
       "--prompt=packed_equals_parity",
       "--metadata=syntax=split",
-      "--idempotency-key=packed-equals-parity",
       "--runtime=container",
       "--runtime-size=0.25cpu-1gb",
       "--api-key=tok-installed-cli",
@@ -604,7 +601,17 @@ describe("installed CLI host commands", () => {
     const joinedRequests = api.requests.slice(beforeEquals);
     expect(joined).toEqual(split);
     expect(joined.exitCode, `stdout:\n${joined.stdout}\nstderr:\n${joined.stderr}`).toBe(0);
-    expect(joinedRequests).toEqual(splitRequests);
+    // The idempotency key is CLI-minted and therefore unique per invocation —
+    // that is the point of it. Parity is about how the two FLAG SYNTAXES parse,
+    // so the key is normalised out and its shape asserted separately.
+    const withoutKey = (requests: readonly CapturedRequest[]): unknown[] =>
+      requests.map(({ idempotencyKey: _key, ...rest }) => rest);
+    expect(withoutKey(joinedRequests)).toEqual(withoutKey(splitRequests));
+    for (const request of [...splitRequests, ...joinedRequests]) {
+      if (request.method !== "POST") continue;
+      expect(request.idempotencyKey).toMatch(/^idem_[0-9a-f]{32}(:message)?$/);
+    }
+    expect(joinedRequests[0]!.idempotencyKey).not.toBe(splitRequests[0]!.idempotencyKey);
     expect(joined.stdout).not.toContain("tok-installed-cli");
     expect(joined.stderr).not.toContain("tok-installed-cli");
     const missing = await runCommand(
