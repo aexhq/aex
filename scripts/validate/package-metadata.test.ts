@@ -177,21 +177,89 @@ describe("third-party attribution", () => {
   });
 });
 
+/**
+ * O6 — who owns the `aex` command.
+ *
+ * THE DECISION: **both `@aexhq/sdk` and `@aexhq/cli` keep `bin.aex`.** Recorded
+ * here, with the conditions that make it safe, because the failure mode this
+ * question has is being answered by default.
+ *
+ * The situation it decides. `npm i` of both succeeds with no error and no
+ * warning, and the winner is install-order dependent: together or sdk-then-cli
+ * gives the CLI's copy, cli-then-sdk gives the SDK's, and a fresh `npm ci` from
+ * one lockfile can flip it back. So the same lockfile can yield a different
+ * `aex` on a developer's incremental tree than in CI. That is harmless if and
+ * only if the two copies are the same bytes.
+ *
+ * Why not "CLI owns it, the SDK drops `bin`". The SDK deliberately ships the
+ * executable: `npm i @aexhq/sdk` gives a caller both the library and `aex`, and
+ * that is the agent-first surface decision `bin-bundle.test.ts` guards.
+ * Dropping it is a breaking change to a published package for a cosmetic gain.
+ * (It is NOT ruled out by the hosted runtime, contrary to what was assumed: the
+ * in-container `aex` at `/mnt/session/uploads/aex/aex` is a renamed copy of
+ * platform's own private `@aexhq/runtime-bridge` bundle, and `@aexhq/cli`
+ * appears nowhere in platform.)
+ *
+ * Why not "SDK owns it, `@aexhq/cli` stops publishing". `@aexhq/cli` is already
+ * on npm and is the documented answer for callers that do not want the SDK.
+ * Unpublishing it does not remove the drift; it freezes it at 0.25.2 forever.
+ *
+ * What makes keeping both SAFE is a property, not a hope, and the two
+ * assertions below are that property:
+ *
+ *   1. both claimants are PUBLISHABLE, and the module graph knows the SDK
+ *      depends on the CLI — so the release loop publishes both on any change to
+ *      either and they cannot skew across versions. Before the graph edge
+ *      existed, a CLI-only change published `@aexhq/cli` alone, which is how
+ *      `@aexhq/cli@0.25.2` (157,149 bytes, still speaking `aex run`,
+ *      `--api-token` and `skills upload` over retired providers) ended up beside
+ *      `@aexhq/sdk@0.43.0`'s 286,874-byte copy.
+ *   2. both point `bin.aex` at the same relative path, and the bundles are
+ *      byte-identical per commit — asserted by
+ *      `packages/sdk/test/unit/bin-bundle.test.ts`.
+ *
+ * The READMEs must state the version-scoped truth and no more: the two are the
+ * same binary AT A GIVEN VERSION. The unqualified "they install the same
+ * binary" was false across published versions, so it is asserted absent.
+ */
 describe("binary name ownership", () => {
+  const claimants = listWorkspaceModules(repoRoot).filter((module) =>
+    Object.keys((module.manifest as Manifest).bin ?? {}).includes("aex")
+  );
+
   it("freezes the packages that claim the `aex` command", () => {
-    // Two published packages declare `bin.aex`, and npm cannot install both
-    // without one shadowing the other. That is deliberate and documented in
-    // packages/cli/README.md: `@aexhq/sdk` republishes the very same
-    // `packages/cli` bundle, so a user installs exactly one of the two. This
-    // assertion exists so a THIRD claimant cannot appear silently.
-    const claimants = listWorkspaceModules(repoRoot)
-      .filter((module) => Object.keys((module.manifest as Manifest).bin ?? {}).includes("aex"))
-      .map((module) => module.manifest.name)
-      .sort();
+    // A THIRD claimant must not be able to appear silently.
+    expect(claimants.map((module) => module.manifest.name).sort()).toEqual(["@aexhq/cli", "@aexhq/sdk"]);
+  });
 
-    expect(claimants).toEqual(["@aexhq/cli", "@aexhq/sdk"]);
+  it("keeps every claimant in the publish set, so one cannot go stale beside the other", () => {
+    const publishableNames = new Set(publishable.map((module) => module.manifest.name));
+    for (const module of claimants) {
+      expect(publishableNames.has(module.manifest.name), `${module.manifest.name} claims \`aex\``).toBe(true);
+    }
+  });
 
+  it("points every claimant at the same bin path", () => {
+    // Identical paths are what makes "the SDK republishes the CLI bundle" a
+    // mechanical statement rather than a convention.
+    const paths = new Set(claimants.map((module) => (module.manifest as Manifest).bin?.aex));
+    expect([...paths]).toEqual(["./dist/cli.mjs"]);
+  });
+
+  it("documents that the guarantee is per version, not across versions", () => {
     const cliReadme = readFileSync(resolve(repoRoot, "packages/cli/README.md"), "utf8");
+    const sdkReadme = readFileSync(resolve(repoRoot, "packages/sdk/README.md"), "utf8");
+
     expect(cliReadme).toContain("@aexhq/sdk");
+    // The claim that was false across published versions.
+    for (const [name, text] of [
+      ["packages/cli/README.md", cliReadme],
+      ["packages/sdk/README.md", sdkReadme]
+    ] as const) {
+      expect(text, `${name} must not claim an unqualified same-binary guarantee`).not.toMatch(
+        /install \*\*the same binary\*\*|is the same bundle published as/
+      );
+      expect(text, `${name} must name the version scope of the guarantee`).toContain("at the same version");
+    }
   });
 });

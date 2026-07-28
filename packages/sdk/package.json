@@ -60,6 +60,7 @@
     "pack:dry-run": "bun ../../scripts/with-generated-dist-lock.mjs bun pm pack --dry-run --ignore-scripts"
   },
   "devDependencies": {
+    "@aexhq/cli": "workspace:*",
     "@aexhq/contracts": "workspace:*",
     "@types/bun": "1.3.14"
   },

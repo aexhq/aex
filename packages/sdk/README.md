@@ -47,8 +47,11 @@ The package also includes the CLI:
 npx aex --help
 ```
 
-That binary is the same bundle published as `@aexhq/cli`. Both packages install
-a command called `aex`, so install exactly one of them.
+That binary is a copy of the bundle published as `@aexhq/cli`, and the two are
+the same bytes at the same version — CI compares them byte for byte on every
+commit and publishes both whenever either changes. Both packages install a
+command called `aex`, so install exactly one of them: with both installed, the
+winner is package-manager ordering.
 
 ## License
 

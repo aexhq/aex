@@ -13,17 +13,21 @@ npx @aexhq/cli start \
 
 ## Install exactly one of these
 
-This package and `@aexhq/sdk` both install a command called `aex`, and they
-install **the same binary**: the SDK's `dist/cli.mjs` is a copy of the bundle
-built here. Installing both in one tree leaves the winner to package-manager
-ordering.
+This package and `@aexhq/sdk` both install a command called `aex`. Both are
+built from this package's bundle at the same commit, and the two are the same
+bytes **at the same version** — the SDK's `dist/cli.mjs` is a copy of the one
+built here, and CI compares them byte for byte on every commit. Two DIFFERENT
+versions are two different binaries, as with any two releases.
 
 | You want | Install |
 | --- | --- |
 | The CLI only | `@aexhq/cli` |
 | The TypeScript SDK, with the CLI included | `@aexhq/sdk` |
 
-There is no third option and no reason to install both.
+There is no third option and no reason to install both. Installing both leaves
+the winner to package-manager ordering — including between a fresh `npm ci` and
+an incremental `npm i` of the same lockfile — so which copy you get is not
+something to rely on.
 
 ## What it is for
 
