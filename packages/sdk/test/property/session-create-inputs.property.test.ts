@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import type { FetchLike } from "@aexhq/contracts";
+import { idPattern, type FetchLike } from "@aexhq/contracts";
 import {
   BUILTIN_TOOL_NAMES,
   RUNTIME_SIZES,
@@ -374,7 +374,7 @@ function validateAcceptedCreate({ calls }: CaptureHarness, testCase: ValidCase):
   // is always present and always well-formed, whatever the rest of the options.
   const idempotencyHeader = call.headers["idempotency-key"];
   expect(typeof idempotencyHeader).toBe("string");
-  expect(idempotencyHeader).toMatch(/^idem_[0-9a-f]{32}$/);
+  expect(idempotencyHeader).toMatch(idPattern("idempotency"));
 
   const body = requireRecord(call.body, "session create body");
   expect("idempotencyKey" in body).toBe(false);

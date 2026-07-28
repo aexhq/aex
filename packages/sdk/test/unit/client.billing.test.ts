@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isId, type FetchLike } from "@aexhq/contracts";
+import { idPattern, isId, type FetchLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 interface RecordedCall {
@@ -124,7 +124,7 @@ describe("aex.billingTopup", () => {
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
     // SDK-minted: the caller never supplied one, but the wire still carries it.
-    expect(calls[0]!.headers.get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(calls[0]!.headers.get("idempotency-key")).toMatch(idPattern("idempotency"));
   });
 
   it("reuses one generated identity across transport retries", async () => {
@@ -198,7 +198,7 @@ describe("aex.billingPortal", () => {
     expect(url.pathname).toBe("/api/billing/portal");
     expect(calls[0]!.method).toBe("POST");
     expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ returnUrl: "https://aex.dev/billing" });
-    expect(calls[0]!.headers.get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(calls[0]!.headers.get("idempotency-key")).toMatch(idPattern("idempotency"));
   });
 });
 

@@ -1,7 +1,16 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { idPatternSource } from "@aexhq/contracts";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+
+/**
+ * The idempotency-key shape, taken from the id authority and INJECTED into the
+ * sandboxed child script below. The child imports only the installed
+ * `@aexhq/sdk`, so it cannot reach `@aexhq/contracts`; the shape crosses the
+ * process boundary as derived data rather than as a restated literal.
+ */
+const IDEMPOTENCY_KEY_SOURCE = JSON.stringify(idPatternSource("idempotency"));
 
 const SCRIPT = String.raw`
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
@@ -117,7 +126,7 @@ deepStrictEqual(result.usage, { inputTokens: 3, outputTokens: 2, totalTokens: 5 
 strictEqual(result.checkpoint.checkpointId, "cp-1");
 strictEqual(result.files[0].checkpointId, "cp-1");
 deepStrictEqual(result.events.map((event) => event.type), ["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]);
-ok(/^idem_[0-9a-f]{32}$/.test(calls.find((call) => call.path.endsWith("/messages")).headers.get("idempotency-key")));
+ok(new RegExp(${IDEMPOTENCY_KEY_SOURCE}).test(calls.find((call) => call.path.endsWith("/messages")).headers.get("idempotency-key")));
 
 await session.suspend();
 strictEqual(session.record.status, "suspended");

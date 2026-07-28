@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { FetchLike } from "@aexhq/contracts";
+import { idPattern, type FetchLike } from "@aexhq/contracts";
 import { Aex, McpServer, SessionConfigValidationError, type WorkspaceToolRef } from "../../src/index.js";
 import { unvalidatedCreateOptions } from "../helpers/unvalidated.js";
 
@@ -58,7 +58,7 @@ describe("aex.sessions.create", () => {
     const call = calls[0]!;
     expect(call.url).toBe("https://api.example.test/api/sessions");
     expect(call.method).toBe("POST");
-    expect(call.headers.get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(call.headers.get("idempotency-key")).toMatch(idPattern("idempotency"));
     const submission = call.body.submission as Record<string, unknown>;
     expect(submission.assets).toEqual({ files: [], skills: [], tools: [tool], instructions: [] });
     expect(submission.builtinTools).toEqual(["bash"]);

@@ -17,7 +17,7 @@
  * mechanism exists for — is pinned in `client.idempotency-retry-stability.test.ts`.
  */
 import { describe, expect, it } from "bun:test";
-import type { FetchLike } from "@aexhq/contracts";
+import { idPattern, type FetchLike } from "@aexhq/contracts";
 import { Aex, SessionConfigValidationError } from "../../src/index.js";
 
 function makeClient(): { client: Aex; keys: (string | undefined)[] } {
@@ -38,7 +38,7 @@ function makeClient(): { client: Aex; keys: (string | undefined)[] } {
 }
 
 /** The minted identifier's canonical form, per `@aexhq/contracts` `newId`. */
-const MINTED_KEY = /^idem_[0-9a-f]{32}$/;
+const MINTED_KEY = idPattern("idempotency");
 
 describe("the SDK owns the idempotency key", () => {
   const base = { model: "anthropic/claude-haiku-4-5" } as const;

@@ -11,6 +11,7 @@
  *   T13  a client-side config error is a typed `SessionConfigValidationError`.
  */
 import { describe, expect, it } from "bun:test";
+import { idPattern } from "@aexhq/contracts";
 import {
   SessionConfigValidationError,
   type SessionStartOptions,
@@ -92,6 +93,6 @@ describe("blackbox: idempotency key is a real safety property", () => {
     const create = platform.requestLog.find((r) => r.method === "POST" && r.path.endsWith("/api/sessions"));
     // The WIRE CONTRACT is unchanged by the public-surface removal — only the
     // owner of the value moved from the caller to the SDK.
-    expect(create?.idempotencyKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(create?.idempotencyKey).toMatch(idPattern("idempotency"));
   });
 });

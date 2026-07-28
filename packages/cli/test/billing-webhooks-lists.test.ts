@@ -7,6 +7,7 @@
  * Same injected-IO style as host.test.ts: fake fetch, captured stdout/stderr.
  */
 import { describe, expect, it } from "bun:test";
+import { idPattern } from "@aexhq/contracts";
 import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 
@@ -241,7 +242,7 @@ describe("aex billing topup", () => {
       cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
     // CLI-minted: no flag exists, but the wire still carries the identity.
-    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toMatch(idPattern("idempotency"));
   });
 
   it("supports --json and rejects a non-positive amount before network", async () => {
@@ -366,7 +367,7 @@ describe("aex billing portal", () => {
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/portal");
     expect(cap.calls[0]!.init.method).toBe("POST");
     expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({ returnUrl: "https://aex.dev/billing" });
-    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toMatch(idPattern("idempotency"));
   });
 
   it("supports --json", async () => {

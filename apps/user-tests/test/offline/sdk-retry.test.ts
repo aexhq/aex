@@ -13,7 +13,20 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { idPatternSource } from "@aexhq/contracts";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+
+/**
+ * The idempotency-key shape, taken from the id authority and INJECTED into the
+ * sandboxed child script below.
+ *
+ * The child runs inside a clean `npm i @aexhq/sdk` tree and can import nothing
+ * but the installed package, so it cannot reach `@aexhq/contracts` itself. A
+ * hand-written anchored shape literal there is exactly what
+ * `scripts/validate/id-format-parity.test.ts` refuses, so the shape crosses the
+ * process boundary as data derived from `idPatternSource` instead.
+ */
+const IDEMPOTENCY_KEY_SOURCE = JSON.stringify(idPatternSource("idempotency"));
 
 const CHILD_HARNESS = String.raw`
 import { strictEqual, ok } from "node:assert/strict";
@@ -107,7 +120,7 @@ const session = await client(a.fetch).sessions.create({ model: "anthropic/claude
 strictEqual(session.id, "sess_retry");
 strictEqual(a.attempts.length, 3);
 const keys = a.attempts.map((x) => x.headers["idempotency-key"]);
-ok(/^idem_[0-9a-f]{32}$/.test(keys[0]), "the SDK mints the key; the caller supplies none");
+ok(new RegExp(${IDEMPOTENCY_KEY_SOURCE}).test(keys[0]), "the SDK mints the key; the caller supplies none");
 strictEqual(new Set(keys).size, 1, "every retry reuses the SAME minted idempotency key");
 
 // 2) A transient network error is retried, then succeeds.
