@@ -195,9 +195,9 @@ jobs:
   # without sharing a mutable checkout between packages.
   #
   # `matrix` is the router's publish set, so an unaffected module is not
-  # republished and an affected one cannot be forgotten. Stable promotion is NOT
-  # here and is not a consequence of this job passing: it lives in
-  # `promote-canary.yml`, behind an explicit manual dispatch.
+  # republished and an affected one cannot be forgotten. Stable promotion is
+  # intentionally absent during prelaunch and is not a consequence of this job
+  # passing.
   #
   # Publication is OIDC trusted publishing (`id-token: write` + `--provenance`).
   # There is deliberately no token path: the `NPM_TOKEN` secret was deleted, and

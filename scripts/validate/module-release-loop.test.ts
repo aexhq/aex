@@ -14,7 +14,6 @@ import {
 
 const repoRoot = new URL("../../", import.meta.url);
 const ci = readWorkflow(".github/workflows/ci.yml");
-const promote = readWorkflow(".github/workflows/promote-canary.yml");
 const workflowPaths = readdirSync(new URL(".github/workflows/", repoRoot))
   .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
   .map((name) => `.github/workflows/${name}`)
@@ -161,41 +160,17 @@ describe("publication is OIDC trusted publishing with no token path", () => {
     }
   });
 
-  it("keeps every job on a GitHub-hosted runner behind a declared environment", () => {
+  it("keeps the publisher on a GitHub-hosted runner behind a declared environment", () => {
     expect(workflowJob(ci, "publish-canary").environment).toBe("npm-release");
-    expect(workflowJob(promote, "promote").environment).toBe("npm-promote");
   });
 });
 
-describe("stable promotion stays manual", () => {
-  it("has exactly one trigger, and it is a human dispatch", () => {
-    expect(Object.keys(workflowTriggers(promote))).toEqual(["workflow_dispatch"]);
-  });
-
-  it("is not reachable from a push, a release, a schedule, or another workflow", () => {
-    const triggers = workflowTriggers(promote);
-    for (const forbidden of ["push", "release", "schedule", "workflow_run", "workflow_call", "pull_request"]) {
-      expect(Object.keys(triggers), forbidden).not.toContain(forbidden);
-    }
-  });
-
-  it("verifies the selection against the registry before it moves a tag", () => {
-    const job = workflowJob(promote, "promote");
-    expect(stepRun(job, /verify-canary-selection\.mjs/)).toBe(true);
-    expect(stepRun(job, /merge-base --is-ancestor/)).toBe(true);
-    const steps = workflowSteps(job);
-    const verifyIndex = steps.findIndex((step) => String(step.run).includes("verify-canary-selection.mjs"));
-    const promoteIndex = steps.findIndex((step) => String(step.run).includes("npm dist-tag add"));
-    expect(verifyIndex).toBeGreaterThanOrEqual(0);
-    expect(promoteIndex).toBeGreaterThan(verifyIndex);
-  });
-
-  it("is never invoked from the CI workflow, so green CI cannot promote", () => {
-    // Prose may name it — CI explains where promotion lives. What must not exist
-    // is an invocation: a reusable-workflow call or a dist-tag move inside CI.
-    for (const [id, job] of Object.entries(ci.jobs)) {
-      expect(String(job.uses ?? ""), `${id} must not call the promotion workflow`).not.toContain("promote-canary");
-      expect(JSON.stringify(workflowSteps(job)), id).not.toContain("npm dist-tag");
+describe("prelaunch remains canary-only", () => {
+  it("has no stable promotion workflow or dist-tag mutation", () => {
+    expect(workflowPaths).not.toContain(".github/workflows/promote-canary.yml");
+    for (const path of workflowPaths) {
+      expect(readRepoFile(path), `${path} must not move a stable npm tag`).not.toContain("npm dist-tag");
+      expect(readRepoFile(path), `${path} must not use the stable promotion environment`).not.toContain("npm-promote");
     }
     expect(Object.keys(workflowTriggers(ci))).not.toContain("workflow_run");
   });
