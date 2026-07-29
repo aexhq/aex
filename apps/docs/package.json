@@ -13,7 +13,7 @@
     "lucide-react": "0.562.0",
     "next": "16.2.6",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.8"
   },
   "scripts": {
     "generate": "bun ../../scripts/with-generated-dist-lock.mjs bun run generate:unlocked",
