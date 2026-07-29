@@ -8,7 +8,7 @@
     "@orama/orama": "^3.1.18",
     "aex": "workspace:*",
     "fumadocs-core": "^16.9.3",
-    "fumadocs-mdx": "^15.0.10",
+    "fumadocs-mdx": "^15.2.0",
     "fumadocs-ui": "^16.9.3",
     "lucide-react": "0.562.0",
     "next": "16.2.6",
