@@ -223,6 +223,7 @@ jobs:
         needs.module-checks.result == 'success'
       }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: npm-release
     permissions:
       contents: write

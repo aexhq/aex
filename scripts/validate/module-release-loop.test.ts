@@ -147,6 +147,10 @@ describe("each published canary records version, integrity, and source identity"
 });
 
 describe("publication is OIDC trusted publishing with no token path", () => {
+  it("bounds each canary publisher so a registry or runner hang cannot run unbounded", () => {
+    expect(workflowJob(ci, "publish-canary")["timeout-minutes"]).toBe(20);
+  });
+
   it("requests an id-token and publishes with provenance", () => {
     const publish = workflowJob(ci, "publish-canary");
     expect((publish.permissions as Record<string, string>)["id-token"]).toBe("write");
