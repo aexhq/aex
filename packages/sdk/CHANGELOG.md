@@ -10,8 +10,35 @@ Prepaid billing. The free/pro/team subscription catalog is gone: a card is
 optional, every workspace gets per-dimension free allowances that reset each UTC
 month, and past those you spend prepaid credit. There is no plan to be on.
 
+The idempotency key also stops being a customer concern. It is still on the wire
+and still load-bearing — the API has a 29-second ceiling, so a submit can succeed
+while its response never reaches you, and only a stable key keeps the retry from
+becoming a second session, a second container and a second bill. The SDK now owns
+that value end to end.
+
 ### Changed (BREAKING)
 
+- **`idempotencyKey` is removed from every public option.** `IdempotencyOptions`
+  is gone, along with `SessionCreateOptions.idempotencyKey`,
+  `SessionSendOptions.idempotencyKey`, `SessionStartOptions.idempotencyKey` and
+  `SessionStartOptions.messageIdempotencyKey`, the second `IdempotencyOptions`
+  argument to `aex.billingTopup(...)` and `aex.billingPortal(...)`, and the CLI
+  flags `aex start --idempotency-key`, `aex billing topup --idempotency-key` and
+  `aex billing portal --idempotency-key`. Passing the option now throws
+  `SessionConfigValidationError` instead of being silently accepted.
+
+  The SDK mints a key per logical mutation and REUSES it across its own automatic
+  retries (4 attempts by default: one try plus three retries). `Aex.start` still
+  derives the first-message key from the create key, so both halves of one start
+  de-duplicate together. `session.messages.replayLast()` still re-presents the
+  ORIGINAL key; `session.messages.send(...)` is how you ask for a new turn.
+
+  A retry loop you write yourself is NOT covered by that guarantee: each pass is
+  a new logical mutation carrying a new key, and each one bills. If a call still
+  fails once the built-in retries are exhausted, treat it as failed rather than
+  reissuing it blind, then reconcile with `aex.sessions.list()` and delete any
+  duplicate. Duplicates are bounded — they hit `maxIdleTtl`, checkpoint
+  themselves, and are listable and deletable.
 - **`402 insufficient_balance` → `402 insufficient_credits`.** The code names
   what is actually exhausted: the free monthly allowance *and* the prepaid
   balance. The body gains `admissionState`, `exhaustedDimension`, an
@@ -69,6 +96,13 @@ Replace `aex.billingCheckout({ planKey: "pro" })` with
 handling `"account_blocked"` separately, since credit does not clear it. Read
 account state from `whoami().limits.admissionState` and remaining free allowance
 from `billing().allowances` rather than from `planKey`.
+
+Delete every `idempotencyKey` / `messageIdempotencyKey` you pass and every
+`--idempotency-key` you script; there is no replacement option and no shim. If
+you kept a key only to make your own retry safe, delete that retry loop too and
+let the built-in one run — it is the only loop that reuses the key. Keep a
+caller-side loop only where a duplicate session is acceptable, and reconcile with
+`aex.sessions.list()`.
 
 ## 1.0.0
 

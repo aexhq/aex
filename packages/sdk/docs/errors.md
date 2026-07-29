@@ -210,19 +210,19 @@ does not distinguish the two). The SDK raises `AexNotFoundError` (guard:
 
 | Code | Meaning |
 | --- | --- |
-| `idempotency_conflict` | The `idempotencyKey` was already used with a different request body. The SDK raises `AexIdempotencyConflictError` (guard: `isIdempotencyConflict(err)`). |
+| `idempotency_conflict` | The SDK-minted idempotency key was already used with a different request body. The SDK raises `AexIdempotencyConflictError` (guard: `isIdempotencyConflict(err)`). |
 | `session_busy` | The session is handling another turn or lifecycle transition. Wait for its current operation to finish. |
 | `checkpoint_not_available` | No committed checkpoint exists yet for a checkpoint-backed read such as `session.files.list()`. Wait for the current run to finish. This remains a base `AexApiError`, not an idempotency conflict. |
 | `session_not_terminal` | The requested operation requires a terminal session state. |
 | `session_terminal` | The session has ended and cannot perform the requested action. |
 | `workspace_inactive` | A workspace deletion fence won the admission race, so the workspace no longer accepts new session work. The body carries `workspaceStatus` (normally `deleting`). Use an active workspace. |
 
-For `idempotency_conflict`, use a fresh idempotency key for a genuinely new request, or resubmit
-the byte-identical body to replay the original result (a matching retry returns
-the existing session rather than conflicting). Note that the SDK validates the
-key client-side first: an empty or whitespace-only `idempotencyKey` throws
-`SessionConfigValidationError` before the request is sent, as does a key longer
-than 255 characters. Never pass `""`.
+`idempotency_conflict` should not reach an SDK caller: the key is SDK-owned and
+minted fresh per logical mutation, so a genuinely new request always carries a
+new key, and a transport retry resubmits the byte-identical body under the
+original key (which replays the original result rather than conflicting).
+Seeing it means a key was reused across differing bodies — treat it as a bug
+report rather than something to retry.
 
 `workspace_inactive` is not an idempotency conflict and is not transient for
 that workspace. It remains a base `AexApiError`; branch on

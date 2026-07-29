@@ -44,6 +44,13 @@ const pinnedBase = {
   contentHash: `sha256:${hash}`
 } as const;
 
+/** An instruction is pinned to its TEXT, so it carries no asset pair at all. */
+const pinnedInstructionBase = {
+  resourceId: `wres_${"1".repeat(32)}`,
+  version: 1,
+  textHash: `sha256:${hash}`
+} as const;
+
 describe("persisted workspace resource names", () => {
   it.each([
     ["file", WORKSPACE_FILE_RESOURCE_NAME_PATTERN, assertWorkspaceFileResourceName],
@@ -65,12 +72,12 @@ describe("persisted workspace resource names", () => {
   });
 
   it.each([
-    ["file", "files", { mountPath: "/workspace" }],
-    ["instruction", "instructions", {}]
+    ["file", "files", { ...pinnedBase, mountPath: "/workspace" }],
+    ["instruction", "instructions", pinnedInstructionBase]
   ] as const)("applies the %s name contract to pinned refs", (kind, field, extra) => {
     for (const name of acceptedNames) {
       const assets = { files: [], skills: [], tools: [], instructions: [] } as Record<string, unknown>;
-      assets[field] = [{ ...pinnedBase, ...extra, kind, name }];
+      assets[field] = [{ ...extra, kind, name }];
       expect(() => parseSubmission({
         model: "anthropic/claude-haiku-4-5",
         prompt: ["work"],
@@ -82,7 +89,7 @@ describe("persisted workspace resource names", () => {
 
     for (const name of rejectedNames) {
       const assets = { files: [], skills: [], tools: [], instructions: [] } as Record<string, unknown>;
-      assets[field] = [{ ...pinnedBase, ...extra, kind, name }];
+      assets[field] = [{ ...extra, kind, name }];
       expect(() => parseSubmission({
         model: "anthropic/claude-haiku-4-5",
         prompt: ["work"],

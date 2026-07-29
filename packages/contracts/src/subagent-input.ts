@@ -79,9 +79,15 @@ function rejectUnknownKeys(
   }
 }
 
-const COMMON_PROPERTIES = {
+/** The logical version every kind is pinned by, whatever it is pinned TO. */
+const VERSION_PROPERTIES = {
   resourceId: { type: "string", pattern: idPatternSource("resource") },
-  version: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+  version: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER }
+} as const satisfies Readonly<Record<string, JsonValue>>;
+
+/** The content-address the three ASSET-BACKED kinds additionally carry. */
+const COMMON_PROPERTIES = {
+  ...VERSION_PROPERTIES,
   assetId: { type: "string", pattern: "^asset_[0-9a-f]{64}$" },
   contentHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }
 } as const satisfies Readonly<Record<string, JsonValue>>;
@@ -133,11 +139,14 @@ const RESOURCE_DESCRIPTORS = {
       }
     }
   },
+  // Pinned to TEXT, so no assetId/contentHash: the model is advertised the same
+  // key set the wire schema enforces, and neither carries an asset any more.
   instructions: {
     kind: "instruction",
     properties: {
       kind: { const: "instruction" },
-      ...COMMON_PROPERTIES,
+      ...VERSION_PROPERTIES,
+      textHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
       name: {
         type: "string",
         pattern: WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN.source,
@@ -251,12 +260,18 @@ function parseResource(
   rejectUnknownKeys(input, descriptorKeys(collection), (key) => `${path}.${key} is not allowed`);
   if (input.kind !== descriptor.kind) throw new Error(`${path}.kind must be '${descriptor.kind}'`);
 
-  const base = {
+  const version = {
     resourceId: requireString(input.resourceId, `${path}.resourceId`),
-    version: requirePositiveInteger(input.version, `${path}.version`),
+    version: requirePositiveInteger(input.version, `${path}.version`)
+  };
+  // Only the three asset-backed kinds have a content address to read. Read
+  // lazily rather than up front: asking an instruction for one would reject
+  // every valid instruction ref.
+  const base = (): typeof version & { assetId: string; contentHash: string } => ({
+    ...version,
     assetId: requireString(input.assetId, `${path}.assetId`),
     contentHash: requireString(input.contentHash, `${path}.contentHash`)
-  };
+  });
 
   let result: WorkspaceResourceRef;
   switch (collection) {
@@ -265,14 +280,14 @@ function parseResource(
       assertWorkspaceFileResourceName(name, `${path}.name`);
       const mountPath = requireString(input.mountPath, `${path}.mountPath`);
       assertValidMountPath(mountPath, `${path}.mountPath`);
-      result = { ...base, kind: "file", name, mountPath };
+      result = { ...base(), kind: "file", name, mountPath };
       break;
     }
     case "skills": {
       const name = requireString(input.name, `${path}.name`);
       assertSkillName(name, `${path}.name`);
       const description = requireDescription(input.description, `${path}.description`);
-      result = { ...base, kind: "skill", name, description };
+      result = { ...base(), kind: "skill", name, description };
       break;
     }
     case "tools": {
@@ -286,13 +301,18 @@ function parseResource(
       }
       const entry = requireString(input.entry, `${path}.entry`);
       assertToolEntry(entry, `${path}.entry`);
-      result = { ...base, kind: "tool", name, description, input_schema: input.input_schema, entry };
+      result = { ...base(), kind: "tool", name, description, input_schema: input.input_schema, entry };
       break;
     }
     case "instructions": {
       const name = requireString(input.name, `${path}.name`);
       assertWorkspaceInstructionResourceName(name, `${path}.name`);
-      result = { ...base, kind: "instruction", name };
+      result = {
+        ...version,
+        kind: "instruction",
+        name,
+        textHash: requireString(input.textHash, `${path}.textHash`)
+      };
       break;
     }
   }

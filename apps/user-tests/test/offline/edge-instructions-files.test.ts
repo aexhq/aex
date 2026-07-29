@@ -115,13 +115,23 @@ function makeFetch() {
     const workspace = /\/workspace\/(files|instructions)$/.exec(new URL(url).pathname);
     if (workspace && method === "POST") {
       resourceCounter += 1;
-      return j(200, { resource: {
-        ...body,
-        kind: workspace[1] === "files" ? "file" : "instruction",
+      const identity = {
         resourceId: "wres_" + resourceCounter.toString(16).repeat(32),
         version: resourceCounter,
         createdAt: new Date(0).toISOString()
-      }});
+      };
+      // An instruction is published as TEXT: the request carries { name, text }
+      // and the record answers with a textHash, never an assetId/contentType.
+      if (workspace[1] === "instructions") {
+        return j(200, { resource: {
+          kind: "instruction",
+          name: body.name,
+          textHash: "sha256:" + resourceCounter.toString(16).repeat(64).slice(0, 64),
+          sizeBytes: new TextEncoder().encode(body.text).byteLength,
+          ...identity
+        }});
+      }
+      return j(200, { resource: { ...body, kind: "file", ...identity }});
     }
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;

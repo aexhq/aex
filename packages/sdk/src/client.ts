@@ -101,7 +101,6 @@ import { splitSecretEnv } from "./secret.js";
 import { Skill } from "./skill.js";
 import { Tool } from "./tool.js";
 import type {
-  IdempotencyOptions,
   Message,
   SessionCreateOptions,
   SessionInput,
@@ -139,7 +138,6 @@ import {
 } from "./submission-wire.js";
 
 export type {
-  IdempotencyOptions,
   Message,
   SessionCreateOptions,
   SessionEnvironmentOptions,
@@ -184,6 +182,7 @@ export interface AexOptions {
 
 interface InternalSessionSendOptions extends SessionSendOptions {
   readonly signal?: AbortSignal;
+  readonly idempotencyKey?: string; // SDK-owned; see `internalSessionCreators`.
 }
 
 interface InternalSessionRunStreamOptions extends InternalSessionSendOptions {
@@ -276,6 +275,12 @@ function sendSessionInternal(
   }
   return sender(normaliseSessionInput(input, "session.messages.send", "input"), options);
 }
+
+// Package-private create-with-a-known-key channel (the `internalSessionSenders`
+// idiom): `Aex.start` mints ONE SDK-owned key, creates with it, and derives the
+// first-message key from it — none of it reaching the public options.
+type InternalSessionCreator = (options: SessionCreateOptions, idempotencyKey: string) => Promise<SessionHandle>;
+const internalSessionCreators = new WeakMap<SessionClient, InternalSessionCreator>();
 
 /**
  * Accessor over the session's assistant messages. `session.messages` returns
@@ -370,9 +375,9 @@ export class SessionHandle {
         if (last === undefined) {
           throw new SessionStateError("session.messages.replayLast: no message has been sent on this session yet");
         }
-        return sendSessionInternal(this, last.input, {
+        return sendSessionInternal(this, last.input, { // the ORIGINAL key: same logical turn
           ...options,
-          idempotencyKey: options.idempotencyKey ?? last.idempotencyKey
+          idempotencyKey: last.idempotencyKey
         });
       }
     );
@@ -531,16 +536,15 @@ export class SessionClient {
     this.#http = http;
     this.#buildCreateRequest = buildCreateRequest;
     this.#fetch = fetch;
+    internalSessionCreators.set(this, async (createOptions, idempotencyKey) => {
+      const request = await this.#buildCreateRequest(createOptions);
+      const session = await operations.createSession(this.#http, request, { idempotencyKey });
+      return new SessionHandle(this.#http, session, this.#fetch);
+    });
   }
 
   async create(options: SessionCreateOptions): Promise<SessionHandle> {
-    const request = await this.#buildCreateRequest(options);
-    const session = await operations.createSession(
-      this.#http,
-      request,
-      { idempotencyKey: operations.resolveIdempotencyKey(options.idempotencyKey) }
-    );
-    return new SessionHandle(this.#http, session, this.#fetch);
+    return (internalSessionCreators.get(this) as InternalSessionCreator)(options, operations.resolveIdempotencyKey());
   }
 
   async open(sessionId: string): Promise<SessionHandle> {
@@ -1320,10 +1324,10 @@ export class Aex {
     assertStartSessionOptions(opts, "Aex.start");
     const scopedSignal = scopedAbortSignal(opts.timeoutMs);
     try {
-      const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
+      const { message, deleteAfter, stream, ...createOptions } = options;
       assertSupportedSessionFields(options, "Aex.start", true);
       const input = normaliseSessionInput(message, "Aex.start", "message");
-      assertSupportedSessionSendOptions(stream, "Aex.start stream", false);
+      assertSupportedSessionSendOptions(stream, "Aex.start stream");
       const sendOptions: InternalSessionSendOptions = {
         ...(stream ?? {}),
         ...(scopedSignal?.signal ? { signal: scopedSignal.signal } : {}),
@@ -1331,15 +1335,11 @@ export class Aex {
         ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
         ...(opts.pingIntervalMs !== undefined ? { pingIntervalMs: opts.pingIntervalMs } : {})
       };
-      // Derive the message key from the create key (like the CLI) so a retried
-      // session with the same `idempotencyKey` de-duplicates BOTH the create and the
-      // billable turn server-side — never a duplicate billable session turn (sdk-dx-3).
-      const createKey = operations.resolveIdempotencyKey(createOptions.idempotencyKey);
-      const messageKey =
-        messageIdempotencyKey !== undefined
-          ? operations.resolveIdempotencyKey(messageIdempotencyKey)
-          : operations.deriveMessageIdempotencyKey(createKey);
-      const session = await this.sessions.create({ ...createOptions, idempotencyKey: createKey });
+      // ONE SDK-minted key for the create + the first-message key DERIVED from
+      // it (like the CLI), so neither half of one start() is billed twice.
+      const createKey = operations.resolveIdempotencyKey();
+      const messageKey = operations.deriveMessageIdempotencyKey(createKey);
+      const session = await (internalSessionCreators.get(this.sessions) as InternalSessionCreator)(createOptions, createKey);
       // One terminal boundary: RUN_FINISHED/RUN_ERROR carries the run outcome,
       // cost, and usage. `start()` only reshapes the same finished result.
       let turnResult: SessionRunResult;
@@ -1590,8 +1590,8 @@ export class Aex {
   }
 
   /** Buy prepaid credit through hosted checkout; first use also saves the card. */
-  billingTopup(request: BillingTopupCheckoutRequest, options?: IdempotencyOptions): Promise<BillingHostedSession> {
-    return operations.createBillingTopupCheckout(this.#http, request, options);
+  billingTopup(request: BillingTopupCheckoutRequest): Promise<BillingHostedSession> {
+    return operations.createBillingTopupCheckout(this.#http, request);
   }
 
   /** Set the separately consented, off-by-default auto-recharge authority. */
@@ -1600,8 +1600,8 @@ export class Aex {
   }
 
   /** Create a hosted billing-portal session. */
-  billingPortal(request: BillingPortalRequest = {}, options?: IdempotencyOptions): Promise<BillingHostedSession> {
-    return operations.createBillingPortal(this.#http, request, options);
+  billingPortal(request: BillingPortalRequest = {}): Promise<BillingHostedSession> {
+    return operations.createBillingPortal(this.#http, request);
   }
 
   /** Read recent signed credit-ledger rows, newest first. */
@@ -1779,20 +1779,18 @@ export class WorkspaceToolsClient {
   delete(resourceId: string): Promise<void> { return operations.deleteWorkspaceTool(this.http, resourceId); }
 }
 
+/**
+ * The one resource client with no {@link WorkspaceAssetPublisher}: instructions
+ * are published as text, so there is no asset to stage first and the
+ * `assets:write` scope is not exercised by publishing one.
+ */
 export class WorkspaceInstructionsClient {
-  constructor(private readonly http: HttpClient, private readonly publisher: WorkspaceAssetPublisher) {}
+  constructor(private readonly http: HttpClient) {}
 
   async publish(instructions: Instructions): Promise<WorkspaceInstructionRecord> {
-    const bundle = instructions._takeDraftBundle();
-    if (!bundle) throw new Error("workspace.instructions.publish requires draft instructions");
-    const uploaded = await this.publisher.upload({ bytes: bundle.bytes, hash: bundle.contentHash, contentType: "application/zip" });
-    return operations.publishWorkspaceInstruction(this.http, {
-      assetId: uploaded.assetId,
-      contentHash: uploaded.contentHash,
-      sizeBytes: uploaded.sizeBytes,
-      contentType: uploaded.contentType,
-      name: bundle.name
-    });
+    const draft = instructions._takeDraftInstruction();
+    if (!draft) throw new Error("workspace.instructions.publish requires draft instructions");
+    return operations.publishWorkspaceInstruction(this.http, { name: draft.name, text: draft.text });
   }
 
   list(query?: WorkspaceResourceListQuery): Promise<WorkspaceResourcePage<WorkspaceInstructionRecord>> {
@@ -1813,7 +1811,7 @@ export class WorkspaceClient {
     this.files = new WorkspaceFilesClient(http, publisher);
     this.skills = new WorkspaceSkillsClient(http, publisher);
     this.tools = new WorkspaceToolsClient(http, publisher);
-    this.instructions = new WorkspaceInstructionsClient(http, publisher);
+    this.instructions = new WorkspaceInstructionsClient(http);
     this.secrets = new SecretsClient(http);
   }
 }

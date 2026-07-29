@@ -1,4 +1,8 @@
 ---
+# GENERATED FILE - do not edit.
+# Written by `scripts/docs/generate-all.mjs` from `packages/sdk/docs/concepts/providers-and-runtimes.md`.
+# Edit the source and run `bun run docs:generate`. A hand edit here is
+# reverted by the next `bun run lint`, which regenerates via `prelint`.
 title: Models & runtimes
 description: How gateway model slugs map to managed runtime execution.
 icon: Network

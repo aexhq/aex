@@ -46,3 +46,10 @@ The package also includes the CLI:
 ```bash
 npx aex --help
 ```
+
+That binary is the same bundle published as `@aexhq/cli`. Both packages install
+a command called `aex`, so install exactly one of them.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

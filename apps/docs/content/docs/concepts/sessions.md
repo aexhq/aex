@@ -1,4 +1,8 @@
 ---
+# GENERATED FILE - do not edit.
+# Written by `scripts/docs/generate-all.mjs` from `packages/sdk/docs/concepts/sessions.md`.
+# Edit the source and run `bun run docs:generate`. A hand edit here is
+# reverted by the next `bun run lint`, which regenerates via `prelint`.
 title: Sessions
 description: Resumable threads, explicit runs, and committed checkpoints.
 icon: Play
@@ -42,10 +46,12 @@ console.log(snapshot.revision.checkpointId);
 console.log(snapshot.files);
 ```
 
-Reopen a durable session with `aex.sessions.open(id)`. Use a stable
-`idempotencyKey` for create and message mutations that your application may
-repeat. Reads and explicitly idempotent mutations receive bounded transport
-retries; a user run is never replayed as a whole by the SDK.
+Reopen a durable session with `aex.sessions.open(id)`. Create and message
+mutations carry an SDK-minted idempotency key that is reused across the
+transport's automatic retries, so a lost response is de-duplicated rather than
+billed twice — you neither supply nor manage a key. Reads and idempotent
+mutations receive bounded transport retries; a user run is never replayed as a
+whole by the SDK.
 
 `aex.start(...)` is the one-shot create, send, and finish convenience. It
 returns the same five-value run outcome and committed file snapshot.

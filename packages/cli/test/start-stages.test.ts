@@ -93,7 +93,6 @@ describe("start stage ownership", () => {
 
 describe("start-specific parser", () => {
   it.each([
-    ["--idempotency-key", "idem"],
     ["--webhook", "https://hooks.example.test/aex"],
     ["--runtime-size", "0.25cpu-1gb"],
     ["--runtime", "lambda"],
@@ -148,7 +147,6 @@ describe("start-specific parser", () => {
   });
 
   it.each([
-    ["--idempotency-key"],
     ["--webhook"],
     ["--runtime-size"],
     ["--runtime"],

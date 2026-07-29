@@ -45,27 +45,30 @@ The SDK never reruns a whole user scenario after a terminal failure. A failed
 run is the product result a user would observe. Reliability belongs below that
 boundary, in idempotent transport, checkpointing, and the hosted runtime.
 
-When your application deliberately repeats a create or message mutation, reuse
-its idempotency key:
+## Idempotency is handled for you
 
-```ts
-const result = await aex.start({
-  model,
-  message: "Write the report.",
-  idempotencyKey: "report-2026-07-10"
-});
-```
+There is no idempotency key on the SDK or CLI surface. You do not generate one,
+pass one, or store one.
 
-`Aex.start` derives a stable message key from the create key, so repeating the
-same call cannot create a second billable run. A changed request under the same
-key fails with an idempotency conflict. Explicit keys may contain at most 255
-characters. For a create key short enough to append `:message`, the derived key
-is readable as `<createKey>:message`; longer valid keys use a deterministic
-SHA-256-derived message key that remains within the same limit.
+It still exists on the wire, and it is load-bearing. The API has a 29-second
+ceiling, so a submit can succeed server-side while its response never reaches
+you. The SDK mints a key per logical mutation and replays **that same key**
+across its own automatic retries, so the retried attempt is recognised as the
+original and de-duplicated — instead of creating a second session, a second
+container, and a second bill. `Aex.start` additionally derives the first-message
+key from the create key, so both halves of one start are covered.
 
-For an explicit user-driven retry on an existing session, call
-`session.messages.replayLast()` after applying your own policy. It reuses the
-last message key by default.
+A retry loop you write yourself is **not** covered by that guarantee: each pass
+is a new logical mutation carrying a new key, and each one bills. If a call
+still fails once the SDK's own retries are exhausted, treat it as failed rather
+than reissuing it blind, then reconcile with `aex.sessions.list()` and delete
+anything duplicated. The blast radius is bounded — a duplicate session hits its
+`maxIdleTtl`, checkpoints itself, and is listable and deletable.
+
+To repeat a turn on an existing session deliberately, call
+`session.messages.replayLast()`. It re-presents the ORIGINAL key, so a server
+that already recorded that turn de-duplicates it rather than billing another.
+`session.messages.send(...)` is how you ask for a genuinely new turn.
 
 ## Throttling
 

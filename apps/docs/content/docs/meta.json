@@ -1,4 +1,5 @@
 {
+  "$generated": "GENERATED FILE - do not edit. Written by scripts/docs/generate-all.mjs; run 'bun run docs:generate'.",
   "title": "aex",
   "pages": [
     "index",

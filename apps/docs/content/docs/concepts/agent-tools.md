@@ -1,4 +1,8 @@
 ---
+# GENERATED FILE - do not edit.
+# Written by `scripts/docs/generate-all.mjs` from `packages/sdk/docs/concepts/agent-tools.md`.
+# Edit the source and run `bun run docs:generate`. A hand edit here is
+# reverted by the next `bun run lint`, which regenerates via `prelint`.
 title: Agent tools
 description: Select builtin capabilities and attach published custom tools.
 icon: TerminalSquare

@@ -1,4 +1,8 @@
 ---
+# GENERATED FILE - do not edit.
+# Written by `scripts/docs/generate-all.mjs` from `packages/sdk/docs/concepts/subagents.md`.
+# Edit the source and run `bun run docs:generate`. A hand edit here is
+# reverted by the next `bun run lint`, which regenerates via `prelint`.
 title: Subagents
 description: Delegate bounded work to child sessions and inspect their lineage.
 icon: GitFork

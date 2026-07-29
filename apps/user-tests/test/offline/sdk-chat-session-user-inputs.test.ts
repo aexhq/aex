@@ -105,7 +105,6 @@ class Socket {
 const client = new Aex({ apiKey: "aex_test", baseUrl: "https://api.example", fetch });
 const session = await client.sessions.create({ model: "anthropic/claude-haiku-4-5" });
 const result = await session.messages.send(["hello", "again"], {
-  idempotencyKey: "stable-message",
   webSocketFactory: (url) => new Socket(url)
 }).finished();
 
@@ -118,7 +117,7 @@ deepStrictEqual(result.usage, { inputTokens: 3, outputTokens: 2, totalTokens: 5 
 strictEqual(result.checkpoint.checkpointId, "cp-1");
 strictEqual(result.files[0].checkpointId, "cp-1");
 deepStrictEqual(result.events.map((event) => event.type), ["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]);
-strictEqual(calls.find((call) => call.path.endsWith("/messages")).headers.get("idempotency-key"), "stable-message");
+ok(/^idem_[0-9a-f]{32}$/.test(calls.find((call) => call.path.endsWith("/messages")).headers.get("idempotency-key")));
 
 await session.suspend();
 strictEqual(session.record.status, "suspended");

@@ -3,11 +3,26 @@
   "version": "0.33.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aexhq/aex.git"
+    "url": "git+https://github.com/aexhq/aex.git",
+    "directory": "packages/contracts"
   },
   "description": "Public aex wire contracts, SDK transport helpers, and conformance-facing schemas.",
   "license": "Apache-2.0",
+  "keywords": [
+    "aex",
+    "agent",
+    "contracts",
+    "openapi",
+    "zod"
+  ],
+  "homepage": "https://aex.dev",
+  "bugs": {
+    "url": "https://github.com/aexhq/aex/issues"
+  },
   "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -63,6 +78,8 @@
   "files": [
     "dist",
     "openapi",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ]
 }

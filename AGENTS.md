@@ -36,7 +36,12 @@ Before changing code, config, tests, or docs, read
 | Development, tests, and release routing | [`references/develop.md`](references/develop.md) |
 | Contributor and review procedure | [`references/contributing.md`](references/contributing.md) |
 | Durable-doc, diagnostics, scratch, and worktree placement | [`references/repository-hygiene.md`](references/repository-hygiene.md) |
+| System design and the open-core boundary | [`references/architecture.md`](references/architecture.md) |
+| Vocabulary the source uses without defining | [`references/glossary.md`](references/glossary.md) |
+| The `*.internal` runtime protocol | [`references/internal-protocol.md`](references/internal-protocol.md) |
 | Public product orientation | [`README.md`](README.md) |
+| Contributor entry point and the maintainer asymmetry | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Community conduct | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
 | Canonical SDK documentation | [`packages/sdk/docs/`](packages/sdk/docs/) |
 | Public website source | [`apps/docs/content/docs/`](apps/docs/content/docs/) |
 | Security reporting | [`SECURITY.md`](SECURITY.md) |

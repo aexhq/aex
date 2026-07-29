@@ -64,17 +64,18 @@ export interface SessionOverrides {
   readonly maxTurns?: number;
 }
 
-/** Stable mutation identity used for server-side deduplication and safe transport retries. */
-export interface IdempotencyOptions {
-  readonly idempotencyKey?: string;
-}
-
 /**
  * Options for creating a resumable session or starting a one-shot run.
  * Reusable bytes are published first through `aex.workspace`, then pinned in
  * `assets` by resource id and immutable version.
+ *
+ * There is no `idempotencyKey`. The SDK mints the mutation identity itself and
+ * reuses it across its own automatic retries, so a submit whose response is lost
+ * (the API has a 29-second ceiling — the call can succeed while the
+ * acknowledgement never arrives) is de-duplicated server-side instead of
+ * creating a second session, a second container, and a second bill.
  */
-export interface SessionCreateOptions extends IdempotencyOptions {
+export interface SessionCreateOptions {
   /**
    * The model to run, as a Vercel AI Gateway `creator/model` slug string
    * (e.g. `"anthropic/claude-haiku-4-5"`, `"deepseek/deepseek-v4-flash"`).
@@ -159,7 +160,8 @@ export interface SessionCreateOptions extends IdempotencyOptions {
   readonly webhook?: { readonly url: string };
 }
 
-export interface SessionSendOptions extends IdempotencyOptions {
+/** Options for one turn. The mutation identity is SDK-owned; see {@link SessionCreateOptions}. */
+export interface SessionSendOptions {
   readonly webSocketFactory?: WebSocketFactory;
   readonly idleTimeoutMs?: number;
   readonly pingIntervalMs?: number;
@@ -168,8 +170,7 @@ export interface SessionSendOptions extends IdempotencyOptions {
 export interface SessionStartOptions extends SessionCreateOptions {
   readonly message: SessionInput;
   readonly deleteAfter?: boolean;
-  readonly messageIdempotencyKey?: string;
-  readonly stream?: Omit<SessionSendOptions, "idempotencyKey">;
+  readonly stream?: SessionSendOptions;
 }
 
 /** Options for {@link Aex.start}. */

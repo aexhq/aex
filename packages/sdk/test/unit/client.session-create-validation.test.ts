@@ -333,7 +333,18 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
           input_schema: { type: "object", callerKeyword: true },
           entry: "index.js"
         }],
-        instructions: [{ ...common, kind: "instruction", name: "guide" }]
+        // An instruction record is NOT asset-shaped: it is pinned to its text,
+        // so it carries none of `common`'s asset keys.
+        instructions: [{
+          resourceId: `wres_${"2".repeat(32)}`,
+          version: 1,
+          kind: "instruction",
+          name: "guide",
+          textHash: `sha256:${"b".repeat(64)}`,
+          createdAt: "2026-07-21T00:00:00.000Z",
+          updatedAt: "2026-07-21T01:00:00.000Z",
+          sizeBytes: 42
+        }]
       },
       environment: { variables: { CALLER_DEFINED: "yes" } },
       responseFormat: {

@@ -1735,9 +1735,9 @@ export type PublishWorkspaceToolInput = WorkspacePublishBase & {
   readonly entry: string;
 };
 
-export type PublishWorkspaceInstructionInput = WorkspacePublishBase & {
-  readonly name: string;
-};
+/** TEXT, not a {@link WorkspacePublishBase}: nothing is staged through
+ *  `/api/assets/presign`, so `assets:write` no longer publishes an instruction. */
+export type PublishWorkspaceInstructionInput = { readonly name: string; readonly text: string };
 
 export async function publishWorkspaceFile(
   http: HttpClient,
