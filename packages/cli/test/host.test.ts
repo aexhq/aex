@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { idPattern } from "@aexhq/contracts";
 import { strToU8, unzipSync } from "fflate";
 import { createHash } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
@@ -732,7 +733,7 @@ describe("aex start", () => {
     // Idempotency is header-carried on create (not in the body) and CLI-minted;
     // the first-message key stays derived from the create key.
     const createKey = (create.init.headers as Record<string, string>)["Idempotency-Key"]!;
-    expect(createKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(createKey).toMatch(idPattern("idempotency"));
     expect((message.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(`${createKey}:message`);
     const createBody = create.body as Record<string, unknown>;
     expect(createBody.workspaceId).toBeUndefined();
@@ -849,7 +850,7 @@ describe("aex start", () => {
     // silently bill twice — only the equality catches it.
     const firstKey = (firstCreate.init.headers as Record<string, string>)["Idempotency-Key"]!;
     const secondKey = (secondCreate.init.headers as Record<string, string>)["Idempotency-Key"]!;
-    expect(firstKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(firstKey).toMatch(idPattern("idempotency"));
     expect(secondKey).toBe(firstKey);
     expect(secondCreate.body).toEqual(firstCreate.body);
     expect(cap.calls[2]!.url).toBe("https://dash.example/api/sessions/sess-retry/messages");

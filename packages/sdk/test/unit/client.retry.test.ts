@@ -9,7 +9,7 @@
  * deterministically without a live backend.
  */
 import { describe, expect, it } from "bun:test";
-import { HTTP_RETRY_POLICY, type FetchLike } from "@aexhq/contracts";
+import { HTTP_RETRY_POLICY, idPattern, type FetchLike } from "@aexhq/contracts";
 import { Aex, isRateLimited, AexRateLimitError, SessionStateError } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
 import { FakeWebSocket } from "@aexhq/contracts/testing";
@@ -208,7 +208,7 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     // The create carries the SDK-minted key; the billable turn carries the
     // DERIVED key, so the two halves of one start() de-duplicate together.
     const createKey = h.idempotencyKeys("/api/sessions")[0]!;
-    expect(createKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(createKey).toMatch(idPattern("idempotency"));
     expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual([`${createKey}:message`]);
   });
 
@@ -240,7 +240,7 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     await promise;
 
     const createKey = h.idempotencyKeys("/api/sessions")[0]!;
-    expect(createKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(createKey).toMatch(idPattern("idempotency"));
     expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual([`${createKey}:message`]);
   });
 
@@ -283,7 +283,7 @@ describe("Aex built-in transport retry", () => {
     // attempt would still produce two calls, and would double-bill silently.
     const createKeys = h.idempotencyKeys("/api/sessions");
     expect(createKeys).toHaveLength(2);
-    expect(createKeys[0]).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(createKeys[0]).toMatch(idPattern("idempotency"));
     expect(createKeys[0]).toBe(createKeys[1]);
   });
 

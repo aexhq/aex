@@ -63,6 +63,22 @@ describe("the public module graph is derived from the workspace, not restated", 
     expect(graph.byId.get("cli")!.dependsOn).toContain("contracts");
   });
 
+  it("knows the SDK embeds the CLI, because it republishes that bundle as `aex`", () => {
+    // `packages/sdk/scripts/bundle-cli.mjs` copies packages/cli/dist/cli.mjs into
+    // the SDK's own dist and `bin.aex` points at the copy. Both packages therefore
+    // ship the SAME executable, and `packages/sdk/test/unit/bin-bundle.test.ts`
+    // asserts they are byte-identical per commit.
+    //
+    // Without this edge a CLI-only change published a new @aexhq/cli and NO new
+    // @aexhq/sdk, so the two `aex` binaries skewed on the registry from that push
+    // onward — which is exactly the drift measured between the published
+    // @aexhq/cli@0.25.2 and @aexhq/sdk@0.43.0. The edge is what makes "the release
+    // loop publishes both, so they cannot skew" a true statement rather than an
+    // assumed one.
+    const graph = readModuleGraph(repoRoot);
+    expect(graph.byId.get("sdk")!.dependsOn).toContain("cli");
+  });
+
   it("resolves a bare specifier through the root overrides map", () => {
     // `apps/docs` depends on `aex`, which the root `overrides` maps to
     // `./packages/sdk`. Without that resolution the SDK loses a dependent and a
@@ -104,11 +120,14 @@ describe("a change routes its dependent closure, not just the changed module", (
     expect(routed.publish).toEqual(["cli", "contracts", "sdk"]);
   });
 
-  it("does not expand a leaf change upstream", () => {
+  it("does not expand a leaf change upstream, but does reach its dependents", () => {
     const graph = readModuleGraph(repoRoot);
     const routed = routeChanges(graph, ["packages/cli/src/index.ts"]);
+    // Upstream is untouched: the CLI's own change cannot alter contracts.
     expect(routed.closure).not.toContain("contracts");
-    expect(routed.publish).toEqual(["cli"]);
+    // Downstream is not: the SDK republishes the CLI bundle as its `aex` bin, so
+    // a CLI change is a change to the published SDK artifact too.
+    expect(routed.publish).toEqual(["cli", "sdk"]);
   });
 
   it("treats a path no module owns as repo-wide rather than as no impact", () => {

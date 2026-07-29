@@ -1,6 +1,6 @@
 import fc, { type Arbitrary } from "fast-check";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import type { FetchLike } from "@aexhq/contracts";
+import { idPattern, type FetchLike } from "@aexhq/contracts";
 import { Aex, type Message, type SessionResult, type SessionInput, type SessionStartOptions } from "../../src/index.js";
 import type { AexEvent, JsonValue } from "@aexhq/contracts";
 import { FakeWebSocket } from "@aexhq/contracts/testing";
@@ -228,7 +228,7 @@ function expectSessionKeys(harness: Harness): void {
   expect(messages).toHaveLength(1);
 
   const createKey = idempotencyKey(create[0]!);
-  expect(createKey).toEqual(expect.stringMatching(/^idem_[0-9a-f]{32}$/));
+  expect(createKey).toEqual(expect.stringMatching(idPattern("idempotency")));
   expect(idempotencyKey(messages[0]!)).toBe(`${createKey}:message`);
 }
 
@@ -395,7 +395,7 @@ describe("SDK run/send SessionInput properties", () => {
 
         expect(messages).toHaveLength(1);
         expect(messages[0]!.body).toEqual({ input });
-        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(/^idem_[0-9a-f]{32}$/));
+        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(idPattern("idempotency")));
         expect(result.text).toBe("");
         expect(createCalls(harness)).toHaveLength(0);
       }),
@@ -474,7 +474,7 @@ describe("SDK run/send SessionInput properties", () => {
         expect(messages).toHaveLength(2);
         expect(messages[0]!.body).toEqual({ input });
         expect(messages[1]!.body).toEqual({ input });
-        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(/^idem_[0-9a-f]{32}$/));
+        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(idPattern("idempotency")));
         // A replay re-presents the ORIGINAL identity, never a fresh one.
         expect(idempotencyKey(messages[1]!)).toBe(idempotencyKey(messages[0]!));
       }),

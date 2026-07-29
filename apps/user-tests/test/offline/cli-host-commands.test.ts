@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { strToU8, unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { idPattern, isId } from "@aexhq/contracts";
 import { getAexBinPath, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 const REPORT_BYTES = strToU8("hello world");
 const REPORT_SHA256 = createHash("sha256").update(REPORT_BYTES).digest("hex");
@@ -375,7 +376,7 @@ describe("installed CLI host commands", () => {
     expect(submit).not.toHaveProperty("idempotencyKey");
     expect(submit).not.toHaveProperty("input");
     // CLI-minted: there is no flag to supply one.
-    expect(createReq.idempotencyKey).toMatch(/^idem_[0-9a-f]{32}$/);
+    expect(createReq.idempotencyKey).toMatch(idPattern("idempotency"));
     expect(submit.retention).toEqual({ idleTtl: "3m" });
     // `secrets` may still be present as an empty bag (envSecrets/mcpServers ride it);
     // what must never appear again is customer key material, under either name.
@@ -609,7 +610,10 @@ describe("installed CLI host commands", () => {
     expect(withoutKey(joinedRequests)).toEqual(withoutKey(splitRequests));
     for (const request of [...splitRequests, ...joinedRequests]) {
       if (request.method !== "POST") continue;
-      expect(request.idempotencyKey).toMatch(/^idem_[0-9a-f]{32}(:message)?$/);
+      // The first-message key is the create key plus a `:message` suffix. Strip
+      // the suffix and hand the remainder to the id authority, rather than
+      // restating the shape here with an optional group appended to it.
+      expect(isId("idempotency", (request.idempotencyKey ?? "").replace(/:message$/, ""))).toBe(true);
     }
     expect(joinedRequests[0]!.idempotencyKey).not.toBe(splitRequests[0]!.idempotencyKey);
     expect(joined.stdout).not.toContain("tok-installed-cli");
