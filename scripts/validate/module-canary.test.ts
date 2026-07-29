@@ -7,8 +7,10 @@ import {
   applyModuleCanary,
   moduleNode,
   moduleSourceTag,
+  moduleUpstreamCanaryVersions,
   moduleUpstreamVersions,
-  resolveModuleCanaryVersion
+  resolveModuleCanaryVersion,
+  verifyPackedModuleManifest
 } from "../cicd/module-canary.mjs";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
@@ -105,19 +107,27 @@ describe("source tags are immutable and cannot collide across modules", () => {
 describe("applying a canary binds the package to the exact tested source", () => {
   it("writes version and source sha for a generic module", () => {
     const root = workspaceCopy();
-    applyModuleCanary(root, "contracts", { version: "0.34.0-canary.7.gabcdef0", sha: SHA });
+    applyModuleCanary(root, "contracts", { version: "0.34.0-canary.7.gabcdef0", sha: SHA, run: "7" });
     const manifest = manifestAt(root, "packages/contracts/package.json");
     expect(manifest.version).toBe("0.34.0-canary.7.gabcdef0");
-    expect(manifest.aexRelease).toEqual({ sourceSha: SHA });
+    expect(manifest.aexRelease).toEqual({ sourceSha: SHA, upstream: {} });
   });
 
   it("also rewrites the SDK's exported version constant", () => {
     // A generic package.json writer would leave `SDK_VERSION` stale, so the shipped
     // SDK would report a version it is not.
     const root = workspaceCopy();
-    applyModuleCanary(root, "sdk", { version: "0.46.4-canary.7.gabcdef0", sha: SHA });
+    const applied = applyModuleCanary(root, "sdk", {
+      version: "0.46.4-canary.7.gabcdef0",
+      sha: SHA,
+      run: "7"
+    });
     expect(manifestAt(root, "packages/sdk/package.json").version).toBe("0.46.4-canary.7.gabcdef0");
-    expect(manifestAt(root, "packages/sdk/package.json").aexRelease).toEqual({ sourceSha: SHA });
+    expect(manifestAt(root, "packages/sdk/package.json").aexRelease).toEqual({
+      sourceSha: SHA,
+      upstream: applied.upstream
+    });
+    expect(manifestAt(root, "packages/sdk/package.json").devDependencies).toMatchObject(applied.upstream);
     expect(readFileSync(resolve(root, "packages/sdk/src/version.ts"), "utf8")).toContain(
       'export const SDK_VERSION = "0.46.4-canary.7.gabcdef0";'
     );
@@ -125,16 +135,18 @@ describe("applying a canary binds the package to the exact tested source", () =>
 
   it("refuses a mutable version, a bad sha, and a private module", () => {
     const root = workspaceCopy();
-    expect(() => applyModuleCanary(root, "cli", { version: "0.34.0", sha: SHA })).toThrow(/invalid canary version/);
-    expect(() => applyModuleCanary(root, "cli", { version: "0.34.0-canary", sha: SHA })).toThrow(
+    expect(() => applyModuleCanary(root, "cli", { version: "0.34.0", sha: SHA, run: "7" })).toThrow(
       /invalid canary version/
     );
-    expect(() => applyModuleCanary(root, "cli", { version: "0.34.0-canary.7.gabcdef0", sha: "abc" })).toThrow(
-      /invalid release source SHA/
+    expect(() => applyModuleCanary(root, "cli", { version: "0.34.0-canary", sha: SHA, run: "7" })).toThrow(
+      /invalid canary version/
     );
-    expect(() => applyModuleCanary(root, "docs", { version: "0.1.0-canary.7.gabcdef0", sha: SHA })).toThrow(
-      /private and must not be published/
-    );
+    expect(() =>
+      applyModuleCanary(root, "cli", { version: "0.34.0-canary.7.gabcdef0", sha: "abc", run: "7" })
+    ).toThrow(/invalid release source SHA/);
+    expect(() =>
+      applyModuleCanary(root, "docs", { version: "0.1.0-canary.7.gabcdef0", sha: SHA, run: "7" })
+    ).toThrow(/private and must not be published/);
   });
 });
 
@@ -148,5 +160,25 @@ describe("upstream package versions are recorded as release identity", () => {
       "@aexhq/contracts": moduleNode(repoRoot, "contracts").version
     });
     expect(moduleUpstreamVersions(repoRoot, "contracts")).toEqual({});
+  });
+
+  it("rewrites and verifies the exact same-run upstream identity in packed metadata", () => {
+    const root = workspaceCopy();
+    const version = "0.34.0-canary.7.gabcdef0";
+    const applied = applyModuleCanary(root, "cli", { version, sha: SHA, run: "7" });
+    const packed = manifestAt(root, "packages/cli/package.json");
+    const expected = moduleUpstreamCanaryVersions(repoRoot, "cli", SHA, "7");
+
+    expect(applied.upstream).toEqual(expected);
+    expect((packed.dependencies as Record<string, string>)["@aexhq/contracts"]).toBe(
+      expected["@aexhq/contracts"]
+    );
+    expect(moduleUpstreamVersions(root, "cli")).toEqual(expected);
+    expect(verifyPackedModuleManifest(root, "cli", packed, { version, sha: SHA, run: "7" })).toEqual(expected);
+
+    (packed.dependencies as Record<string, string>)["@aexhq/contracts"] = "workspace:*";
+    expect(() => verifyPackedModuleManifest(root, "cli", packed, { version, sha: SHA, run: "7" })).toThrow(
+      /dependencies.@aexhq\/contracts/
+    );
   });
 });

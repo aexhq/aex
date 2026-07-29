@@ -6,7 +6,6 @@ import {
   buildCanaryManifest,
   parseCanaryManifest
 } from "../cicd/canary-manifest.mjs";
-import { readModuleGraph } from "../cicd/public-module-graph.mjs";
 import { selectManifestEntry, verifyCanarySelection } from "../cicd/verify-canary-selection.mjs";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
@@ -15,7 +14,33 @@ const OTHER_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 const INTEGRITY = "sha512-qyF1qjoLAp+Epu6azUW9PIhg3w7FWjC1IS5B4Gxsl/NpZtgEMccpY+iFPXrXVygFTLeL7lkMF+EcONMU4Szn3g==";
 const OTHER_INTEGRITY = "sha512-AAF1qjoLAp+Epu6azUW9PIhg3w7FWjC1IS5B4Gxsl/NpZtgEMccpY+iFPXrXVygFTLeL7lkMF+EcONMU4Szn3g==";
 
-function build(entries: readonly { module: string; name: string; version: string }[]) {
+type Entry = {
+  module: string;
+  name: string;
+  version: string;
+  upstream: Record<string, string>;
+};
+
+const releaseEntries = (): Entry[] => [
+  { module: "contracts", name: "@aexhq/contracts", version: "0.34.0-canary", upstream: {} },
+  {
+    module: "cli",
+    name: "@aexhq/cli",
+    version: "0.34.0-canary",
+    upstream: { "@aexhq/contracts": "0.34.0-canary" }
+  },
+  {
+    module: "sdk",
+    name: "@aexhq/sdk",
+    version: "0.46.4-canary",
+    upstream: {
+      "@aexhq/cli": "0.34.0-canary",
+      "@aexhq/contracts": "0.34.0-canary"
+    }
+  }
+];
+
+function build(entries: readonly Entry[]) {
   return buildCanaryManifest({
     repoRoot,
     repository: "aexhq/aex",
@@ -32,10 +57,10 @@ function build(entries: readonly { module: string; name: string; version: string
 
 describe("the canary manifest is release identity, not lockfile data", () => {
   it("records version, integrity, source commit, and source tag for every package", () => {
-    const manifest = build([{ module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" }]);
+    const manifest = build(releaseEntries());
     expect(manifest.schema).toBe(CANARY_MANIFEST_SCHEMA);
-    expect(manifest.packages).toHaveLength(1);
-    const entry = manifest.packages[0];
+    expect(manifest.packages).toHaveLength(3);
+    const entry = manifest.packages.find((candidate) => candidate.module === "sdk")!;
     expect(entry).toMatchObject({
       module: "sdk",
       name: "@aexhq/sdk",
@@ -48,37 +73,22 @@ describe("the canary manifest is release identity, not lockfile data", () => {
   });
 
   it("pins an upstream published in the same release to that release's canary", () => {
-    const manifest = build([
-      { module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" },
-      { module: "contracts", name: "@aexhq/contracts", version: "0.34.0-canary" }
-    ]);
+    const manifest = build(releaseEntries());
     const sdk = manifest.packages.find((entry) => entry.module === "sdk")!;
-    // The SDK embeds contracts AND the CLI bundle at build time, so a canary
-    // built against a different one of either is a different artifact at the
-    // same commit. `@aexhq/cli` was not published in this release, so it pins to
-    // the version the workspace built against.
     expect(sdk.upstream).toEqual({
-      "@aexhq/cli": readModuleGraph(repoRoot).byId.get("cli")!.version,
+      "@aexhq/cli": "0.34.0-canary",
       "@aexhq/contracts": "0.34.0-canary"
     });
   });
 
-  it("pins an unaffected upstream to the version the workspace built against", () => {
-    const manifest = build([{ module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" }]);
-    const sdk = manifest.packages.find((entry) => entry.module === "sdk")!;
-    expect(sdk.upstream["@aexhq/contracts"]).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(sdk.upstream["@aexhq/contracts"]).not.toMatch(/-canary$/);
+  it("fails closed when packed metadata names an upstream absent from the same run", () => {
+    const sdk = releaseEntries().find((entry) => entry.module === "sdk")!;
+    expect(() => build([sdk])).toThrow(/did not publish @aexhq\/cli/);
   });
 
   it("sorts packages so two runs of the same release produce the same bytes", () => {
-    const forward = build([
-      { module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" },
-      { module: "cli", name: "@aexhq/cli", version: "0.34.0-canary" }
-    ]);
-    const reverse = build([
-      { module: "cli", name: "@aexhq/cli", version: "0.34.0-canary" },
-      { module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" }
-    ]);
+    const forward = build(releaseEntries());
+    const reverse = build(releaseEntries().reverse());
     expect(JSON.stringify(forward)).toBe(JSON.stringify(reverse));
   });
 
@@ -90,14 +100,23 @@ describe("the canary manifest is release identity, not lockfile data", () => {
         sourceSha: SHA,
         workflowRunId: "1",
         generatedAt: "2026-07-28T00:00:00.000Z",
-        entries: [{ module: "sdk", name: "@aexhq/contracts", version: "1.0.0-canary", integrity: INTEGRITY, sourceTag: "t" }]
+        entries: [
+          {
+            module: "sdk",
+            name: "@aexhq/contracts",
+            version: "1.0.0-canary",
+            integrity: INTEGRITY,
+            sourceTag: "t",
+            upstream: {}
+          }
+        ]
       })
     ).toThrow(/claims package @aexhq\/contracts, workspace says @aexhq\/sdk/);
   });
 });
 
 describe("the manifest parser fails closed on anything a consumer could not verify", () => {
-  const valid = () => JSON.parse(JSON.stringify(build([{ module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" }])));
+  const valid = () => JSON.parse(JSON.stringify(build(releaseEntries())));
 
   it("accepts the manifest it produced", () => {
     expect(() => parseCanaryManifest(valid())).not.toThrow();
@@ -138,14 +157,7 @@ describe("the manifest parser fails closed on anything a consumer could not veri
   });
 
   it("rejects an upstream pin that contradicts what this release published", () => {
-    const manifest = JSON.parse(
-      JSON.stringify(
-        build([
-          { module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" },
-          { module: "contracts", name: "@aexhq/contracts", version: "0.34.0-canary" }
-        ])
-      )
-    );
+    const manifest = JSON.parse(JSON.stringify(build(releaseEntries())));
     manifest.packages.find((entry: { module: string }) => entry.module === "sdk")!.upstream["@aexhq/contracts"] =
       "0.33.0";
     expect(() => parseCanaryManifest(manifest)).toThrow(/this release published @aexhq\/contracts@0.34.0-canary/);
@@ -167,7 +179,7 @@ describe("the manifest parser fails closed on anything a consumer could not veri
 });
 
 describe("promotion verifies the registry, not only the manifest", () => {
-  const manifest = () => JSON.parse(JSON.stringify(build([{ module: "sdk", name: "@aexhq/sdk", version: "0.46.4-canary" }])));
+  const manifest = () => JSON.parse(JSON.stringify(build(releaseEntries())));
 
   function registry(packument: unknown) {
     return async () => ({ ok: true, status: 200, json: async () => packument });
@@ -176,7 +188,7 @@ describe("promotion verifies the registry, not only the manifest", () => {
   it("selects the manifest entry by module and exact version", () => {
     const parsed = parseCanaryManifest(manifest());
     expect(selectManifestEntry(parsed, "sdk", "0.46.4-canary").name).toBe("@aexhq/sdk");
-    expect(() => selectManifestEntry(parsed, "cli", "0.46.4-canary")).toThrow(/has no module cli/);
+    expect(() => selectManifestEntry(parsed, "runtime", "0.46.4-canary")).toThrow(/has no module runtime/);
     expect(() => selectManifestEntry(parsed, "sdk", "0.46.5-canary")).toThrow(/not 0.46.5-canary/);
   });
 

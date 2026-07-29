@@ -160,6 +160,20 @@ export function dependentClosure(graph, seedIds) {
   return [...closure].sort();
 }
 
+/** Transitive dependencies (forward edges), including the seeds themselves. */
+export function dependencyClosure(graph, seedIds) {
+  const closure = new Set();
+  const stack = [...seedIds];
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (!graph.byId.has(id)) throw new Error(`unknown module: ${id}`);
+    if (closure.has(id)) continue;
+    closure.add(id);
+    stack.push(...graph.byId.get(id).dependsOn);
+  }
+  return [...closure].sort();
+}
+
 /**
  * Which module owns a repository-relative path.
  *
@@ -186,12 +200,16 @@ export function routeChanges(graph, paths) {
   const repoWide = unowned.length > 0;
   const affected = repoWide ? graph.modules.map((node) => node.id) : [...seeds].sort();
   const closure = dependentClosure(graph, affected);
+  const publishSeeds = closure.filter((id) => graph.byId.get(id).publishable);
   return {
     repoWide,
     unowned: unowned.slice(0, 20).sort(),
     affected,
     closure,
-    publish: closure.filter((id) => graph.byId.get(id).publishable)
+    // A dependent canary is only a coherent release identity when every public
+    // package it embeds or installs is minted in the same run. Include those
+    // upstreams even when the source diff itself only touched a leaf.
+    publish: dependencyClosure(graph, publishSeeds).filter((id) => graph.byId.get(id).publishable)
   };
 }
 

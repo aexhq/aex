@@ -27,6 +27,7 @@ export interface CanaryReleaseEntry {
   readonly version: string;
   readonly integrity: string;
   readonly sourceTag: string;
+  readonly upstream: Record<string, string>;
 }
 
 export function parseCanaryManifest(value: unknown): CanaryManifest;

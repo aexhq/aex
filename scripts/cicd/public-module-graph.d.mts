@@ -55,6 +55,7 @@ export interface RouterArgs {
 
 export function readModuleGraph(repoRoot: string): PublicModuleGraph;
 export function dependentClosure(graph: PublicModuleGraph, seedIds: Iterable<string>): string[];
+export function dependencyClosure(graph: PublicModuleGraph, seedIds: Iterable<string>): string[];
 export function classifyPath(graph: PublicModuleGraph, path: string): string | null;
 export function routeChanges(graph: PublicModuleGraph, paths: Iterable<string>): RoutedChanges;
 export function moduleMatrix(graph: PublicModuleGraph, ids: readonly string[]): ModuleMatrix;

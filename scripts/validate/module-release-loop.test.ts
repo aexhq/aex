@@ -56,6 +56,7 @@ describe("the module canary loop runs the dependent closure before it publishes"
     const publish = workflowJob(ci, "publish-canary");
     expect(JSON.stringify(publish.strategy?.matrix)).toContain("publish_matrix");
     expect(publish.strategy?.["fail-fast"]).toBe(false);
+    expect(publish.strategy?.["max-parallel"]).toBeUndefined();
     for (const need of ["modules", "lint", "typecheck", "unit-tests", "module-checks"]) {
       expect(jobNeeds(publish), need).toContain(need);
     }
@@ -128,6 +129,19 @@ describe("each published canary records version, integrity, and source identity"
     const pack = workflowSteps(publish).find((step) => step.id === "pack");
     expect(String(pack?.run)).toMatch(/pack:sdk|contracts:boundary:check/);
     expect(String(pack?.run)).toContain("contracts:boundary:check");
+  });
+
+  it("waits for same-run upstreams before packing and verifies packed metadata", () => {
+    const steps = workflowSteps(publish);
+    const waitIndex = steps.findIndex((step) => String(step.run).includes("upstream-lines"));
+    const packIndex = steps.findIndex((step) => step.id === "pack");
+    const publishIndex = steps.findIndex((step) => String(step.run).includes("npm publish"));
+    expect(waitIndex).toBeGreaterThanOrEqual(0);
+    expect(packIndex).toBeGreaterThan(waitIndex);
+    expect(publishIndex).toBeGreaterThan(packIndex);
+    expect(String(steps[waitIndex]?.run)).toContain("wait-for-npm.mjs");
+    expect(String(steps[packIndex]?.run)).toContain("verify-packed");
+    expect(JSON.stringify(steps)).toContain("steps.pack.outputs.upstream");
   });
 });
 

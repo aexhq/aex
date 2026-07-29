@@ -77,12 +77,14 @@ export function parseCanaryManifest(value) {
     byName.set(entry.name, entry);
   }
 
-  // Cross-check: a package published in this same release must be recorded at the
-  // version it was actually published at, everywhere it appears as an upstream.
+  // Every recorded upstream must be an immutable package from this same run.
   for (const entry of byName.values()) {
     for (const [name, version] of Object.entries(entry.upstream)) {
       const published = byName.get(name);
-      if (published && published.version !== version) {
+      if (!published) {
+        fail(`${entry.name} records upstream ${name}@${version}, but this release did not publish ${name}`);
+      }
+      if (published.version !== version) {
         fail(
           `${entry.name} records upstream ${name}@${version}, but this release published ${name}@${published.version}`
         );
@@ -105,7 +107,6 @@ export function parseCanaryManifest(value) {
  */
 export function buildCanaryManifest(options) {
   const graph = readModuleGraph(options.repoRoot);
-  const publishedVersions = new Map(options.entries.map((entry) => [entry.name, entry.version]));
 
   const packages = [...options.entries]
     .sort((left, right) => left.name.localeCompare(right.name))
@@ -115,13 +116,17 @@ export function buildCanaryManifest(options) {
       if (node.name !== entry.name) {
         throw new Error(`release entry ${entry.module} claims package ${entry.name}, workspace says ${node.name}`);
       }
-      const upstream = {};
-      for (const id of node.dependsOn) {
-        const dependency = graph.byId.get(id);
-        if (!dependency.publishable) continue;
-        // A module published in this same run pins to its canary; one that was not
-        // affected pins to the version the workspace built against.
-        upstream[dependency.name] = publishedVersions.get(dependency.name) ?? dependency.version;
+      const expectedNames = node.dependsOn
+        .map((id) => graph.byId.get(id))
+        .filter((dependency) => dependency.publishable)
+        .map((dependency) => dependency.name)
+        .sort();
+      const actualNames = Object.keys(entry.upstream ?? {}).sort();
+      if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+        throw new Error(
+          `release entry ${entry.module} upstream packages ${JSON.stringify(actualNames)} ` +
+            `do not match workspace dependencies ${JSON.stringify(expectedNames)}`
+        );
       }
       return {
         module: entry.module,
@@ -132,7 +137,7 @@ export function buildCanaryManifest(options) {
         sourceRepository: options.repository,
         sourceSha: options.sourceSha,
         sourceTag: entry.sourceTag,
-        upstream
+        upstream: entry.upstream
       };
     });
 
@@ -156,7 +161,8 @@ export function readReleaseEntries(paths) {
       name: record.name,
       version: record.version,
       integrity: record.npmIntegrity ?? record.integrity,
-      sourceTag: record.sourceTag
+      sourceTag: record.sourceTag,
+      upstream: record.upstream
     });
   }
   return entries;

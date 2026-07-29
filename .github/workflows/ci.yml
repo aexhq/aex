@@ -189,7 +189,10 @@ jobs:
             exit 1
           fi
 
-  # One canary per affected public module, published independently.
+  # One canary per affected public module. Matrix jobs may start together, but
+  # each dependent waits for immutable npm evidence for every same-run upstream
+  # before it packs or publishes. That gives the graph real publication order
+  # without sharing a mutable checkout between packages.
   #
   # `matrix` is the router's publish set, so an unaffected module is not
   # republished and an affected one cannot be forgotten. Stable promotion is NOT
@@ -225,10 +228,9 @@ jobs:
       contents: write
       id-token: write
     strategy:
-      # Never fail-fast: a failed module canary must not cancel a sibling module's
-      # publication, or the manifest silently loses a package that was ready.
+      # Never fail-fast: each dependent is responsible for waiting on its
+      # upstreams and failing closed if one never becomes available.
       fail-fast: false
-      max-parallel: 1
       matrix: ${{ fromJSON(needs.modules.outputs.publish_matrix) }}
     env:
       RELEASE_HEAD_SHA: ${{ github.sha }}
@@ -305,6 +307,19 @@ jobs:
           --module "$MODULE_ID"
           --version "${{ steps.version.outputs.version }}"
           --sha "$RELEASE_HEAD_SHA"
+          --run "$GITHUB_RUN_ID"
+
+      - name: Require same-run upstream canaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r upstream_name upstream_version; do
+            [ -n "$upstream_name" ] || continue
+            node scripts/cicd/wait-for-npm.mjs \
+              "$upstream_name" "$upstream_version" \
+              --source-sha "$RELEASE_HEAD_SHA"
+            bun scripts/cicd/wait-for-bun-install.mjs "$upstream_name" "$upstream_version"
+          done < <(bun scripts/cicd/module-canary.mjs upstream-lines --module "$MODULE_ID")
 
       - name: Tag the exact tested source
         id: source-tag
@@ -359,6 +374,15 @@ jobs:
             echo "::error::No ${MODULE_NAME} tarball was produced."
             exit 1
           fi
+          packed_manifest="$pack_dir/package.json"
+          tar -xOf "$tarball" package/package.json > "$packed_manifest"
+          bun scripts/cicd/module-canary.mjs verify-packed \
+            --module "$MODULE_ID" \
+            --manifest "$packed_manifest" \
+            --version "${{ steps.version.outputs.version }}" \
+            --sha "$RELEASE_HEAD_SHA" \
+            --run "$GITHUB_RUN_ID" \
+            --github-output "$GITHUB_OUTPUT"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Publish canary to npm
@@ -387,6 +411,7 @@ jobs:
           CANARY_VERSION: ${{ steps.version.outputs.version }}
           SOURCE_TAG: ${{ steps.source-tag.outputs.source_tag }}
           NPM_INTEGRITY: ${{ steps.registry-evidence.outputs.integrity }}
+          PACKED_UPSTREAM: ${{ steps.pack.outputs.upstream }}
         run: |
           set -euo pipefail
           cat > "canary-release-${MODULE_ID}.json" <<JSON
@@ -399,6 +424,7 @@ jobs:
             "sourceTag": "${SOURCE_TAG}",
             "npmDistTag": "${NPM_DIST_TAG}",
             "npmIntegrity": "${NPM_INTEGRITY}",
+            "upstream": ${PACKED_UPSTREAM},
             "workflowRunId": "${GITHUB_RUN_ID}"
           }
           JSON

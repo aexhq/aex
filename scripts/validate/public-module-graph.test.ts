@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 
 import {
   classifyPath,
+  dependencyClosure,
   dependentClosure,
   fallbackResult,
   moduleMatrix,
@@ -120,14 +121,14 @@ describe("a change routes its dependent closure, not just the changed module", (
     expect(routed.publish).toEqual(["cli", "contracts", "sdk"]);
   });
 
-  it("does not expand a leaf change upstream, but does reach its dependents", () => {
+  it("adds publishable upstreams needed for one same-run release identity", () => {
     const graph = readModuleGraph(repoRoot);
     const routed = routeChanges(graph, ["packages/cli/src/index.ts"]);
-    // Upstream is untouched: the CLI's own change cannot alter contracts.
+    // Verification still follows only the changed module and its dependents.
     expect(routed.closure).not.toContain("contracts");
-    // Downstream is not: the SDK republishes the CLI bundle as its `aex` bin, so
-    // a CLI change is a change to the published SDK artifact too.
-    expect(routed.publish).toEqual(["cli", "sdk"]);
+    // Publication also includes the upstream contracts canary that CLI and SDK
+    // must pack against in this same run.
+    expect(routed.publish).toEqual(["cli", "contracts", "sdk"]);
   });
 
   it("treats a path no module owns as repo-wide rather than as no impact", () => {
@@ -151,6 +152,7 @@ describe("a change routes its dependent closure, not just the changed module", (
   it("rejects an unknown module id instead of silently dropping it", () => {
     const graph = readModuleGraph(repoRoot);
     expect(() => dependentClosure(graph, ["not-a-module"])).toThrow(/unknown module/);
+    expect(() => dependencyClosure(graph, ["not-a-module"])).toThrow(/unknown module/);
   });
 });
 
