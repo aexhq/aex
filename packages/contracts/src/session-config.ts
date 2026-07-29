@@ -37,6 +37,7 @@ import {
 import { rethrowContractParseError, withContractParseError } from "./contract-parse-error.js";
 import { type ModelName } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
+import { denyReasonForMcpHost } from "./egress-deny-list.js";
 import {
   ASSET_ID_PATTERN,
   MOUNT_PATH_MAX_LENGTH,
@@ -524,188 +525,6 @@ export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
 
 export { rejectStdioMcpShape };
 
-/**
- * One entry in {@link EGRESS_DENIED_RANGES}.
- *
- * `cidr` is the canonical wire form. IPv4 entries are matched numerically FROM
- * `cidr` — there is no second hand-written octet test. The IPv6 special forms
- * keep an explicit `match` predicate because they are textual shapes (`::`,
- * `::1`) or prefix families whose full IPv6 parse would add no precision here.
- *
- * MIRROR of `EGRESS_DENIED_RANGES` in the platform repo's
- * `packages/shared/src/blueprint.ts`, which OWNS this set. This package cannot
- * import from the platform tree, so the table is duplicated and held in parity
- * by the platform's `scripts/validate/egress-cidr-ssot.test.ts` (which reads
- * this file) plus `scripts/cicd/check-contract-parity.mjs`. Do not edit one
- * side alone.
- */
-interface EgressDeniedRange {
-  readonly cidr: string;
-  readonly family: 4 | 6;
-  readonly reason: string;
-  readonly match?: (host: string) => boolean;
-}
-
-/**
- * The canonical private/unroutable address set — the union resolved once so the
- * SDK, the CLI, and the platform admission path refuse the same bytes.
- */
-const EGRESS_DENIED_RANGES: readonly EgressDeniedRange[] = [
-  { cidr: "0.0.0.0/8", family: 4, reason: "must not target unroutable IPv4 (0.0.0.0/8)" },
-  { cidr: "10.0.0.0/8", family: 4, reason: "must not target RFC1918 IPv4 (10.0.0.0/8)" },
-  { cidr: "127.0.0.0/8", family: 4, reason: "must not target loopback IPv4 (127.0.0.0/8)" },
-  {
-    cidr: "169.254.0.0/16",
-    family: 4,
-    reason: "must not target link-local IPv4 (169.254.0.0/16) — cloud metadata range"
-  },
-  { cidr: "100.64.0.0/10", family: 4, reason: "must not target CGNAT IPv4 (100.64.0.0/10)" },
-  { cidr: "198.18.0.0/15", family: 4, reason: "must not target benchmark IPv4 (198.18.0.0/15)" },
-  { cidr: "172.16.0.0/12", family: 4, reason: "must not target RFC1918 IPv4 (172.16.0.0/12)" },
-  { cidr: "192.168.0.0/16", family: 4, reason: "must not target RFC1918 IPv4 (192.168.0.0/16)" },
-  { cidr: "224.0.0.0/3", family: 4, reason: "must not target multicast/reserved IPv4 (224.0.0.0/3)" },
-  {
-    cidr: "::/128",
-    family: 6,
-    reason: "must not target unspecified IPv6 (::)",
-    match: (host) => host === "::"
-  },
-  {
-    cidr: "::1/128",
-    family: 6,
-    reason: "must not target loopback IPv6 (::1)",
-    match: (host) => host === "::1" || host === "0:0:0:0:0:0:0:1"
-  },
-  {
-    cidr: "fe80::/10",
-    family: 6,
-    reason: "must not target link-local IPv6 (fe80::/10)",
-    match: (host) => /^fe[89ab][0-9a-f]?:/.test(host)
-  },
-  {
-    cidr: "fc00::/7",
-    family: 6,
-    reason: "must not target unique-local IPv6 (fc00::/7)",
-    match: (host) => /^f[cd][0-9a-f]{0,2}:/.test(host)
-  },
-  {
-    cidr: "64:ff9b::/96",
-    family: 6,
-    reason: "must not target IPv6 NAT64 prefix (64:ff9b::/96)",
-    match: (host) => host.startsWith("64:ff9b::")
-  }
-];
-
-// NOTE — `::ffff:0:0/96` is deliberately ABSENT from the table above. Go's
-// `net.IPNet.Contains` degrades an IPv4-mapped `/96` to IPv4 `0.0.0.0/0`, so
-// adding it to the egress proxy's deny_ranges would block ALL IPv4. It is also
-// unnecessary: IPv4-mapped literals are folded to IPv4 and classified by the
-// IPv4 rules above (see the `::ffff:` branch in the IP-literal classifier).
-
-/** IPv4 dotted-quad → uint32, or null when `host` is not a dotted-quad. */
-function ipv4ToUint32(host: string): number | null {
-  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return null;
-  const octets = host.split(".").map((o) => Number.parseInt(o, 10));
-  if (octets.some((o) => o > 255)) return null;
-  return ((octets[0]! << 24) | (octets[1]! << 16) | (octets[2]! << 8) | octets[3]!) >>> 0;
-}
-
-/** Whether `value` (uint32) falls inside the IPv4 `cidr`. */
-function ipv4InCidr(value: number, cidr: string): boolean {
-  const [network, prefixText] = cidr.split("/") as [string, string];
-  const base = ipv4ToUint32(network);
-  if (base === null) return false;
-  const prefix = Number.parseInt(prefixText, 10);
-  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  return (value & mask) === (base & mask);
-}
-
-/**
- * Reasons an IP-literal host should be refused. Returns null when the
- * literal is a routable public address (or not an IP literal at all — name
- * resolution is the caller's concern). This numeric-range deny-list is kept
- * in parity across the public contract parser and platform shared parser so
- * the MCP parser, the egress proxy handlers, and `submission.parseProxyBaseUrl`
- * classify the same bytes.
- *
- * `host` is the already-bracket-stripped, lowercased hostname.
- *
- * NOTE — residual DNS-rebind gap: this denies IP *literals* only. A name
- * that resolves to a private/metadata IP is NOT caught here (we don't
- * resolve at parse time). Closing that requires resolve-then-pin at egress;
- * that pinning is deferred. The host's outbound fetch still refuses RFC1918
- * at connect, but not loopback/169.254/CGNAT/ULA — which is exactly why the
- * literal checks below exist as defense in depth.
- */
-function denyReasonForHostIp(host: string): string | null {
-  // IPv4-mapped / IPv4-compatible IPv6 literals decode to an embedded IPv4 —
-  // classify that IPv4 so a mapped form can't smuggle a private target. Two
-  // shapes reach us: the dotted-quad form a caller may type (`::ffff:127.0.0.1`)
-  // and the hex form `new URL().hostname` normalises it to (`::ffff:7f00:1`),
-  // where the two trailing hextets ARE the four IPv4 octets.
-  const mappedDotted = /^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
-  if (mappedDotted) {
-    return denyReasonForV4(mappedDotted[1]!);
-  }
-  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (mappedHex) {
-    const hi = Number.parseInt(mappedHex[1]!, 16);
-    const lo = Number.parseInt(mappedHex[2]!, 16);
-    const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
-    return denyReasonForV4(dotted);
-  }
-  const v4 = denyReasonForV4(host);
-  if (v4) return v4;
-  for (const range of EGRESS_DENIED_RANGES) {
-    if (range.family === 6 && range.match?.(host) === true) return range.reason;
-  }
-  return null;
-}
-
-/**
- * IPv4-literal deny-list, derived from {@link EGRESS_DENIED_RANGES}. Returns
- * null when `host` is not a dotted-quad or
- * is a routable public IPv4. Split out of {@link denyReasonForHostIp} so the
- * IPv4-mapped IPv6 branch reuses the exact same ranges.
- */
-function denyReasonForV4(host: string): string | null {
-  const value = ipv4ToUint32(host);
-  if (value === null) return null;
-  for (const range of EGRESS_DENIED_RANGES) {
-    if (range.family === 4 && ipv4InCidr(value, range.cidr)) return range.reason;
-  }
-  return null;
-}
-
-/**
- * Reasons an MCP server URL should be refused at parse time. Returns null
- * when the URL is acceptable. Hostnames are lowercased; numeric ranges
- * are checked literally so the catch covers both names ("localhost") and
- * IP literals ("127.0.0.1") symmetrically. The numeric-range checks
- * delegate to {@link denyReasonForHostIp} (shared with the platform proxy).
- *
- * Surface tracked by server-side SSRF regression coverage.
- */
-function denyReasonForMcpHost(parsed: URL): string | null {
-  // `new URL("https://[fe80::1]/").hostname` returns `[fe80::1]` WITH
-  // the brackets on Node 22; strip them so the IPv6 checks match either
-  // shape symmetrically.
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  // Loopback name (covers `localhost` + `localhost.localdomain` etc.)
-  if (host === "localhost" || host.endsWith(".localhost")) {
-    return "must not target a loopback hostname";
-  }
-  const ipDenial = denyReasonForHostIp(host);
-  if (ipDenial) return ipDenial;
-  // Port constraint: https must be on 443 (defense in depth — non-standard
-  // https ports often indicate internal services). http allowance keeps
-  // the existing local-dev pattern (e.g. host.docker.internal:8787) usable.
-  if (parsed.protocol === "https:" && parsed.port !== "" && parsed.port !== "443") {
-    return `must use port 443 for https (got ${parsed.port})`;
-  }
-  return null;
-}
-
 function parseRemoteMcpTransport(input: unknown, field: string): RemoteMcpTransport | undefined {
   if (input === undefined) {
     return undefined;
@@ -718,16 +537,7 @@ function parseRemoteMcpTransport(input: unknown, field: string): RemoteMcpTransp
   return input as RemoteMcpTransport;
 }
 
-/**
- * The two rules the MCP schemas defer back to this module for.
- *
- * Injected rather than imported the other way around because
- * `scripts/cicd/check-contract-parity.mjs` locates the SSRF deny-list INSIDE
- * this file — it slices from `denyReasonForHostIp` to `parseRemoteMcpTransport`
- * and byte-compares that region against `platform/packages/shared/src/blueprint.ts`.
- * Moving either function into `schemas/` would break the only check that keeps
- * the two deny-lists identical.
- */
+/** The host and transport rules injected into the request-wire schemas. */
 const MCP_WIRE_POLICY: McpWirePolicy = {
   denyReasonForHost: denyReasonForMcpHost,
   parseTransport: parseRemoteMcpTransport

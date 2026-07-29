@@ -139,8 +139,8 @@ describe("session-config — parseMcpServerRef", () => {
     ).toThrow(/userinfo|username|password/i);
   });
 
-  // SSRF deny-list parity with platform `denyReasonForHostIp`. The cases
-  // below cover IPv4-mapped IPv6 (both dotted and hex normalisation),
+  // Public SSRF deny-list coverage. The cases below cover IPv4-mapped IPv6
+  // (both dotted and hex normalisation),
   // unspecified/current-network ranges, CGNAT (100.64.0.0/10), benchmark and
   // multicast/reserved ranges, and ULA (fc00::/7). A mapped form must not
   // smuggle a private target past the literal checks.

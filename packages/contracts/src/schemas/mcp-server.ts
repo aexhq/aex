@@ -3,15 +3,9 @@
  * non-secret `McpServerRef` that enters the hashed submission, and the
  * `SessionConfigMcpServer` a `session.json` may carry with inline `headers`.
  *
- * Two rules are DEFERRED BACK to `session-config.ts` through {@link McpWirePolicy}
- * rather than moved here, and that is deliberate:
- * `scripts/cicd/check-parser-ratchet.mjs`'s sibling gate
- * `scripts/cicd/check-contract-parity.mjs` locates the SSRF host deny-list
- * inside `session-config.ts` — it slices the file from `denyReasonForHostIp` to
- * `parseRemoteMcpTransport` and byte-compares that region against
- * `platform/packages/shared/src/blueprint.ts`. Moving either function here would
- * break the only cross-repo check that keeps the two deny-lists identical, so
- * the schema takes them as parameters instead.
+ * Host classification and transport narrowing are injected through
+ * {@link McpWirePolicy}. This module owns wire shape and issue ordering; the
+ * policy owns the accepted values and egress decision.
  */
 import * as z from "zod/mini";
 import type { McpServerRef, RemoteMcpTransport, SessionConfigMcpServer } from "../session-config.js";
@@ -39,7 +33,7 @@ const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
 /**
  * The host and transport rules the MCP schemas defer to.
  *
- * See the module header for why these are injected rather than imported.
+ * See the module header for the ownership split.
  */
 export interface McpWirePolicy {
   /** Reason this URL's host must be refused, or `null` when it is acceptable. */

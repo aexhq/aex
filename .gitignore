@@ -30,7 +30,6 @@ release-diagnostics/
 .claude/
 
 .vercel
-_platform/
 
 # Local SDK playground (inlined keys — never commit)
 scripts/aex-sample.ts

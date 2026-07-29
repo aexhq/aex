@@ -58,9 +58,8 @@ describe("instruction drafts carry text", () => {
   /**
    * §5a of the archive-registration redesign: the 128,000-byte rejection was OUR
    * limit, not a real one, and `a8f34eb9` deleted it. This test asserted the
-   * opposite and had been failing ever since -- the SDK half of the same stale
-   * assertion that stayed GREEN on the platform side only because its
-   * `public-contracts-snapshot` was a stale build of this package.
+   * opposite and had been failing ever since. It now locks the supported
+   * authoring behavior instead of preserving that retired bound.
    *
    * A model's context window is real and is a per-SESSION fact, so the platform
    * PLACES an over-large instruction (staged to a workspace file, prompt carries

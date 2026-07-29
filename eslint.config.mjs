@@ -45,9 +45,6 @@ export default tseslint.config(
       "**/coverage/**",
       "**/.cache/**",
       "**/.release-worktrees/**",
-      // CI checks out the private platform repo here only for contract parity.
-      // It is not public repo source and must not enter public lint scope.
-      "_platform/**",
       // Skipped/sample / template files committed for offline tests.
       "**/test/fixtures/**",
       // GENERATED artefacts that happen to live outside `dist/`: the OpenAPI

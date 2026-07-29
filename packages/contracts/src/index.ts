@@ -103,6 +103,7 @@ export {
 } from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
 export * from "./canonical-sha256.js";
+export * from "./egress-deny-list.js";
 export * from "./session-config.js";
 export * from "./bundle-manifest.js";
 // The admission vocabulary is a LEAF: `runtime-types` (whoami), `account-types`
@@ -136,7 +137,5 @@ export type { ContractParseError } from "./contract-parse-error.js";
 export * from "./schemas/index.js";
 // The data-plane route table. Declared here rather than in the platform so the
 // spec generator, the platform dispatcher and any future non-TypeScript SDK all
-// read one statement of the HTTP surface. A subpath export is not available:
-// public-contracts-snapshot.mjs pins the code entrypoints to a fixed set, and
-// this is not one of them.
+// read one statement of the HTTP surface.
 export * from "./api-routes.js";

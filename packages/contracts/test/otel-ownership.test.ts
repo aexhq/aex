@@ -14,7 +14,7 @@ describe("public telemetry contract ownership", () => {
     const source = readFileSync(sourceUrl, "utf8");
     expect(source).toMatch(/export\s+(?:interface|type)\s+Otlp(?:Trace|ExportTrace)/);
     expect(source).toMatch(/export\s+(?:interface|type)\s+Otlp(?:Log|ExportLog)/);
-    expect(source).not.toMatch(/from\s+["'][^"']*(?:journal|platform|registry|public-contracts-snapshot)/i);
+    expect(source).not.toMatch(/from\s+["'][^"']*(?:journal|platform|registry)/i);
     expect(source).not.toMatch(/\b(?:Private)?JournalRow\b/);
   });
 

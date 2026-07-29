@@ -16,7 +16,6 @@ const ignoredDirs = new Set([
   "coverage",
   ".next",
   ".generated",
-  "_platform",
   ".source",
   "out",
   "playwright-report",
