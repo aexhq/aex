@@ -8,10 +8,12 @@ export interface ModuleLanePlan {
 }
 
 export interface ModuleLaneOutcome extends ModuleLanePlan {
+  readonly prerequisites: readonly { readonly id: string; readonly name: string; readonly status: number }[];
   readonly results: readonly { readonly lane: string; readonly status: number }[];
   readonly ok: boolean;
 }
 
+export function dependencyBuildPlan(repoRoot: string, moduleId: string): readonly { readonly id: string; readonly name: string }[];
 export function planModuleLanes(repoRoot: string, moduleId: string): ModuleLanePlan;
 export function runModuleLanes(
   repoRoot: string,
