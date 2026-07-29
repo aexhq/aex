@@ -126,8 +126,10 @@ describe("each published canary records version, integrity, and source identity"
     // Calling `bun pm pack` directly once skipped contracts:boundary:check, so a
     // public-surface violation could ship with every gate green.
     const pack = workflowSteps(publish).find((step) => step.id === "pack");
-    expect(String(pack?.run)).toMatch(/pack:sdk|contracts:boundary:check/);
-    expect(String(pack?.run)).toContain("contracts:boundary:check");
+    const packRun = String(pack?.run);
+    expect(packRun).toMatch(/pack:sdk|contracts:boundary:check/);
+    expect(packRun).toContain("bun run --filter @aexhq/sdk build");
+    expect(packRun).toContain("contracts:boundary:check");
   });
 
   it("waits for same-run upstreams before packing and verifies packed metadata", () => {

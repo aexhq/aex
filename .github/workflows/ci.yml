@@ -356,13 +356,16 @@ jobs:
         # boundary check entirely, so a public-surface violation could ship to npm
         # with every gate green. Publishing must not be reachable except through
         # the checked path — which is why the boundary check also runs for every
-        # other module, whose build script does not carry it.
+        # other module, whose build script does not carry it. The boundary
+        # inspects the SDK's packed surface, so non-SDK lanes must materialize
+        # the SDK before running it in their fresh checkout.
         run: |
           set -euo pipefail
           if [ "$MODULE_ID" = "sdk" ]; then
             bun run pack:sdk
           else
             bun run --filter "$MODULE_NAME" build
+            bun run --filter @aexhq/sdk build
             bun run contracts:boundary:check
           fi
           pack_dir="$RUNNER_TEMP/aex-pack-$MODULE_ID"
