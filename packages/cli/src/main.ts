@@ -4,13 +4,13 @@ import { newId } from "@aexhq/contracts";
 import {
   Aex,
   AexApiError,
+  coordinateDownloadGrants,
   type DownloadGrant,
   type DownloadRange,
   type Id,
   type OperationHandle,
   type OperationKind,
   type OrganizationUsageQuery,
-  planDownloadRanges,
   type UsageQuery
 } from "@aexhq/sdk";
 import type { CliIO } from "./internal.js";
@@ -446,6 +446,9 @@ async function files(ctx: Context, scope: string | undefined, args: readonly str
     let access = await fileRequest(ctx, scope);
     const entry = await client.stat({ path, ...access } as never);
     if (entry.type !== "file") throw new UsageError("only files can be downloaded");
+    if (entry.sha256 === undefined) {
+      throw new Error("file response has no declared SHA-256");
+    }
     if (scope === "live" && !("ifGenerationId" in access)) {
       access = {
         ...access,
@@ -460,7 +463,7 @@ async function files(ctx: Context, scope: string | undefined, args: readonly str
       ctx,
       {
         sizeBytes: entry.sizeBytes,
-        ...(entry.sha256 === undefined ? {} : { sha256: entry.sha256 })
+        sha256: entry.sha256
       },
       rangeRequest(ctx).range,
       (range, options) => client.download(
@@ -701,7 +704,7 @@ async function consumeDownload(
 
 interface DownloadDescriptor {
   readonly sizeBytes: number;
-  readonly sha256?: string;
+  readonly sha256: string;
 }
 
 type DownloadGrantMinter = (
@@ -756,29 +759,20 @@ async function consumeRangedDownload(
         start: selectionStart + prefixBytes,
         endExclusive: selectionEnd
       };
-  const ranges = planDownloadRanges(descriptor.sizeBytes, remaining);
   const wholeDigest = selected === undefined && !resume
     ? createHash("sha256")
     : undefined;
   let writtenBytes = prefixBytes;
-  for (const [index, range] of ranges.entries()) {
-    const grant = await mint(
+  const coordinated = coordinateDownloadGrants({
+    sizeBytes: descriptor.sizeBytes,
+    sha256: descriptor.sha256,
+    ...(remaining === undefined ? {} : { range: remaining }),
+    mint: (range, position) => mint(
       range,
-      rangeIdempotency(ctx, range, index, ranges.length)
-    );
-    const expectedBytes = range.endExclusive - range.start;
-    if (
-      grant.sizeBytes !== descriptor.sizeBytes ||
-      grant.authorizedBytes !== expectedBytes ||
-      (
-        descriptor.sha256 !== undefined &&
-        grant.sha256 !== descriptor.sha256
-      )
-    ) {
-      throw new Error(
-        `download grant range mismatch: expected ${expectedBytes} of ${descriptor.sizeBytes} bytes`
-      );
-    }
+      rangeIdempotency(ctx, range, position.index, position.count)
+    )
+  });
+  for await (const { grant, range } of coordinated) {
     const rangeDigest = await streamGrant(ctx, grant, async (chunk) => {
       wholeDigest?.update(chunk);
       writtenBytes += chunk.byteLength;
@@ -805,7 +799,7 @@ async function consumeRangedDownload(
       `download length mismatch: expected ${selectedBytes}, got ${writtenBytes}`
     );
   }
-  if (selected === undefined && descriptor.sha256 !== undefined) {
+  if (selected === undefined) {
     const actual = resume
       ? await hashFile(ctx, part)
       : `sha256:${wholeDigest!.digest("hex")}`;

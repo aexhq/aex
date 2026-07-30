@@ -62,16 +62,24 @@ provider-hard boundary. Plan a larger full or partial download without
 allocating the object:
 
 ```ts
-import { planDownloadRanges } from "@aexhq/sdk";
+import { coordinateDownloadGrants } from "@aexhq/sdk";
 
-for (const range of planDownloadRanges(file.sizeBytes)) {
-  const grant = await session.files.persisted.download({
-    path: file.path,
-    range
-  });
+const grants = coordinateDownloadGrants({
+  sizeBytes: file.sizeBytes,
+  sha256: file.sha256,
+  mint: (range) => session.files.persisted.download({
+    path: file.path, range
+  })
+});
+
+for await (const { range, grant } of grants) {
   // Stream this exact signed range and verify grant.authorizedBytes.
 }
 ```
+
+Use `planDownloadRanges()` directly when only the arithmetic plan is needed.
+The coordinator mints one bearer grant at a time and rejects any grant that
+changes the planned range, object length, or immutable whole-object hash.
 
 The CLI performs this coordination automatically. It streams each range into
 `<output>.part`, verifies every authorized range length, verifies the complete

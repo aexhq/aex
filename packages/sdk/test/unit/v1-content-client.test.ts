@@ -4,7 +4,11 @@ import {
   newId,
   type FetchLike
 } from "@aexhq/contracts";
-import { Aex, planDownloadRanges } from "../../src/index.js";
+import {
+  Aex,
+  coordinateDownloadGrants,
+  planDownloadRanges
+} from "../../src/index.js";
 
 const BASE_URL = "https://eu-west-1.api.aex.test";
 const SID = newId("session");
@@ -128,6 +132,49 @@ describe("v1 session file and approval namespaces", () => {
       start: 75,
       endExclusive: 101
     })).toThrow("inside the declared object size");
+  });
+
+  it("coordinates and validates one immutable grant per planned range", async () => {
+    const sizeBytes = MAX_SINGLE_GET_BYTES + 2;
+    const ranges: { start: number; endExclusive: number }[] = [];
+    const grants = coordinateDownloadGrants({
+      sizeBytes,
+      sha256: hash,
+      mint: async (range) => {
+        ranges.push(range);
+        return {
+          ...grant,
+          sizeBytes,
+          authorizedBytes: range.endExclusive - range.start,
+          sha256: hash
+        };
+      }
+    });
+
+    const coordinated = [];
+    for await (const item of grants) coordinated.push(item);
+
+    expect(ranges).toEqual([
+      { start: 0, endExclusive: MAX_SINGLE_GET_BYTES },
+      { start: MAX_SINGLE_GET_BYTES, endExclusive: sizeBytes }
+    ]);
+    expect(coordinated.map(({ index, count }) => ({ index, count }))).toEqual([
+      { index: 0, count: 2 },
+      { index: 1, count: 2 }
+    ]);
+  });
+
+  it("rejects a grant that changes whole-object identity or range length", async () => {
+    const grants = coordinateDownloadGrants({
+      sizeBytes: 12,
+      sha256: hash,
+      mint: async () => ({ ...grant, authorizedBytes: 11 })
+    });
+    await expect(async () => {
+      for await (const _item of grants) {
+        throw new Error("invalid grant was yielded");
+      }
+    }).toThrow("grant does not match");
   });
 
   it("uses the exact persisted/live action routes and access controls", async () => {

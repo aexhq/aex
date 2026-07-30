@@ -53,6 +53,8 @@ export {
   planDownloadRanges
 } from "./client-v1.js";
 
+export { coordinateDownloadGrants } from "./download-coordinator.js";
+
 export type {
   AexOptions,
   AccountGetQuery,
@@ -85,6 +87,11 @@ export type {
   WorkspaceDiscardRequest,
   WorkspaceListQuery
 } from "./client-v1.js";
+
+export type {
+  CoordinatedDownloadGrant,
+  CoordinateDownloadGrantsInput
+} from "./download-coordinator.js";
 
 export type {
   ApiError,
