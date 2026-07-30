@@ -1,9 +1,12 @@
 import {
+  AEX_DEFAULT_BASE_URL,
   CredentialValidationError,
   HTTP_RETRY_POLICY,
   HttpClient,
   assertId,
+  apiErrorFromResponse,
   newId,
+  ObservationFrameSchema,
   parseApiKey,
   RegisteredNameSchema,
   type Approval,
@@ -23,6 +26,16 @@ import {
   type LiveFileStatRequest,
   type MessageSendRequest,
   type MessageV1,
+  type MetricAggregationPage,
+  type MetricAggregationRequest,
+  type Observation,
+  type ObservationCoverage,
+  type ObservationFrame,
+  type ObservationListenRequest,
+  type ObservationPage,
+  type ObservationQuery,
+  type ObservationSignal,
+  type ObservationStreamRequest,
   type Operation,
   type OperationKind,
   type OperationStatusV1,
@@ -39,6 +52,11 @@ import {
   type SessionCreateRequestV1,
   type SessionStatusV1,
   type SessionV1,
+  type TelemetryExport,
+  type TelemetryExportRequest,
+  type TelemetryGap,
+  type TelemetryGapQuery,
+  type TraceSummary,
   type Upload,
   type UploadCompleteRequest,
   type UploadCreateRequest,
@@ -158,6 +176,78 @@ export class OperationFailedError extends Error {
     this.name = "OperationFailedError";
     this.operation = operation;
     this.operationId = operation.id;
+  }
+}
+
+export class TelemetryStreamProtocolError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "TelemetryStreamProtocolError";
+  }
+}
+
+export class TelemetryStreamBackpressureError extends Error {
+  readonly cursor: string | undefined;
+
+  constructor(message: string, cursor?: string) {
+    super(message);
+    this.name = "TelemetryStreamBackpressureError";
+    this.cursor = cursor;
+  }
+}
+
+export class TelemetryStreamRotationError extends Error {
+  readonly cursor: string | undefined;
+
+  constructor(message: string, cursor?: string) {
+    super(message);
+    this.name = "TelemetryStreamRotationError";
+    this.cursor = cursor;
+  }
+}
+
+class RawTelemetryTransport {
+  readonly #baseUrl: URL;
+  readonly #apiKey: string;
+  readonly #fetch: FetchLike;
+
+  constructor(baseUrl: string, apiKey: string, fetchImpl: FetchLike) {
+    this.#baseUrl = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+    this.#apiKey = apiKey;
+    this.#fetch = fetchImpl;
+  }
+
+  async post(
+    path: string,
+    body: BodyInit,
+    headers: HeadersInit
+  ): Promise<Response> {
+    const response = await this.#fetch(
+      new URL(path.replace(/^\//, ""), this.#baseUrl),
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${this.#apiKey}`,
+          ...Object.fromEntries(new Headers(headers))
+        },
+        body
+      }
+    );
+    if (!response.ok) {
+      let parsed: unknown;
+      try {
+        parsed = await response.clone().json();
+      } catch {
+        parsed = undefined;
+      }
+      throw apiErrorFromResponse({
+        status: response.status,
+        body: parsed,
+        message: telemetryErrorMessage(parsed, response.status)
+      });
+    }
+    return response;
   }
 }
 
@@ -491,6 +581,200 @@ export class SessionApprovalsClient {
   }
 }
 
+type ObservationFor<S extends ObservationSignal | "telemetry"> =
+  S extends "telemetry" ? Observation : Extract<Observation, { readonly signal: S }>;
+
+export class ObservationIterator<S extends ObservationSignal | "telemetry">
+implements AsyncIterable<ObservationFor<S>> {
+  readonly #client: ObservationSignalClient<S>;
+  readonly #query: ObservationQuery;
+  readonly coverage: Promise<ObservationCoverage>;
+  #resolveCoverage!: (coverage: ObservationCoverage) => void;
+  #rejectCoverage!: (error: unknown) => void;
+  #started = false;
+
+  constructor(client: ObservationSignalClient<S>, query: ObservationQuery) {
+    this.#client = client;
+    this.#query = query;
+    this.coverage = new Promise<ObservationCoverage>((resolve, reject) => {
+      this.#resolveCoverage = resolve;
+      this.#rejectCoverage = reject;
+    });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<ObservationFor<S>> {
+    if (this.#started) {
+      throw new TelemetryStreamProtocolError(
+        "ObservationIterator can be consumed only once"
+      );
+    }
+    this.#started = true;
+    return this.#iterate();
+  }
+
+  async *#iterate(): AsyncGenerator<ObservationFor<S>, void, void> {
+    let cursor = this.#query.cursor;
+    let finalCoverage: ObservationCoverage | undefined;
+    const seen = new Set<string>();
+    try {
+      do {
+        if (cursor !== undefined && seen.has(cursor)) {
+          throw new TelemetryStreamProtocolError(
+            `Observation query repeated cursor ${cursor}`
+          );
+        }
+        if (cursor !== undefined) seen.add(cursor);
+        const page = await this.#client.query({
+          ...this.#query,
+          ...(cursor === undefined ? {} : { cursor })
+        });
+        finalCoverage = page.coverage;
+        for (const item of page.items) yield item;
+        cursor = page.nextCursor;
+      } while (cursor !== undefined);
+      if (finalCoverage === undefined) {
+        throw new TelemetryStreamProtocolError(
+          "Observation iteration completed without coverage"
+        );
+      }
+      this.#resolveCoverage(finalCoverage);
+    } catch (error) {
+      this.#rejectCoverage(error);
+      throw error;
+    }
+  }
+}
+
+export class ObservationSignalClient<S extends ObservationSignal | "telemetry"> {
+  readonly #http: HttpClient;
+  readonly #raw: RawTelemetryTransport;
+  readonly #path: string;
+
+  constructor(
+    http: HttpClient,
+    raw: RawTelemetryTransport,
+    signal: S,
+    sessionId?: string
+  ) {
+    this.#http = http;
+    this.#raw = raw;
+    this.#path = sessionId === undefined
+      ? `/api/${signal}`
+      : `/api/sessions/${encodeURIComponent(sessionId)}/${signal}`;
+  }
+
+  query(request: ObservationQuery = {}): Promise<
+    Omit<ObservationPage, "items"> & { readonly items: readonly ObservationFor<S>[] }
+  > {
+    return this.#http.request<
+      Omit<ObservationPage, "items"> & { readonly items: readonly ObservationFor<S>[] }
+    >(`${this.#path}/query`, {
+      method: "POST",
+      body: JSON.stringify(request)
+    });
+  }
+
+  iterate(request: ObservationQuery = {}): ObservationIterator<S> {
+    return new ObservationIterator(this, request);
+  }
+
+  stream(request: ObservationStreamRequest): AsyncIterable<ObservationFrame> {
+    return this.#frames("stream", request);
+  }
+
+  listen(request: ObservationListenRequest = {}): AsyncIterable<ObservationFrame> {
+    return this.#frames("listen", request);
+  }
+
+  async *#frames(
+    action: "stream" | "listen",
+    request: ObservationStreamRequest | ObservationListenRequest
+  ): AsyncGenerator<ObservationFrame, void, void> {
+    const response = await this.#raw.post(
+      `${this.#path}/${action}`,
+      JSON.stringify(request),
+      {
+        accept: "application/x-ndjson",
+        "content-type": "application/json"
+      }
+    );
+    const closeReason = response.headers.get("aex-stream-close");
+    if (closeReason === "backpressure") {
+      throw new TelemetryStreamBackpressureError(
+        "Telemetry stream closed for slow-consumer backpressure",
+        response.headers.get("aex-stream-cursor") ?? undefined
+      );
+    }
+    if (closeReason === "rotation") {
+      throw new TelemetryStreamRotationError(
+        "Telemetry stream rotated without a rotate frame",
+        response.headers.get("aex-stream-cursor") ?? undefined
+      );
+    }
+    for await (const line of ndjsonLines(response)) {
+      let value: unknown;
+      try {
+        value = JSON.parse(line);
+      } catch (cause) {
+        throw new TelemetryStreamProtocolError(
+          "Telemetry stream returned malformed NDJSON",
+          { cause }
+        );
+      }
+      const parsed = ObservationFrameSchema.safeParse(value);
+      if (!parsed.success) {
+        throw new TelemetryStreamProtocolError(
+          "Telemetry stream returned an invalid frame"
+        );
+      }
+      yield parsed.data;
+    }
+  }
+}
+
+export class MetricsClient extends ObservationSignalClient<"metrics"> {
+  readonly #http: HttpClient;
+  readonly #path: string;
+
+  constructor(http: HttpClient, raw: RawTelemetryTransport, sessionId?: string) {
+    super(http, raw, "metrics", sessionId);
+    this.#http = http;
+    this.#path = sessionId === undefined
+      ? "/api/metrics"
+      : `/api/sessions/${encodeURIComponent(sessionId)}/metrics`;
+  }
+
+  aggregate(request: MetricAggregationRequest): Promise<MetricAggregationPage> {
+    return this.#http.request<MetricAggregationPage>(
+      `${this.#path}/aggregate`,
+      { method: "POST", body: JSON.stringify(request) }
+    );
+  }
+}
+
+export class TracesClient extends ObservationSignalClient<"traces"> {
+  readonly #http: HttpClient;
+  readonly #sessionId: string | undefined;
+
+  constructor(http: HttpClient, raw: RawTelemetryTransport, sessionId?: string) {
+    super(http, raw, "traces", sessionId);
+    this.#http = http;
+    this.#sessionId = sessionId;
+  }
+
+  get(traceId: string): Promise<TraceSummary> {
+    if (this.#sessionId === undefined) {
+      throw new Error("traces.get requires a session-scoped trace client");
+    }
+    if (!/^[0-9a-f]{32}$/.test(traceId)) {
+      throw new Error("traceId must be a 32-character lowercase W3C trace id");
+    }
+    return this.#http.request<TraceSummary>(
+      `/api/sessions/${encodeURIComponent(this.#sessionId)}/traces/${traceId}`
+    );
+  }
+}
+
 export class SessionHandle {
   readonly #http: HttpClient;
   readonly #session: SessionV1;
@@ -499,8 +783,18 @@ export class SessionHandle {
   readonly credentials: SessionCredentialsClient;
   readonly files: SessionFilesClient;
   readonly approvals: SessionApprovalsClient;
+  readonly events: ObservationSignalClient<"events">;
+  readonly logs: ObservationSignalClient<"logs">;
+  readonly spans: ObservationSignalClient<"spans">;
+  readonly metrics: MetricsClient;
+  readonly traces: TracesClient;
+  readonly telemetry: ScopedTelemetryClient;
 
-  constructor(http: HttpClient, session: SessionV1) {
+  constructor(
+    http: HttpClient,
+    raw: RawTelemetryTransport,
+    session: SessionV1
+  ) {
     this.#http = http;
     assertId("session", session.id, "session.id");
     this.#session = session;
@@ -509,6 +803,12 @@ export class SessionHandle {
     this.credentials = new SessionCredentialsClient(this);
     this.files = new SessionFilesClient(http, session.id);
     this.approvals = new SessionApprovalsClient(http, session.id);
+    this.events = new ObservationSignalClient(http, raw, "events", session.id);
+    this.logs = new ObservationSignalClient(http, raw, "logs", session.id);
+    this.spans = new ObservationSignalClient(http, raw, "spans", session.id);
+    this.metrics = new MetricsClient(http, raw, session.id);
+    this.traces = new TracesClient(http, raw, session.id);
+    this.telemetry = new ScopedTelemetryClient(http, raw, session.id);
   }
 
   get id(): string {
@@ -585,9 +885,11 @@ export class SessionHandle {
 
 export class SessionsClient {
   readonly #http: HttpClient;
+  readonly #raw: RawTelemetryTransport;
 
-  constructor(http: HttpClient) {
+  constructor(http: HttpClient, raw: RawTelemetryTransport) {
     this.#http = http;
+    this.#raw = raw;
   }
 
   async create(
@@ -599,7 +901,7 @@ export class SessionsClient {
       headers: idempotencyHeaders(options),
       body: JSON.stringify(request)
     });
-    return new SessionHandle(this.#http, session);
+    return new SessionHandle(this.#http, this.#raw, session);
   }
 
   async get(sessionId: string): Promise<SessionV1> {
@@ -614,7 +916,7 @@ export class SessionsClient {
   }
 
   async open(sessionId: string): Promise<SessionHandle> {
-    return new SessionHandle(this.#http, await this.get(sessionId));
+    return new SessionHandle(this.#http, this.#raw, await this.get(sessionId));
   }
 
   list(query: SessionListQuery = {}): Promise<Page<SessionV1>> {
@@ -880,10 +1182,227 @@ export class WorkspaceClient {
   }
 }
 
+export interface TelemetryGapPage {
+  readonly items: readonly TelemetryGap[];
+  readonly nextCursor?: string;
+  readonly coverage: ObservationCoverage;
+}
+
+export class TelemetryGapsClient {
+  readonly #http: HttpClient;
+  readonly #prefix: string;
+
+  constructor(http: HttpClient, sessionId?: string) {
+    this.#http = http;
+    this.#prefix = sessionId === undefined
+      ? "/api/telemetry/gaps"
+      : `/api/sessions/${encodeURIComponent(sessionId)}/telemetry/gaps`;
+  }
+
+  query(request: TelemetryGapQuery = {}): Promise<TelemetryGapPage> {
+    return this.#http.request<TelemetryGapPage>(`${this.#prefix}/query`, {
+      method: "POST",
+      body: JSON.stringify(request)
+    });
+  }
+
+  async get(gapId: string): Promise<TelemetryGap> {
+    const id = assertId("telemetryGap", gapId, "gapId");
+    const gap = await this.#http.request<TelemetryGap>(
+      `${this.#prefix}/${encodeURIComponent(id)}`
+    );
+    if (gap.id !== id) {
+      throw new Error(`Telemetry gap GET for ${id} returned ${gap.id}`);
+    }
+    return gap;
+  }
+}
+
+export class TelemetryExportsClient {
+  readonly #http: HttpClient;
+  readonly #prefix: string;
+
+  constructor(http: HttpClient, sessionId?: string) {
+    this.#http = http;
+    this.#prefix = sessionId === undefined
+      ? "/api/telemetry/exports"
+      : `/api/sessions/${encodeURIComponent(sessionId)}/telemetry/exports`;
+  }
+
+  async get(exportId: string): Promise<TelemetryExport> {
+    const id = assertId("export", exportId, "exportId");
+    const record = await this.#http.request<TelemetryExport>(
+      `${this.#prefix}/${encodeURIComponent(id)}`
+    );
+    return this.#check(record, id);
+  }
+
+  download(
+    exportId: string,
+    options: IdempotencyOptions = {}
+  ): Promise<DownloadGrant> {
+    const id = assertId("export", exportId, "exportId");
+    return this.#http.request<DownloadGrant>(
+      `${this.#prefix}/${encodeURIComponent(id)}/downloads`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify({})
+      }
+    );
+  }
+
+  async revoke(
+    exportId: string,
+    options: IdempotencyOptions = {}
+  ): Promise<TelemetryExport> {
+    const id = assertId("export", exportId, "exportId");
+    const record = await this.#http.request<TelemetryExport>(
+      `${this.#prefix}/${encodeURIComponent(id)}/revocations`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify({})
+      }
+    );
+    return this.#check(record, id);
+  }
+
+  #check(record: TelemetryExport, id: string): TelemetryExport {
+    if (record.id !== id) {
+      throw new Error(`Telemetry export ${id} returned ${record.id}`);
+    }
+    return record;
+  }
+}
+
+export interface OtlpAdmissionOptions {
+  readonly batchId?: Id<"telemetryBatch">;
+  readonly contentType?: "application/json" | "application/x-protobuf";
+}
+
+export interface OtlpAdmissionReceipt {
+  readonly batchId: string;
+  readonly receiptId: string;
+  readonly response: unknown;
+}
+
+export class TelemetryOtlpClient {
+  readonly #raw: RawTelemetryTransport;
+
+  constructor(raw: RawTelemetryTransport) {
+    this.#raw = raw;
+  }
+
+  logs(body: unknown, options: OtlpAdmissionOptions = {}): Promise<OtlpAdmissionReceipt> {
+    return this.#admit("logs", body, options);
+  }
+
+  traces(body: unknown, options: OtlpAdmissionOptions = {}): Promise<OtlpAdmissionReceipt> {
+    return this.#admit("traces", body, options);
+  }
+
+  metrics(body: unknown, options: OtlpAdmissionOptions = {}): Promise<OtlpAdmissionReceipt> {
+    return this.#admit("metrics", body, options);
+  }
+
+  async #admit(
+    signal: "logs" | "traces" | "metrics",
+    body: unknown,
+    options: OtlpAdmissionOptions
+  ): Promise<OtlpAdmissionReceipt> {
+    const batchId = options.batchId === undefined
+      ? newId("telemetryBatch")
+      : assertId("telemetryBatch", options.batchId, "batchId");
+    const contentType = options.contentType ?? "application/json";
+    const wireBody: BodyInit = contentType === "application/json"
+      ? JSON.stringify(body)
+      : body as BodyInit;
+    const response = await this.#raw.post(
+      `/api/telemetry/otlp/v1/${signal}`,
+      wireBody,
+      {
+        accept: "application/json",
+        "content-type": contentType,
+        "Idempotency-Key": batchId
+      }
+    );
+    const returnedBatchId = response.headers.get("aex-telemetry-batch-id");
+    const receiptId = response.headers.get("aex-telemetry-receipt-id");
+    if (returnedBatchId !== batchId || receiptId === null) {
+      throw new TelemetryStreamProtocolError(
+        "OTLP admission response is missing its batch or receipt identity"
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = {};
+    }
+    return { batchId, receiptId, response: parsed };
+  }
+}
+
+export class ScopedTelemetryClient extends ObservationSignalClient<"telemetry"> {
+  readonly #http: HttpClient;
+  readonly #prefix: string;
+  readonly gaps: TelemetryGapsClient;
+  readonly exports: TelemetryExportsClient;
+
+  constructor(http: HttpClient, raw: RawTelemetryTransport, sessionId?: string) {
+    super(http, raw, "telemetry", sessionId);
+    this.#http = http;
+    this.#prefix = sessionId === undefined
+      ? "/api/telemetry"
+      : `/api/sessions/${encodeURIComponent(sessionId)}/telemetry`;
+    this.gaps = new TelemetryGapsClient(http, sessionId);
+    this.exports = new TelemetryExportsClient(http, sessionId);
+  }
+
+  async export(
+    request: TelemetryExportRequest,
+    options: OperationAdmissionOptions = {}
+  ): Promise<OperationHandle<"telemetry_export">> {
+    const operationId = options.operationId === undefined
+      ? newId("operation")
+      : assertId("operation", options.operationId, "operationId");
+    const operation = await this.#http.request<OperationFor<"telemetry_export">>(
+      `${this.#prefix}/exports`,
+      {
+        method: "POST",
+        headers: { "Aex-Operation-Id": operationId },
+        body: JSON.stringify(request)
+      }
+    );
+    if (operation.id !== operationId || operation.kind !== "telemetry_export") {
+      throw new Error(
+        `Telemetry export admission for ${operationId} returned ${operation.id}/${operation.kind}`
+      );
+    }
+    return new OperationHandle(this.#http, operation);
+  }
+}
+
+export class TelemetryClient extends ScopedTelemetryClient {
+  readonly otlp: TelemetryOtlpClient;
+
+  constructor(http: HttpClient, raw: RawTelemetryTransport) {
+    super(http, raw);
+    this.otlp = new TelemetryOtlpClient(raw);
+  }
+}
+
 export class Aex {
   readonly sessions: SessionsClient;
   readonly operations: OperationsClient;
   readonly workspace: WorkspaceClient;
+  readonly events: ObservationSignalClient<"events">;
+  readonly logs: ObservationSignalClient<"logs">;
+  readonly spans: ObservationSignalClient<"spans">;
+  readonly metrics: MetricsClient;
+  readonly traces: TracesClient;
+  readonly telemetry: TelemetryClient;
 
   constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
   constructor(options: AexOptions);
@@ -900,19 +1419,29 @@ export class Aex {
     const debug = resolved.debug === true
       ? (line: string) => console.error(line)
       : resolved.debug || undefined;
-    const baseUrl = resolved.baseUrl ?? regionalBaseUrl(resolved.apiKey);
+    const baseUrl =
+      resolved.baseUrl ?? regionalBaseUrl(resolved.apiKey) ?? AEX_DEFAULT_BASE_URL;
+    const fetchImpl = resolved.fetch ??
+      ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
     const http = new HttpClient({
       apiKey: resolved.apiKey,
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(resolved.fetch ? { fetch: resolved.fetch } : {}),
+      baseUrl,
+      fetch: fetchImpl,
       ...(debug ? { debug } : {}),
       retry: resolved.retry === false
         ? false
         : resolved.retry ?? HTTP_RETRY_POLICY
     });
-    this.sessions = new SessionsClient(http);
+    const raw = new RawTelemetryTransport(baseUrl, resolved.apiKey, fetchImpl);
+    this.sessions = new SessionsClient(http, raw);
     this.operations = new OperationsClient(http);
     this.workspace = new WorkspaceClient(http);
+    this.events = new ObservationSignalClient(http, raw, "events");
+    this.logs = new ObservationSignalClient(http, raw, "logs");
+    this.spans = new ObservationSignalClient(http, raw, "spans");
+    this.metrics = new MetricsClient(http, raw);
+    this.traces = new TracesClient(http, raw);
+    this.telemetry = new TelemetryClient(http, raw);
   }
 }
 
@@ -1053,4 +1582,49 @@ async function delay(ms: number, signal?: AbortSignal): Promise<void> {
 function regionalBaseUrl(apiKey: string): string | undefined {
   const parsed = parseApiKey(apiKey);
   return parsed === null ? undefined : `https://${parsed.region}.api.aex.dev`;
+}
+
+function telemetryErrorMessage(body: unknown, status: number): string {
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    "error" in body &&
+    typeof body.error === "object" &&
+    body.error !== null &&
+    "message" in body.error &&
+    typeof body.error.message === "string"
+  ) {
+    return body.error.message;
+  }
+  return `Aex telemetry request failed with status ${status}`;
+}
+
+async function* ndjsonLines(response: Response): AsyncGenerator<string, void, void> {
+  if (response.body === null) {
+    throw new TelemetryStreamProtocolError(
+      "Telemetry stream response did not include a body"
+    );
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      let lineEnd = pending.indexOf("\n");
+      while (lineEnd !== -1) {
+        const line = pending.slice(0, lineEnd).replace(/\r$/, "");
+        pending = pending.slice(lineEnd + 1);
+        if (line.trim().length > 0) yield line;
+        lineEnd = pending.indexOf("\n");
+      }
+    }
+    pending += decoder.decode();
+    const finalLine = pending.replace(/\r$/, "");
+    if (finalLine.trim().length > 0) yield finalLine;
+  } finally {
+    reader.releaseLock();
+  }
 }

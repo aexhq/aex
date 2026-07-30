@@ -28,6 +28,316 @@
     }
   ],
   "paths": {
+    "/api/events/listen": {
+      "post": {
+        "operationId": "events.listen",
+        "summary": "events.listen",
+        "tags": [
+          "events"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/query": {
+      "post": {
+        "operationId": "events.query",
+        "summary": "events.query",
+        "tags": [
+          "events"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events/stream": {
+      "post": {
+        "operationId": "events.stream",
+        "summary": "events.stream",
+        "tags": [
+          "events"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/logs/listen": {
+      "post": {
+        "operationId": "logs.listen",
+        "summary": "logs.listen",
+        "tags": [
+          "logs"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/logs/query": {
+      "post": {
+        "operationId": "logs.query",
+        "summary": "logs.query",
+        "tags": [
+          "logs"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/logs/stream": {
+      "post": {
+        "operationId": "logs.stream",
+        "summary": "logs.stream",
+        "tags": [
+          "logs"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/aggregate": {
+      "post": {
+        "operationId": "metrics.aggregate",
+        "summary": "metrics.aggregate",
+        "tags": [
+          "metrics"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/listen": {
+      "post": {
+        "operationId": "metrics.listen",
+        "summary": "metrics.listen",
+        "tags": [
+          "metrics"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/query": {
+      "post": {
+        "operationId": "metrics.query",
+        "summary": "metrics.query",
+        "tags": [
+          "metrics"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/stream": {
+      "post": {
+        "operationId": "metrics.stream",
+        "summary": "metrics.stream",
+        "tags": [
+          "metrics"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/operations": {
       "get": {
         "operationId": "operations.list",
@@ -503,6 +813,129 @@
         }
       }
     },
+    "/api/sessions/{sessionId}/events/listen": {
+      "post": {
+        "operationId": "session.events.listen",
+        "summary": "session.events.listen",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/events/query": {
+      "post": {
+        "operationId": "session.events.query",
+        "summary": "session.events.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/events/stream": {
+      "post": {
+        "operationId": "session.events.stream",
+        "summary": "session.events.stream",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sessions/{sessionId}/files/live/downloads": {
       "post": {
         "operationId": "files.live.download",
@@ -819,6 +1252,129 @@
         }
       }
     },
+    "/api/sessions/{sessionId}/logs/listen": {
+      "post": {
+        "operationId": "session.logs.listen",
+        "summary": "session.logs.listen",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/logs/query": {
+      "post": {
+        "operationId": "session.logs.query",
+        "summary": "session.logs.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/logs/stream": {
+      "post": {
+        "operationId": "session.logs.stream",
+        "summary": "session.logs.stream",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sessions/{sessionId}/messages": {
       "get": {
         "operationId": "messages.list",
@@ -899,6 +1455,170 @@
           {
             "workspaceApiKey": [
               "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/metrics/aggregate": {
+      "post": {
+        "operationId": "session.metrics.aggregate",
+        "summary": "session.metrics.aggregate",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/metrics/listen": {
+      "post": {
+        "operationId": "session.metrics.listen",
+        "summary": "session.metrics.listen",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/metrics/query": {
+      "post": {
+        "operationId": "session.metrics.query",
+        "summary": "session.metrics.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/metrics/stream": {
+      "post": {
+        "operationId": "session.metrics.stream",
+        "summary": "session.metrics.stream",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
             ]
           }
         ],
@@ -1059,6 +1779,129 @@
         }
       }
     },
+    "/api/sessions/{sessionId}/spans/listen": {
+      "post": {
+        "operationId": "session.spans.listen",
+        "summary": "session.spans.listen",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/spans/query": {
+      "post": {
+        "operationId": "session.spans.query",
+        "summary": "session.spans.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/spans/stream": {
+      "post": {
+        "operationId": "session.spans.stream",
+        "summary": "session.spans.stream",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sessions/{sessionId}/stops": {
       "post": {
         "operationId": "sessions.stop",
@@ -1109,6 +1952,608 @@
         }
       }
     },
+    "/api/sessions/{sessionId}/telemetry/exports": {
+      "post": {
+        "operationId": "session.telemetry.exports.create",
+        "summary": "session.telemetry.exports.create",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Aex-Operation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/exports/{exportId}": {
+      "get": {
+        "operationId": "session.telemetry.exports.get",
+        "summary": "session.telemetry.exports.get",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads": {
+      "post": {
+        "operationId": "session.telemetry.exports.download",
+        "summary": "session.telemetry.exports.download",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations": {
+      "post": {
+        "operationId": "session.telemetry.exports.revoke",
+        "summary": "session.telemetry.exports.revoke",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/gaps/{gapId}": {
+      "get": {
+        "operationId": "session.telemetry.gaps.get",
+        "summary": "session.telemetry.gaps.get",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/gaps/query": {
+      "post": {
+        "operationId": "session.telemetry.gaps.query",
+        "summary": "session.telemetry.gaps.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/listen": {
+      "post": {
+        "operationId": "session.telemetry.listen",
+        "summary": "session.telemetry.listen",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/query": {
+      "post": {
+        "operationId": "session.telemetry.query",
+        "summary": "session.telemetry.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/telemetry/stream": {
+      "post": {
+        "operationId": "session.telemetry.stream",
+        "summary": "session.telemetry.stream",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/traces/{traceId}": {
+      "get": {
+        "operationId": "session.traces.get",
+        "summary": "session.traces.get",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "traceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/traces/listen": {
+      "post": {
+        "operationId": "session.traces.listen",
+        "summary": "session.traces.listen",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/traces/query": {
+      "post": {
+        "operationId": "session.traces.query",
+        "summary": "session.traces.query",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{sessionId}/traces/stream": {
+      "post": {
+        "operationId": "session.traces.stream",
+        "summary": "session.traces.stream",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sessions/{sessionId}/workspace/discards": {
       "post": {
         "operationId": "sessions.workspace.discard",
@@ -1139,6 +2584,671 @@
           {
             "workspaceApiKey": [
               "sessions:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spans/listen": {
+      "post": {
+        "operationId": "spans.listen",
+        "summary": "spans.listen",
+        "tags": [
+          "spans"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spans/query": {
+      "post": {
+        "operationId": "spans.query",
+        "summary": "spans.query",
+        "tags": [
+          "spans"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spans/stream": {
+      "post": {
+        "operationId": "spans.stream",
+        "summary": "spans.stream",
+        "tags": [
+          "spans"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/exports": {
+      "post": {
+        "operationId": "telemetry.exports.create",
+        "summary": "telemetry.exports.create",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "Aex-Operation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/exports/{exportId}": {
+      "get": {
+        "operationId": "telemetry.exports.get",
+        "summary": "telemetry.exports.get",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "exportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/exports/{exportId}/downloads": {
+      "post": {
+        "operationId": "telemetry.exports.download",
+        "summary": "telemetry.exports.download",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "exportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/exports/{exportId}/revocations": {
+      "post": {
+        "operationId": "telemetry.exports.revoke",
+        "summary": "telemetry.exports.revoke",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "exportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/gaps/{gapId}": {
+      "get": {
+        "operationId": "telemetry.gaps.get",
+        "summary": "telemetry.gaps.get",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "gapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/gaps/query": {
+      "post": {
+        "operationId": "telemetry.gaps.query",
+        "summary": "telemetry.gaps.query",
+        "tags": [
+          "telemetry"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/listen": {
+      "post": {
+        "operationId": "telemetry.listen",
+        "summary": "telemetry.listen",
+        "tags": [
+          "telemetry"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/otlp/v1/logs": {
+      "post": {
+        "operationId": "telemetry.otlp.logs",
+        "summary": "telemetry.otlp.logs",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/otlp/v1/metrics": {
+      "post": {
+        "operationId": "telemetry.otlp.metrics",
+        "summary": "telemetry.otlp.metrics",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/otlp/v1/traces": {
+      "post": {
+        "operationId": "telemetry.otlp.traces",
+        "summary": "telemetry.otlp.traces",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:write"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/query": {
+      "post": {
+        "operationId": "telemetry.query",
+        "summary": "telemetry.query",
+        "tags": [
+          "telemetry"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/telemetry/stream": {
+      "post": {
+        "operationId": "telemetry.stream",
+        "summary": "telemetry.stream",
+        "tags": [
+          "telemetry"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/traces/listen": {
+      "post": {
+        "operationId": "traces.listen",
+        "summary": "traces.listen",
+        "tags": [
+          "traces"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/traces/query": {
+      "post": {
+        "operationId": "traces.query",
+        "summary": "traces.query",
+        "tags": [
+          "traces"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/traces/stream": {
+      "post": {
+        "operationId": "traces.stream",
+        "summary": "traces.stream",
+        "tags": [
+          "traces"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "telemetry:read"
             ]
           }
         ],

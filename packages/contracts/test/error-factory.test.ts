@@ -237,6 +237,7 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "idempotency_conflict":
           return "idempotency";
         case "not_found":
+        case "export_not_found":
           return "not_found";
         case "rate_limited":
         case "workspace_concurrency_exceeded":
@@ -245,6 +246,18 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "content_deleted":
           return "content_deleted";
         case "session_busy":
+        case "invalid_cursor":
+        case "invalid_query":
+        case "invalid_metric_aggregation":
+        case "invalid_telemetry":
+        case "telemetry_payload_too_large":
+        case "telemetry_quota_exceeded":
+        case "observability_unavailable":
+        case "telemetry_incomplete":
+        case "unsupported_export_signal":
+        case "export_not_ready":
+        case "export_expired":
+        case "export_revoked":
         case "checkpoint_not_available":
         case "session_not_terminal":
         case "session_terminal":

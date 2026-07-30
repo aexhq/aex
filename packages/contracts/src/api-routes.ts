@@ -75,6 +75,24 @@ function registryRoutes(
   ];
 }
 
+function observationRoutes(
+  signal: "events" | "logs" | "spans" | "metrics" | "traces" | "telemetry",
+  sessionScoped: boolean
+): readonly AuthenticatedApiRouteDescriptor[] {
+  const prefix = sessionScoped ? `/sessions/[^/]+/${signal}` : `/${signal}`;
+  const samplePrefix = sessionScoped ? `/sessions/ses_1/${signal}` : `/${signal}`;
+  const namePrefix = sessionScoped ? `session.${signal}` : signal;
+  return (["query", "stream", "listen"] as const).map((action) =>
+    regional(
+      `${namePrefix}.${action}`,
+      "POST",
+      new RegExp(`^${prefix}/${action}$`),
+      `${samplePrefix}/${action}`,
+      "telemetry:read"
+    )
+  );
+}
+
 export const BOOTSTRAP_API_ROUTE_DESCRIPTORS = [
   bootstrap("account.get", "GET", /^\/account$/, "/account", "account:read"),
   bootstrap("organizations.list", "GET", /^\/organizations$/, "/organizations", "organizations:read"),
@@ -439,5 +457,152 @@ export const REGIONAL_API_ROUTE_DESCRIPTORS = [
     /^\/sessions\/[^/]+\/approvals\/[^/]+\/responses$/,
     "/sessions/ses_1/approvals/apr_1/responses",
     "sessions:write"
+  ),
+  ...observationRoutes("events", false),
+  ...observationRoutes("logs", false),
+  ...observationRoutes("spans", false),
+  ...observationRoutes("metrics", false),
+  ...observationRoutes("traces", false),
+  ...observationRoutes("telemetry", false),
+  ...observationRoutes("events", true),
+  ...observationRoutes("logs", true),
+  ...observationRoutes("spans", true),
+  ...observationRoutes("metrics", true),
+  ...observationRoutes("traces", true),
+  ...observationRoutes("telemetry", true),
+  regional(
+    "metrics.aggregate",
+    "POST",
+    /^\/metrics\/aggregate$/,
+    "/metrics/aggregate",
+    "telemetry:read"
+  ),
+  regional(
+    "session.metrics.aggregate",
+    "POST",
+    /^\/sessions\/[^/]+\/metrics\/aggregate$/,
+    "/sessions/ses_1/metrics/aggregate",
+    "telemetry:read"
+  ),
+  regional(
+    "session.traces.get",
+    "GET",
+    /^\/sessions\/[^/]+\/traces\/[0-9a-f]{32}$/,
+    "/sessions/ses_1/traces/0123456789abcdef0123456789abcdef",
+    "telemetry:read"
+  ),
+  regional(
+    "telemetry.otlp.logs",
+    "POST",
+    /^\/telemetry\/otlp\/v1\/logs$/,
+    "/telemetry/otlp/v1/logs",
+    "telemetry:write",
+    "idempotency-key"
+  ),
+  regional(
+    "telemetry.otlp.traces",
+    "POST",
+    /^\/telemetry\/otlp\/v1\/traces$/,
+    "/telemetry/otlp/v1/traces",
+    "telemetry:write",
+    "idempotency-key"
+  ),
+  regional(
+    "telemetry.otlp.metrics",
+    "POST",
+    /^\/telemetry\/otlp\/v1\/metrics$/,
+    "/telemetry/otlp/v1/metrics",
+    "telemetry:write",
+    "idempotency-key"
+  ),
+  regional(
+    "telemetry.gaps.query",
+    "POST",
+    /^\/telemetry\/gaps\/query$/,
+    "/telemetry/gaps/query",
+    "telemetry:read"
+  ),
+  regional(
+    "telemetry.gaps.get",
+    "GET",
+    /^\/telemetry\/gaps\/[^/]+$/,
+    "/telemetry/gaps/gap_1",
+    "telemetry:read"
+  ),
+  regional(
+    "session.telemetry.gaps.query",
+    "POST",
+    /^\/sessions\/[^/]+\/telemetry\/gaps\/query$/,
+    "/sessions/ses_1/telemetry/gaps/query",
+    "telemetry:read"
+  ),
+  regional(
+    "session.telemetry.gaps.get",
+    "GET",
+    /^\/sessions\/[^/]+\/telemetry\/gaps\/[^/]+$/,
+    "/sessions/ses_1/telemetry/gaps/gap_1",
+    "telemetry:read"
+  ),
+  regional(
+    "telemetry.exports.create",
+    "POST",
+    /^\/telemetry\/exports$/,
+    "/telemetry/exports",
+    "telemetry:read",
+    "operation-id"
+  ),
+  regional(
+    "telemetry.exports.get",
+    "GET",
+    /^\/telemetry\/exports\/[^/]+$/,
+    "/telemetry/exports/exp_1",
+    "telemetry:read"
+  ),
+  regional(
+    "telemetry.exports.download",
+    "POST",
+    /^\/telemetry\/exports\/[^/]+\/downloads$/,
+    "/telemetry/exports/exp_1/downloads",
+    "telemetry:read",
+    "idempotency-key"
+  ),
+  regional(
+    "telemetry.exports.revoke",
+    "POST",
+    /^\/telemetry\/exports\/[^/]+\/revocations$/,
+    "/telemetry/exports/exp_1/revocations",
+    "telemetry:read",
+    "idempotency-key"
+  ),
+  regional(
+    "session.telemetry.exports.create",
+    "POST",
+    /^\/sessions\/[^/]+\/telemetry\/exports$/,
+    "/sessions/ses_1/telemetry/exports",
+    "telemetry:read",
+    "operation-id"
+  ),
+  regional(
+    "session.telemetry.exports.get",
+    "GET",
+    /^\/sessions\/[^/]+\/telemetry\/exports\/[^/]+$/,
+    "/sessions/ses_1/telemetry/exports/exp_1",
+    "telemetry:read"
+  ),
+  regional(
+    "session.telemetry.exports.download",
+    "POST",
+    /^\/sessions\/[^/]+\/telemetry\/exports\/[^/]+\/downloads$/,
+    "/sessions/ses_1/telemetry/exports/exp_1/downloads",
+    "telemetry:read",
+    "idempotency-key"
+  ),
+  regional(
+    "session.telemetry.exports.revoke",
+    "POST",
+    /^\/sessions\/[^/]+\/telemetry\/exports\/[^/]+\/revocations$/,
+    "/sessions/ses_1/telemetry/exports/exp_1/revocations",
+    "telemetry:read",
+    "idempotency-key"
   )
 ] as const satisfies readonly AuthenticatedApiRouteDescriptor[];
