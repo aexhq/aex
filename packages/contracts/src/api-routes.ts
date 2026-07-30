@@ -55,6 +55,26 @@ const regional = (
   idempotency: RouteIdempotency = "none"
 ) => route("regional", name, method, pattern, samplePath, requiredScope, idempotency);
 
+function registryRoutes(
+  name: "files" | "skills" | "tools" | "instructions" | "mcpServers",
+  path: "files" | "skills" | "tools" | "instructions" | "mcp-servers"
+): readonly AuthenticatedApiRouteDescriptor[] {
+  const escaped = path.replace("-", "\\-");
+  return [
+    regional(`registry.${name}.list`, "GET", new RegExp(`^/workspace/${escaped}$`), `/workspace/${path}`, "resources:read"),
+    regional(`registry.${name}.get`, "GET", new RegExp(`^/workspace/${escaped}/[^/]+$`), `/workspace/${path}/example`, "resources:read"),
+    regional(
+      `registry.${name}.put`,
+      "PUT",
+      new RegExp(`^/workspace/${escaped}/[^/]+$`),
+      `/workspace/${path}/example`,
+      "resources:write",
+      "idempotency-key"
+    ),
+    regional(`registry.${name}.delete`, "DELETE", new RegExp(`^/workspace/${escaped}/[^/]+$`), `/workspace/${path}/example`, "resources:write")
+  ];
+}
+
 export const BOOTSTRAP_API_ROUTE_DESCRIPTORS = [
   bootstrap("account.get", "GET", /^\/account$/, "/account", "account:read"),
   bootstrap("organizations.list", "GET", /^\/organizations$/, "/organizations", "organizations:read"),
@@ -288,5 +308,136 @@ export const REGIONAL_API_ROUTE_DESCRIPTORS = [
     /^\/operations\/[^/]+\/cancellations$/,
     "/operations/op_1/cancellations",
     "operations:write"
+  ),
+  regional(
+    "files.persisted.list",
+    "POST",
+    /^\/sessions\/[^/]+\/files\/persisted\/list$/,
+    "/sessions/ses_1/files/persisted/list",
+    "files:read"
+  ),
+  regional(
+    "files.persisted.stat",
+    "POST",
+    /^\/sessions\/[^/]+\/files\/persisted\/stat$/,
+    "/sessions/ses_1/files/persisted/stat",
+    "files:read"
+  ),
+  regional(
+    "files.persisted.download",
+    "POST",
+    /^\/sessions\/[^/]+\/files\/persisted\/downloads$/,
+    "/sessions/ses_1/files/persisted/downloads",
+    "files:read",
+    "idempotency-key"
+  ),
+  regional(
+    "files.live.list",
+    "POST",
+    /^\/sessions\/[^/]+\/files\/live\/list$/,
+    "/sessions/ses_1/files/live/list",
+    "files:live"
+  ),
+  regional(
+    "files.live.stat",
+    "POST",
+    /^\/sessions\/[^/]+\/files\/live\/stat$/,
+    "/sessions/ses_1/files/live/stat",
+    "files:live"
+  ),
+  regional(
+    "files.live.download",
+    "POST",
+    /^\/sessions\/[^/]+\/files\/live\/downloads$/,
+    "/sessions/ses_1/files/live/downloads",
+    "files:live",
+    "idempotency-key"
+  ),
+  ...registryRoutes("files", "files"),
+  ...registryRoutes("skills", "skills"),
+  ...registryRoutes("tools", "tools"),
+  ...registryRoutes("instructions", "instructions"),
+  ...registryRoutes("mcpServers", "mcp-servers"),
+  regional(
+    "uploads.create",
+    "POST",
+    /^\/workspace\/uploads$/,
+    "/workspace/uploads",
+    "resources:write",
+    "idempotency-key"
+  ),
+  regional(
+    "uploads.parts",
+    "POST",
+    /^\/workspace\/uploads\/[^/]+\/parts$/,
+    "/workspace/uploads/upl_1/parts",
+    "resources:write"
+  ),
+  regional(
+    "uploads.complete",
+    "POST",
+    /^\/workspace\/uploads\/[^/]+\/completion$/,
+    "/workspace/uploads/upl_1/completion",
+    "resources:write",
+    "idempotency-key"
+  ),
+  regional(
+    "uploads.abort",
+    "DELETE",
+    /^\/workspace\/uploads\/[^/]+$/,
+    "/workspace/uploads/upl_1",
+    "resources:write"
+  ),
+  regional("secrets.list", "GET", /^\/workspace\/secrets$/, "/workspace/secrets", "secrets:read"),
+  regional(
+    "secrets.get",
+    "GET",
+    /^\/workspace\/secrets\/[^/]+$/,
+    "/workspace/secrets/GITHUB_TOKEN",
+    "secrets:read"
+  ),
+  regional(
+    "secrets.put",
+    "PUT",
+    /^\/workspace\/secrets\/[^/]+$/,
+    "/workspace/secrets/GITHUB_TOKEN",
+    "secrets:write",
+    "idempotency-key"
+  ),
+  regional(
+    "secrets.delete",
+    "DELETE",
+    /^\/workspace\/secrets\/[^/]+$/,
+    "/workspace/secrets/GITHUB_TOKEN",
+    "secrets:write"
+  ),
+  regional(
+    "secrets.revoke",
+    "POST",
+    /^\/workspace\/secrets\/[^/]+\/revocations$/,
+    "/workspace/secrets/GITHUB_TOKEN/revocations",
+    "secrets:revoke",
+    "idempotency-key"
+  ),
+  regional(
+    "approvals.list",
+    "GET",
+    /^\/sessions\/[^/]+\/approvals$/,
+    "/sessions/ses_1/approvals",
+    "sessions:read"
+  ),
+  regional(
+    "approvals.get",
+    "GET",
+    /^\/sessions\/[^/]+\/approvals\/[^/]+$/,
+    "/sessions/ses_1/approvals/apr_1",
+    "sessions:read"
+  ),
+  regional(
+    "approvals.respond",
+    "POST",
+    /^\/sessions\/[^/]+\/approvals\/[^/]+\/responses$/,
+    "/sessions/ses_1/approvals/apr_1/responses",
+    "sessions:write"
   )
 ] as const satisfies readonly AuthenticatedApiRouteDescriptor[];

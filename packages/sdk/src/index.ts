@@ -10,17 +10,26 @@ export {
   OperationFailedError,
   OperationHandle,
   OperationsClient,
+  PersistedSessionFilesClient,
+  RegisteredResourceClient,
   RunFailedError,
   RunHandle,
+  SessionApprovalsClient,
   SessionCredentialsClient,
+  SessionFilesClient,
   SessionHandle,
+  LiveSessionFilesClient,
   SessionMessagesClient,
   SessionWorkspaceClient,
-  SessionsClient
+  SessionsClient,
+  WorkspaceClient,
+  WorkspaceSecretsClient,
+  WorkspaceUploadsClient
 } from "./client-v1.js";
 
 export type {
   AexOptions,
+  ApprovalListQuery,
   CredentialRebindRequest,
   IdempotencyOptions,
   MessagePart,
@@ -28,7 +37,9 @@ export type {
   OperationAdmissionOptions,
   OperationListQuery,
   OperationResult,
+  RevisionMutationOptions,
   RevisionOperationAdmissionOptions,
+  RevisionOptions,
   SessionDeleteRequest,
   SessionForkRequest,
   SessionListQuery,
@@ -40,19 +51,50 @@ export type {
 export type {
   ApiError,
   ApiErrorBody,
+  Approval,
+  ApprovalResponseRequest,
+  BlobInput,
+  DownloadGrant,
+  FileDownloadRequest,
+  FileEntry,
   Id,
+  LiveDownloadGrant,
+  LiveFileDownloadRequest,
+  LiveFileEntry,
+  LiveFileListRequest,
+  LiveFilePage,
+  LiveFileStatRequest,
   MessageSendRequest,
   MessageV1 as Message,
   Operation,
   OperationKind,
   OperationStatusV1 as OperationStatus,
   Page,
+  PersistedFileListRequest,
+  PersistedFileStatRequest,
+  RegisteredFileValue,
+  RegisteredInstructionValue,
+  RegisteredMcpServerValue,
+  RegisteredResource,
+  RegisteredResourceKind,
+  RegisteredResourceSummary,
+  RegisteredSkillValue,
+  RegisteredToolValue,
   Region,
   RunStatusV1 as RunStatus,
   RunV1 as Run,
   SessionCreateRequestV1 as SessionCreateRequest,
   SessionStatusV1 as SessionStatus,
   SessionV1 as Session,
+  SecretMetadataV1 as SecretMetadata,
+  SecretRevocation,
+  Upload,
+  UploadCompleteRequest,
+  UploadCreateRequest,
+  UploadPartGrant,
+  UploadPartsRequest,
+  UploadPartsResponse,
+  WorkspaceAccess,
   WorkspaceContinuity
 } from "@aexhq/contracts";
 
@@ -69,11 +111,3 @@ export {
   isIdempotencyConflict,
   isNotFound
 } from "@aexhq/contracts";
-
-// Registered-resource authoring primitives remain usable while their v1
-// registry clients land in the next public SDK wave.
-export { File } from "./file.js";
-export { Instructions } from "./instructions.js";
-export { Secret } from "./secret.js";
-export { Skill } from "./skill.js";
-export { Tool } from "./tool.js";

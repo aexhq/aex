@@ -140,3 +140,4 @@ export * from "./schemas/index.js";
 // read one statement of the HTTP surface.
 export * from "./api-routes.js";
 export * from "./v1-resources.js";
+export * from "./v1-content.js";

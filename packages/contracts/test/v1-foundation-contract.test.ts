@@ -235,9 +235,18 @@ describe("exact v1 route authorities", () => {
   });
 
   it("pins regional session/run/operation routes and operation headers", () => {
-    expect(REGIONAL_API_ROUTE_DESCRIPTORS.map(({ name, method, samplePath, requiredScope, idempotency }) => [
+    const foundationNames = new Set([
+      "workspace.get", "sessions.create", "sessions.list", "sessions.get",
+      "messages.list", "messages.send", "runs.list", "runs.get",
+      "sessions.stop", "sessions.persist", "sessions.fork",
+      "sessions.workspace.discard", "sessions.credentials.rebind",
+      "sessions.delete", "operations.list", "operations.get", "operations.cancel"
+    ]);
+    expect(REGIONAL_API_ROUTE_DESCRIPTORS
+      .filter(({ name }) => foundationNames.has(name))
+      .map(({ name, method, samplePath, requiredScope, idempotency }) => [
       name, method, samplePath, requiredScope, idempotency
-    ])).toEqual([
+      ])).toEqual([
       ["workspace.get", "GET", "/workspace", "workspace:read", "none"],
       ["sessions.create", "POST", "/sessions", "sessions:write", "idempotency-key"],
       ["sessions.list", "GET", "/sessions", "sessions:read", "none"],

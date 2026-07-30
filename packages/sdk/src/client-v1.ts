@@ -5,21 +5,45 @@ import {
   assertId,
   newId,
   parseApiKey,
+  RegisteredNameSchema,
+  type Approval,
+  type ApprovalResponseRequest,
   type DebugSink,
+  type DownloadGrant,
+  type FileDownloadRequest,
+  type FileEntry,
   type FetchLike,
   type HttpRetryOptions,
   type Id,
+  type LiveDownloadGrant,
+  type LiveFileDownloadRequest,
+  type LiveFileEntry,
+  type LiveFileListRequest,
+  type LiveFilePage,
+  type LiveFileStatRequest,
   type MessageSendRequest,
   type MessageV1,
   type Operation,
   type OperationKind,
   type OperationStatusV1,
   type Page,
+  type PersistedFileListRequest,
+  type PersistedFileStatRequest,
+  type RegisteredResource,
+  type RegisteredResourceKind,
+  type RegisteredResourceSummary,
   type RunStatusV1,
   type RunV1,
+  type SecretMetadataV1,
+  type SecretRevocation,
   type SessionCreateRequestV1,
   type SessionStatusV1,
-  type SessionV1
+  type SessionV1,
+  type Upload,
+  type UploadCompleteRequest,
+  type UploadCreateRequest,
+  type UploadPartsRequest,
+  type UploadPartsResponse
 } from "@aexhq/contracts";
 
 export interface AexOptions {
@@ -41,6 +65,12 @@ export interface OperationAdmissionOptions {
 export interface RevisionOperationAdmissionOptions extends OperationAdmissionOptions {
   readonly ifRevision?: number;
 }
+
+export interface RevisionOptions {
+  readonly ifRevision?: number;
+}
+
+export interface RevisionMutationOptions extends IdempotencyOptions, RevisionOptions {}
 
 export interface WaitOptions {
   readonly pollIntervalMs?: number;
@@ -333,12 +363,142 @@ export class SessionCredentialsClient {
   }
 }
 
+export class PersistedSessionFilesClient {
+  readonly #http: HttpClient;
+  readonly #sessionId: string;
+
+  constructor(http: HttpClient, sessionId: string) {
+    this.#http = http;
+    this.#sessionId = sessionId;
+  }
+
+  list(request: PersistedFileListRequest = {}): Promise<Page<FileEntry>> {
+    return this.#post<Page<FileEntry>>("list", request);
+  }
+
+  stat(request: PersistedFileStatRequest): Promise<FileEntry> {
+    return this.#post<FileEntry>("stat", request);
+  }
+
+  download(
+    request: FileDownloadRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<DownloadGrant> {
+    assertByteRange(request.range);
+    return this.#post<DownloadGrant>("downloads", request, idempotencyHeaders(options));
+  }
+
+  #post<T>(route: string, body: unknown, headers?: HeadersInit): Promise<T> {
+    return this.#http.request<T>(
+      `/api/sessions/${encodeURIComponent(this.#sessionId)}/files/persisted/${route}`,
+      { method: "POST", ...(headers ? { headers } : {}), body: JSON.stringify(body) }
+    );
+  }
+}
+
+export class LiveSessionFilesClient {
+  readonly #http: HttpClient;
+  readonly #sessionId: string;
+
+  constructor(http: HttpClient, sessionId: string) {
+    this.#http = http;
+    this.#sessionId = sessionId;
+  }
+
+  list(request: LiveFileListRequest = {}): Promise<LiveFilePage> {
+    assertGeneration(request.ifGenerationId);
+    return this.#post<LiveFilePage>("list", request);
+  }
+
+  stat(request: LiveFileStatRequest): Promise<LiveFileEntry> {
+    assertGeneration(request.ifGenerationId);
+    return this.#post<LiveFileEntry>("stat", request);
+  }
+
+  download(
+    request: LiveFileDownloadRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<LiveDownloadGrant> {
+    assertGeneration(request.ifGenerationId);
+    assertByteRange(request.range);
+    return this.#post<LiveDownloadGrant>("downloads", request, idempotencyHeaders(options));
+  }
+
+  #post<T>(route: string, body: unknown, headers?: HeadersInit): Promise<T> {
+    return this.#http.request<T>(
+      `/api/sessions/${encodeURIComponent(this.#sessionId)}/files/live/${route}`,
+      { method: "POST", ...(headers ? { headers } : {}), body: JSON.stringify(body) }
+    );
+  }
+}
+
+export class SessionFilesClient {
+  readonly persisted: PersistedSessionFilesClient;
+  readonly live: LiveSessionFilesClient;
+
+  constructor(http: HttpClient, sessionId: string) {
+    this.persisted = new PersistedSessionFilesClient(http, sessionId);
+    this.live = new LiveSessionFilesClient(http, sessionId);
+  }
+}
+
+export interface ApprovalListQuery {
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export class SessionApprovalsClient {
+  readonly #http: HttpClient;
+  readonly #sessionId: string;
+
+  constructor(http: HttpClient, sessionId: string) {
+    this.#http = http;
+    this.#sessionId = sessionId;
+  }
+
+  list(query: ApprovalListQuery = {}): Promise<Page<Approval>> {
+    return this.#http.request<Page<Approval>>(
+      `/api/sessions/${encodeURIComponent(this.#sessionId)}/approvals`,
+      {},
+      queryParameters(query)
+    );
+  }
+
+  async get(approvalId: string): Promise<Approval> {
+    const id = assertId("approval", approvalId, "approvalId");
+    const approval = await this.#http.request<Approval>(
+      `/api/sessions/${encodeURIComponent(this.#sessionId)}/approvals/${encodeURIComponent(id)}`
+    );
+    return this.#check(approval, id);
+  }
+
+  async respond(approvalId: string, request: ApprovalResponseRequest): Promise<Approval> {
+    const id = assertId("approval", approvalId, "approvalId");
+    const approval = await this.#http.request<Approval>(
+      `/api/sessions/${encodeURIComponent(this.#sessionId)}/approvals/${encodeURIComponent(id)}/responses`,
+      { method: "POST", body: JSON.stringify(request) }
+    );
+    return this.#check(approval, id);
+  }
+
+  #check(approval: Approval, id: string): Approval {
+    if (approval.id !== id || approval.sessionId !== this.#sessionId) {
+      throw new Error(
+        `Approval ${this.#sessionId}/${id} returned ${approval.sessionId}/${approval.id}`
+      );
+    }
+    return approval;
+  }
+}
+
 export class SessionHandle {
   readonly #http: HttpClient;
   readonly #session: SessionV1;
   readonly messages: SessionMessagesClient;
   readonly workspace: SessionWorkspaceClient;
   readonly credentials: SessionCredentialsClient;
+  readonly files: SessionFilesClient;
+  readonly approvals: SessionApprovalsClient;
 
   constructor(http: HttpClient, session: SessionV1) {
     this.#http = http;
@@ -347,6 +507,8 @@ export class SessionHandle {
     this.messages = new SessionMessagesClient(http, session.id);
     this.workspace = new SessionWorkspaceClient(this);
     this.credentials = new SessionCredentialsClient(this);
+    this.files = new SessionFilesClient(http, session.id);
+    this.approvals = new SessionApprovalsClient(http, session.id);
   }
 
   get id(): string {
@@ -511,9 +673,217 @@ export class OperationsClient {
   }
 }
 
+type RegisteredResourceFor<K extends RegisteredResourceKind> =
+  Extract<RegisteredResource, { readonly kind: K }>;
+type RegisteredSummaryFor<K extends RegisteredResourceKind> =
+  Extract<RegisteredResourceSummary, { readonly kind: K }>;
+
+const REGISTRY_PATHS = {
+  file: "files",
+  skill: "skills",
+  tool: "tools",
+  instruction: "instructions",
+  mcp_server: "mcp-servers"
+} as const satisfies Readonly<Record<RegisteredResourceKind, string>>;
+
+export class RegisteredResourceClient<K extends RegisteredResourceKind> {
+  readonly #http: HttpClient;
+  readonly #kind: K;
+  readonly #path: string;
+
+  constructor(http: HttpClient, kind: K) {
+    this.#http = http;
+    this.#kind = kind;
+    this.#path = REGISTRY_PATHS[kind];
+  }
+
+  list(query: { readonly cursor?: string; readonly limit?: number } = {}):
+    Promise<Page<RegisteredSummaryFor<K>>> {
+    return this.#http.request<Page<RegisteredSummaryFor<K>>>(
+      `/api/workspace/${this.#path}`,
+      {},
+      queryParameters(query)
+    );
+  }
+
+  async get(name: string): Promise<RegisteredResourceFor<K>> {
+    const resource = await this.#http.request<RegisteredResourceFor<K>>(
+      `/api/workspace/${this.#path}/${encodeURIComponent(assertRegisteredName(name))}`
+    );
+    return this.#check(resource, name);
+  }
+
+  async set(
+    name: string,
+    value: RegisteredResourceFor<K>["value"],
+    options: RevisionMutationOptions = {}
+  ): Promise<RegisteredResourceFor<K>> {
+    const resource = await this.#http.request<RegisteredResourceFor<K>>(
+      `/api/workspace/${this.#path}/${encodeURIComponent(assertRegisteredName(name))}`,
+      {
+        method: "PUT",
+        headers: mutationHeaders(options),
+        body: JSON.stringify(value)
+      }
+    );
+    return this.#check(resource, name);
+  }
+
+  async delete(name: string, options: RevisionOptions = {}): Promise<void> {
+    const headers = revisionHeaders(options);
+    await this.#http.request<void>(
+      `/api/workspace/${this.#path}/${encodeURIComponent(assertRegisteredName(name))}`,
+      {
+        method: "DELETE",
+        ...(headers ? { headers } : {})
+      }
+    );
+  }
+
+  #check(resource: RegisteredResourceFor<K>, name: string): RegisteredResourceFor<K> {
+    if (resource.kind !== this.#kind || resource.name !== name) {
+      throw new Error(
+        `Registry ${this.#kind}/${name} returned ${resource.kind}/${resource.name}`
+      );
+    }
+    return resource;
+  }
+}
+
+export class WorkspaceUploadsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  create(
+    request: UploadCreateRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<Upload> {
+    return this.#http.request<Upload>("/api/workspace/uploads", {
+      method: "POST",
+      headers: idempotencyHeaders(options),
+      body: JSON.stringify(request)
+    });
+  }
+
+  parts(uploadId: string, request: UploadPartsRequest): Promise<UploadPartsResponse> {
+    const id = assertId("upload", uploadId, "uploadId");
+    return this.#http.request<UploadPartsResponse>(
+      `/api/workspace/uploads/${encodeURIComponent(id)}/parts`,
+      { method: "POST", body: JSON.stringify(request) }
+    );
+  }
+
+  complete(
+    uploadId: string,
+    request: UploadCompleteRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<Upload> {
+    const id = assertId("upload", uploadId, "uploadId");
+    return this.#http.request<Upload>(
+      `/api/workspace/uploads/${encodeURIComponent(id)}/completion`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify(request)
+      }
+    );
+  }
+
+  async abort(uploadId: string): Promise<void> {
+    const id = assertId("upload", uploadId, "uploadId");
+    await this.#http.request<void>(
+      `/api/workspace/uploads/${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    );
+  }
+}
+
+export class WorkspaceSecretsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(query: { readonly cursor?: string; readonly limit?: number } = {}):
+    Promise<Page<SecretMetadataV1>> {
+    return this.#http.request<Page<SecretMetadataV1>>(
+      "/api/workspace/secrets",
+      {},
+      queryParameters(query)
+    );
+  }
+
+  get(name: string): Promise<SecretMetadataV1> {
+    return this.#http.request<SecretMetadataV1>(
+      `/api/workspace/secrets/${encodeURIComponent(assertRegisteredName(name))}`
+    );
+  }
+
+  set(
+    name: string,
+    value: string,
+    options: RevisionMutationOptions = {}
+  ): Promise<SecretMetadataV1> {
+    return this.#http.request<SecretMetadataV1>(
+      `/api/workspace/secrets/${encodeURIComponent(assertRegisteredName(name))}`,
+      {
+        method: "PUT",
+        headers: mutationHeaders(options),
+        body: JSON.stringify({ value })
+      }
+    );
+  }
+
+  async delete(name: string): Promise<void> {
+    await this.#http.request<void>(
+      `/api/workspace/secrets/${encodeURIComponent(assertRegisteredName(name))}`,
+      { method: "DELETE" }
+    );
+  }
+
+  revoke(
+    name: string,
+    options: IdempotencyOptions = {}
+  ): Promise<SecretRevocation> {
+    return this.#http.request<SecretRevocation>(
+      `/api/workspace/secrets/${encodeURIComponent(assertRegisteredName(name))}/revocations`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify({})
+      }
+    );
+  }
+}
+
+export class WorkspaceClient {
+  readonly files: RegisteredResourceClient<"file">;
+  readonly skills: RegisteredResourceClient<"skill">;
+  readonly tools: RegisteredResourceClient<"tool">;
+  readonly instructions: RegisteredResourceClient<"instruction">;
+  readonly mcpServers: RegisteredResourceClient<"mcp_server">;
+  readonly uploads: WorkspaceUploadsClient;
+  readonly secrets: WorkspaceSecretsClient;
+
+  constructor(http: HttpClient) {
+    this.files = new RegisteredResourceClient(http, "file");
+    this.skills = new RegisteredResourceClient(http, "skill");
+    this.tools = new RegisteredResourceClient(http, "tool");
+    this.instructions = new RegisteredResourceClient(http, "instruction");
+    this.mcpServers = new RegisteredResourceClient(http, "mcp_server");
+    this.uploads = new WorkspaceUploadsClient(http);
+    this.secrets = new WorkspaceSecretsClient(http);
+  }
+}
+
 export class Aex {
   readonly sessions: SessionsClient;
   readonly operations: OperationsClient;
+  readonly workspace: WorkspaceClient;
 
   constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
   constructor(options: AexOptions);
@@ -542,6 +912,7 @@ export class Aex {
     });
     this.sessions = new SessionsClient(http);
     this.operations = new OperationsClient(http);
+    this.workspace = new WorkspaceClient(http);
   }
 }
 
@@ -568,11 +939,57 @@ function idempotencyHeaders(options: IdempotencyOptions): Record<string, string>
   return { "Idempotency-Key": key };
 }
 
+function mutationHeaders(options: RevisionMutationOptions): Record<string, string> {
+  return {
+    ...idempotencyHeaders(options),
+    ...(options.ifRevision === undefined
+      ? {}
+      : { "If-Match": revisionEtag(options.ifRevision) })
+  };
+}
+
+function revisionHeaders(options: RevisionOptions): Record<string, string> | undefined {
+  return options.ifRevision === undefined
+    ? undefined
+    : { "If-Match": revisionEtag(options.ifRevision) };
+}
+
 function revisionEtag(revision: number): string {
   if (!Number.isSafeInteger(revision) || revision < 1) {
     throw new Error("ifRevision must be a positive safe integer");
   }
   return `"${revision}"`;
+}
+
+function assertRegisteredName(name: string): string {
+  if (!RegisteredNameSchema.safeParse(name).success) {
+    throw new Error(
+      "name must match [A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+    );
+  }
+  return name;
+}
+
+function assertGeneration(generationId: string | undefined): void {
+  if (generationId !== undefined) {
+    assertId("generation", generationId, "ifGenerationId");
+  }
+}
+
+function assertByteRange(
+  range: { readonly start: number; readonly endExclusive: number } | undefined
+): void {
+  if (range === undefined) return;
+  if (
+    !Number.isSafeInteger(range.start) ||
+    range.start < 0 ||
+    !Number.isSafeInteger(range.endExclusive) ||
+    range.endExclusive <= range.start
+  ) {
+    throw new Error(
+      "range must be a non-negative half-open byte interval with endExclusive > start"
+    );
+  }
 }
 
 function queryParameters<T extends object>(query: T): Record<string, string> {
