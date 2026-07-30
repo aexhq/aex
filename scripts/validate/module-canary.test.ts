@@ -152,12 +152,12 @@ describe("applying a canary binds the package to the exact tested source", () =>
 
 describe("upstream package versions are recorded as release identity", () => {
   it("lists only publishable upstream modules", () => {
-    // Both embedded artifacts, because both change what the published SDK IS:
-    // contracts is inlined into dist/_contracts and the CLI bundle becomes the
-    // `aex` bin.
     expect(moduleUpstreamVersions(repoRoot, "sdk")).toEqual({
-      "@aexhq/cli": moduleNode(repoRoot, "cli").version,
       "@aexhq/contracts": moduleNode(repoRoot, "contracts").version
+    });
+    expect(moduleUpstreamVersions(repoRoot, "cli")).toEqual({
+      "@aexhq/contracts": moduleNode(repoRoot, "contracts").version,
+      "@aexhq/sdk": moduleNode(repoRoot, "sdk").version
     });
     expect(moduleUpstreamVersions(repoRoot, "contracts")).toEqual({});
   });
@@ -172,6 +172,9 @@ describe("upstream package versions are recorded as release identity", () => {
     expect(applied.upstream).toEqual(expected);
     expect((packed.dependencies as Record<string, string>)["@aexhq/contracts"]).toBe(
       expected["@aexhq/contracts"]
+    );
+    expect((packed.dependencies as Record<string, string>)["@aexhq/sdk"]).toBe(
+      expected["@aexhq/sdk"]
     );
     expect(moduleUpstreamVersions(root, "cli")).toEqual(expected);
     expect(verifyPackedModuleManifest(root, "cli", packed, { version, sha: SHA, run: "7" })).toEqual(expected);

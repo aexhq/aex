@@ -1,7 +1,7 @@
 {
   "name": "@aexhq/cli",
   "version": "0.33.0",
-  "description": "The aex command-line interface: session start, follow, files, and host commands. The same bundle ships inside @aexhq/sdk as the `aex` binary.",
+  "description": "The resource-oriented aex v1 command-line interface for sessions, operations, files, telemetry, and account resources.",
   "license": "Apache-2.0",
   "keywords": [
     "aex",
@@ -36,21 +36,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./runtime": {
-      "types": "./dist/runtime.d.ts",
-      "import": "./dist/runtime.js"
     }
   },
   "bin": {
     "aex": "./dist/cli.mjs"
   },
   "scripts": {
-    "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
-    "build:unlocked": "bun run --cwd ../.. --filter @aexhq/contracts build && tsc -p tsconfig.build.json && bun ./scripts/finalize-bundle.mjs",
-    "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
+    "build": "bun run --cwd ../sdk build && bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
+    "build:unlocked": "tsc -p tsconfig.build.json && bun ./scripts/finalize-bundle.mjs",
+    "lint": "bun run --cwd ../sdk build && bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
     "lint:unlocked": "tsc --noEmit -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "bun run --cwd ../sdk build && tsc --noEmit -p tsconfig.json",
     "pretest": "bun run build",
     "test": "bun run test:unit",
     "test:unit": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:unit:unlocked",
@@ -58,7 +54,7 @@
   },
   "dependencies": {
     "@aexhq/contracts": "workspace:*",
-    "fflate": "^0.8.2"
+    "@aexhq/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

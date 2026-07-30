@@ -63,7 +63,7 @@
       },
       "dependencies": {
         "@aexhq/contracts": "workspace:*",
-        "fflate": "^0.8.2",
+        "@aexhq/sdk": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "1.3.14",
@@ -84,7 +84,6 @@
       "name": "@aexhq/sdk",
       "version": "0.46.5",
       "devDependencies": {
-        "@aexhq/cli": "workspace:*",
         "@aexhq/contracts": "workspace:*",
         "@types/bun": "1.3.14",
       },

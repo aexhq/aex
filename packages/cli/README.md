@@ -1,57 +1,47 @@
-# @aexhq/cli
+# `@aexhq/cli`
 
-The aex command-line interface. Start a session, follow its event stream, and
-move files in and out of it from a terminal or a shell script.
+The explicit, resource-oriented command-line interface for the aex v1 API.
+It is a thin adapter over `@aexhq/sdk`; it does not provide compatibility
+aliases for the pre-v1 checkpoint/runtime CLI.
 
-```bash
-npx @aexhq/cli start \
-  --api-key "$AEX_API_KEY" \
-  --model anthropic/claude-haiku-4-5 \
-  --prompt "Write a short report." \
-  --follow
+```sh
+bun add --global @aexhq/cli
+
+aex sessions create \
+  --request @session.json \
+  --idempotency-key idem_01k4z7x6p9v3h2m8c5r1t0abcd \
+  --api-key "$AEX_API_KEY"
+
+aex messages send ses_01k4z7x6p9v3h2m8c5r1t0abcd \
+  --request '{"content":[{"type":"text","text":"Ship it"}]}' \
+  --idempotency-key idem_01k4z7x6p9v3h2m8c5r1t0abce \
+  --api-key "$AEX_API_KEY"
+
+aex events query \
+  --session ses_01k4z7x6p9v3h2m8c5r1t0abcd \
+  --query @query.json \
+  --api-key "$AEX_API_KEY"
 ```
 
-## Install exactly one of these
+Run `aex help` for the full resource tree. Mutation bodies use
+`--request <json|@file|->`; observational filters use
+`--query <json|@file|->`. `-` means stdin.
 
-This package and `@aexhq/sdk` both install a command called `aex`. Both are
-built from this package's bundle at the same commit, and the two are the same
-bytes **at the same version** — the SDK's `dist/cli.mjs` is a copy of the one
-built here, and CI compares them byte for byte on every commit. Two DIFFERENT
-versions are two different binaries, as with any two releases.
+Durable mutations wait by default. Add `--detach` to print the admitted
+operation immediately. A timeout or interrupt only detaches the client; it
+does not cancel the server operation.
 
-| You want | Install |
-| --- | --- |
-| The CLI only | `@aexhq/cli` |
-| The TypeScript SDK, with the CLI included | `@aexhq/sdk` |
+Downloads mint and consume one short-lived grant:
 
-There is no third option and no reason to install both. Installing both leaves
-the winner to package-manager ordering — including between a fresh `npm ci` and
-an incremental `npm i` of the same lockfile — so which copy you get is not
-something to rely on.
+```sh
+aex files persisted download <sessionId> <path> --output <file|->
+aex files live download <sessionId> <path> --output <file|-> \
+  --wake retained --consistency coherent
+aex telemetry download <exportId> --output <file|->
+aex billing statements download <statementId> \
+  --organization <organizationId> --output <file|->
+```
 
-## What it is for
-
-The CLI is a thin, fully typed front end over the same public contracts the SDK
-uses (`@aexhq/contracts`). It does not hold any capability the SDK lacks — it
-exists so an agent, a CI job, or a person can drive a session without writing
-TypeScript.
-
-The generated command reference lives at
-[aex.dev/docs/reference/cli](https://aex.dev/docs/reference/cli/); it is
-produced from `aex --help`, so it cannot drift from the binary.
-
-## Programmatic entry points
-
-Two subpaths are exported for embedding, and nothing else is public:
-
-- `@aexhq/cli` — `executeCli`, the verb table, and the flag specifications.
-- `@aexhq/cli/runtime` — the file-sync command, for callers running inside a
-  session runtime.
-
-Deep imports are blocked by the export map on purpose;
-`test/package-surface.test.ts` asserts that a published tarball keeps them
-blocked.
-
-## License
-
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+The CLI never prints grant URLs. File downloads use a same-directory `.part`
+file and atomic rename, reject an existing target unless `--force`, and only
+resume an existing partial when `--resume` is explicit.

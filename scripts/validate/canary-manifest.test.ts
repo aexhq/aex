@@ -27,16 +27,16 @@ const releaseEntries = (): Entry[] => [
     module: "cli",
     name: "@aexhq/cli",
     version: "0.34.0-canary",
-    upstream: { "@aexhq/contracts": "0.34.0-canary" }
+    upstream: {
+      "@aexhq/contracts": "0.34.0-canary",
+      "@aexhq/sdk": "0.46.4-canary"
+    }
   },
   {
     module: "sdk",
     name: "@aexhq/sdk",
     version: "0.46.4-canary",
-    upstream: {
-      "@aexhq/cli": "0.34.0-canary",
-      "@aexhq/contracts": "0.34.0-canary"
-    }
+    upstream: { "@aexhq/contracts": "0.34.0-canary" }
   }
 ];
 
@@ -74,16 +74,16 @@ describe("the canary manifest is release identity, not lockfile data", () => {
 
   it("pins an upstream published in the same release to that release's canary", () => {
     const manifest = build(releaseEntries());
-    const sdk = manifest.packages.find((entry) => entry.module === "sdk")!;
-    expect(sdk.upstream).toEqual({
-      "@aexhq/cli": "0.34.0-canary",
-      "@aexhq/contracts": "0.34.0-canary"
+    const cli = manifest.packages.find((entry) => entry.module === "cli")!;
+    expect(cli.upstream).toEqual({
+      "@aexhq/contracts": "0.34.0-canary",
+      "@aexhq/sdk": "0.46.4-canary"
     });
   });
 
   it("fails closed when packed metadata names an upstream absent from the same run", () => {
-    const sdk = releaseEntries().find((entry) => entry.module === "sdk")!;
-    expect(() => build([sdk])).toThrow(/did not publish @aexhq\/cli/);
+    const cli = releaseEntries().find((entry) => entry.module === "cli")!;
+    expect(() => build([cli])).toThrow(/did not publish @aexhq\/(contracts|sdk)/);
   });
 
   it("sorts packages so two runs of the same release produce the same bytes", () => {

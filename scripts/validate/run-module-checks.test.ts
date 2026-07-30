@@ -38,7 +38,6 @@ describe("a failing lane does not hide the lanes after it", () => {
     });
     expect(attempted).toEqual([
       "@aexhq/contracts:build",
-      "@aexhq/cli:build",
       "@aexhq/sdk:build",
       "@aexhq/sdk:typecheck",
       "@aexhq/sdk:lint",

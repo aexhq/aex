@@ -64,20 +64,10 @@ describe("the public module graph is derived from the workspace, not restated", 
     expect(graph.byId.get("cli")!.dependsOn).toContain("contracts");
   });
 
-  it("knows the SDK embeds the CLI, because it republishes that bundle as `aex`", () => {
-    // `packages/sdk/scripts/bundle-cli.mjs` copies packages/cli/dist/cli.mjs into
-    // the SDK's own dist and `bin.aex` points at the copy. Both packages therefore
-    // ship the SAME executable, and `packages/sdk/test/unit/bin-bundle.test.ts`
-    // asserts they are byte-identical per commit.
-    //
-    // Without this edge a CLI-only change published a new @aexhq/cli and NO new
-    // @aexhq/sdk, so the two `aex` binaries skewed on the registry from that push
-    // onward — which is exactly the drift measured between the published
-    // @aexhq/cli@0.25.2 and @aexhq/sdk@0.43.0. The edge is what makes "the release
-    // loop publishes both, so they cannot skew" a true statement rather than an
-    // assumed one.
+  it("knows the standalone CLI consumes the SDK", () => {
     const graph = readModuleGraph(repoRoot);
-    expect(graph.byId.get("sdk")!.dependsOn).toContain("cli");
+    expect(graph.byId.get("cli")!.dependsOn).toContain("sdk");
+    expect(graph.byId.get("sdk")!.dependsOn).not.toContain("cli");
   });
 
   it("resolves a bare specifier through the root overrides map", () => {
@@ -124,10 +114,10 @@ describe("a change routes its dependent closure, not just the changed module", (
   it("adds publishable upstreams needed for one same-run release identity", () => {
     const graph = readModuleGraph(repoRoot);
     const routed = routeChanges(graph, ["packages/cli/src/index.ts"]);
-    // Verification still follows only the changed module and its dependents.
+    // Verification follows only the changed leaf module.
     expect(routed.closure).not.toContain("contracts");
-    // Publication also includes the upstream contracts canary that CLI and SDK
-    // must pack against in this same run.
+    // Publication also includes the upstream SDK and contracts canaries that
+    // the CLI must pack against in this same run.
     expect(routed.publish).toEqual(["cli", "contracts", "sdk"]);
   });
 

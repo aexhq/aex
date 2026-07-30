@@ -46,7 +46,8 @@ dependencies and is installable from a clean Bun project with no workspace
 access:
 
 - `@aexhq/contracts` is copied into the SDK distribution at build time.
-- `@aexhq/cli` is bundled into `dist/cli.mjs`, exposed through the `aex` bin.
+- The `aex` executable is published independently by `@aexhq/cli`; the SDK
+  package contains only the library.
 - The offline user-test package checks these invariants before publication.
 
 ## Roll-forward
