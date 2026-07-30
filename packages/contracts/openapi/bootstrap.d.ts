@@ -234,6 +234,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/organizations/{organizationId}/billing/statements/{statementId}/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** billing.statements.download */
+        post: operations["billing.statements.download"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/organizations/{organizationId}/billing/top-up-checkouts": {
         parameters: {
             query?: never;
@@ -1466,6 +1483,38 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
+            path: {
+                organizationId: string;
+                statementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error envelope. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    "billing.statements.download": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 organizationId: string;
                 statementId: string;

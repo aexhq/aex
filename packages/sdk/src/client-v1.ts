@@ -5,12 +5,19 @@ import {
   HttpClient,
   assertId,
   apiErrorFromResponse,
+  AutoTopupPolicyRequestSchema,
   newId,
   ObservationFrameSchema,
   parseApiKey,
   RegisteredNameSchema,
   type Approval,
   type ApprovalResponseRequest,
+  type AccountOperationalState,
+  type ApiKey,
+  type ApiKeyCreateRequest,
+  type AutoTopupPolicy,
+  type AutoTopupPolicyRequest,
+  type BillingBalance,
   type DebugSink,
   type DownloadGrant,
   type FileDownloadRequest,
@@ -18,6 +25,7 @@ import {
   type FetchLike,
   type HttpRetryOptions,
   type Id,
+  type HostedBillingSession,
   type LiveDownloadGrant,
   type LiveFileDownloadRequest,
   type LiveFileEntry,
@@ -26,6 +34,7 @@ import {
   type LiveFileStatRequest,
   type MessageSendRequest,
   type MessageV1,
+  type Membership,
   type MetricAggregationPage,
   type MetricAggregationRequest,
   type Observation,
@@ -36,12 +45,17 @@ import {
   type ObservationQuery,
   type ObservationSignal,
   type ObservationStreamRequest,
+  type Organization,
+  type OrganizationCreateRequest,
+  type OrganizationUsageQuery,
+  type OrganizationUsageResult,
   type Operation,
   type OperationKind,
   type OperationStatusV1,
   type Page,
   type PersistedFileListRequest,
   type PersistedFileStatRequest,
+  type PortalSessionRequest,
   type RegisteredResource,
   type RegisteredResourceKind,
   type RegisteredResourceSummary,
@@ -56,16 +70,28 @@ import {
   type TelemetryExportRequest,
   type TelemetryGap,
   type TelemetryGapQuery,
+  type Statement,
+  type StatementSummary,
+  type TopUpCheckoutRequest,
   type TraceSummary,
+  type UsageFrontier,
+  type UsagePage,
+  type UsageQuery,
   type Upload,
   type UploadCompleteRequest,
   type UploadCreateRequest,
   type UploadPartsRequest,
-  type UploadPartsResponse
+  type UploadPartsResponse,
+  type Invitation,
+  type InvitationCreateRequest,
+  type Workspace,
+  type WorkspaceCreateRequest,
+  type NewWorkspaceApiKey
 } from "@aexhq/contracts";
 
 export interface AexOptions {
   readonly apiKey?: string;
+  readonly bootstrapBaseUrl?: string;
   readonly baseUrl?: string;
   readonly fetch?: FetchLike;
   readonly debug?: boolean | DebugSink;
@@ -122,6 +148,39 @@ export interface SessionForkRequest {
 
 export interface WorkspaceDiscardRequest {
   readonly ifGenerationId?: string;
+}
+
+export interface AccountGetQuery {
+  readonly organizationId?: string;
+}
+
+export interface OrganizationListQuery {
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface WorkspaceListQuery {
+  readonly organizationId?: string;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface ApiKeyListQuery {
+  readonly workspaceId: string;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface BillingBalanceQuery {
+  readonly organizationId?: string;
+}
+
+export interface AutoTopupReplaceOptions extends IdempotencyOptions {
+  readonly ifRevision: number;
+}
+
+export interface WorkspaceDeleteOptions extends OperationAdmissionOptions {
+  readonly confirmation: string;
 }
 
 export interface CredentialRebindRequest {
@@ -975,6 +1034,509 @@ export class OperationsClient {
   }
 }
 
+export class AccountClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  get(query: AccountGetQuery = {}): Promise<AccountOperationalState> {
+    if (query.organizationId !== undefined) {
+      assertId("organization", query.organizationId, "organizationId");
+    }
+    return this.#http.request<AccountOperationalState>(
+      "/api/account",
+      {},
+      queryParameters(query)
+    );
+  }
+}
+
+export class OrganizationMembershipsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(
+    organizationId: string,
+    query: OrganizationListQuery = {}
+  ): Promise<Page<Membership>> {
+    const id = assertId("organization", organizationId, "organizationId");
+    return this.#http.request<Page<Membership>>(
+      `/api/organizations/${encodeURIComponent(id)}/memberships`,
+      {},
+      queryParameters(query)
+    );
+  }
+}
+
+export class OrganizationInvitationsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  create(
+    organizationId: string,
+    request: InvitationCreateRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<Invitation> {
+    const id = assertId("organization", organizationId, "organizationId");
+    return this.#http.request<Invitation>(
+      `/api/organizations/${encodeURIComponent(id)}/invitations`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify(request)
+      }
+    );
+  }
+}
+
+export class OrganizationsClient {
+  readonly #http: HttpClient;
+  readonly memberships: OrganizationMembershipsClient;
+  readonly invitations: OrganizationInvitationsClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+    this.memberships = new OrganizationMembershipsClient(http);
+    this.invitations = new OrganizationInvitationsClient(http);
+  }
+
+  list(query: OrganizationListQuery = {}): Promise<Page<Organization>> {
+    return this.#http.request<Page<Organization>>(
+      "/api/organizations",
+      {},
+      queryParameters(query)
+    );
+  }
+
+  create(
+    request: OrganizationCreateRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<Organization> {
+    return this.#http.request<Organization>("/api/organizations", {
+      method: "POST",
+      headers: idempotencyHeaders(options),
+      body: JSON.stringify(request)
+    });
+  }
+
+  async get(organizationId: string): Promise<Organization> {
+    const id = assertId("organization", organizationId, "organizationId");
+    const organization = await this.#http.request<Organization>(
+      `/api/organizations/${encodeURIComponent(id)}`
+    );
+    if (organization.id !== id) {
+      throw new Error(`Organization GET for ${id} returned ${organization.id}`);
+    }
+    return organization;
+  }
+}
+
+export class WorkspacesClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(query: WorkspaceListQuery = {}): Promise<Page<Workspace>> {
+    if (query.organizationId !== undefined) {
+      assertId("organization", query.organizationId, "organizationId");
+    }
+    return this.#http.request<Page<Workspace>>(
+      "/api/workspaces",
+      {},
+      queryParameters(query)
+    );
+  }
+
+  create(
+    request: WorkspaceCreateRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<Workspace> {
+    assertId("organization", request.organizationId, "request.organizationId");
+    return this.#http.request<Workspace>("/api/workspaces", {
+      method: "POST",
+      headers: idempotencyHeaders(options),
+      body: JSON.stringify(request)
+    });
+  }
+
+  async get(workspaceId: string): Promise<Workspace> {
+    const id = assertId("workspace", workspaceId, "workspaceId");
+    const workspace = await this.#http.request<Workspace>(
+      `/api/workspaces/${encodeURIComponent(id)}`
+    );
+    if (workspace.id !== id) {
+      throw new Error(`Workspace GET for ${id} returned ${workspace.id}`);
+    }
+    return workspace;
+  }
+
+  async delete(
+    workspaceId: string,
+    options: WorkspaceDeleteOptions
+  ): Promise<OperationHandle<"workspace_delete">> {
+    const id = assertId("workspace", workspaceId, "workspaceId");
+    const confirmation = assertId(
+      "workspace",
+      options.confirmation,
+      "confirmation"
+    );
+    if (confirmation !== id) {
+      throw new Error("confirmation must exactly match workspaceId");
+    }
+    const operationId = options.operationId === undefined
+      ? newId("operation")
+      : assertId("operation", options.operationId, "operationId");
+    const operation = await this.#http.request<OperationFor<"workspace_delete">>(
+      `/api/workspaces/${encodeURIComponent(id)}/deletions`,
+      {
+        method: "POST",
+        headers: { "Aex-Operation-Id": operationId },
+        body: JSON.stringify({ confirmation })
+      }
+    );
+    if (operation.id !== operationId || operation.kind !== "workspace_delete") {
+      throw new Error(
+        `Workspace deletion for ${operationId} returned ${operation.id}/${operation.kind}`
+      );
+    }
+    return new OperationHandle(this.#http, operation);
+  }
+}
+
+export class ApiKeysClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(query: ApiKeyListQuery): Promise<Page<ApiKey>> {
+    assertId("workspace", query.workspaceId, "workspaceId");
+    return this.#http.request<Page<ApiKey>>(
+      "/api/api-keys",
+      {},
+      queryParameters(query)
+    );
+  }
+
+  create(
+    request: ApiKeyCreateRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<NewWorkspaceApiKey> {
+    assertId("workspace", request.workspaceId, "request.workspaceId");
+    return this.#http.request<NewWorkspaceApiKey>("/api/api-keys", {
+      method: "POST",
+      headers: idempotencyHeaders(options),
+      body: JSON.stringify(request)
+    });
+  }
+
+  async revoke(apiKeyId: string, options: RevisionOptions = {}): Promise<void> {
+    const id = assertId("apiKey", apiKeyId, "apiKeyId");
+    const headers = revisionHeaders(options);
+    await this.#http.request<void>(
+      `/api/api-keys/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        ...(headers ? { headers } : {})
+      }
+    );
+  }
+}
+
+export class BillingBalanceClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  get(query: BillingBalanceQuery = {}): Promise<BillingBalance> {
+    if (query.organizationId !== undefined) {
+      assertId("organization", query.organizationId, "organizationId");
+    }
+    return this.#http.request<BillingBalance>(
+      "/api/billing/balance",
+      {},
+      queryParameters(query)
+    );
+  }
+}
+
+export class BillingAutoTopupClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  get(organizationId: string): Promise<AutoTopupPolicy> {
+    const id = assertId("organization", organizationId, "organizationId");
+    return this.#http.request<AutoTopupPolicy>(
+      `/api/organizations/${encodeURIComponent(id)}/billing/auto-topup-policy`
+    );
+  }
+
+  replace(
+    organizationId: string,
+    request: AutoTopupPolicyRequest,
+    options: AutoTopupReplaceOptions
+  ): Promise<AutoTopupPolicy> {
+    const id = assertId("organization", organizationId, "organizationId");
+    if (!AutoTopupPolicyRequestSchema.safeParse(request).success) {
+      throw new Error(
+        "auto-topup policy must be complete and use valid whole-cent USD bounds"
+      );
+    }
+    return this.#http.request<AutoTopupPolicy>(
+      `/api/organizations/${encodeURIComponent(id)}/billing/auto-topup-policy`,
+      {
+        method: "PUT",
+        headers: {
+          ...idempotencyHeaders(options),
+          "If-Match": revisionEtag(options.ifRevision)
+        },
+        body: JSON.stringify(request)
+      }
+    );
+  }
+}
+
+export class BillingStatementsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(
+    organizationId: string,
+    query: OrganizationListQuery = {}
+  ): Promise<Page<StatementSummary>> {
+    const id = assertId("organization", organizationId, "organizationId");
+    return this.#http.request<Page<StatementSummary>>(
+      `/api/organizations/${encodeURIComponent(id)}/billing/statements`,
+      {},
+      queryParameters(query)
+    );
+  }
+
+  async get(organizationId: string, statementId: string): Promise<Statement> {
+    const organization = assertId(
+      "organization",
+      organizationId,
+      "organizationId"
+    );
+    const statement = assertId("statement", statementId, "statementId");
+    const record = await this.#http.request<Statement>(
+      `/api/organizations/${encodeURIComponent(organization)}/billing/statements/${encodeURIComponent(statement)}`
+    );
+    if (record.id !== statement || record.organizationId !== organization) {
+      throw new Error(
+        `Statement GET for ${organization}/${statement} returned ${record.organizationId}/${record.id}`
+      );
+    }
+    return record;
+  }
+
+  download(
+    organizationId: string,
+    statementId: string,
+    options: IdempotencyOptions = {}
+  ): Promise<DownloadGrant> {
+    const organization = assertId(
+      "organization",
+      organizationId,
+      "organizationId"
+    );
+    const statement = assertId("statement", statementId, "statementId");
+    return this.#http.request<DownloadGrant>(
+      `/api/organizations/${encodeURIComponent(organization)}/billing/statements/${encodeURIComponent(statement)}/downloads`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify({})
+      }
+    );
+  }
+}
+
+type RegionalHttpFactory = (baseUrl: string) => HttpClient;
+
+export class BillingUsageClient {
+  readonly #regionalHttp: HttpClient;
+  readonly #workspaces: WorkspacesClient;
+  readonly #regionalHttpFor: RegionalHttpFactory;
+
+  constructor(
+    regionalHttp: HttpClient,
+    workspaces: WorkspacesClient,
+    regionalHttpFor: RegionalHttpFactory
+  ) {
+    this.#regionalHttp = regionalHttp;
+    this.#workspaces = workspaces;
+    this.#regionalHttpFor = regionalHttpFor;
+  }
+
+  query(request: UsageQuery): Promise<UsagePage> {
+    return this.#query(this.#regionalHttp, request);
+  }
+
+  async queryOrganization(
+    organizationId: string,
+    request: OrganizationUsageQuery
+  ): Promise<OrganizationUsageResult> {
+    const organization = assertId(
+      "organization",
+      organizationId,
+      "organizationId"
+    );
+    const workspaces = await this.#allWorkspaces(organization);
+    const results = await Promise.all(
+      workspaces.map(async (workspace) => {
+        const http = this.#regionalHttpFor(workspace.apiUrl);
+        const items = [];
+        const frontiers: UsageFrontier[] = [];
+        let cursor: string | undefined;
+        const seen = new Set<string>();
+        do {
+          if (cursor !== undefined && seen.has(cursor)) {
+            throw new Error(
+              `Usage query repeated cursor ${cursor} for workspace ${workspace.id}`
+            );
+          }
+          if (cursor !== undefined) seen.add(cursor);
+          const page = await this.#query(
+            http,
+            { ...request, ...(cursor === undefined ? {} : { cursor }) },
+            workspace.id
+          );
+          items.push(...page.items);
+          frontiers.push(...page.frontiers);
+          cursor = page.nextCursor;
+        } while (cursor !== undefined);
+        return { items, frontiers };
+      })
+    );
+    return {
+      items: results.flatMap(({ items }) => items),
+      frontiers: mergeUsageFrontiers(
+        results.flatMap(({ frontiers }) => frontiers)
+      )
+    };
+  }
+
+  #query(
+    http: HttpClient,
+    request: UsageQuery,
+    workspaceId?: string
+  ): Promise<UsagePage> {
+    return http.request<UsagePage>(
+      "/api/billing/usage/query",
+      { method: "POST", body: JSON.stringify(request) },
+      workspaceId === undefined ? undefined : { workspaceId }
+    );
+  }
+
+  async #allWorkspaces(organizationId: string): Promise<readonly Workspace[]> {
+    const items: Workspace[] = [];
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    do {
+      if (cursor !== undefined && seen.has(cursor)) {
+        throw new Error(`Workspace list repeated cursor ${cursor}`);
+      }
+      if (cursor !== undefined) seen.add(cursor);
+      const page = await this.#workspaces.list({
+        organizationId,
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: 1_000
+      });
+      items.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    return items;
+  }
+}
+
+export class BillingClient {
+  readonly #http: HttpClient;
+  readonly balance: BillingBalanceClient;
+  readonly autoTopup: BillingAutoTopupClient;
+  readonly statements: BillingStatementsClient;
+  readonly usage: BillingUsageClient;
+
+  constructor(
+    bootstrapHttp: HttpClient,
+    regionalHttp: HttpClient,
+    workspaces: WorkspacesClient,
+    regionalHttpFor: RegionalHttpFactory
+  ) {
+    this.#http = bootstrapHttp;
+    this.balance = new BillingBalanceClient(bootstrapHttp);
+    this.autoTopup = new BillingAutoTopupClient(bootstrapHttp);
+    this.statements = new BillingStatementsClient(bootstrapHttp);
+    this.usage = new BillingUsageClient(
+      regionalHttp,
+      workspaces,
+      regionalHttpFor
+    );
+  }
+
+  topUpCheckout(
+    organizationId: string,
+    request: TopUpCheckoutRequest,
+    options: IdempotencyOptions = {}
+  ): Promise<HostedBillingSession> {
+    return this.#hosted(
+      organizationId,
+      "top-up-checkouts",
+      request,
+      options
+    );
+  }
+
+  portalSession(
+    organizationId: string,
+    request: PortalSessionRequest = {},
+    options: IdempotencyOptions = {}
+  ): Promise<HostedBillingSession> {
+    return this.#hosted(
+      organizationId,
+      "portal-sessions",
+      request,
+      options
+    );
+  }
+
+  #hosted(
+    organizationId: string,
+    route: "top-up-checkouts" | "portal-sessions",
+    request: TopUpCheckoutRequest | PortalSessionRequest,
+    options: IdempotencyOptions
+  ): Promise<HostedBillingSession> {
+    const id = assertId("organization", organizationId, "organizationId");
+    return this.#http.request<HostedBillingSession>(
+      `/api/organizations/${encodeURIComponent(id)}/billing/${route}`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify(request)
+      }
+    );
+  }
+}
+
 type RegisteredResourceFor<K extends RegisteredResourceKind> =
   Extract<RegisteredResource, { readonly kind: K }>;
 type RegisteredSummaryFor<K extends RegisteredResourceKind> =
@@ -1163,6 +1725,7 @@ export class WorkspaceSecretsClient {
 }
 
 export class WorkspaceClient {
+  readonly #http: HttpClient;
   readonly files: RegisteredResourceClient<"file">;
   readonly skills: RegisteredResourceClient<"skill">;
   readonly tools: RegisteredResourceClient<"tool">;
@@ -1172,6 +1735,7 @@ export class WorkspaceClient {
   readonly secrets: WorkspaceSecretsClient;
 
   constructor(http: HttpClient) {
+    this.#http = http;
     this.files = new RegisteredResourceClient(http, "file");
     this.skills = new RegisteredResourceClient(http, "skill");
     this.tools = new RegisteredResourceClient(http, "tool");
@@ -1179,6 +1743,10 @@ export class WorkspaceClient {
     this.mcpServers = new RegisteredResourceClient(http, "mcp_server");
     this.uploads = new WorkspaceUploadsClient(http);
     this.secrets = new WorkspaceSecretsClient(http);
+  }
+
+  get(): Promise<Workspace> {
+    return this.#http.request<Workspace>("/api/workspace");
   }
 }
 
@@ -1394,6 +1962,11 @@ export class TelemetryClient extends ScopedTelemetryClient {
 }
 
 export class Aex {
+  readonly account: AccountClient;
+  readonly organizations: OrganizationsClient;
+  readonly workspaces: WorkspacesClient;
+  readonly apiKeys: ApiKeysClient;
+  readonly billing: BillingClient;
   readonly sessions: SessionsClient;
   readonly operations: OperationsClient;
   readonly workspace: WorkspaceClient;
@@ -1413,26 +1986,42 @@ export class Aex {
     const resolved = typeof options === "string"
       ? { ...overrides, apiKey: options }
       : options;
-    if (!resolved.apiKey) {
+    const apiKey = resolved.apiKey;
+    if (!apiKey) {
       throw new CredentialValidationError("Aex: apiKey is required");
     }
     const debug = resolved.debug === true
       ? (line: string) => console.error(line)
       : resolved.debug || undefined;
     const baseUrl =
-      resolved.baseUrl ?? regionalBaseUrl(resolved.apiKey) ?? AEX_DEFAULT_BASE_URL;
+      resolved.baseUrl ?? regionalBaseUrl(apiKey) ?? AEX_DEFAULT_BASE_URL;
+    const bootstrapBaseUrl = resolved.bootstrapBaseUrl ??
+      (resolved.baseUrl === undefined ? AEX_DEFAULT_BASE_URL : resolved.baseUrl);
     const fetchImpl = resolved.fetch ??
       ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
-    const http = new HttpClient({
-      apiKey: resolved.apiKey,
-      baseUrl,
+    const retry = resolved.retry === false
+      ? false
+      : resolved.retry ?? HTTP_RETRY_POLICY;
+    const httpFor = (url: string) => new HttpClient({
+      apiKey,
+      baseUrl: url,
       fetch: fetchImpl,
       ...(debug ? { debug } : {}),
-      retry: resolved.retry === false
-        ? false
-        : resolved.retry ?? HTTP_RETRY_POLICY
+      retry
     });
-    const raw = new RawTelemetryTransport(baseUrl, resolved.apiKey, fetchImpl);
+    const http = httpFor(baseUrl);
+    const bootstrapHttp = httpFor(bootstrapBaseUrl);
+    const raw = new RawTelemetryTransport(baseUrl, apiKey, fetchImpl);
+    this.account = new AccountClient(bootstrapHttp);
+    this.organizations = new OrganizationsClient(bootstrapHttp);
+    this.workspaces = new WorkspacesClient(bootstrapHttp);
+    this.apiKeys = new ApiKeysClient(bootstrapHttp);
+    this.billing = new BillingClient(
+      bootstrapHttp,
+      http,
+      this.workspaces,
+      httpFor
+    );
     this.sessions = new SessionsClient(http, raw);
     this.operations = new OperationsClient(http);
     this.workspace = new WorkspaceClient(http);
@@ -1527,6 +2116,26 @@ function queryParameters<T extends object>(query: T): Record<string, string> {
     if (value !== undefined) result[key] = String(value);
   }
   return result;
+}
+
+function mergeUsageFrontiers(
+  frontiers: readonly UsageFrontier[]
+): readonly UsageFrontier[] {
+  const merged = new Map<string, UsageFrontier>();
+  for (const frontier of frontiers) {
+    const key = `${frontier.region}\u0000${frontier.workspaceId}\u0000${frontier.category}`;
+    const current = merged.get(key);
+    if (
+      current !== undefined &&
+      JSON.stringify(current) !== JSON.stringify(frontier)
+    ) {
+      throw new Error(
+        `Organization usage returned conflicting pinned frontiers for ${frontier.workspaceId}/${frontier.category}`
+      );
+    }
+    merged.set(key, frontier);
+  }
+  return [...merged.values()];
 }
 
 async function pollUntilTerminal<T>(

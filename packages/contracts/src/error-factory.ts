@@ -50,6 +50,7 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "malformed_token":
       return "auth";
     case "idempotency_conflict":
+    case "operation_idempotency_conflict":
       return "idempotency";
     case "not_found":
     case "export_not_found":
@@ -61,6 +62,13 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "content_deleted":
       return "content_deleted";
     case "session_busy":
+    case "invalid_auto_topup_policy":
+    case "payment_method_required":
+    case "authentication_unavailable":
+    case "account_paused":
+    case "account_state_unavailable":
+    case "precondition_failed":
+    case "wrong_workspace_region":
     case "invalid_cursor":
     case "invalid_query":
     case "invalid_metric_aggregation":

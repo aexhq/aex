@@ -642,6 +642,65 @@
         }
       }
     },
+    "/api/organizations/{organizationId}/billing/statements/{statementId}/downloads": {
+      "post": {
+        "operationId": "billing.statements.download",
+        "summary": "billing.statements.download",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "statementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          }
+        ],
+        "security": [
+          {
+            "accountToken": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/organizations/{organizationId}/billing/top-up-checkouts": {
       "post": {
         "operationId": "billing.topUpCheckout",

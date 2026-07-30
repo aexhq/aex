@@ -10,6 +10,23 @@
  * `openapi:types:check` fails when this file and a fresh generation disagree.
  */
 export interface paths {
+    "/api/billing/usage/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** billing.usage.query */
+        post: operations["billing.usage.query"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events/listen": {
         parameters: {
             query?: never;
@@ -2335,6 +2352,33 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "billing.usage.query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error envelope. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     "events.listen": {
         parameters: {
             query?: never;

@@ -228,6 +228,7 @@ describe("exact v1 route authorities", () => {
       ["billing.autoTopup.put", "PUT", "/organizations/org_1/billing/auto-topup-policy", "billing:write", "idempotency-key"],
       ["billing.statements.list", "GET", "/organizations/org_1/billing/statements", "billing:read", "none"],
       ["billing.statements.get", "GET", "/organizations/org_1/billing/statements/stm_1", "billing:read", "none"],
+      ["billing.statements.download", "POST", "/organizations/org_1/billing/statements/stm_1/downloads", "billing:read", "idempotency-key"],
       ["operations.list", "GET", "/operations", "operations:read", "none"],
       ["operations.get", "GET", "/operations/op_1", null, "none"],
       ["operations.cancel", "POST", "/operations/op_1/cancellations", "operations:write", "none"]

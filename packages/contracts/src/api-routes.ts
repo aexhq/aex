@@ -212,6 +212,14 @@ export const BOOTSTRAP_API_ROUTE_DESCRIPTORS = [
     "/organizations/org_1/billing/statements/stm_1",
     "billing:read"
   ),
+  bootstrap(
+    "billing.statements.download",
+    "POST",
+    /^\/organizations\/[^/]+\/billing\/statements\/[^/]+\/downloads$/,
+    "/organizations/org_1/billing/statements/stm_1/downloads",
+    "billing:read",
+    "idempotency-key"
+  ),
   bootstrap("operations.list", "GET", /^\/operations$/, "/operations", "operations:read"),
   bootstrap("operations.get", "GET", /^\/operations\/[^/]+$/, "/operations/op_1", null),
   bootstrap(
@@ -457,6 +465,13 @@ export const REGIONAL_API_ROUTE_DESCRIPTORS = [
     /^\/sessions\/[^/]+\/approvals\/[^/]+\/responses$/,
     "/sessions/ses_1/approvals/apr_1/responses",
     "sessions:write"
+  ),
+  regional(
+    "billing.usage.query",
+    "POST",
+    /^\/billing\/usage\/query$/,
+    "/billing/usage/query",
+    "billing:read"
   ),
   ...observationRoutes("events", false),
   ...observationRoutes("logs", false),

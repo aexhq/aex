@@ -22,6 +22,14 @@ export const AEX_API_ERROR_CODES = [
   "malformed_token",
   "not_found",
   "idempotency_conflict",
+  "operation_idempotency_conflict",
+  "invalid_auto_topup_policy",
+  "payment_method_required",
+  "authentication_unavailable",
+  "account_paused",
+  "account_state_unavailable",
+  "precondition_failed",
+  "wrong_workspace_region",
   "invalid_cursor",
   "invalid_query",
   "invalid_metric_aggregation",
@@ -77,6 +85,22 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   malformed_token: "The API key is malformed.",
   not_found: "The requested resource was not found.",
   idempotency_conflict: "This idempotency key was already used with a different request body.",
+  operation_idempotency_conflict:
+    "This operation ID was already used with a different canonical intent.",
+  invalid_auto_topup_policy:
+    "The automatic top-up policy is not a complete valid replacement.",
+  payment_method_required:
+    "A usable organization payment method is required for this billing action.",
+  authentication_unavailable:
+    "Current central authentication authority is temporarily unavailable.",
+  account_paused:
+    "The organization account is paused and this action is not pause-exempt.",
+  account_state_unavailable:
+    "The current organization account-state revision could not be established.",
+  precondition_failed:
+    "The supplied resource revision precondition does not match.",
+  wrong_workspace_region:
+    "The workspace belongs to a different immutable execution region.",
   invalid_cursor: "The cursor is malformed, expired, or does not match this query.",
   invalid_query: "The observation query is not valid.",
   invalid_metric_aggregation: "The metric aggregation request is not valid for this instrument.",
@@ -121,6 +145,16 @@ export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = 
   insufficient_scope: "Mint an API key that includes the scope this endpoint requires.",
   idempotency_conflict:
     "Use a fresh idempotency key, or resubmit the byte-identical request body to replay the original result.",
+  operation_idempotency_conflict:
+    "Use a fresh operation ID, or resubmit the same operation with byte-identical canonical intent.",
+  invalid_auto_topup_policy:
+    "Replace the whole policy with whole-cent USD values: amount $10–$500 and threshold $0.01 through amount minus $0.01.",
+  payment_method_required:
+    "Open an organization billing portal session and add a usable payment method.",
+  account_paused:
+    "Top up the reported minimum, then explicitly start the next action after access is restored.",
+  wrong_workspace_region:
+    "Use the authoritative region and API URL returned with the workspace record.",
   token_invalid: "Check the API key value and that its plane matches your baseUrl.",
   token_expired: "Mint a new API key.",
   token_revoked: "Mint a new API key.",

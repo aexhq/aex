@@ -249,6 +249,13 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "invalid_cursor":
         case "invalid_query":
         case "invalid_metric_aggregation":
+        case "invalid_auto_topup_policy":
+        case "payment_method_required":
+        case "authentication_unavailable":
+        case "account_paused":
+        case "account_state_unavailable":
+        case "precondition_failed":
+        case "wrong_workspace_region":
         case "invalid_telemetry":
         case "telemetry_payload_too_large":
         case "telemetry_quota_exceeded":
@@ -276,6 +283,8 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "upstream_error":
         case "internal_error":
           return "generic";
+        case "operation_idempotency_conflict":
+          return "idempotency";
       }
     };
     expect(kindOf("not_found")).toBe("not_found");

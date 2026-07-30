@@ -28,6 +28,37 @@
     }
   ],
   "paths": {
+    "/api/billing/usage/query": {
+      "post": {
+        "operationId": "billing.usage.query",
+        "summary": "billing.usage.query",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "billing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events/listen": {
       "post": {
         "operationId": "events.listen",
