@@ -7,38 +7,12 @@
 # finding absent here, an entry with no stated reason, and an entry no finding
 # matches any more.
 #
-# Baseline measured 2026-07-28 (gitleaks 8.30.1): every finding below is a
-# synthetic redaction-corpus fixture. trufflehog 3.96.0 `--only-verified`: 0
-# verified.
+# Current strict-v1 scan measured 2026-07-30 (gitleaks 8.30.1). The remaining
+# findings are deliberate redaction-corpus inputs:
 
-# Synthetic fixture: an `apt_` API key literal built from repeated hex, used by
-# the offline session-start test. It is not a key any plane has ever issued.
-apps/user-tests/test/offline/live-session-start-result.test.ts:generic-api-key:52
+# Synthetic fixture: a jwt.io-shaped HS256 token in the SDK secret-redaction
+# corpus. It carries no production signing material and validates nowhere.
+packages/contracts/test/sdk-secrets.test.ts:jwt:23
 
-# Synthetic fixture: the base64 secret material the webhook signature test signs
-# with, so the computed signature is reproducible.
-packages/contracts/test/webhook-verify.test.ts:generic-api-key:48
-
-# Synthetic fixture: a provider API key whose value literally says "synthetic",
-# in the corpus asserting the public-safe payload projection redacts it.
-packages/contracts/test/public-safe-payload.test.ts:generic-api-key:17
-
-# Synthetic fixture: a Slack-shaped token whose value literally says
-# "synthetic", in the same redaction corpus.
-packages/contracts/test/public-safe-payload.test.ts:generic-api-key:19
-
-# Synthetic fixture: a Google-shaped key whose value literally says "Synthetic",
-# in the same redaction corpus.
-packages/contracts/test/public-safe-payload.test.ts:generic-api-key:20
-
-# Synthetic fixture: a deliberately high-entropy random string, present to prove
-# the entropy branch of the redactor fires. It is not a credential of any kind.
-packages/contracts/test/public-safe-payload.test.ts:generic-api-key:25
-
-# Synthetic fixture: the jwt.io example token (HS256 header, `sub: 1234`
-# payload, truncated signature), in the SDK secret-redaction corpus. It carries
-# no signing key and validates against nothing.
-packages/contracts/test/sdk-secrets.test.ts:jwt:24
-
-# Synthetic fixture: a fake Slack bot token in the same SDK redaction corpus.
-packages/contracts/test/sdk-secrets.test.ts:generic-api-key:27
+# Synthetic fixture: a fake Slack bot token in the same redaction corpus.
+packages/contracts/test/sdk-secrets.test.ts:generic-api-key:26

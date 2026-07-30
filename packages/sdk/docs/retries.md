@@ -14,7 +14,7 @@ the SDK unless the caller supplies one.
 
 ```ts
 const { run } = await session.messages.send("Continue.", {
-  idempotencyKey: "continue-2026-07-30"
+  idempotencyKey: "request-42"
 });
 await run.result();
 ```
