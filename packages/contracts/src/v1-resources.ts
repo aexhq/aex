@@ -106,7 +106,6 @@ export const ApprovalPolicySchema = z.discriminatedUnion("mode", [
 ]);
 
 export const ComputeSizeSchema = z.enum(["512mb", "1gb", "2gb", "4gb", "8gb"]);
-export const DiskSizeSchema = z.enum(["8gb", "16gb", "32gb"]);
 export const PackageEcosystemSchema = z.enum(["apt", "pip", "npm"]);
 
 export const PackageRequestSchema = z.strictObject({
@@ -132,9 +131,7 @@ export const SessionCreateRequestSchema = z.strictObject({
     secrets: z.array(z.strictObject({ name: nonEmptyString }))
   })),
   compute: z.optional(z.strictObject({
-    requestedSize: z.optional(ComputeSizeSchema),
-    peakSize: z.optional(ComputeSizeSchema),
-    diskSize: z.optional(DiskSizeSchema)
+    size: z.optional(ComputeSizeSchema)
   })),
   network: z.optional(networkSchema),
   packages: z.optional(z.array(PackageRequestSchema)),
@@ -145,6 +142,41 @@ export const SessionCreateRequestSchema = z.strictObject({
   ))
 });
 export type SessionCreateRequestV1 = z.infer<typeof SessionCreateRequestSchema>;
+
+function resolvedCompute(
+  size: "512mb" | "1gb" | "2gb" | "4gb" | "8gb",
+  baselineMemoryMiB: 512 | 1024 | 2048 | 4096 | 8192,
+  baselineVcpus: 0.25 | 0.5 | 1 | 2 | 4,
+  peakMemoryMiB: 2048 | 4096 | 8192 | 16384 | 32768,
+  peakVcpus: 1 | 2 | 4 | 8 | 16,
+  maxDiskGiB: 8 | 16 | 32,
+  endpointBandwidthMBps: 1 | 2 | 4 | 8 | 16,
+  maxConcurrentConnections: 8 | 16 | 32 | 64 | 128
+) {
+  return z.strictObject({
+    size: z.literal(size),
+    baseline: z.strictObject({
+      memoryMiB: z.literal(baselineMemoryMiB),
+      vcpus: z.literal(baselineVcpus)
+    }),
+    peak: z.strictObject({
+      memoryMiB: z.literal(peakMemoryMiB),
+      vcpus: z.literal(peakVcpus)
+    }),
+    maxDiskGiB: z.literal(maxDiskGiB),
+    endpointBandwidthMBps: z.literal(endpointBandwidthMBps),
+    maxConcurrentConnections: z.literal(maxConcurrentConnections)
+  });
+}
+
+export const ResolvedComputeSchema = z.discriminatedUnion("size", [
+  resolvedCompute("512mb", 512, 0.25, 2048, 1, 8, 1, 8),
+  resolvedCompute("1gb", 1024, 0.5, 4096, 2, 8, 2, 16),
+  resolvedCompute("2gb", 2048, 1, 8192, 4, 8, 4, 32),
+  resolvedCompute("4gb", 4096, 2, 16384, 8, 16, 8, 64),
+  resolvedCompute("8gb", 8192, 4, 32768, 16, 32, 16, 128)
+]);
+export type ResolvedCompute = z.infer<typeof ResolvedComputeSchema>;
 
 const builtinTool = z.enum([
   "bash",
@@ -176,11 +208,7 @@ export const ResolvedSessionConfigSchema = z.strictObject({
   approvalPolicy: ApprovalPolicySchema,
   network: networkSchema,
   packages: z.array(PackageRequestSchema),
-  compute: z.strictObject({
-    requestedSize: ComputeSizeSchema,
-    peakSize: ComputeSizeSchema,
-    diskSize: DiskSizeSchema
-  }),
+  compute: ResolvedComputeSchema,
   continuityPolicy: z.strictObject({
     idleAction: z.literal("hibernate"),
     idleDelayMs: z.literal(180_000),
@@ -221,6 +249,23 @@ export const SessionSchema = z.strictObject({
   resolvedConfig: ResolvedSessionConfigSchema
 });
 export type SessionV1 = z.infer<typeof SessionSchema>;
+
+export const LimitIdSchema = z.string().check(
+  z.regex(/^[a-z][a-z0-9_.-]{0,127}$/)
+);
+export const EffectiveWorkspaceLimitSchema = z.strictObject({
+  id: LimitIdSchema,
+  effectiveValue: z.union([
+    z.number(),
+    z.record(z.string(), z.number())
+  ]),
+  source: z.enum(["default", "workspace_override"]),
+  adjustable: z.literal(true),
+  revision: positiveInteger,
+  changedAt: timestamp
+});
+export type EffectiveWorkspaceLimit =
+  z.infer<typeof EffectiveWorkspaceLimitSchema>;
 
 export const MessagePartSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("text"), text: nonEmptyString }),

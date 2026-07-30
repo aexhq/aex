@@ -207,6 +207,32 @@ describe("v1 bootstrap account, organizations, workspaces, and keys", () => {
       [REGIONAL, "/api/workspace"]
     ]);
   });
+
+  it("lists and gets effective adjustable workspace limits on the regional host", async () => {
+    const limit = {
+      id: "query.page",
+      effectiveValue: { maximumItems: 1_000, targetBytes: 8_388_608 },
+      source: "workspace_override",
+      adjustable: true,
+      revision: 3,
+      changedAt: at
+    } as const;
+    const { client, calls } = recordingClient((call) =>
+      json(call.url.pathname === "/api/workspace/limits"
+        ? { items: [limit], nextCursor: "cur_more" }
+        : limit)
+    );
+
+    const page = await client.workspace.limits.list({ limit: 100 });
+    const record = await client.workspace.limits.get("query.page");
+
+    expect(page.items).toEqual([limit]);
+    expect(record).toEqual(limit);
+    expect(calls.map(({ url }) => [url.origin, url.pathname, url.search])).toEqual([
+      [REGIONAL, "/api/workspace/limits", "?limit=100"],
+      [REGIONAL, "/api/workspace/limits/query.page", ""]
+    ]);
+  });
 });
 
 describe("v1 bootstrap billing and immutable statements", () => {

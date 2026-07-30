@@ -302,6 +302,16 @@ async function workspace(ctx: Context, action: string | undefined, args: readonl
       await request(ctx, {})
     );
   }
+  if (action === "limits") {
+    const subcommand = arg(args, 0, "action");
+    if (subcommand === "list") {
+      return ctx.api.workspace.limits.list(pageFlags(ctx));
+    }
+    if (subcommand === "get") {
+      return ctx.api.workspace.limits.get(arg(args, 1, "limitId"));
+    }
+    throw new UsageError("workspace limits support list|get");
+  }
   const registry = {
     files: ctx.api.workspace.files,
     skills: ctx.api.workspace.skills,
@@ -312,7 +322,7 @@ async function workspace(ctx: Context, action: string | undefined, args: readonl
   if (registry) return registered(ctx, registry, args);
   if (action === "secrets") return secrets(ctx, args);
   if (action === "uploads") return uploads(ctx, args);
-  throw new UsageError("usage: aex workspace get|discard|files|skills|tools|instructions|mcp-servers|secrets|uploads");
+  throw new UsageError("usage: aex workspace get|limits|discard|files|skills|tools|instructions|mcp-servers|secrets|uploads");
 }
 
 interface RegistryLike {
@@ -930,7 +940,7 @@ Usage:
   aex messages list|send <sessionId>
   aex runs list|get <sessionId> [runId]
   aex operations list|get|wait|cancel
-  aex workspace get|discard|files|skills|tools|instructions|mcp-servers|secrets|uploads
+  aex workspace get|limits list|get|discard|files|skills|tools|instructions|mcp-servers|secrets|uploads
   aex workspace files download <name> --output <file|->
   aex files live|persisted list|stat|download
   aex approvals list|get|respond

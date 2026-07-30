@@ -3,6 +3,7 @@ import * as contractRoot from "../src/index.js";
 import {
   ApiErrorSchema,
   BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+  EffectiveWorkspaceLimitSchema,
   MessageSchema,
   OperationSchema,
   PageSchema,
@@ -23,7 +24,14 @@ const resolvedConfig = {
   approvalPolicy: { mode: "allow_all" as const },
   network: { hands: { mode: "none" as const } },
   packages: [],
-  compute: { requestedSize: "1gb" as const, peakSize: "4gb" as const, diskSize: "8gb" as const },
+  compute: {
+    size: "1gb" as const,
+    baseline: { memoryMiB: 1024, vcpus: 0.5 },
+    peak: { memoryMiB: 4096, vcpus: 2 },
+    maxDiskGiB: 8,
+    endpointBandwidthMBps: 2,
+    maxConcurrentConnections: 16
+  },
   continuityPolicy: {
     idleAction: "hibernate" as const,
     idleDelayMs: 180_000,
@@ -139,8 +147,16 @@ describe("workspace API-key secret values", () => {
 describe("v1 session creation", () => {
   it("requires model and accepts only the explicit v1 inputs", () => {
     expect(parses(SessionCreateRequestSchema, { model: "anthropic/claude-sonnet" })).toBe(true);
+    expect(parses(SessionCreateRequestSchema, {
+      model: "anthropic/claude-sonnet",
+      compute: { size: "4gb" }
+    })).toBe(true);
     expect(parses(SessionCreateRequestSchema, {})).toBe(false);
     expect(parses(SessionCreateRequestSchema, { model: "" })).toBe(false);
+    expect(parses(SessionCreateRequestSchema, {
+      model: "m",
+      compute: { requestedSize: "1gb", peakSize: "4gb", diskSize: "8gb" }
+    })).toBe(false);
   });
 
   it.each([
@@ -204,6 +220,27 @@ describe("durable operation union", () => {
   });
 });
 
+describe("effective workspace limits", () => {
+  it("returns only adjustable effective values with durable provenance", () => {
+    expect(parses(EffectiveWorkspaceLimitSchema, {
+      id: "query.page",
+      effectiveValue: { maximumItems: 1_000, targetBytes: 8_388_608 },
+      source: "workspace_override",
+      adjustable: true,
+      revision: 3,
+      changedAt: at
+    })).toBe(true);
+    expect(parses(EffectiveWorkspaceLimitSchema, {
+      id: "microvm.lifetime",
+      effectiveValue: 28_800,
+      source: "provider",
+      adjustable: false,
+      revision: 1,
+      changedAt: at
+    })).toBe(false);
+  });
+});
+
 describe("exact v1 route authorities", () => {
   it("pins bootstrap routes, scopes, and idempotency header policy", () => {
     expect(BOOTSTRAP_API_ROUTE_DESCRIPTORS.map(({ name, method, samplePath, requiredScope, idempotency }) => [
@@ -238,7 +275,8 @@ describe("exact v1 route authorities", () => {
 
   it("pins regional session/run/operation routes and operation headers", () => {
     const foundationNames = new Set([
-      "workspace.get", "sessions.create", "sessions.list", "sessions.get",
+      "workspace.get", "workspace.limits.list", "workspace.limits.get",
+      "sessions.create", "sessions.list", "sessions.get",
       "messages.list", "messages.send", "runs.list", "runs.get",
       "sessions.stop", "sessions.persist", "sessions.fork",
       "sessions.workspace.discard", "sessions.credentials.rebind",
@@ -250,6 +288,8 @@ describe("exact v1 route authorities", () => {
       name, method, samplePath, requiredScope, idempotency
       ])).toEqual([
       ["workspace.get", "GET", "/workspace", "workspace:read", "none"],
+      ["workspace.limits.list", "GET", "/workspace/limits", "workspace:read", "none"],
+      ["workspace.limits.get", "GET", "/workspace/limits/query.page", "workspace:read", "none"],
       ["sessions.create", "POST", "/sessions", "sessions:write", "idempotency-key"],
       ["sessions.list", "GET", "/sessions", "sessions:read", "none"],
       ["sessions.get", "GET", "/sessions/ses_1", "sessions:read", "none"],

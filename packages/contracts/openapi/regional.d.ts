@@ -1450,6 +1450,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspace/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** workspace.limits.list */
+        get: operations["workspace.limits.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspace/limits/{limitId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** workspace.limits.get */
+        get: operations["workspace.limits.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspace/mcp-servers": {
         parameters: {
             query?: never;
@@ -1732,6 +1766,22 @@ export interface components {
             authorizedBytes: number;
             measurementId: string;
             sha256: string;
+        };
+        EffectiveWorkspaceLimit: {
+            id: string;
+            effectiveValue: number | {
+                [key: string]: number;
+            };
+            /** @enum {string} */
+            source: "default" | "workspace_override";
+            /** @constant */
+            adjustable: true;
+            revision: number;
+            changedAt: string;
+        };
+        EffectiveWorkspaceLimitPage: {
+            items: components["schemas"]["EffectiveWorkspaceLimit"][];
+            nextCursor?: string;
         };
         FileDownloadRequest: {
             path: string;
@@ -2549,12 +2599,110 @@ export interface components {
                     version: string;
                 }[];
                 compute: {
-                    /** @enum {string} */
-                    requestedSize: "512mb" | "1gb" | "2gb" | "4gb" | "8gb";
-                    /** @enum {string} */
-                    peakSize: "512mb" | "1gb" | "2gb" | "4gb" | "8gb";
-                    /** @enum {string} */
-                    diskSize: "8gb" | "16gb" | "32gb";
+                    /** @constant */
+                    size: "512mb";
+                    baseline: {
+                        /** @constant */
+                        memoryMiB: 512;
+                        /** @constant */
+                        vcpus: 0.25;
+                    };
+                    peak: {
+                        /** @constant */
+                        memoryMiB: 2048;
+                        /** @constant */
+                        vcpus: 1;
+                    };
+                    /** @constant */
+                    maxDiskGiB: 8;
+                    /** @constant */
+                    endpointBandwidthMBps: 1;
+                    /** @constant */
+                    maxConcurrentConnections: 8;
+                } | {
+                    /** @constant */
+                    size: "1gb";
+                    baseline: {
+                        /** @constant */
+                        memoryMiB: 1024;
+                        /** @constant */
+                        vcpus: 0.5;
+                    };
+                    peak: {
+                        /** @constant */
+                        memoryMiB: 4096;
+                        /** @constant */
+                        vcpus: 2;
+                    };
+                    /** @constant */
+                    maxDiskGiB: 8;
+                    /** @constant */
+                    endpointBandwidthMBps: 2;
+                    /** @constant */
+                    maxConcurrentConnections: 16;
+                } | {
+                    /** @constant */
+                    size: "2gb";
+                    baseline: {
+                        /** @constant */
+                        memoryMiB: 2048;
+                        /** @constant */
+                        vcpus: 1;
+                    };
+                    peak: {
+                        /** @constant */
+                        memoryMiB: 8192;
+                        /** @constant */
+                        vcpus: 4;
+                    };
+                    /** @constant */
+                    maxDiskGiB: 8;
+                    /** @constant */
+                    endpointBandwidthMBps: 4;
+                    /** @constant */
+                    maxConcurrentConnections: 32;
+                } | {
+                    /** @constant */
+                    size: "4gb";
+                    baseline: {
+                        /** @constant */
+                        memoryMiB: 4096;
+                        /** @constant */
+                        vcpus: 2;
+                    };
+                    peak: {
+                        /** @constant */
+                        memoryMiB: 16384;
+                        /** @constant */
+                        vcpus: 8;
+                    };
+                    /** @constant */
+                    maxDiskGiB: 16;
+                    /** @constant */
+                    endpointBandwidthMBps: 8;
+                    /** @constant */
+                    maxConcurrentConnections: 64;
+                } | {
+                    /** @constant */
+                    size: "8gb";
+                    baseline: {
+                        /** @constant */
+                        memoryMiB: 8192;
+                        /** @constant */
+                        vcpus: 4;
+                    };
+                    peak: {
+                        /** @constant */
+                        memoryMiB: 32768;
+                        /** @constant */
+                        vcpus: 16;
+                    };
+                    /** @constant */
+                    maxDiskGiB: 32;
+                    /** @constant */
+                    endpointBandwidthMBps: 16;
+                    /** @constant */
+                    maxConcurrentConnections: 128;
                 };
                 continuityPolicy: {
                     /** @constant */
@@ -2595,11 +2743,7 @@ export interface components {
             };
             compute?: {
                 /** @enum {string} */
-                requestedSize?: "512mb" | "1gb" | "2gb" | "4gb" | "8gb";
-                /** @enum {string} */
-                peakSize?: "512mb" | "1gb" | "2gb" | "4gb" | "8gb";
-                /** @enum {string} */
-                diskSize?: "8gb" | "16gb" | "32gb";
+                size?: "512mb" | "1gb" | "2gb" | "4gb" | "8gb";
             };
             network?: {
                 hands: {
@@ -5539,6 +5683,66 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error envelope. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    "workspace.limits.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectiveWorkspaceLimitPage"];
+                };
+            };
+            /** @description Error envelope. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    "workspace.limits.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                limitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectiveWorkspaceLimit"];
+                };
             };
             /** @description Error envelope. */
             default: {

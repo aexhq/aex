@@ -7,12 +7,14 @@
 import { z } from "zod";
 import {
   ApiErrorSchema,
+  EffectiveWorkspaceLimitSchema,
   MessageSchema,
   MessageSendRequestSchema,
   OperationSchema,
   RunSchema,
   SessionCreateRequestSchema,
   SessionSchema,
+  PageSchema,
   WorkspaceApiKeyValueSchema
 } from "../../packages/contracts/src/v1-resources.js";
 import {
@@ -76,6 +78,8 @@ function register<Schema extends object>(
 
 for (const [id, schema] of [
   ["ApiError", ApiErrorSchema],
+  ["EffectiveWorkspaceLimit", EffectiveWorkspaceLimitSchema],
+  ["EffectiveWorkspaceLimitPage", PageSchema(EffectiveWorkspaceLimitSchema)],
   ["Message", MessageSchema],
   ["MessageSendRequest", MessageSendRequestSchema],
   ["Operation", OperationSchema],
@@ -195,6 +199,8 @@ const registryResponses = Object.fromEntries(
 );
 
 export const OPENAPI_RESPONSE_BODIES: Readonly<Record<string, string>> = {
+  "workspace.limits.list": "EffectiveWorkspaceLimitPage",
+  "workspace.limits.get": "EffectiveWorkspaceLimit",
   ...registryResponses,
   "registry.files.download": "DownloadGrant",
   "uploads.create": "Upload",

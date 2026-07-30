@@ -46,7 +46,7 @@ describe("v1 resource grammar", () => {
 
   test("session create forwards canonical JSON and idempotency then writes JSON output", async () => {
     const sessionId = newId("session");
-    const request = { model: "openai/gpt-5" };
+    const request = { model: "openai/gpt-5", compute: { size: "2gb" } };
     const cap = makeHarness({
       args: [
         "sessions", "create", "--request", JSON.stringify(request),
@@ -64,6 +64,38 @@ describe("v1 resource grammar", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toBe("");
     expect(new TextDecoder().decode(cap.writes.get("C:\\cli-test\\created.json"))).toContain(sessionId);
+  });
+
+  test("workspace limits list and get use the explicit effective-limit API", async () => {
+    const limit = {
+      id: "query.page",
+      effectiveValue: 1_000,
+      source: "default",
+      adjustable: true,
+      revision: 1,
+      changedAt: "2026-07-30T00:00:00.000Z"
+    };
+    const list = makeHarness({
+      args: ["workspace", "limits", "list", "--limit", "100", ...API],
+      fetch: (call) => {
+        expect(call.url).toBe("https://regional.example/api/workspace/limits?limit=100");
+        return json({ items: [limit] });
+      }
+    });
+    await executeCli(list.io);
+    expect(list.exitCode).toBe(0);
+    expect(JSON.parse(list.stdout).items).toEqual([limit]);
+
+    const get = makeHarness({
+      args: ["workspace", "limits", "get", "query.page", ...API],
+      fetch: (call) => {
+        expect(call.url).toBe("https://regional.example/api/workspace/limits/query.page");
+        return json(limit);
+      }
+    });
+    await executeCli(get.io);
+    expect(get.exitCode).toBe(0);
+    expect(JSON.parse(get.stdout)).toEqual(limit);
   });
 
   test("signal query is an observational POST with explicit session scope", async () => {

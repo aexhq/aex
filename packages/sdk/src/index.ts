@@ -47,6 +47,7 @@ export {
   TracesClient,
   WorkspacesClient,
   WorkspaceClient,
+  WorkspaceLimitsClient,
   WorkspaceSecretsClient,
   WorkspaceUploadsClient
 } from "./client-v1.js";
@@ -94,6 +95,8 @@ export type {
   BlobDescriptor,
   BlobInput,
   DownloadGrant,
+  EffectiveWorkspaceLimit,
+  ResolvedCompute,
   AutoTopupPolicy,
   AutoTopupPolicyRequest,
   BillingBalance,

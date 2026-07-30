@@ -4283,6 +4283,92 @@
         }
       }
     },
+    "/api/workspace/limits": {
+      "get": {
+        "operationId": "workspace.limits.list",
+        "summary": "workspace.limits.list",
+        "tags": [
+          "workspace"
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "workspace:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveWorkspaceLimitPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/limits/{limitId}": {
+      "get": {
+        "operationId": "workspace.limits.get",
+        "summary": "workspace.limits.get",
+        "tags": [
+          "workspace"
+        ],
+        "parameters": [
+          {
+            "name": "limitId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "workspaceApiKey": [
+              "workspace:read"
+            ]
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveWorkspaceLimit"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspace/mcp-servers": {
       "get": {
         "operationId": "registry.mcpServers.list",
@@ -5487,6 +5573,79 @@
           "authorizedBytes",
           "measurementId",
           "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "EffectiveWorkspaceLimit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$"
+          },
+          "effectiveValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "default",
+              "workspace_override"
+            ]
+          },
+          "adjustable": {
+            "type": "boolean",
+            "const": true
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "changedAt": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+          }
+        },
+        "required": [
+          "id",
+          "effectiveValue",
+          "source",
+          "adjustable",
+          "revision",
+          "changedAt"
+        ],
+        "additionalProperties": false
+      },
+      "EffectiveWorkspaceLimitPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveWorkspaceLimit"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "pattern": "^cur_"
+          }
+        },
+        "required": [
+          "items"
         ],
         "additionalProperties": false
       },
@@ -9045,43 +9204,338 @@
                 }
               },
               "compute": {
-                "type": "object",
-                "properties": {
-                  "requestedSize": {
-                    "type": "string",
-                    "enum": [
-                      "512mb",
-                      "1gb",
-                      "2gb",
-                      "4gb",
-                      "8gb"
-                    ]
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "size": {
+                        "type": "string",
+                        "const": "512mb"
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 512
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 0.25
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "peak": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 2048
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 1
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxDiskGiB": {
+                        "type": "number",
+                        "const": 8
+                      },
+                      "endpointBandwidthMBps": {
+                        "type": "number",
+                        "const": 1
+                      },
+                      "maxConcurrentConnections": {
+                        "type": "number",
+                        "const": 8
+                      }
+                    },
+                    "required": [
+                      "size",
+                      "baseline",
+                      "peak",
+                      "maxDiskGiB",
+                      "endpointBandwidthMBps",
+                      "maxConcurrentConnections"
+                    ],
+                    "additionalProperties": false
                   },
-                  "peakSize": {
-                    "type": "string",
-                    "enum": [
-                      "512mb",
-                      "1gb",
-                      "2gb",
-                      "4gb",
-                      "8gb"
-                    ]
+                  {
+                    "type": "object",
+                    "properties": {
+                      "size": {
+                        "type": "string",
+                        "const": "1gb"
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 1024
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 0.5
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "peak": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 4096
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 2
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxDiskGiB": {
+                        "type": "number",
+                        "const": 8
+                      },
+                      "endpointBandwidthMBps": {
+                        "type": "number",
+                        "const": 2
+                      },
+                      "maxConcurrentConnections": {
+                        "type": "number",
+                        "const": 16
+                      }
+                    },
+                    "required": [
+                      "size",
+                      "baseline",
+                      "peak",
+                      "maxDiskGiB",
+                      "endpointBandwidthMBps",
+                      "maxConcurrentConnections"
+                    ],
+                    "additionalProperties": false
                   },
-                  "diskSize": {
-                    "type": "string",
-                    "enum": [
-                      "8gb",
-                      "16gb",
-                      "32gb"
-                    ]
+                  {
+                    "type": "object",
+                    "properties": {
+                      "size": {
+                        "type": "string",
+                        "const": "2gb"
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 2048
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 1
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "peak": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 8192
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 4
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxDiskGiB": {
+                        "type": "number",
+                        "const": 8
+                      },
+                      "endpointBandwidthMBps": {
+                        "type": "number",
+                        "const": 4
+                      },
+                      "maxConcurrentConnections": {
+                        "type": "number",
+                        "const": 32
+                      }
+                    },
+                    "required": [
+                      "size",
+                      "baseline",
+                      "peak",
+                      "maxDiskGiB",
+                      "endpointBandwidthMBps",
+                      "maxConcurrentConnections"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "size": {
+                        "type": "string",
+                        "const": "4gb"
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 4096
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 2
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "peak": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 16384
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 8
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxDiskGiB": {
+                        "type": "number",
+                        "const": 16
+                      },
+                      "endpointBandwidthMBps": {
+                        "type": "number",
+                        "const": 8
+                      },
+                      "maxConcurrentConnections": {
+                        "type": "number",
+                        "const": 64
+                      }
+                    },
+                    "required": [
+                      "size",
+                      "baseline",
+                      "peak",
+                      "maxDiskGiB",
+                      "endpointBandwidthMBps",
+                      "maxConcurrentConnections"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "size": {
+                        "type": "string",
+                        "const": "8gb"
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 8192
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 4
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "peak": {
+                        "type": "object",
+                        "properties": {
+                          "memoryMiB": {
+                            "type": "number",
+                            "const": 32768
+                          },
+                          "vcpus": {
+                            "type": "number",
+                            "const": 16
+                          }
+                        },
+                        "required": [
+                          "memoryMiB",
+                          "vcpus"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxDiskGiB": {
+                        "type": "number",
+                        "const": 32
+                      },
+                      "endpointBandwidthMBps": {
+                        "type": "number",
+                        "const": 16
+                      },
+                      "maxConcurrentConnections": {
+                        "type": "number",
+                        "const": 128
+                      }
+                    },
+                    "required": [
+                      "size",
+                      "baseline",
+                      "peak",
+                      "maxDiskGiB",
+                      "endpointBandwidthMBps",
+                      "maxConcurrentConnections"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "requestedSize",
-                  "peakSize",
-                  "diskSize"
-                ],
-                "additionalProperties": false
+                ]
               },
               "continuityPolicy": {
                 "type": "object",
@@ -9248,7 +9702,7 @@
           "compute": {
             "type": "object",
             "properties": {
-              "requestedSize": {
+              "size": {
                 "type": "string",
                 "enum": [
                   "512mb",
@@ -9256,24 +9710,6 @@
                   "2gb",
                   "4gb",
                   "8gb"
-                ]
-              },
-              "peakSize": {
-                "type": "string",
-                "enum": [
-                  "512mb",
-                  "1gb",
-                  "2gb",
-                  "4gb",
-                  "8gb"
-                ]
-              },
-              "diskSize": {
-                "type": "string",
-                "enum": [
-                  "8gb",
-                  "16gb",
-                  "32gb"
                 ]
               }
             },

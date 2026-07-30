@@ -245,6 +245,20 @@ export const BOOTSTRAP_API_ROUTE_DESCRIPTORS = [
 export const REGIONAL_API_ROUTE_DESCRIPTORS = [
   regional("workspace.get", "GET", /^\/workspace$/, "/workspace", "workspace:read"),
   regional(
+    "workspace.limits.list",
+    "GET",
+    /^\/workspace\/limits$/,
+    "/workspace/limits",
+    "workspace:read"
+  ),
+  regional(
+    "workspace.limits.get",
+    "GET",
+    /^\/workspace\/limits\/[^/]+$/,
+    "/workspace/limits/query.page",
+    "workspace:read"
+  ),
+  regional(
     "sessions.create",
     "POST",
     /^\/sessions$/,

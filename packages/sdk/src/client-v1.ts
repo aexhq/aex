@@ -20,6 +20,7 @@ import {
   type BillingBalance,
   type DebugSink,
   type DownloadGrant,
+  type EffectiveWorkspaceLimit,
   type FileDownloadRequest,
   type FileEntry,
   type FetchLike,
@@ -1766,6 +1767,7 @@ export class WorkspaceClient {
   readonly mcpServers: RegisteredResourceClient<"mcp_server">;
   readonly uploads: WorkspaceUploadsClient;
   readonly secrets: WorkspaceSecretsClient;
+  readonly limits: WorkspaceLimitsClient;
 
   constructor(http: HttpClient) {
     this.#http = http;
@@ -1776,10 +1778,39 @@ export class WorkspaceClient {
     this.mcpServers = new RegisteredResourceClient(http, "mcp_server");
     this.uploads = new WorkspaceUploadsClient(http);
     this.secrets = new WorkspaceSecretsClient(http);
+    this.limits = new WorkspaceLimitsClient(http);
   }
 
   get(): Promise<Workspace> {
     return this.#http.request<Workspace>("/api/workspace");
+  }
+}
+
+export class WorkspaceLimitsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(query: { readonly cursor?: string; readonly limit?: number } = {}):
+    Promise<Page<EffectiveWorkspaceLimit>> {
+    return this.#http.request<Page<EffectiveWorkspaceLimit>>(
+      "/api/workspace/limits",
+      {},
+      queryParameters(query)
+    );
+  }
+
+  async get(limitId: string): Promise<EffectiveWorkspaceLimit> {
+    const id = assertLimitId(limitId);
+    const limit = await this.#http.request<EffectiveWorkspaceLimit>(
+      `/api/workspace/limits/${encodeURIComponent(id)}`
+    );
+    if (limit.id !== id) {
+      throw new Error(`Workspace limit GET for ${id} returned ${limit.id}`);
+    }
+    return limit;
   }
 }
 
@@ -2088,6 +2119,13 @@ function idempotencyHeaders(options: IdempotencyOptions): Record<string, string>
     throw new Error("idempotencyKey must be a non-empty string");
   }
   return { "Idempotency-Key": key };
+}
+
+function assertLimitId(value: string): string {
+  if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(value)) {
+    throw new Error("limitId must be a lowercase dotted limit identifier");
+  }
+  return value;
 }
 
 function mutationHeaders(options: RevisionMutationOptions): Record<string, string> {
