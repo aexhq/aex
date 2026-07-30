@@ -53,3 +53,31 @@ addressable read route.
 
 The live response includes `workspaceAccess`, which identifies the generation
 that answered the request. Persisted reads never wake a workspace.
+
+## Large and resumed downloads
+
+One S3 `GetObject` can authorize at most 5,000,000,000,000 bytes. The
+low-level `download()` methods therefore reject a selected range above that
+provider-hard boundary. Plan a larger full or partial download without
+allocating the object:
+
+```ts
+import { planDownloadRanges } from "@aexhq/sdk";
+
+for (const range of planDownloadRanges(file.sizeBytes)) {
+  const grant = await session.files.persisted.download({
+    path: file.path,
+    range
+  });
+  // Stream this exact signed range and verify grant.authorizedBytes.
+}
+```
+
+The CLI performs this coordination automatically. It streams each range into
+`<output>.part`, verifies every authorized range length, verifies the complete
+declared length and whole-object SHA-256, and renames atomically only after
+completion. `DownloadGrant.sha256` is always the whole immutable object's hash,
+not an arbitrary-range digest. A selected partial download remains bound to
+that source hash but cannot independently match it until all object bytes are
+assembled. `--resume` measures the existing `.part` file and requests only the
+missing ranges; it never reads the partial object into memory.

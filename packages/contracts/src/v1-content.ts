@@ -19,10 +19,19 @@ export const RegisteredNameSchema = z.string().check(
   z.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
 );
 
+/** AWS S3's provider-hard maximum selected byte range for one GetObject. */
+export const MAX_SINGLE_GET_BYTES = 5_000_000_000_000;
+
 export const ByteRangeSchema = z.strictObject({
   start: nonNegativeInteger,
   endExclusive: positiveInteger
-}).check(z.refine((range) => range.endExclusive > range.start));
+}).check(
+  z.refine((range) => range.endExclusive > range.start),
+  z.refine(
+    (range) => range.endExclusive - range.start <= MAX_SINGLE_GET_BYTES
+  )
+);
+export type ByteRange = z.infer<typeof ByteRangeSchema>;
 
 export const FileEntrySchema = z.strictObject({
   path: nonEmptyString,

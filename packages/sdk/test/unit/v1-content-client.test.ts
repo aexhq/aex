@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { newId, type FetchLike } from "@aexhq/contracts";
-import { Aex } from "../../src/index.js";
+import {
+  MAX_SINGLE_GET_BYTES,
+  newId,
+  type FetchLike
+} from "@aexhq/contracts";
+import { Aex, planDownloadRanges } from "../../src/index.js";
 
 const BASE_URL = "https://eu-west-1.api.aex.test";
 const SID = newId("session");
@@ -104,6 +108,28 @@ function clientWith(
 }
 
 describe("v1 session file and approval namespaces", () => {
+  it("plans provider-bounded ranges without allocating the object", () => {
+    expect(planDownloadRanges(MAX_SINGLE_GET_BYTES * 2 + 1)).toEqual([
+      { start: 0, endExclusive: MAX_SINGLE_GET_BYTES },
+      {
+        start: MAX_SINGLE_GET_BYTES,
+        endExclusive: MAX_SINGLE_GET_BYTES * 2
+      },
+      {
+        start: MAX_SINGLE_GET_BYTES * 2,
+        endExclusive: MAX_SINGLE_GET_BYTES * 2 + 1
+      }
+    ]);
+    expect(planDownloadRanges(100, {
+      start: 25,
+      endExclusive: 75
+    })).toEqual([{ start: 25, endExclusive: 75 }]);
+    expect(() => planDownloadRanges(100, {
+      start: 75,
+      endExclusive: 101
+    })).toThrow("inside the declared object size");
+  });
+
   it("uses the exact persisted/live action routes and access controls", async () => {
     const { client, calls } = clientWith((call) => {
       if (call.url.pathname === `/api/sessions/${SID}`) return json(session());
@@ -159,6 +185,10 @@ describe("v1 session file and approval namespaces", () => {
     expect(calls[1]!.headers.get("idempotency-key")).toBeNull();
     expect(calls[3]!.headers.get("idempotency-key")).toBeTruthy();
     expect(calls[6]!.headers.get("idempotency-key")).toBeTruthy();
+    expect(() => opened.files.persisted.download({
+      path: entry.path,
+      range: { start: 0, endExclusive: MAX_SINGLE_GET_BYTES + 1 }
+    })).toThrow(`at most ${MAX_SINGLE_GET_BYTES} bytes`);
   });
 
   it("lists, gets, and responds to one exact-call approval without blanket controls", async () => {

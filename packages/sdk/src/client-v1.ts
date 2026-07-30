@@ -3,6 +3,7 @@ import {
   CredentialValidationError,
   HTTP_RETRY_POLICY,
   HttpClient,
+  MAX_SINGLE_GET_BYTES,
   assertId,
   apiErrorFromResponse,
   AutoTopupPolicyRequestSchema,
@@ -1637,6 +1638,7 @@ export class RegisteredFileClient extends RegisteredResourceClient<"file"> {
     request: RegisteredFileDownloadRequest = {},
     options: IdempotencyOptions = {}
   ): Promise<DownloadGrant> {
+    assertByteRange(request.range);
     return this.#http.request<DownloadGrant>(
       `/api/workspace/files/${encodeURIComponent(assertRegisteredName(name))}/downloads`,
       {
@@ -2173,12 +2175,53 @@ function assertByteRange(
     !Number.isSafeInteger(range.start) ||
     range.start < 0 ||
     !Number.isSafeInteger(range.endExclusive) ||
-    range.endExclusive <= range.start
+    range.endExclusive <= range.start ||
+    range.endExclusive - range.start > MAX_SINGLE_GET_BYTES
   ) {
     throw new Error(
-      "range must be a non-negative half-open byte interval with endExclusive > start"
+      `range must be a non-negative half-open byte interval of at most ${MAX_SINGLE_GET_BYTES} bytes`
     );
   }
+}
+
+export interface DownloadRange {
+  readonly start: number;
+  readonly endExclusive: number;
+}
+
+/**
+ * Splits a full object or selected interval into explicit provider-valid GET
+ * ranges. Planning is arithmetic-only, so multi-terabyte objects are never
+ * allocated or buffered by the helper.
+ */
+export function planDownloadRanges(
+  sizeBytes: number,
+  selected?: DownloadRange
+): readonly DownloadRange[] {
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+    throw new Error("sizeBytes must be a non-negative safe integer");
+  }
+  const start = selected?.start ?? 0;
+  const endExclusive = selected?.endExclusive ?? sizeBytes;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(endExclusive) ||
+    start < 0 ||
+    endExclusive <= start ||
+    endExclusive > sizeBytes
+  ) {
+    if (selected === undefined && sizeBytes === 0) return [];
+    throw new Error(
+      "selected range must be a non-empty safe-integer interval inside the declared object size"
+    );
+  }
+  const ranges: DownloadRange[] = [];
+  for (let cursor = start; cursor < endExclusive;) {
+    const next = Math.min(cursor + MAX_SINGLE_GET_BYTES, endExclusive);
+    ranges.push({ start: cursor, endExclusive: next });
+    cursor = next;
+  }
+  return ranges;
 }
 
 function queryParameters<T extends object>(query: T): Record<string, string> {

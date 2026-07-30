@@ -4,11 +4,13 @@ import {
   ApprovalSchema,
   BlobDescriptorSchema,
   BlobInputSchema,
+  ByteRangeSchema,
   DownloadGrantSchema,
   FileDownloadRequestSchema,
   FileEntrySchema,
   LiveFileDownloadRequestSchema,
   LiveFileListRequestSchema,
+  MAX_SINGLE_GET_BYTES,
   RegisteredFileDownloadRequestSchema,
   RegisteredFileInputSchema,
   RegisteredResourceSchema,
@@ -59,6 +61,14 @@ describe("v1 session files and download grants", () => {
     expect(accepts(LiveFileDownloadRequestSchema, {
       path: "reports/result.csv",
       range: { start: -1, endExclusive: 12 }
+    })).toBe(false);
+    expect(accepts(ByteRangeSchema, {
+      start: 7,
+      endExclusive: 7 + MAX_SINGLE_GET_BYTES
+    })).toBe(true);
+    expect(accepts(ByteRangeSchema, {
+      start: 7,
+      endExclusive: 8 + MAX_SINGLE_GET_BYTES
     })).toBe(false);
   });
 

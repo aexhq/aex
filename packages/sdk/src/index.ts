@@ -49,7 +49,8 @@ export {
   WorkspaceClient,
   WorkspaceLimitsClient,
   WorkspaceSecretsClient,
-  WorkspaceUploadsClient
+  WorkspaceUploadsClient,
+  planDownloadRanges
 } from "./client-v1.js";
 
 export type {
@@ -60,6 +61,7 @@ export type {
   AutoTopupReplaceOptions,
   BillingBalanceQuery,
   CredentialRebindRequest,
+  DownloadRange,
   IdempotencyOptions,
   MessagePart,
   MessageSendAccepted,
@@ -210,3 +212,5 @@ export {
   isIdempotencyConflict,
   isNotFound
 } from "@aexhq/contracts";
+
+export { MAX_SINGLE_GET_BYTES } from "@aexhq/contracts";

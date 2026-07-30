@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CliIO } from "../src/internal.js";
 
 export interface FetchCall {
@@ -10,6 +11,7 @@ export interface Harness {
   readonly io: CliIO;
   readonly calls: readonly FetchCall[];
   readonly writes: ReadonlyMap<string, Uint8Array>;
+  readonly appends: number;
   readonly stdout: string;
   readonly stdoutBytes: Uint8Array;
   readonly stderr: string;
@@ -27,6 +29,7 @@ export function makeHarness(options: {
   const state = {
     calls: [] as FetchCall[],
     writes: new Map<string, Uint8Array>(),
+    appends: 0,
     stdout: "",
     stdoutBytes: new Uint8Array(),
     stderr: "",
@@ -55,6 +58,28 @@ export function makeHarness(options: {
     readStdin: async () => textFiles.stdin ?? "",
     stdinIsTTY: options.stdinIsTTY ?? true,
     writeFile: async (path, bytes) => { state.writes.set(path, bytes); },
+    appendFile: async (path, bytes) => {
+      const prior = state.writes.get(path) ?? byteFiles[path] ?? new Uint8Array();
+      const merged = new Uint8Array(prior.byteLength + bytes.byteLength);
+      merged.set(prior);
+      merged.set(bytes, prior.byteLength);
+      state.writes.set(path, merged);
+      state.appends += 1;
+    },
+    fileSize: async (path) => {
+      const written = state.writes.get(path);
+      if (written) return written.byteLength;
+      const bytes = byteFiles[path];
+      if (bytes) return bytes.byteLength;
+      const text = textFiles[path];
+      if (text !== undefined) return new TextEncoder().encode(text).byteLength;
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    },
+    sha256File: async (path) => {
+      const written = state.writes.get(path) ?? byteFiles[path];
+      if (!written) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      return `sha256:${createHash("sha256").update(written).digest("hex")}`;
+    },
     renameFile: async (from, to) => {
       const value = state.writes.get(from);
       if (!value) throw new Error(`missing partial ${from}`);
@@ -85,6 +110,7 @@ export function makeHarness(options: {
     io,
     get calls() { return state.calls; },
     get writes() { return state.writes; },
+    get appends() { return state.appends; },
     get stdout() { return state.stdout; },
     get stdoutBytes() { return state.stdoutBytes; },
     get stderr() { return state.stderr; },

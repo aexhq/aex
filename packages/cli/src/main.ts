@@ -5,10 +5,12 @@ import {
   Aex,
   AexApiError,
   type DownloadGrant,
+  type DownloadRange,
   type Id,
   type OperationHandle,
   type OperationKind,
   type OrganizationUsageQuery,
+  planDownloadRanges,
   type UsageQuery
 } from "@aexhq/sdk";
 import type { CliIO } from "./internal.js";
@@ -354,43 +356,38 @@ async function registered(ctx: Context, client: RegistryLike, args: readonly str
       throw new UsageError("only registered files support download");
     }
     await preflightDownload(ctx);
-    let selectedRange = rangeRequest(ctx);
-    if (has(ctx.parsed, "resume")) {
-      const output = requiredFlag(ctx, "output");
-      if (output === "-") throw new UsageError("--resume requires file output");
-      const part = `${resolve(ctx.io.cwd(), output)}.part`;
-      if (!await exists(ctx, part)) {
-        throw new UsageError("--resume requires an existing .part file");
-      }
-      const partialBytes = (await ctx.io.readFileBytes!(part)).byteLength;
-      const start = (selectedRange.range?.start ?? 0) + partialBytes;
-      const endExclusive = selectedRange.range?.endExclusive
-        ?? registeredFileSize(await client.get(name));
-      if (start >= endExclusive) {
-        throw new UsageError("partial file already covers the selected range");
-      }
-      selectedRange = { range: { start, endExclusive } };
-    }
-    await consumeDownload(
+    const descriptor = registeredFileDescriptor(await client.get(name));
+    await consumeRangedDownload(
       ctx,
-      await client.download(name, selectedRange, idempotency(ctx)),
-      true
+      descriptor,
+      rangeRequest(ctx).range,
+      (range, options) => client.download!(name, { range }, options)
     );
     return undefined;
   }
   throw new UsageError("registered resources support list|get|set|delete; files also support download");
 }
 
-function registeredFileSize(resource: unknown): number {
-  const size = (
+function registeredFileDescriptor(resource: unknown): DownloadDescriptor {
+  const content = (
     resource as {
-      readonly value?: { readonly content?: { readonly sizeBytes?: unknown } };
+      readonly value?: {
+        readonly content?: {
+          readonly sizeBytes?: unknown;
+          readonly sha256?: unknown;
+        };
+      };
     }
-  ).value?.content?.sizeBytes;
+  ).value?.content;
+  const size = content?.sizeBytes;
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) {
     throw new Error("registered file response has no valid content size");
   }
-  return size;
+  const sha256 = content?.sha256;
+  if (typeof sha256 !== "string" || !/^sha256:[0-9a-f]{64}$/.test(sha256)) {
+    throw new Error("registered file response has no valid content SHA-256");
+  }
+  return { sizeBytes: size, sha256 };
 }
 
 async function secrets(ctx: Context, args: readonly string[]) {
@@ -446,32 +443,31 @@ async function files(ctx: Context, scope: string | undefined, args: readonly str
   }
   if (action === "download") {
     const path = arg(args, 2, "path");
-    const access = await fileRequest(ctx, scope);
-    let selectedRange = rangeRequest(ctx);
-    if (has(ctx.parsed, "resume")) {
-      const output = requiredFlag(ctx, "output");
-      if (output === "-") throw new UsageError("--resume requires file output");
-      const part = `${resolve(ctx.io.cwd(), output)}.part`;
-      if (!await exists(ctx, part)) throw new UsageError("--resume requires an existing .part file");
-      const partialBytes = (await ctx.io.readFileBytes!(part)).byteLength;
-      let start: number;
-      let endExclusive: number;
-      if (selectedRange.range) {
-        start = selectedRange.range.start + partialBytes;
-        endExclusive = selectedRange.range.endExclusive;
-      } else {
-        const entry = await client.stat({ path, ...access } as never);
-        start = partialBytes;
-        endExclusive = entry.sizeBytes;
-      }
-      if (start >= endExclusive) throw new UsageError("partial file already covers the selected range");
-      selectedRange = { range: { start, endExclusive } };
+    let access = await fileRequest(ctx, scope);
+    const entry = await client.stat({ path, ...access } as never);
+    if (entry.type !== "file") throw new UsageError("only files can be downloaded");
+    if (scope === "live" && !("ifGenerationId" in access)) {
+      access = {
+        ...access,
+        ifGenerationId: (
+          entry as unknown as {
+            readonly workspaceAccess: { readonly generationId: string };
+          }
+        ).workspaceAccess.generationId
+      };
     }
-    const grant = await client.download(
-      { path, ...access, ...selectedRange } as never,
-      idempotency(ctx)
+    await consumeRangedDownload(
+      ctx,
+      {
+        sizeBytes: entry.sizeBytes,
+        ...(entry.sha256 === undefined ? {} : { sha256: entry.sha256 })
+      },
+      rangeRequest(ctx).range,
+      (range, options) => client.download(
+        { path, ...access, range } as never,
+        options
+      )
     );
-    await consumeDownload(ctx, grant, true);
     return undefined;
   }
   throw new UsageError("files support list|stat|download");
@@ -683,32 +679,205 @@ async function consumeDownload(
   if (target !== "-" && await exists(ctx, target) && !force) {
     throw new UsageError(`output already exists: ${target}`);
   }
-  let prefix: Uint8Array<ArrayBufferLike> = new Uint8Array();
-  if (target !== "-" && resume && await exists(ctx, part)) {
-    prefix = await ctx.io.readFileBytes!(part);
+  if (target !== "-" && (!resume || !await exists(ctx, part))) {
+    await ctx.io.writeFile(part, new Uint8Array());
   }
+  if (target !== "-" && !ctx.io.appendFile) {
+    throw new UsageError("this CLI host cannot stream file downloads");
+  }
+  const digest = await streamGrant(ctx, grant, async (chunk) => {
+    if (target === "-") {
+      if (!ctx.io.stdoutBytes) throw new UsageError("binary stdout is unavailable");
+      ctx.io.stdoutBytes(chunk);
+    } else {
+      await ctx.io.appendFile!(part, chunk);
+    }
+  });
+  if (digest !== grant.sha256) throw new Error("download SHA-256 mismatch");
+  if (target === "-") return;
+  await ctx.io.renameFile!(part, target);
+  ctx.io.stderr(`downloaded ${grant.authorizedBytes} bytes to ${target}\n`);
+}
+
+interface DownloadDescriptor {
+  readonly sizeBytes: number;
+  readonly sha256?: string;
+}
+
+type DownloadGrantMinter = (
+  range: DownloadRange,
+  options: { readonly idempotencyKey?: string }
+) => Promise<DownloadGrant>;
+
+async function consumeRangedDownload(
+  ctx: Context,
+  descriptor: DownloadDescriptor,
+  selected: DownloadRange | undefined,
+  mint: DownloadGrantMinter
+): Promise<void> {
+  const output = requiredFlag(ctx, "output");
+  const resume = has(ctx.parsed, "resume");
+  const force = has(ctx.parsed, "force");
+  if (resume && output === "-") {
+    throw new UsageError("--resume requires file output");
+  }
+  if (output !== "-" && (!ctx.io.renameFile || !ctx.io.appendFile || !ctx.io.fileSize)) {
+    throw new UsageError(
+      "this CLI host cannot stream, size, and atomically rename downloads"
+    );
+  }
+  const target = output === "-" ? "-" : resolve(ctx.io.cwd(), output);
+  const part = target === "-" ? "-" : `${target}.part`;
+  if (target !== "-" && await exists(ctx, target) && !force) {
+    throw new UsageError(`output already exists: ${target}`);
+  }
+
+  const selectionStart = selected?.start ?? 0;
+  const selectionEnd = selected?.endExclusive ?? descriptor.sizeBytes;
+  const selectedBytes = selectionEnd - selectionStart;
+  let prefixBytes = 0;
+  if (target !== "-") {
+    if (resume) {
+      if (!await exists(ctx, part)) {
+        throw new UsageError("--resume requires an existing .part file");
+      }
+      prefixBytes = await ctx.io.fileSize!(part);
+      if (prefixBytes >= selectedBytes) {
+        throw new UsageError("partial file already covers the selected range");
+      }
+    } else {
+      await ctx.io.writeFile(part, new Uint8Array());
+    }
+  }
+
+  const remaining = prefixBytes === 0
+    ? selected
+    : {
+        start: selectionStart + prefixBytes,
+        endExclusive: selectionEnd
+      };
+  const ranges = planDownloadRanges(descriptor.sizeBytes, remaining);
+  const wholeDigest = selected === undefined && !resume
+    ? createHash("sha256")
+    : undefined;
+  let writtenBytes = prefixBytes;
+  for (const [index, range] of ranges.entries()) {
+    const grant = await mint(
+      range,
+      rangeIdempotency(ctx, range, index, ranges.length)
+    );
+    const expectedBytes = range.endExclusive - range.start;
+    if (
+      grant.sizeBytes !== descriptor.sizeBytes ||
+      grant.authorizedBytes !== expectedBytes ||
+      (
+        descriptor.sha256 !== undefined &&
+        grant.sha256 !== descriptor.sha256
+      )
+    ) {
+      throw new Error(
+        `download grant range mismatch: expected ${expectedBytes} of ${descriptor.sizeBytes} bytes`
+      );
+    }
+    const rangeDigest = await streamGrant(ctx, grant, async (chunk) => {
+      wholeDigest?.update(chunk);
+      writtenBytes += chunk.byteLength;
+      if (target === "-") {
+        if (!ctx.io.stdoutBytes) {
+          throw new UsageError("binary stdout is unavailable");
+        }
+        ctx.io.stdoutBytes(chunk);
+      } else {
+        await ctx.io.appendFile!(part, chunk);
+      }
+    });
+    if (
+      range.start === 0 &&
+      range.endExclusive === descriptor.sizeBytes &&
+      rangeDigest !== grant.sha256
+    ) {
+      throw new Error("download SHA-256 mismatch");
+    }
+  }
+
+  if (writtenBytes !== selectedBytes) {
+    throw new Error(
+      `download length mismatch: expected ${selectedBytes}, got ${writtenBytes}`
+    );
+  }
+  if (selected === undefined && descriptor.sha256 !== undefined) {
+    const actual = resume
+      ? await hashFile(ctx, part)
+      : `sha256:${wholeDigest!.digest("hex")}`;
+    if (actual !== descriptor.sha256) {
+      throw new Error("complete download SHA-256 mismatch");
+    }
+  }
+  if (target === "-") return;
+  if (await ctx.io.fileSize!(part) !== selectedBytes) {
+    throw new Error("partial-file length changed during download");
+  }
+  await ctx.io.renameFile!(part, target);
+  ctx.io.stderr(`downloaded ${selectedBytes} bytes to ${target}\n`);
+}
+
+async function streamGrant(
+  ctx: Context,
+  grant: DownloadGrant,
+  consume: (chunk: Uint8Array) => Promise<void>
+): Promise<string> {
   const response = await ctx.io.fetchImpl(grant.url, {
     method: "GET",
     ...(grant.headers ? { headers: grant.headers } : {})
   });
   if (!response.ok) throw new Error(`download failed with HTTP ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength !== grant.authorizedBytes) {
-    throw new Error(`download length mismatch: expected ${grant.authorizedBytes}, got ${bytes.byteLength}`);
+  if (!response.body) throw new Error("download response has no body");
+  const digest = createHash("sha256");
+  let receivedBytes = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = new Uint8Array(value);
+    receivedBytes += chunk.byteLength;
+    if (receivedBytes > grant.authorizedBytes) {
+      await reader.cancel();
+      throw new Error(
+        `download length mismatch: expected ${grant.authorizedBytes}, got more`
+      );
+    }
+    digest.update(chunk);
+    await consume(chunk);
   }
-  const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  if (digest !== grant.sha256) throw new Error("download SHA-256 mismatch");
-  if (target === "-") {
-    if (!ctx.io.stdoutBytes) throw new UsageError("binary stdout is unavailable");
-    ctx.io.stdoutBytes(bytes);
-    return;
+  if (receivedBytes !== grant.authorizedBytes) {
+    throw new Error(
+      `download length mismatch: expected ${grant.authorizedBytes}, got ${receivedBytes}`
+    );
   }
-  const merged = new Uint8Array(prefix.byteLength + bytes.byteLength);
-  merged.set(prefix);
-  merged.set(bytes, prefix.byteLength);
-  await ctx.io.writeFile(part, merged);
-  await ctx.io.renameFile!(part, target);
-  ctx.io.stderr(`downloaded ${bytes.byteLength} bytes to ${target}\n`);
+  return `sha256:${digest.digest("hex")}`;
+}
+
+function rangeIdempotency(
+  ctx: Context,
+  range: DownloadRange,
+  index: number,
+  count: number
+): { readonly idempotencyKey?: string } {
+  const base = flag(ctx.parsed, "idempotency-key");
+  if (base === undefined || count === 1) {
+    return base === undefined ? {} : { idempotencyKey: base };
+  }
+  const digest = createHash("sha256")
+    .update(`${base}\0${index}\0${range.start}\0${range.endExclusive}`)
+    .digest("hex");
+  return { idempotencyKey: `range_${digest}` };
+}
+
+async function hashFile(ctx: Context, path: string): Promise<string> {
+  if (!ctx.io.sha256File) {
+    throw new UsageError("this CLI host cannot verify a resumed download");
+  }
+  return ctx.io.sha256File(path);
 }
 
 async function preflightDownload(ctx: Context): Promise<void> {

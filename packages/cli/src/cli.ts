@@ -1,5 +1,13 @@
-import { access, readFile, rename, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { createHash } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
+import {
+  access,
+  appendFile,
+  readFile,
+  rename,
+  stat,
+  writeFile
+} from "node:fs/promises";
 import { executeCli } from "./main.js";
 import type { CliIO } from "./internal.js";
 
@@ -15,6 +23,13 @@ const io: CliIO = {
   },
   stdinIsTTY: process.stdin.isTTY,
   writeFile: (path, data) => writeFile(path, data),
+  appendFile: (path, data) => appendFile(path, data),
+  fileSize: async (path) => (await stat(path)).size,
+  sha256File: async (path) => {
+    const digest = createHash("sha256");
+    for await (const chunk of createReadStream(path)) digest.update(chunk);
+    return `sha256:${digest.digest("hex")}`;
+  },
   renameFile: (from, to) => rename(from, to),
   fileExists: async (path) => {
     try {

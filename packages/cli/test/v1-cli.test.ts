@@ -286,6 +286,16 @@ describe("durable operations and downloads", () => {
         if (call.url.endsWith(`/api/sessions/${sessionId}`)) {
           return json({ id: sessionId, workspaceId, status: "idle" });
         }
+        if (call.url.endsWith("/files/persisted/stat")) {
+          return json({
+            path: "out/result.txt",
+            type: "file",
+            sizeBytes: bytes.byteLength,
+            sha256: digest,
+            mode: "0644",
+            mtime: "2026-07-30T00:00:00.000Z"
+          });
+        }
         if (call.url.endsWith("/files/persisted/downloads")) {
           grants += 1;
           return json({
@@ -297,7 +307,13 @@ describe("durable operations and downloads", () => {
             sha256: digest
           }, 201);
         }
-        return new Response(bytes);
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes.slice(0, 3));
+            controller.enqueue(bytes.slice(3));
+            controller.close();
+          }
+        }));
       }
     });
     await executeCli(cap.io);
@@ -305,12 +321,16 @@ describe("durable operations and downloads", () => {
     expect(grants).toBe(1);
     expect(cap.writes.has("C:\\cli-test\\result.txt.part")).toBeFalse();
     expect(cap.writes.get("C:\\cli-test\\result.txt")).toEqual(bytes);
+    expect(cap.appends).toBe(2);
     expect(cap.stdout).toBe("");
     expect(cap.stderr).not.toContain("objects.example");
-    expect(cap.calls).toHaveLength(3);
-    expect(cap.calls[1]?.body).toEqual({ path: "out/result.txt" });
-    expect(new Headers(cap.calls[1]?.init.headers).get("idempotency-key")).toBe("download-1");
-    expect(cap.calls[2]?.url).toBe("https://objects.example/grant");
+    expect(cap.calls).toHaveLength(4);
+    expect(cap.calls[2]?.body).toEqual({
+      path: "out/result.txt",
+      range: { start: 0, endExclusive: bytes.byteLength }
+    });
+    expect(new Headers(cap.calls[2]?.init.headers).get("idempotency-key")).toBe("download-1");
+    expect(cap.calls[3]?.url).toBe("https://objects.example/grant");
   });
 
   test("registered-file download binds the current name and never prints its grant", async () => {
@@ -323,6 +343,24 @@ describe("durable operations and downloads", () => {
         "--idempotency-key", "registered-download-1", ...API
       ],
       fetch: (call) => {
+        if (call.url.endsWith("/api/workspace/files/report")) {
+          return json({
+            kind: "file",
+            name: "report",
+            revision: 1,
+            state: "current",
+            sha256: digest,
+            sizeBytes: bytes.byteLength,
+            value: {
+              mountPath: "report.txt",
+              content: { sha256: digest, sizeBytes: bytes.byteLength },
+              mediaType: "text/plain",
+              mode: "0644"
+            },
+            createdAt: "2026-07-30T00:00:00.000Z",
+            updatedAt: "2026-07-30T00:00:00.000Z"
+          });
+        }
         if (call.url.endsWith("/api/workspace/files/report/downloads")) {
           return json({
             url: "https://objects.example/current-report",
@@ -343,16 +381,71 @@ describe("durable operations and downloads", () => {
     expect(cap.stdout).toBe("");
     expect(cap.stderr).not.toContain("objects.example");
     expect(cap.writes.get("C:\\cli-test\\report.txt")).toEqual(bytes);
-    expect(cap.calls[0]?.url).toBe(
+    expect(cap.calls[1]?.url).toBe(
       "https://regional.example/api/workspace/files/report/downloads"
     );
-    expect(cap.calls[0]?.body).toEqual({
+    expect(cap.calls[1]?.body).toEqual({
       range: { start: 0, endExclusive: 7 }
     });
-    expect(new Headers(cap.calls[0]?.init.headers).get("idempotency-key")).toBe(
+    expect(new Headers(cap.calls[1]?.init.headers).get("idempotency-key")).toBe(
       "registered-download-1"
     );
-    expect(cap.calls[1]?.url).toBe("https://objects.example/current-report");
+    expect(cap.calls[2]?.url).toBe("https://objects.example/current-report");
+  });
+
+  test("resume appends only the missing range and verifies the complete file", async () => {
+    const sessionId = newId("session");
+    const workspaceId = newId("workspace");
+    const complete = new TextEncoder().encode("artifact");
+    const prefix = complete.slice(0, 3);
+    const suffix = complete.slice(3);
+    const completeHash = `sha256:${createHash("sha256").update(complete).digest("hex")}`;
+    let grantRequest: unknown;
+    const cap = makeHarness({
+      args: [
+        "files", "persisted", "download", sessionId, "out/result.txt",
+        "--output", "result.txt", "--resume", "--idempotency-key", "resume-1",
+        ...API
+      ],
+      byteFiles: { "C:\\cli-test\\result.txt.part": prefix },
+      fetch: (call) => {
+        if (call.url.endsWith(`/api/sessions/${sessionId}`)) {
+          return json({ id: sessionId, workspaceId, status: "idle" });
+        }
+        if (call.url.endsWith("/files/persisted/stat")) {
+          return json({
+            path: "out/result.txt",
+            type: "file",
+            sizeBytes: complete.byteLength,
+            sha256: completeHash,
+            mode: "0644",
+            mtime: "2026-07-30T00:00:00.000Z"
+          });
+        }
+        if (call.url.endsWith("/files/persisted/downloads")) {
+          grantRequest = call.body;
+          return json({
+            url: "https://objects.example/resume",
+            expiresAt: "2026-07-30T01:00:00.000Z",
+            sizeBytes: complete.byteLength,
+            authorizedBytes: suffix.byteLength,
+            measurementId: newId("measurement"),
+            sha256: completeHash
+          });
+        }
+        return new Response(suffix);
+      }
+    });
+
+    await executeCli(cap.io);
+
+    expect(cap.exitCode).toBe(0);
+    expect(grantRequest).toEqual({
+      path: "out/result.txt",
+      range: { start: prefix.byteLength, endExclusive: complete.byteLength }
+    });
+    expect(cap.writes.get("C:\\cli-test\\result.txt")).toEqual(complete);
+    expect(cap.writes.has("C:\\cli-test\\result.txt.part")).toBeFalse();
   });
 
   test("an existing output fails before a download grant is minted", async () => {

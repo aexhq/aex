@@ -17,6 +17,9 @@ export interface CliIO {
   readonly readStdin?: () => Promise<string>;
   readonly stdinIsTTY: boolean | undefined;
   readonly writeFile: (path: string, data: Uint8Array) => Promise<void>;
+  readonly appendFile?: (path: string, data: Uint8Array) => Promise<void>;
+  readonly fileSize?: (path: string) => Promise<number>;
+  readonly sha256File?: (path: string) => Promise<string>;
   readonly renameFile?: (from: string, to: string) => Promise<void>;
   readonly fileExists?: (path: string) => Promise<boolean>;
   readonly fetchImpl: FetchLike;
