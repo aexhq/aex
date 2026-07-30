@@ -27,7 +27,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
-  AUTHENTICATED_API_ROUTE_DESCRIPTORS,
+  BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+  REGIONAL_API_ROUTE_DESCRIPTORS,
   type AuthenticatedApiRouteDescriptor
 } from "../../packages/contracts/src/api-routes.js";
 import { OPENAPI_SCHEMA_REGISTRY, OPENAPI_REQUEST_BODIES } from "./registry.js";
@@ -42,6 +43,8 @@ interface PlaneSpec {
   readonly description: string;
   readonly servers: readonly { readonly url: string; readonly description: string }[];
   readonly routes: readonly AuthenticatedApiRouteDescriptor[];
+  readonly securityScheme: string;
+  readonly securityDescription: string;
 }
 
 /**
@@ -102,22 +105,42 @@ function parameterName(precedingSegment: string | undefined, position: number): 
   return `${singular}Id`;
 }
 
-function operationFor(descriptor: AuthenticatedApiRouteDescriptor, parameters: readonly string[]) {
+function operationFor(
+  plane: PlaneSpec,
+  descriptor: AuthenticatedApiRouteDescriptor,
+  parameters: readonly string[]
+) {
   const requestBody = OPENAPI_REQUEST_BODIES[descriptor.name];
+  const idempotencyParameter =
+    descriptor.idempotency === "operation-id"
+      ? {
+          name: "Aex-Operation-Id",
+          in: "header" as const,
+          required: true,
+          schema: { type: "string" as const, pattern: "^op_[0-9a-hjkmnp-tv-z]{26}$" }
+        }
+      : descriptor.idempotency === "idempotency-key"
+        ? {
+            name: "Idempotency-Key",
+            in: "header" as const,
+            required: true,
+            schema: { type: "string" as const, minLength: 1, maxLength: 255 }
+          }
+        : undefined;
+  const allParameters = [
+    ...parameters.map((name) => ({
+      name,
+      in: "path" as const,
+      required: true,
+      schema: { type: "string" as const }
+    })),
+    ...(idempotencyParameter ? [idempotencyParameter] : [])
+  ];
   return {
     operationId: descriptor.name,
     summary: descriptor.name,
     tags: [descriptor.name.split(".")[0] ?? "api"],
-    ...(parameters.length > 0
-      ? {
-          parameters: parameters.map((name) => ({
-            name,
-            in: "path" as const,
-            required: true,
-            schema: { type: "string" as const }
-          }))
-        }
-      : {}),
+    ...(allParameters.length > 0 ? { parameters: allParameters } : {}),
     ...(requestBody
       ? {
           requestBody: {
@@ -133,14 +156,14 @@ function operationFor(descriptor: AuthenticatedApiRouteDescriptor, parameters: r
     // `requiredScope` is route metadata today and becomes Hono route metadata at
     // P5, at which point this stops being a projection and starts being the
     // declaration itself.
-    security: [{ workspaceApiKey: descriptor.requiredScope ? [descriptor.requiredScope] : [] }],
+    security: [{ [plane.securityScheme]: descriptor.requiredScope ? [descriptor.requiredScope] : [] }],
     responses: {
       "2XX": { description: "Success." },
       default: {
         description: "Error envelope.",
         content: {
           "application/json": {
-            schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+            schema: { $ref: "#/components/schemas/ApiError" }
           }
         }
       }
@@ -154,7 +177,7 @@ function buildDocument(plane: PlaneSpec): unknown {
     const { path, parameters } = toPathTemplate(descriptor.pattern);
     const key = `/api${path}`;
     paths[key] ??= {};
-    paths[key][descriptor.method.toLowerCase()] = operationFor(descriptor, parameters);
+    paths[key][descriptor.method.toLowerCase()] = operationFor(plane, descriptor, parameters);
   }
 
   // One conversion of the whole registry, so a schema reused by two operations
@@ -172,17 +195,6 @@ function buildDocument(plane: PlaneSpec): unknown {
     const { $schema: _schema, $id: _id, ...rest } = schema;
     schemas[id] = rest;
   }
-  schemas.ApiErrorEnvelope = {
-    type: "object",
-    properties: {
-      error: { type: "string", description: "Stable machine-readable error code." },
-      message: { type: "string" },
-      requestId: { type: "string" }
-    },
-    required: ["error", "message"],
-    additionalProperties: true
-  };
-
   return {
     openapi: "3.1.0",
     info: {
@@ -194,10 +206,10 @@ function buildDocument(plane: PlaneSpec): unknown {
     paths: sortKeys(paths),
     components: {
       securitySchemes: {
-        workspaceApiKey: {
+        [plane.securityScheme]: {
           type: "http",
           scheme: "bearer",
-          description: "Workspace API key, sent as `Authorization: Bearer <key>`."
+          description: plane.securityDescription
         }
       },
       schemas: sortKeys(schemas)
@@ -223,16 +235,34 @@ function sortKeys<T>(value: Record<string, T>): Record<string, T> {
 
 const PLANES: readonly PlaneSpec[] = [
   {
-    file: "data-plane.json",
-    title: "aex data plane",
+    file: "bootstrap.json",
+    title: "aex bootstrap API",
     description:
-      "The workspace-scoped HTTP API. Authenticated with a workspace API key. " +
+      "The global account, organization, workspace-placement, key, and billing API. " +
       "Generated from packages/contracts/src/schemas/** and src/api-routes.ts — do not edit by hand.",
     servers: [
-      { url: "https://api.aex.dev", description: "production" },
-      { url: "https://dev-api.aex.dev", description: "development" }
+      { url: "https://api.aex.dev", description: "bootstrap" }
     ],
-    routes: AUTHENTICATED_API_ROUTE_DESCRIPTORS
+    routes: BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+    securityScheme: "accountToken",
+    securityDescription: "Account identity token, sent as `Authorization: Bearer <token>`."
+  },
+  {
+    file: "regional.json",
+    title: "aex regional workspace API",
+    description:
+      "The region-pinned workspace and session API. Generated from " +
+      "packages/contracts/src/schemas/** and src/api-routes.ts — do not edit by hand.",
+    servers: [
+      { url: "https://us-east-1.api.aex.dev", description: "us-east-1" },
+      { url: "https://us-east-2.api.aex.dev", description: "us-east-2" },
+      { url: "https://us-west-2.api.aex.dev", description: "us-west-2" },
+      { url: "https://ap-northeast-1.api.aex.dev", description: "ap-northeast-1" },
+      { url: "https://eu-west-1.api.aex.dev", description: "eu-west-1" }
+    ],
+    routes: REGIONAL_API_ROUTE_DESCRIPTORS,
+    securityScheme: "workspaceApiKey",
+    securityDescription: "Region-pinned workspace API key, sent as `Authorization: Bearer <key>`."
   }
 ];
 

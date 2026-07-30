@@ -81,7 +81,7 @@ function rejectUnknownKeys(
 
 /** The logical version every kind is pinned by, whatever it is pinned TO. */
 const VERSION_PROPERTIES = {
-  resourceId: { type: "string", pattern: idPatternSource("resource") },
+  resourceId: { type: "string", pattern: idPatternSource("upload") },
   version: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER }
 } as const satisfies Readonly<Record<string, JsonValue>>;
 

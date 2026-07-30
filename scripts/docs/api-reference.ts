@@ -8,7 +8,7 @@
  * generated, and the fix for anything wrong on it is a fix to the schemas, the
  * route table, or this renderer — never to the page.
  *
- * The input is `packages/contracts/openapi/data-plane.json`, which
+ * The input is `packages/contracts/openapi/regional.json`, which
  * `openapi:generate` derives from the request schemas and the route table. This
  * module reads the document and nothing else, so it cannot drift from the spec,
  * and the spec cannot drift from the code the server runs.
@@ -18,7 +18,7 @@
  * build that the rest of that pipeline needs.
  */
 
-export const API_REFERENCE_SPEC_PATH = "packages/contracts/openapi/data-plane.json";
+export const API_REFERENCE_SPEC_PATH = "packages/contracts/openapi/regional.json";
 export const API_REFERENCE_PAGE_PATH = "apps/docs/content/docs/reference/api.md";
 export const API_REFERENCE_TITLE = "HTTP API";
 export const API_REFERENCE_DESCRIPTION = "Generated HTTP API reference for the aex data plane.";

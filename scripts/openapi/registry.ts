@@ -38,6 +38,16 @@ import { SessionLimitsSchema } from "../../packages/contracts/src/schemas/sessio
 import { SessionMachineSchema } from "../../packages/contracts/src/schemas/session-machine.js";
 import { SessionSubmissionRequestSchema } from "../../packages/contracts/src/schemas/submission-request.js";
 import {
+  ApiErrorSchema,
+  MessageSchema,
+  MessageSendRequestSchema,
+  OperationSchema,
+  RunSchema,
+  SessionCreateRequestSchema,
+  SessionSchema,
+  WorkspaceApiKeyValueSchema
+} from "../../packages/contracts/src/v1-resources.js";
+import {
   ApprovalGateSchema,
   FileCaptureSchema,
   PlatformInjectionSchema,
@@ -105,6 +115,14 @@ register("SubmissionFileCapture", FileCaptureSchema);
 register("SubmissionResponseFormat", ResponseFormatSchema);
 register("SubmissionApprovalGate", ApprovalGateSchema);
 register("SubmissionPlatformInjection", PlatformInjectionSchema);
+register("ApiError", ApiErrorSchema);
+register("Message", MessageSchema);
+register("MessageSendRequest", MessageSendRequestSchema);
+register("Operation", OperationSchema);
+register("Run", RunSchema);
+register("Session", SessionSchema);
+register("SessionCreateRequestV1", SessionCreateRequestSchema);
+register("WorkspaceApiKeyValue", WorkspaceApiKeyValueSchema);
 
 /** The registry the generator converts in one pass. */
 export const OPENAPI_SCHEMA_REGISTRY = z.globalRegistry;
@@ -124,5 +142,6 @@ export const OPENAPI_SCHEMA_REGISTRY = z.globalRegistry;
  * nobody checks.
  */
 export const OPENAPI_REQUEST_BODIES: Readonly<Record<string, string>> = {
-  "sessions.create": "SessionSubmissionRequest"
+  "sessions.create": "SessionCreateRequestV1",
+  "messages.send": "MessageSendRequest"
 };

@@ -21,16 +21,27 @@ import {
 describe("ID_PREFIXES", () => {
   it("declares every entity kind exactly once, with a unique prefix", () => {
     expect(ID_PREFIXES).toEqual({
-      workspace: "wsp",
-      session: "ses",
-      resource: "wres",
-      mcp: "mcp",
-      secret: "sec",
-      org: "org",
-      team: "team",
       user: "usr",
+      organization: "org",
+      membership: "mem",
+      invitation: "inv",
+      workspace: "wsp",
       apiKey: "key",
-      idempotency: "idem"
+      session: "ses",
+      message: "msg",
+      run: "run",
+      agent: "agt",
+      toolCall: "tcl",
+      operation: "op",
+      approval: "apr",
+      generation: "gen",
+      observation: "obs",
+      telemetryBatch: "bch",
+      telemetryGap: "gap",
+      export: "exp",
+      upload: "upl",
+      measurement: "msr",
+      statement: "stm"
     });
     const prefixes = Object.values(ID_PREFIXES);
     expect(new Set(prefixes).size).toBe(prefixes.length);
@@ -48,15 +59,15 @@ describe("ID_PREFIXES", () => {
 });
 
 describe("newId", () => {
-  it("mints `<prefix>_<32 lowercase hex>` for every kind", () => {
+  it("mints `<prefix>_<26 lowercase Crockford base32>` UUIDv7 ids for every kind", () => {
     for (const kind of ID_KINDS) {
       const value = newId(kind);
-      expect(value).toMatch(new RegExp(`^${ID_PREFIXES[kind]}_[0-9a-f]{32}$`));
+      expect(value).toMatch(new RegExp(`^${ID_PREFIXES[kind]}_[0-9a-hjkmnp-tv-z]{26}$`));
       expect(isId(kind, value)).toBe(true);
     }
   });
 
-  it("is unique across mints (32 hex = 128 bits)", () => {
+  it("is unique across mints", () => {
     const minted = new Set(Array.from({ length: 512 }, () => newId("workspace")));
     expect(minted.size).toBe(512);
   });
@@ -83,12 +94,12 @@ describe("isId", () => {
     for (const dead of [
       "5fc4b90e-55af-46cf-9938-b70f988e431d",
       "5fc4b90e55af46cf9938b70f988e431d",
-      "wsp_5FC4B90E55AF46CF9938B70F988E431D",
+      "wsp_01JAVZZZ0ZZZZZZZZZZZZZZZZZ",
       "wsabc123",
       "ws-abc-123",
       "wsp_example",
-      "wsp_5fc4b90e55af46cf9938b70f988e431",
-      "wsp_5fc4b90e55af46cf9938b70f988e431dd",
+      "wsp_01javzzz0zzzzzzzzzzzzzzzz",
+      "wsp_01javzzz0zzzzzzzzzzzzzzzzzz",
       "wsp_5fc4b90e-55af-46cf-9938-b70f988e431d"
     ]) {
       expect(isId("workspace", dead)).toBe(false);
@@ -101,7 +112,7 @@ describe("isId", () => {
     }
   });
 
-  it("is case-sensitive — an uppercase-hex id is not an id anywhere", () => {
+  it("is case-sensitive — an uppercase id is not an id anywhere", () => {
     // The bug this closes: seven copies matched `/i` and telemetry's did not, so
     // an uppercase id passed every boundary and threw at the span attribute.
     const upper = newId("workspace").toUpperCase();
@@ -117,24 +128,24 @@ describe("assertId", () => {
 
   it("throws naming the kind, the expected shape, and the value — never coerces", () => {
     expect(() => assertId("workspace", "5fc4b90e-55af-46cf-9938-b70f988e431d")).toThrow(
-      'workspace id must match ^wsp_[0-9a-f]{32}$, got "5fc4b90e-55af-46cf-9938-b70f988e431d"'
+      'workspace id must match ^wsp_[0-9a-hjkmnp-tv-z]{26}$, got "5fc4b90e-55af-46cf-9938-b70f988e431d"'
     );
     expect(() => assertId("workspace", undefined)).toThrow(
-      "workspace id must match ^wsp_[0-9a-f]{32}$, got <undefined>"
+      "workspace id must match ^wsp_[0-9a-hjkmnp-tv-z]{26}$, got <undefined>"
     );
   });
 
   it("uses the caller's label when the field name is more useful than the kind", () => {
     expect(() => assertId("workspace", "x", "x-aex-workspace-id")).toThrow(
-      "x-aex-workspace-id must match ^wsp_[0-9a-f]{32}$"
+      "x-aex-workspace-id must match ^wsp_[0-9a-hjkmnp-tv-z]{26}$"
     );
   });
 });
 
 describe("idPatternSource / idPattern", () => {
   it("is the ONE shape source every SQL CHECK and JSON-Schema pattern is derived from", () => {
-    expect(idPatternSource("workspace")).toBe("^wsp_[0-9a-f]{32}$");
-    expect(idPatternSource("resource")).toBe("^wres_[0-9a-f]{32}$");
+    expect(idPatternSource("workspace")).toBe("^wsp_[0-9a-hjkmnp-tv-z]{26}$");
+    expect(idPatternSource("operation")).toBe("^op_[0-9a-hjkmnp-tv-z]{26}$");
     expect(idPattern("workspace").source).toBe(idPatternSource("workspace"));
     expect(idPattern("workspace").flags).toBe("");
   });
@@ -151,7 +162,7 @@ describe("idKindOf", () => {
       expect(idKindOf(newId(kind))).toBe(kind);
     }
     expect(idKindOf("wsp_nope")).toBeUndefined();
-    expect(idKindOf("nope_5fc4b90e55af46cf9938b70f988e431d")).toBeUndefined();
+    expect(idKindOf("nope_01javzzz0zzzzzzzzzzzzzzzzz")).toBeUndefined();
     expect(idKindOf("5fc4b90e-55af-46cf-9938-b70f988e431d")).toBeUndefined();
     expect(idKindOf(undefined)).toBeUndefined();
   });

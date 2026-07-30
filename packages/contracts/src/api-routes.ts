@@ -1,127 +1,292 @@
 /**
- * The authenticated data-plane HTTP route table.
+ * The prelaunch v1 authenticated route authorities.
  *
- * This is the single machine-readable description of the data-plane surface:
- * the platform api lambda dispatches and scope-gates from it, and the OpenAPI
- * generator in this repo reads the same table. It is declared here exactly
- * once so the two can never drift.
- *
- * Declaration-only and dependency-free: matching, scope lookup and route
- * classification stay with the server that dispatches them.
+ * Bootstrap and regional hosts use different principals and are deliberately
+ * separate tables. The hosted dispatchers and OpenAPI generator consume these
+ * declarations directly; legacy runtime/checkpoint/webhook routes have no
+ * compatibility entries.
  */
 
 export type RequiredApiScope = string;
+export type ApiPlane = "bootstrap" | "regional";
+export type RouteIdempotency = "none" | "idempotency-key" | "operation-id";
 
 export type AuthenticatedApiRouteDescriptor = {
+  readonly plane: ApiPlane;
   readonly name: string;
-  readonly method: string;
+  readonly method: "GET" | "POST" | "PUT" | "DELETE";
   readonly pattern: RegExp;
   readonly samplePath: string;
   readonly requiredScope: RequiredApiScope | null;
+  /**
+   * `operation-id` means the required `Aex-Operation-Id` header.
+   * `idempotency-key` means the required `Idempotency-Key` header.
+   */
+  readonly idempotency: RouteIdempotency;
 };
 
-const route = (
+function route(
+  plane: ApiPlane,
   name: string,
-  method: string,
+  method: AuthenticatedApiRouteDescriptor["method"],
   pattern: RegExp,
   samplePath: string,
   requiredScope: RequiredApiScope | null,
-): AuthenticatedApiRouteDescriptor => ({
-  name,
-  method,
-  pattern,
-  samplePath,
-  requiredScope,
-});
+  idempotency: RouteIdempotency = "none"
+): AuthenticatedApiRouteDescriptor {
+  return { plane, name, method, pattern, samplePath, requiredScope, idempotency };
+}
 
-export const AUTHENTICATED_API_ROUTE_DESCRIPTORS: readonly AuthenticatedApiRouteDescriptor[] = [
-  // Valid-token canary.
-  route("whoami", "GET", /^\/whoami$/, "/whoami", null),
-  // Private runtime liveness of the exact writer baton. This is writer-token
-  // only at dispatch; it is not a bearer/public SDK surface.
-  route("runtime.writerAuthority", "GET", /^\/runtime\/writer-authority$/, "/runtime/writer-authority", null),
-  // (storage-model WS2) The credential-less container's DDB-decided journal commit channel: the api
-  // runs the fenced control-item write on its behalf. Writer-token only (same channel as
-  // writer-authority); the WS1 writerEpoch fence is applied at dispatch before this route runs.
-  route("runtime.journalCommit", "POST", /^\/runtime\/journal\/commit$/, "/runtime/journal/commit", null),
-  // Sessions.
-  route("sessions.create", "POST", /^\/sessions$/, "/sessions", "sessions:write"),
-  route("sessions.list", "GET", /^\/sessions$/, "/sessions", "sessions:read"),
-  route("sessions.listMessages", "GET", /^\/sessions\/[^/]+\/messages$/, "/sessions/sess_1/messages", "sessions:read"),
-  route("sessions.sendMessage", "POST", /^\/sessions\/[^/]+\/messages$/, "/sessions/sess_1/messages", "sessions:write"),
-  route("sessions.suspend", "POST", /^\/sessions\/[^/]+\/suspend$/, "/sessions/sess_1/suspend", "sessions:write"),
-  route("sessions.cancel", "POST", /^\/sessions\/[^/]+\/cancel$/, "/sessions/sess_1/cancel", "sessions:cancel"),
-  route("sessions.resume", "POST", /^\/sessions\/[^/]+\/resume$/, "/sessions/sess_1/resume", "sessions:write"),
-  route("sessions.requestApproval", "POST", /^\/sessions\/[^/]+\/request-approval$/, "/sessions/sess_1/request-approval", "sessions:write"),
-  route("sessions.approve", "POST", /^\/sessions\/[^/]+\/approve$/, "/sessions/sess_1/approve", "sessions:write"),
-  route("sessions.deny", "POST", /^\/sessions\/[^/]+\/deny$/, "/sessions/sess_1/deny", "sessions:write"),
-  route("sessions.delete", "DELETE", /^\/sessions\/[^/]+$/, "/sessions/sess_1", "sessions:delete"),
-  route("sessions.eventsTicket", "POST", /^\/sessions\/[^/]+\/events\/ticket$/, "/sessions/sess_1/events/ticket", "sessions:read"),
-  route("sessions.listEvents", "GET", /^\/sessions\/[^/]+\/events$/, "/sessions/sess_1/events", "sessions:read"),
-  route("sessions.otel", "GET", /^\/sessions\/[^/]+\/otel$/, "/sessions/sess_1/otel", "sessions:read"),
-  route("sessions.listChildren", "GET", /^\/sessions\/[^/]+\/children$/, "/sessions/sess_1/children", null),
-  route("sessions.childResult", "GET", /^\/sessions\/[^/]+\/result$/, "/sessions/sess_1/result", null),
-  route("sessions.eventArchiveLink", "POST", /^\/sessions\/[^/]+\/events\/link$/, "/sessions/sess_1/events/link", "sessions:read"),
-  route("sessions.downloadFile", "GET", /^\/sessions\/[^/]+\/files\/[^/]+\/download$/, "/sessions/sess_1/files/file_1/download", "files:read"),
-  route("sessions.fileLink", "POST", /^\/sessions\/[^/]+\/files\/[^/]+\/link$/, "/sessions/sess_1/files/file_1/link", "files:read"),
-  route("sessions.listFiles", "GET", /^\/sessions\/[^/]+\/files$/, "/sessions/sess_1/files", "files:read"),
-  route("sessions.listWebhookDeliveries", "GET", /^\/sessions\/[^/]+\/webhook-deliveries$/, "/sessions/sess_1/webhook-deliveries", "sessions:read"),
-  route("sessions.redeliverWebhook", "POST", /^\/sessions\/[^/]+\/webhook-deliveries\/[^/]+\/redeliver$/, "/sessions/sess_1/webhook-deliveries/del_1/redeliver", "sessions:write"),
-  route("sessions.archiveInternal", "GET", /^\/internal\/sessions\/[^/]+\/archive$/, "/internal/sessions/sess_1/archive", "files:read"),
-  route("sessions.get", "GET", /^\/sessions\/[^/]+$/, "/sessions/sess_1", "sessions:read"),
-  route("sessions.finalize", "POST", /^\/sessions\/[^/]+\/finalize$/, "/sessions/ses_1/finalize", "sessions:write"),
-  // Immutable content-addressed bytes backing every workspace resource family.
-  route("assets.presign", "POST", /^\/assets\/presign$/, "/assets/presign", "assets:write"),
-  route("assets.finalize", "POST", /^\/assets\/finalize$/, "/assets/finalize", "assets:write"),
-  route("assets.mpuPresignParts", "POST", /^\/assets\/mpu\/presign-parts$/, "/assets/mpu/presign-parts", "assets:write"),
-  route("assets.mpuAbort", "POST", /^\/assets\/mpu\/abort$/, "/assets/mpu/abort", "assets:write"),
-  route("assets.delete", "DELETE", /^\/assets\/[^/]+$/, "/assets/asset_1", "assets:delete"),
-  // Versioned workspace resources. The raw bytes stay in /assets; these routes
-  // publish and address immutable typed versions backed by those bytes.
-  route("workspace.files.publish", "POST", /^\/workspace\/files$/, "/workspace/files", "files:write"),
-  route("workspace.files.list", "GET", /^\/workspace\/files$/, "/workspace/files", "files:read"),
-  route("workspace.files.get", "GET", /^\/workspace\/files\/[^/]+$/, "/workspace/files/wres_1", "files:read"),
-  route("workspace.files.delete", "DELETE", /^\/workspace\/files\/[^/]+$/, "/workspace/files/wres_1", "files:delete"),
-  route("workspace.skills.publish", "POST", /^\/workspace\/skills$/, "/workspace/skills", "skills:write"),
-  route("workspace.skills.list", "GET", /^\/workspace\/skills$/, "/workspace/skills", "skills:read"),
-  route("workspace.skills.get", "GET", /^\/workspace\/skills\/[^/]+$/, "/workspace/skills/wres_1", "skills:read"),
-  route("workspace.skills.delete", "DELETE", /^\/workspace\/skills\/[^/]+$/, "/workspace/skills/wres_1", "skills:delete"),
-  route("workspace.tools.publish", "POST", /^\/workspace\/tools$/, "/workspace/tools", "tools:write"),
-  route("workspace.tools.list", "GET", /^\/workspace\/tools$/, "/workspace/tools", "tools:read"),
-  route("workspace.tools.get", "GET", /^\/workspace\/tools\/[^/]+$/, "/workspace/tools/wres_1", "tools:read"),
-  route("workspace.tools.delete", "DELETE", /^\/workspace\/tools\/[^/]+$/, "/workspace/tools/wres_1", "tools:delete"),
-  route("workspace.instructions.publish", "POST", /^\/workspace\/instructions$/, "/workspace/instructions", "instructions:write"),
-  route("workspace.instructions.list", "GET", /^\/workspace\/instructions$/, "/workspace/instructions", "instructions:read"),
-  route("workspace.instructions.get", "GET", /^\/workspace\/instructions\/[^/]+$/, "/workspace/instructions/wres_1", "instructions:read"),
-  route("workspace.instructions.delete", "DELETE", /^\/workspace\/instructions\/[^/]+$/, "/workspace/instructions/wres_1", "instructions:delete"),
-  // Workspace secret store.
-  route("secrets.create", "POST", /^\/secrets$/, "/secrets", "secrets:write"),
-  route("secrets.list", "GET", /^\/secrets$/, "/secrets", "secrets:read"),
-  route("secrets.rotate", "POST", /^\/secrets\/[^/]+\/rotate$/, "/secrets/NAME/rotate", "secrets:write"),
-  route("secrets.delete", "DELETE", /^\/secrets\/[^/]+$/, "/secrets/NAME", "secrets:write"),
-  route("secrets.get", "GET", /^\/secrets\/[^/]+$/, "/secrets/NAME", "secrets:read"),
-  // Workspace MCP server config.
-  route("mcpServers.create", "POST", /^\/mcp-servers$/, "/mcp-servers", "mcp:write"),
-  route("mcpServers.list", "GET", /^\/mcp-servers$/, "/mcp-servers", "mcp:read"),
-  route("mcpServers.delete", "DELETE", /^\/mcp-servers\/[^/]+$/, "/mcp-servers/mcp_abcdefghi", "mcp:delete"),
-  route("mcpServers.get", "GET", /^\/mcp-servers\/[^/]+$/, "/mcp-servers/mcp_abcdefghi", "mcp:read"),
-  // Billing (customer read + operator manage).
-  route("billing.get", "GET", /^\/billing$/, "/billing", "billing:read"),
-  route("billing.ledger", "GET", /^\/billing\/ledger$/, "/billing/ledger", "billing:read"),
-  route("billing.topupCheckout", "POST", /^\/billing\/topup\/checkout$/, "/billing/topup/checkout", "billing:read"),
-  route("billing.autoTopup", "PATCH", /^\/billing\/autotopup$/, "/billing/autotopup", "billing:read"),
-  // Monthly statements. The period segment is pinned to a UTC month rather than
-  // the usual `[^/]+`: a looser pattern would route `/billing/statements/../x`
-  // into the handler for it to reject, instead of refusing it at the door.
-  route("billing.statements", "GET", /^\/billing\/statements$/, "/billing/statements", "billing:read"),
-  route("billing.statement", "GET", /^\/billing\/statements\/[0-9]{4}-(0[1-9]|1[0-2])$/, "/billing/statements/2026-07", "billing:read"),
-  route("billing.portal", "POST", /^\/billing\/portal$/, "/billing/portal", "billing:read"),
-  route("adminBilling.topup", "POST", /^\/admin\/billing\/topup$/, "/admin/billing/topup", "billing:manage"),
-  route("adminBilling.paymentMethod", "POST", /^\/admin\/billing\/payment-method$/, "/admin/billing/payment-method", "billing:manage"),
-  route("adminBilling.accountType", "POST", /^\/admin\/billing\/account-type$/, "/admin/billing/account-type", "billing:manage"),
-  // Session webhooks (reveal/rotate signing secret + delivery ledger).
-  route("webhook.signingSecret", "POST", /^\/webhook\/signing-secret$/, "/webhook/signing-secret", "sessions:write"),
-  route("webhook.listDeliveries", "GET", /^\/webhook\/deliveries$/, "/webhook/deliveries", "sessions:read"),
-  // GDPR workspace hard-erase (owner self-service).
-  route("workspaces.erase", "DELETE", /^\/workspaces\/[^/]+$/, "/workspaces/ws_1", "workspaces:delete"),
-];
+const bootstrap = (
+  name: string,
+  method: AuthenticatedApiRouteDescriptor["method"],
+  pattern: RegExp,
+  samplePath: string,
+  requiredScope: RequiredApiScope | null,
+  idempotency: RouteIdempotency = "none"
+) => route("bootstrap", name, method, pattern, samplePath, requiredScope, idempotency);
+
+const regional = (
+  name: string,
+  method: AuthenticatedApiRouteDescriptor["method"],
+  pattern: RegExp,
+  samplePath: string,
+  requiredScope: RequiredApiScope | null,
+  idempotency: RouteIdempotency = "none"
+) => route("regional", name, method, pattern, samplePath, requiredScope, idempotency);
+
+export const BOOTSTRAP_API_ROUTE_DESCRIPTORS = [
+  bootstrap("account.get", "GET", /^\/account$/, "/account", "account:read"),
+  bootstrap("organizations.list", "GET", /^\/organizations$/, "/organizations", "organizations:read"),
+  bootstrap(
+    "organizations.create",
+    "POST",
+    /^\/organizations$/,
+    "/organizations",
+    "organizations:write",
+    "idempotency-key"
+  ),
+  bootstrap(
+    "organizations.get",
+    "GET",
+    /^\/organizations\/[^/]+$/,
+    "/organizations/org_1",
+    "organizations:read"
+  ),
+  bootstrap(
+    "memberships.list",
+    "GET",
+    /^\/organizations\/[^/]+\/memberships$/,
+    "/organizations/org_1/memberships",
+    "memberships:read"
+  ),
+  bootstrap(
+    "invitations.create",
+    "POST",
+    /^\/organizations\/[^/]+\/invitations$/,
+    "/organizations/org_1/invitations",
+    "memberships:write",
+    "idempotency-key"
+  ),
+  bootstrap("workspaces.list", "GET", /^\/workspaces$/, "/workspaces", "workspaces:read"),
+  bootstrap(
+    "workspaces.create",
+    "POST",
+    /^\/workspaces$/,
+    "/workspaces",
+    "workspaces:write",
+    "idempotency-key"
+  ),
+  bootstrap(
+    "workspaces.get",
+    "GET",
+    /^\/workspaces\/[^/]+$/,
+    "/workspaces/wsp_1",
+    "workspaces:read"
+  ),
+  bootstrap(
+    "workspaces.delete",
+    "POST",
+    /^\/workspaces\/[^/]+\/deletions$/,
+    "/workspaces/wsp_1/deletions",
+    "workspaces:delete",
+    "operation-id"
+  ),
+  bootstrap("apiKeys.list", "GET", /^\/api-keys$/, "/api-keys", "api_keys:read"),
+  bootstrap(
+    "apiKeys.create",
+    "POST",
+    /^\/api-keys$/,
+    "/api-keys",
+    "api_keys:write",
+    "idempotency-key"
+  ),
+  bootstrap(
+    "apiKeys.delete",
+    "DELETE",
+    /^\/api-keys\/[^/]+$/,
+    "/api-keys/key_1",
+    "api_keys:write"
+  ),
+  bootstrap("billing.balance", "GET", /^\/billing\/balance$/, "/billing/balance", "billing:read"),
+  bootstrap(
+    "billing.topUpCheckout",
+    "POST",
+    /^\/organizations\/[^/]+\/billing\/top-up-checkouts$/,
+    "/organizations/org_1/billing/top-up-checkouts",
+    "billing:write",
+    "idempotency-key"
+  ),
+  bootstrap(
+    "billing.portalSession",
+    "POST",
+    /^\/organizations\/[^/]+\/billing\/portal-sessions$/,
+    "/organizations/org_1/billing/portal-sessions",
+    "billing:write",
+    "idempotency-key"
+  ),
+  bootstrap(
+    "billing.autoTopup.get",
+    "GET",
+    /^\/organizations\/[^/]+\/billing\/auto-topup-policy$/,
+    "/organizations/org_1/billing/auto-topup-policy",
+    "billing:read"
+  ),
+  bootstrap(
+    "billing.autoTopup.put",
+    "PUT",
+    /^\/organizations\/[^/]+\/billing\/auto-topup-policy$/,
+    "/organizations/org_1/billing/auto-topup-policy",
+    "billing:write",
+    "idempotency-key"
+  ),
+  bootstrap(
+    "billing.statements.list",
+    "GET",
+    /^\/organizations\/[^/]+\/billing\/statements$/,
+    "/organizations/org_1/billing/statements",
+    "billing:read"
+  ),
+  bootstrap(
+    "billing.statements.get",
+    "GET",
+    /^\/organizations\/[^/]+\/billing\/statements\/[^/]+$/,
+    "/organizations/org_1/billing/statements/stm_1",
+    "billing:read"
+  ),
+  bootstrap("operations.list", "GET", /^\/operations$/, "/operations", "operations:read"),
+  bootstrap("operations.get", "GET", /^\/operations\/[^/]+$/, "/operations/op_1", null),
+  bootstrap(
+    "operations.cancel",
+    "POST",
+    /^\/operations\/[^/]+\/cancellations$/,
+    "/operations/op_1/cancellations",
+    "operations:write"
+  )
+] as const satisfies readonly AuthenticatedApiRouteDescriptor[];
+
+export const REGIONAL_API_ROUTE_DESCRIPTORS = [
+  regional("workspace.get", "GET", /^\/workspace$/, "/workspace", "workspace:read"),
+  regional(
+    "sessions.create",
+    "POST",
+    /^\/sessions$/,
+    "/sessions",
+    "sessions:write",
+    "idempotency-key"
+  ),
+  regional("sessions.list", "GET", /^\/sessions$/, "/sessions", "sessions:read"),
+  regional("sessions.get", "GET", /^\/sessions\/[^/]+$/, "/sessions/ses_1", "sessions:read"),
+  regional(
+    "messages.list",
+    "GET",
+    /^\/sessions\/[^/]+\/messages$/,
+    "/sessions/ses_1/messages",
+    "sessions:read"
+  ),
+  regional(
+    "messages.send",
+    "POST",
+    /^\/sessions\/[^/]+\/messages$/,
+    "/sessions/ses_1/messages",
+    "sessions:write",
+    "idempotency-key"
+  ),
+  regional(
+    "runs.list",
+    "GET",
+    /^\/sessions\/[^/]+\/runs$/,
+    "/sessions/ses_1/runs",
+    "sessions:read"
+  ),
+  regional(
+    "runs.get",
+    "GET",
+    /^\/sessions\/[^/]+\/runs\/[^/]+$/,
+    "/sessions/ses_1/runs/run_1",
+    "sessions:read"
+  ),
+  regional(
+    "sessions.stop",
+    "POST",
+    /^\/sessions\/[^/]+\/stops$/,
+    "/sessions/ses_1/stops",
+    "sessions:write",
+    "operation-id"
+  ),
+  regional(
+    "sessions.persist",
+    "POST",
+    /^\/sessions\/[^/]+\/persists$/,
+    "/sessions/ses_1/persists",
+    "files:write",
+    "operation-id"
+  ),
+  regional(
+    "sessions.fork",
+    "POST",
+    /^\/sessions\/[^/]+\/forks$/,
+    "/sessions/ses_1/forks",
+    "sessions:write",
+    "operation-id"
+  ),
+  regional(
+    "sessions.workspace.discard",
+    "POST",
+    /^\/sessions\/[^/]+\/workspace\/discards$/,
+    "/sessions/ses_1/workspace/discards",
+    "sessions:write",
+    "operation-id"
+  ),
+  regional(
+    "sessions.credentials.rebind",
+    "POST",
+    /^\/sessions\/[^/]+\/credential-rebinds$/,
+    "/sessions/ses_1/credential-rebinds",
+    "secrets:write",
+    "operation-id"
+  ),
+  regional(
+    "sessions.delete",
+    "POST",
+    /^\/sessions\/[^/]+\/deletions$/,
+    "/sessions/ses_1/deletions",
+    "sessions:delete",
+    "operation-id"
+  ),
+  regional("operations.list", "GET", /^\/operations$/, "/operations", "operations:read"),
+  regional(
+    "operations.get",
+    "GET",
+    /^\/operations\/[^/]+$/,
+    "/operations/op_1",
+    "operations:read"
+  ),
+  regional(
+    "operations.cancel",
+    "POST",
+    /^\/operations\/[^/]+\/cancellations$/,
+    "/operations/op_1/cancellations",
+    "operations:write"
+  )
+] as const satisfies readonly AuthenticatedApiRouteDescriptor[];

@@ -10,7 +10,6 @@ import {
   SessionConfigValidationError,
   type SessionCreateRequest
 } from "../src/index.js";
-import { isId } from "../src/ids.js";
 import { operations } from "../src/internal.js";
 
 const createRequest: SessionCreateRequest = {
@@ -39,7 +38,7 @@ describe("idempotency key fail-closed (WS4)", () => {
 
   it("resolveIdempotencyKey returns a real key verbatim and generates one when absent", () => {
     expect(operations.resolveIdempotencyKey("k-123")).toBe("k-123");
-    expect(isId("idempotency", operations.resolveIdempotencyKey())).toBe(true);
+    expect(operations.resolveIdempotencyKey()).toMatch(/^idem_[0-9a-hjkmnp-tv-z]{26}$/);
   });
 
   it("matches the hosted 255-character idempotency-key limit", () => {
@@ -169,7 +168,7 @@ describe("billing mutation identities", () => {
     });
 
     await operations.createBillingTopupCheckout(capture, { amountUsd: 25 });
-    expect(isId("idempotency", seenHeader)).toBe(true);
+    expect(seenHeader).toMatch(/^idem_[0-9a-hjkmnp-tv-z]{26}$/);
     await expect(
       operations.createBillingTopupCheckout(capture, { amountUsd: 25, idempotencyKey: "legacy" } as never)
     ).rejects.toBeInstanceOf(SessionConfigValidationError);

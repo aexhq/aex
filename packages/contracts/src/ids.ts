@@ -5,7 +5,8 @@
  * Every other site — database CHECK constraint, HTTP handler, dashboard URL,
  * log line, span attribute, test fixture — imports from here.
  *
- * An identifier has exactly ONE string form: `<prefix>_<32 lowercase hex>`. It
+ * An identifier has exactly ONE string form: a UUIDv7 encoded as
+ * `<prefix>_<26 lowercase Crockford base32>`. It
  * is the same bytes in Aurora, in the API response, in the dashboard URL, in
  * the log line, and in the telemetry attribute. There is deliberately no
  * normalizer and no coercer: a value that must be reshaped to be compared has
@@ -22,22 +23,33 @@
  * here, never a new generator.
  */
 export const ID_PREFIXES = {
-  workspace: "wsp",
-  session: "ses",
-  resource: "wres",
-  mcp: "mcp",
-  secret: "sec",
-  org: "org",
-  team: "team",
   user: "usr",
+  organization: "org",
+  membership: "mem",
+  invitation: "inv",
+  workspace: "wsp",
   apiKey: "key",
-  idempotency: "idem"
+  session: "ses",
+  message: "msg",
+  run: "run",
+  agent: "agt",
+  toolCall: "tcl",
+  operation: "op",
+  approval: "apr",
+  generation: "gen",
+  observation: "obs",
+  telemetryBatch: "bch",
+  telemetryGap: "gap",
+  export: "exp",
+  upload: "upl",
+  measurement: "msr",
+  statement: "stm"
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;
 export type IdPrefix = (typeof ID_PREFIXES)[IdKind];
 
-/** `wsp_5fc4b90e55af46cf9938b70f988e431d` — the only form of a workspace id. */
+/** `wsp_01k1e7x9m8e009x13t2nby2zy9` — the only form of a workspace id. */
 export type Id<K extends IdKind> = `${(typeof ID_PREFIXES)[K]}_${string}`;
 
 export const ID_KINDS: readonly IdKind[] = Object.keys(ID_PREFIXES) as IdKind[];
@@ -48,9 +60,9 @@ export const ID_KINDS: readonly IdKind[] = Object.keys(ID_PREFIXES) as IdKind[];
  * `idPatternSource` and `platform/scripts/validate/id-format-parity.test.ts`,
  * which fails the build on any hand-written `^<prefix>_` literal elsewhere.
  */
-const ID_BODY_PATTERN = "[0-9a-f]{32}";
+const ID_BODY_PATTERN = "[0-9a-hjkmnp-tv-z]{26}";
 
-/** 16 random bytes rendered as 32 lowercase hex characters. */
+/** One UUID is 16 bytes before its Crockford-base32 encoding. */
 const ID_BYTES = 16;
 
 const PATTERN_CACHE = new Map<IdKind, RegExp>();
@@ -69,14 +81,35 @@ export function idPattern(kind: IdKind): RegExp {
   return compiled;
 }
 
-const HEX_DIGITS = "0123456789abcdef";
+const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 
-function toHex(bytes: Uint8Array): string {
-  let out = "";
+function toBase32(bytes: Uint8Array): string {
+  let value = 0n;
   for (const byte of bytes) {
-    out += HEX_DIGITS[byte >> 4]! + HEX_DIGITS[byte & 0x0f]!;
+    value = (value << 8n) | BigInt(byte);
+  }
+  let out = "";
+  for (let index = 0; index < 26; index += 1) {
+    out = CROCKFORD[Number(value & 31n)]! + out;
+    value >>= 5n;
   }
   return out;
+}
+
+function isUuidV7Body(value: string): boolean {
+  let encoded = 0n;
+  for (const character of value) {
+    const digit = CROCKFORD.indexOf(character);
+    if (digit < 0) return false;
+    encoded = (encoded << 5n) | BigInt(digit);
+  }
+  if (encoded >= (1n << 128n)) return false;
+  const bytes = new Uint8Array(ID_BYTES);
+  for (let index = ID_BYTES - 1; index >= 0; index -= 1) {
+    bytes[index] = Number(encoded & 255n);
+    encoded >>= 8n;
+  }
+  return (bytes[6]! & 0xf0) === 0x70 && (bytes[8]! & 0xc0) === 0x80;
 }
 
 /**
@@ -95,12 +128,23 @@ export function newId<K extends IdKind>(kind: K): Id<K> {
   if (typeof source?.getRandomValues !== "function") {
     throw new Error("newId: crypto.getRandomValues is unavailable; cannot mint an identifier");
   }
-  return `${prefix}_${toHex(source.getRandomValues(new Uint8Array(ID_BYTES)))}` as Id<K>;
+  const bytes = source.getRandomValues(new Uint8Array(ID_BYTES));
+  const timestamp = Date.now();
+  bytes[0] = Math.floor(timestamp / 2 ** 40) & 0xff;
+  bytes[1] = Math.floor(timestamp / 2 ** 32) & 0xff;
+  bytes[2] = Math.floor(timestamp / 2 ** 24) & 0xff;
+  bytes[3] = Math.floor(timestamp / 2 ** 16) & 0xff;
+  bytes[4] = Math.floor(timestamp / 2 ** 8) & 0xff;
+  bytes[5] = timestamp & 0xff;
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  return `${prefix}_${toBase32(bytes)}` as Id<K>;
 }
 
 /** True when `value` is a well-formed identifier of exactly `kind`. */
 export function isId<K extends IdKind>(kind: K, value: unknown): value is Id<K> {
-  return typeof value === "string" && idPattern(kind).test(value);
+  if (typeof value !== "string" || !idPattern(kind).test(value)) return false;
+  return isUuidV7Body(value.slice(value.indexOf("_") + 1));
 }
 
 /**

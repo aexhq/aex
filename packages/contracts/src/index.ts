@@ -135,7 +135,8 @@ export {
 } from "./contract-parse-error.js";
 export type { ContractParseError } from "./contract-parse-error.js";
 export * from "./schemas/index.js";
-// The data-plane route table. Declared here rather than in the platform so the
+// The bootstrap and regional route tables. Declared here rather than in the platform so the
 // spec generator, the platform dispatcher and any future non-TypeScript SDK all
 // read one statement of the HTTP surface.
 export * from "./api-routes.js";
+export * from "./v1-resources.js";

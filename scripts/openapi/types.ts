@@ -39,7 +39,10 @@ interface TypedPlane {
   readonly types: string;
 }
 
-const PLANES: readonly TypedPlane[] = [{ spec: "data-plane.json", types: "data-plane.d.ts" }];
+const PLANES: readonly TypedPlane[] = [
+  { spec: "bootstrap.json", types: "bootstrap.d.ts" },
+  { spec: "regional.json", types: "regional.d.ts" }
+];
 
 function banner(plane: TypedPlane): string {
   return [

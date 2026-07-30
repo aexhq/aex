@@ -187,7 +187,7 @@ describe("subagent nested input contract", () => {
     });
     // The JSON-Schema `pattern` is the id owner's source string, not a copy:
     // a subagent asset ref is the same id as everywhere else.
-    expect(properties.files.items.properties.resourceId.pattern).toBe(idPatternSource("resource"));
+    expect(properties.files.items.properties.resourceId.pattern).toBe(idPatternSource("upload"));
     expect(properties.tools.items.properties.input_schema).toMatchObject({
       type: "object",
       required: ["type"]

@@ -14,7 +14,10 @@
  *    either bound or explicitly excused; nothing falls between.
  */
 import { describe, expect, it } from "bun:test";
-import { AUTHENTICATED_API_ROUTE_DESCRIPTORS } from "../src/api-routes.js";
+import {
+  BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+  REGIONAL_API_ROUTE_DESCRIPTORS
+} from "../src/api-routes.js";
 import { HttpClient } from "../src/http.js";
 import {
   DATA_PLANE_RESPONSE_SCHEMAS,
@@ -23,6 +26,11 @@ import {
   formatResponseSchemaCoverage,
   routeMatchTemplate
 } from "../src/testing/response-bindings.js";
+
+const ALL_API_ROUTE_DESCRIPTORS = [
+  ...BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+  ...REGIONAL_API_ROUTE_DESCRIPTORS
+];
 import {
   formatWireConformanceReport,
   installWireConformance,
@@ -30,8 +38,8 @@ import {
   pathMatches,
   wireOrigin
 } from "../src/testing/wire-conformance.js";
-import { ApiErrorEnvelopeSchema } from "../src/schemas/response-common.js";
-import dataPlaneDocument from "../openapi/data-plane.json" with { type: "json" };
+import { ApiErrorSchema } from "../src/v1-resources.js";
+import dataPlaneDocument from "../openapi/regional.json" with { type: "json" };
 
 const TS = "2026-07-25T12:00:00.000Z";
 
@@ -87,7 +95,7 @@ describe("route match templates", () => {
   });
 
   it("matches the route table's own sample path for every binding", () => {
-    const byName = new Map(AUTHENTICATED_API_ROUTE_DESCRIPTORS.map((route) => [route.name, route]));
+    const byName = new Map(ALL_API_ROUTE_DESCRIPTORS.map((route) => [route.name, route]));
     for (const binding of DATA_PLANE_RESPONSE_SCHEMAS) {
       const descriptor = byName.get(binding.name);
       expect(descriptor).toBeDefined();
@@ -101,7 +109,7 @@ describe("coverage accounting", () => {
   it("accounts for every data-plane route exactly once", () => {
     const bound = new Set(DATA_PLANE_RESPONSE_SCHEMAS.map((binding) => binding.name));
     const excused = new Set(ROUTES_WITHOUT_RESPONSE_SCHEMA.map((route) => route.name));
-    const unaccounted = AUTHENTICATED_API_ROUTE_DESCRIPTORS.map((route) => route.name).filter(
+    const unaccounted = ALL_API_ROUTE_DESCRIPTORS.map((route) => route.name).filter(
       (name) => !bound.has(name) && !excused.has(name)
     );
     expect(unaccounted).toEqual([]);
@@ -111,7 +119,7 @@ describe("coverage accounting", () => {
   });
 
   it("excuses only routes that exist", () => {
-    const known = new Set(AUTHENTICATED_API_ROUTE_DESCRIPTORS.map((route) => route.name));
+    const known = new Set(ALL_API_ROUTE_DESCRIPTORS.map((route) => route.name));
     for (const route of [...ROUTES_WITHOUT_RESPONSE_SCHEMA, ...ROUTES_OFF_THE_SDK_SEAM]) {
       expect(known.has(route.name)).toBe(true);
       expect(route.reason.length).toBeGreaterThan(20);
@@ -137,7 +145,7 @@ describe("coverage accounting", () => {
   it("prints both the excused routes and the unreachable ones", () => {
     const rendered = formatResponseSchemaCoverage();
     expect(rendered).toContain(
-      `${DATA_PLANE_RESPONSE_SCHEMAS.length}/${AUTHENTICATED_API_ROUTE_DESCRIPTORS.length}`
+      `${DATA_PLANE_RESPONSE_SCHEMAS.length}/${ALL_API_ROUTE_DESCRIPTORS.length}`
     );
     for (const route of ROUTES_WITHOUT_RESPONSE_SCHEMA) {
       expect(rendered).toContain(route.name);
@@ -457,19 +465,27 @@ describe("error envelopes", () => {
     // Two declarations of one envelope exist: this schema, and the literal the
     // OpenAPI generator writes into `components.schemas`. Pin them together so
     // the pair cannot drift unnoticed.
-    const component = dataPlaneDocument.components.schemas.ApiErrorEnvelope;
-    expect([...component.required].sort()).toEqual(["error", "message"]);
-    expect(component.additionalProperties).toBe(true);
+    const component = dataPlaneDocument.components.schemas.ApiError;
+    expect([...component.required].sort()).toEqual(["error"]);
+    expect(component.additionalProperties).toBe(false);
     // Required in the document == rejected by the schema when absent.
-    for (const missing of ["error", "message"]) {
-      const body: Record<string, string> = { error: "x", message: "y" };
+    for (const missing of ["code", "message", "requestId", "retryable"]) {
+      const body: Record<string, unknown> = {
+        code: "x",
+        message: "y",
+        requestId: "req_1",
+        retryable: false
+      };
       delete body[missing];
-      expect(ApiErrorEnvelopeSchema["~standard"].validate(body)).toHaveProperty("issues");
+      expect(ApiErrorSchema["~standard"].validate({ error: body })).toHaveProperty("issues");
     }
-    // Open in the document == accepted by the schema when extended.
+    // Strict in the document == rejected by the schema when extended.
     expect(
-      ApiErrorEnvelopeSchema["~standard"].validate({ error: "x", message: "y", extra: 1 })
-    ).not.toHaveProperty("issues");
+      ApiErrorSchema["~standard"].validate({
+        error: { code: "x", message: "y", requestId: "req_1", retryable: false },
+        extra: 1
+      })
+    ).toHaveProperty("issues");
   });
 });
 

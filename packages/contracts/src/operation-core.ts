@@ -40,7 +40,7 @@ export function configError(field: string, message: string): SessionConfigValida
  */
 export function resolveIdempotencyKey(key?: string): string {
   if (key === undefined) {
-    return newId("idempotency");
+    return newId("operation").replace(/^op_/, "idem_");
   }
   if (typeof key !== "string" || key.trim().length === 0) {
     throw configError("idempotencyKey", "idempotencyKey must be a non-empty, non-whitespace string");

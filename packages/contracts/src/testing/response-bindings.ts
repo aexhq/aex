@@ -51,7 +51,8 @@
  */
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
-  AUTHENTICATED_API_ROUTE_DESCRIPTORS,
+  BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+  REGIONAL_API_ROUTE_DESCRIPTORS,
   type AuthenticatedApiRouteDescriptor
 } from "../api-routes.js";
 import { NoContentResponseSchema } from "../schemas/response-common.js";
@@ -360,8 +361,13 @@ function bindingFor(
 }
 
 /** Every data-plane route that has a response schema, bound to it. */
+const ALL_API_ROUTE_DESCRIPTORS: readonly AuthenticatedApiRouteDescriptor[] = [
+  ...BOOTSTRAP_API_ROUTE_DESCRIPTORS,
+  ...REGIONAL_API_ROUTE_DESCRIPTORS
+];
+
 export const DATA_PLANE_RESPONSE_SCHEMAS: readonly ResponseSchemaBinding[] =
-  AUTHENTICATED_API_ROUTE_DESCRIPTORS.flatMap((descriptor) => {
+  ALL_API_ROUTE_DESCRIPTORS.flatMap((descriptor) => {
     const binding = bindingFor(descriptor);
     return binding === undefined ? [] : [binding];
   });
@@ -376,7 +382,7 @@ export const DATA_PLANE_RESPONSE_SCHEMAS: readonly ResponseSchemaBinding[] =
  * it.
  */
 export function formatResponseSchemaCoverage(): string {
-  const total = AUTHENTICATED_API_ROUTE_DESCRIPTORS.length;
+  const total = ALL_API_ROUTE_DESCRIPTORS.length;
   const bound = DATA_PLANE_RESPONSE_SCHEMAS.length;
   const lines = [
     `response schemas: ${bound}/${total} data-plane route(s) have one`,

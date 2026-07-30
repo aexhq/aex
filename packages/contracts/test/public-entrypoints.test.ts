@@ -84,8 +84,10 @@ describe("contracts entrypoint boundary", () => {
       "./ids",
       "./subagent-runtime",
       "./testing",
-      "./openapi/data-plane.json",
-      "./openapi/data-plane"
+      "./openapi/bootstrap.json",
+      "./openapi/bootstrap",
+      "./openapi/regional.json",
+      "./openapi/regional"
     ]);
   });
 

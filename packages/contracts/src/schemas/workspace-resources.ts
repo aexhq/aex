@@ -34,7 +34,7 @@ import { idPattern } from "../ids.js";
  * workspace-id pattern had already drifted (one lacked the `/i` flag the others carried,
  * so the same id passed everywhere and threw at the telemetry boundary).
  */
-const WORKSPACE_RESOURCE_ID_PATTERN = idPattern("resource");
+const WORKSPACE_RESOURCE_ID_PATTERN = idPattern("upload");
 
 /** Bytes prefix stripped from a canonical digest to derive the asset id. */
 const DIGEST_PREFIX = "sha256:";

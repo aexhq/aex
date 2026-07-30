@@ -52,9 +52,13 @@
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
     },
-    "./openapi/data-plane.json": "./openapi/data-plane.json",
-    "./openapi/data-plane": {
-      "types": "./openapi/data-plane.d.ts"
+    "./openapi/bootstrap.json": "./openapi/bootstrap.json",
+    "./openapi/bootstrap": {
+      "types": "./openapi/bootstrap.d.ts"
+    },
+    "./openapi/regional.json": "./openapi/regional.json",
+    "./openapi/regional": {
+      "types": "./openapi/regional.d.ts"
     }
   },
   "dependencies": {
