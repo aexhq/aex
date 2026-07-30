@@ -1,206 +1,214 @@
 ---
-title: aex architecture and the open-core boundary
-description: How an aex session executes — the brain/hands split, ports, the journal and its projection, and the runtime hosts — and exactly which concerns live in this repository versus the private hosted plane.
+title: aex public v1 architecture and repository boundary
+description: How strict v1 exposes explicit sessions, durable operations, persisted and live files, registered resources, telemetry, and one execution contract.
 keywords:
   - architecture
-  - open core
-  - agent runtime
+  - public contract
   - session
+  - operations
   - boundary
 audience: contributors, integrators, and implementation agents
 status: accepted
 related:
   - references/glossary.md
-  - references/internal-protocol.md
   - references/repo.md
   - references/rules.md
 ---
 
-# Architecture
+# Public v1 architecture
 
-Read [`glossary.md`](glossary.md) first if `brain`, `hands`, or `plane` are new
-to you. This page assumes those four paragraphs.
+This page describes the supported public contract, not the hosted substrate.
+The strict schemas in
+[`packages/contracts/src/v1-resources.ts`](../packages/contracts/src/v1-resources.ts),
+[`v1-content.ts`](../packages/contracts/src/v1-content.ts), and
+[`v1-telemetry.ts`](../packages/contracts/src/v1-telemetry.ts) are the wire
+authority. The SDK documentation under [`packages/sdk/docs/`](../packages/sdk/docs/)
+is the user-facing authority.
 
-## The shape of the thing
+## Contract rules
 
-An aex session is a durable, resumable thread. A model drives it, real tools
-execute inside an isolated runtime, and every event, file, and unit of cost is
-recorded. Three properties fall out of that and shape everything below:
+Strict v1 follows four rules:
 
-1. **A session outlives any process that runs it.** State lives in a journal and
-   a checkpoint, never only in memory. Any runtime that can read those can
-   continue the session.
-2. **The code being run is hostile by assumption.** Customer code and
-   model-authored code share a runtime, so the runtime holds no durable
-   credential and makes no network decision. See
-   [`internal-protocol.md`](internal-protocol.md).
-3. **A terminal run event is a consistency boundary.** When `RUN_FINISHED` is
-   visible, the checkpoint, files, usage, cost, messages, and session status are
-   all committed and mutually consistent. Nothing is eventually consistent
-   across that line.
+1. **User-visible mutation is explicit.** Creating a session, admitting a
+   message, persisting files, forking, discarding a live workspace, rebinding
+   credentials, exporting telemetry, and deleting resources are named
+   operations.
+2. **Reads remain observational.** Resource GET/list/query calls do not start
+   compute or mutate customer state. Live-file access is action-shaped because
+   it may wake the exact retained workspace generation.
+3. **Long-running mutations are durable.** Their operation handles can be
+   reopened, waited on, and resolved independently of the client connection
+   that admitted them.
+4. **Implementation is resolved, not selected.** A caller chooses supported
+   capacity and policy inputs. The hosted execution implementation is not a
+   public resource, selector, or fallback ladder.
 
-## Deciding and doing are separate
+## Sessions, messages, and runs
 
-The engine splits an agent turn into two halves with a narrow seam between them.
+Session creation establishes a durable conversational and workspace boundary.
+It does not run a prompt. A message admission creates the accepted message and
+a durable run:
 
-```
-                 ┌──────────────────────────────────────────┐
-   model  ◄─────►│  brain — the loop                        │
-                 │  assemble context → call model → plan    │
-                 │  ONE tool call → fold the result         │
-                 └───────────────┬──────────────────────────┘
-                                 │ hands.execute(call, { timeoutMs })
-                                 ▼
-                 ┌──────────────────────────────────────────┐
-                 │  hands — the tool executor               │
-                 │  run it, return blocks + isError + ms    │
-                 └───────────────┬──────────────────────────┘
-                                 │  every outbound request
-                                 ▼
-                 ┌──────────────────────────────────────────┐
-                 │  the managed boundary (not in this repo) │
-                 │  resolve session → validate → inject     │
-                 │  credential → forward → meter            │
-                 └──────────────────────────────────────────┘
+```ts
+const session = await aex.sessions.create({ model: "openai/gpt-5" });
+const { message, run } = await session.messages.send("Inspect the tests.");
+const terminal = await run.result();
 ```
 
-**Why the seam is there.** The brain is where model output becomes a decision;
-the hands are where a decision becomes a side effect. Keeping them behind a
-frame-shaped port means the two halves can run in different processes and
-different trust domains without the loop knowing, and it means a tool result is
-a value the loop folds rather than a mutation the loop performs.
+Session status is semantic:
 
-One consequence worth knowing: the `subagent` builtin does not run in the tool
-executor. Spawning a child session is a control-plane act, so it is routed to a
-separate runner port. The engine owns the seam; it never makes the call itself.
+- `idle`
+- `running`
+- `awaiting_approval`
+- `deleting`
 
-## Ports, not integrations
+Run status is independently observable:
 
-The brain loop depends on ports — narrow interfaces it is handed — rather than on
-any concrete service. Model access, tool execution, journalling, subagent
-spawning, and telemetry are all ports.
+- `queued`
+- `running`
+- `succeeded`
+- `failed`
+- `timed_out`
+- `cancelled`
+- `interrupted`
 
-That is what lets the same engine run on four different runtimes without a
-per-runtime fork, and it is what makes the engine testable without a network: a
-test supplies its own port implementations.
+The canonical run resource, not a projected stream event, owns terminal status,
+result references, and typed failure. Streaming and telemetry are observation
+surfaces over that execution; consuming a stream never starts a run.
 
-## Journal, projection, and checkpoint
+Session lifecycle changes are explicit durable operations:
 
-The brain does not emit customer-facing events. It writes journal entries, and a
-separate pure projection turns those entries into the ordered event stream a
-client sees.
+- `stop()` makes the session quiescent;
+- `persist()` synchronizes selected live files into the durable file root;
+- `fork()` creates an independent session with explicit lineage;
+- `workspace.discard()` deliberately loses unpersisted live-workspace state;
+- `delete()` closes admission and purges the session under its declared cascade
+  behavior.
 
-**Why the indirection.** The journal is the durable truth and can be replayed;
-the event stream is a view. Reconnecting a client mid-run replays from the
-journal through the same projection that produced the live stream, so a
-reconnecting reader and a live reader cannot diverge. Ordering is a property of
-the journal, not of delivery.
+There is no public suspend/resume lifecycle or automatic end-of-run file
+capture. The builtin subagent tools orchestrate agents inside one session; they
+do not create a separate customer session resource. An independent session is
+created only by an explicit session create or fork operation.
 
-A **checkpoint** is the committed filesystem state at the end of a run. Session
-file reads pin a checkpoint revision, so a read is answered from a specific
-committed state rather than from whatever a live runtime currently holds.
+## Configuration and execution
 
-## Runtimes
+A session request names a model by its managed `creator/model` slug. Customers
+do not select a provider implementation or supply a provider API key.
 
-A session names the runtime it wants. The choice changes placement, isolation,
-and metering — never agent capability or the customer-visible contract.
+Compute is requested only by capacity:
 
-| Runtime | Character |
-| --- | --- |
-| `container` | The default managed container runtime. |
-| `spot_container` | The same runtime on interruptible capacity. |
-| `lambda` | A function runtime that idles to zero cost. |
-| `microvm` | A micro-VM runtime for stronger isolation. |
+```ts
+const session = await aex.sessions.create({
+  model: "openai/gpt-5",
+  compute: { size: "1gb" }
+});
+```
 
-Explicit runtime requests never silently fall back or migrate to another host.
-Which capabilities each runtime supports is generated from the code rather than
-asserted in prose: see `packages/sdk/docs/provider-runtime-capabilities.md`.
+Supported sizes are `512mb`, `1gb`, `2gb`, `4gb`, and `8gb`.
+`resolvedConfig.compute` returns the service-derived baseline and peak memory
+and CPU, maximum disk, endpoint bandwidth, and concurrent-connection capacity.
+Those resolved facts are observable, not independently selectable.
 
-## Model access
+Raw Hands networking is also explicit:
 
-aex holds one platform-owned model-gateway credential per plane and routes every
-model call through it. Callers name a model by its `creator/model` gateway slug
-and supply no provider API key; a submission carrying a provider key or a
-provider selection is rejected.
+```ts
+network: {
+  hands: { mode: "none" }
+}
+```
 
-This is a product decision with an architectural consequence: there is no
-per-provider code path in the engine, no provider credential in the runtime, and
-one host to allow rather than a fan-out.
+The only modes are `none` and `public_internet`. Hands names the untrusted
+tool-execution side of a session; it is not a selectable execution host.
+`public_internet` permits direct public networking. Managed model access and
+other hosted service channels are separate from that raw-network choice.
 
-## Composition
+## Composition and registered resources
 
-Reusable inputs — files, skills, tools, instructions, and MCP servers — live in
-overwrite-only workspace registries. Each exact, case-sensitive name has one
-current value and one monotonic revision. A session request names the resources
-it uses; admission resolves those names to exact content evidence so later
-overwrites do not change the admitted session.
+Files, skills, tools, instructions, and MCP servers are overwrite-by-name
+workspace resources. Each exact, case-sensitive name has one current value and
+one monotonic revision. `set()` returns `created`, `replaced`, or `unchanged`;
+there is no public copy, publish, archive, restore, or old-value read surface.
 
-Large byte inputs use disposable upload staging. A registry PUT consumes the
-ready upload and returns only the current resource plus its checksum/size
-descriptor. Upload IDs and inline bytes are never registry output, and old
-registry bytes have no addressable public route.
+A session request names registered resources and secret metadata:
 
-**Why.** A submission that carried reusable inputs inline would repeat large
-uploads and make workspace policy harder to manage. Resolving a current name at
-admission keeps the caller-facing model small while retaining exact execution
-evidence.
+```ts
+const session = await aex.sessions.create({
+  model: "openai/gpt-5",
+  registered: {
+    files: ["repository-context"],
+    instructions: ["review-policy"]
+  },
+  credentials: {
+    secrets: [{ name: "github-token" }]
+  }
+});
+```
 
-## The open-core boundary
+Admission resolves those names into the session's effective configuration.
+Later registry overwrites do not silently rewrite an admitted session. Secret
+values are write-only; reads expose metadata, never plaintext.
 
-This repository is Apache 2.0 and holds:
+Large registered values use disposable, checksummed upload staging. Registry
+reads and writes return content descriptors rather than inline bytes or upload
+identities.
 
-- **the public contract** — wire schemas, the event envelope, id formats, and the
-  generated OpenAPI document (`packages/contracts`);
-- **the clients** — the TypeScript SDK and the CLI (`packages/sdk`,
-  `packages/cli`);
-- **the engine** — the session loop, the tool kit and the builtin tools, the
-  runtime adapters, the LLM protocol layer, and the runtime-side protocol
-  described in [`internal-protocol.md`](internal-protocol.md). These packages are
-  being extracted from the private history with their commit lineage preserved;
-  the repository README lists what has landed.
+## Persisted and live files
 
-The private repository holds the hosted plane:
+A session has two distinct file-read surfaces:
 
-- accounts, authentication, and API-key issuance;
-- billing, pricing, margins, and reconciliation;
-- admission, scheduling, and quota;
-- the database schema and its migrations;
-- the dashboard and its backend;
-- the egress boundary implementation;
-- every infrastructure definition.
+- `session.files.persisted` reads the latest explicitly persisted root without
+  waking compute;
+- `session.files.live` addresses the exact retained workspace generation and
+  may wake it when the caller selects `wake:"retained"`.
 
-### What that means in practice
+Neither surface substitutes for the other. Persisted reads expose no historical
+revision browser. `persist()` is the only operation that moves selected live
+workspace state into the durable file root.
 
-**Running the hosted plane yourself is out of scope for this repository.** The
-engine is published, its contract is published, and its protocol is published.
-Assembling a control plane around them is not supported here, and no part of
-this documentation should be read as offering it.
+File and telemetry downloads mint short-lived bearer grants. The grant binds
+the authorized object or generation, byte range, length, and immutable
+whole-object hash. The SDK and CLI coordinate large ranges and verify the
+declared evidence before completing a download.
 
-`scripts/cicd/check-public-boundary.mjs` enforces that in the docs it scans:
-`README.md`, `SECURITY.md`, `packages/sdk/README.md`, and `packages/sdk/docs`.
-It is a lint rule, not a promise in either direction.
+## Telemetry and usage
 
-**Substrate is not part of the public contract.** The public SDK and CLI expose
-the runtime kind and size because those are intentional product fields. Storage,
-regions, queues, object keys, credentials, and deployment identifiers are not
-public contract, and a change to any of them is not a public API change.
+Events, logs, spans, metrics, traces, gaps, and combined telemetry share a typed
+filter and cursor model. They can be queried at session or workspace scope.
+Streams expose records plus explicit gap, cursor, and rotation frames.
 
-**The seam is enforced, not just documented.** The generation direction runs one
-way — Zod schemas produce the OpenAPI document, which produces types, which are
-committed and freshness-gated — so a hosted change that alters the wire format
-cannot land without the public artifact changing with it.
+Large extracts are explicit telemetry-export operations. A ready export has a
+separate short-lived download grant; querying observations never creates an
+export.
 
-## Design rules the code actually holds itself to
+Usage is a typed regional resource. Account and billing clients expose the
+bootstrap resources that aggregate those facts without changing the regional
+execution contract.
 
-- **One behavioural contract, several hosts.** A runtime is a placement decision.
-  Two hosts that disagree about behaviour is a bug in one of them, not a
-  documented difference.
-- **One byte-upload path.** Every byte-bearing workspace registry uses the same
-  checksummed direct-upload staging and completion flow.
-- **One submission resource shape.** Reusable inputs appear only as registered
-  names. Builtin tools, secrets, and request policy stay separate fields.
-- **One evidence path.** Every writer commits through the same control decision
-  and reads through the same journal and projection helpers. A second way to
-  record what happened is a second version of what happened.
-- **Ports over integrations.** A dependency the loop cannot substitute in a test
-  is a dependency the loop should not have.
+## Repository boundary
+
+This Apache-2.0 repository owns:
+
+- strict public schemas, identifiers, routes, errors, and generated OpenAPI
+  artifacts in `packages/contracts`;
+- the TypeScript SDK in `packages/sdk`;
+- the standalone CLI in `packages/cli`;
+- public documentation and blackbox user tests.
+
+Hosted authentication, scheduling, execution, persistence, billing,
+observability infrastructure, the dashboard, and deployment definitions are
+outside this repository. They may change without changing the public API when
+the strict wire behavior remains the same.
+
+The generation direction is one way: strict schemas produce OpenAPI artifacts
+and generated types, and freshness gates prevent those views from drifting.
+`scripts/cicd/check-public-boundary.mjs` separately prevents public docs and
+packages from leaking private hosted implementation.
+
+## Design rules
+
+- One strict behavior contract; no customer-selected execution implementation.
+- One explicit message admission creates one durable run.
+- One current value per registered name.
+- One explicit persistence operation; no hidden file capture.
+- One typed observation model across query, stream, and export.
+- One durable operation model for long-running mutations.

@@ -1,181 +1,164 @@
 ---
-title: aex glossary
-description: The vocabulary the aex source uses without defining — brain, hands, plane, session versus run, the internal virtual hosts, and the runtime names — with the file that owns each term.
+title: aex public v1 glossary
+description: Definitions for the strict-v1 session, execution, content, telemetry, region, and release terms used across the public repository.
 keywords:
   - glossary
   - terminology
-  - brain
-  - hands
-  - plane
-  - runtime
+  - session
+  - operation
+  - telemetry
 audience: contributors and implementation agents
 status: accepted
 related:
   - references/architecture.md
-  - references/internal-protocol.md
   - references/repo.md
 ---
 
-# Glossary
+# Public v1 glossary
 
-The aex source uses a small private vocabulary heavily and defines it nowhere.
-`brain` appears in 231 runtime source files; `hands` and `plane` are similarly
-load-bearing. Renaming them is not on the table — the names reach exported
-identifiers across the whole runtime, and a rename would break every consumer to
-buy nothing a paragraph cannot buy. So this page is the paragraph.
+The strict schemas under `packages/contracts/src/` own public field names and
+enumerations. This page explains how the repository uses those terms without
+creating a second contract.
 
-Each entry names the file that owns the concept. Where the file has not yet
-landed in this repository, the entry says so rather than linking a path that
-does not exist.
+## Session and execution terms
 
-## The execution vocabulary
+### session
 
-### brain
+The durable conversational and workspace boundary. Creating a session resolves
+its configuration but does not run a prompt. Public session status is `idle`,
+`running`, `awaiting_approval`, or `deleting`.
 
-The model-driving loop. The brain decides what to do next: it assembles context,
-calls the model, reads the response, plans exactly one tool call per step, and
-folds the result back into the session state. It holds no credentials of its own
-and reaches nothing directly — everything it wants from the outside world goes
-through a port.
+### message
 
-"Brain" is the loop, not a process. It runs inside the session runtime
-(`packages/container-runtime`, once extracted) but the loop itself is
-host-neutral and lives in `packages/agent-session`.
+An admitted item in a session conversation. Sending a user message returns both
+the accepted message and the durable run created to process it.
 
-### hands
+### run
 
-The tool-execution side. Where the brain plans one call, the hands execute it and
-return a result frame. The seam between them is a dispatcher port: the brain
-calls `hands.execute(call, { timeoutMs })` and receives blocks, an error flag,
-and a duration. Nothing else crosses.
+One durable execution admitted for one user message. A run progresses through
+`queued` or `running` to `succeeded`, `failed`, `timed_out`, `cancelled`, or
+`interrupted`. The run resource is the authority for its status and result.
 
-The split exists so the deciding half and the doing half can run in different
-trust domains and different processes. The `subagent` builtin is the documented
-exception: it is not executed by the tool executor but routed to a child-session
-runner, because spawning a child is a control-plane act rather than a tool call.
+### operation
 
-### step / turn / run / session
+A durable handle for a long-running mutation such as stop, persist, fork,
+workspace discard, credential rebind, telemetry export, or deletion. `wait()`
+returns the terminal operation; `result()` returns its typed success value or
+throws its typed failure.
 
-Four nested units, and they are not interchangeable:
+### fork
 
-| Unit | What it is |
-| --- | --- |
-| **step** | One brain iteration: one model call, at most one tool call, one fold. |
-| **turn** | One user message and everything the agent does in response to it. |
-| **run** | One submission's execution, ending in a terminal `RUN_FINISHED`. |
-| **session** | The durable, resumable thread that runs belong to. |
-
-A session's `status` describes whether the thread can progress, not whether the
-last run succeeded. A run's terminal event is the consistency boundary:
-checkpointed files, usage, cost, messages, and session state are all committed
-before it is emitted.
-
-### checkpoint
-
-The committed filesystem state of a session at the end of a run. Session file
-reads are checkpoint-aware: you read the state a specific run committed, not
-whatever a live runtime happens to hold.
-
-### journal
-
-The append-only record of what a session did, written to object storage. The
-brain journals; the projection turns journal entries into the customer-facing
-event stream. Reachable from the runtime through `journal.internal` — see
-[`internal-protocol.md`](internal-protocol.md).
-
-## The deployment vocabulary
-
-### plane
-
-A complete, independent deployment of the hosted platform. There are exactly
-two, `dev` and `prd`, and they are frozen into the wire format: an API key is
-`aex_<plane>_<regionCode>_<workspaceId>_<secret>_<crc>`, so the SDK derives its
-target plane from the key without a network call
-(`packages/contracts/src/api-key.ts:23`).
-
-A plane is **not** an environment variable and **not** localhost. `dev` is a
-remote deployment; a developer machine running a local stack is a third thing
-that is neither plane.
-
-### region code
-
-The frozen four-character region field inside an API key — `euw1`, `usw1`,
-`apne1` (`packages/contracts/src/api-key.ts:32`). Frozen because a code is a
-permanent field of every key ever minted with it.
-
-### workspace
-
-The tenancy boundary. Resources, secrets, spend, and sessions all belong to a
-workspace, and an API key names exactly one.
-
-## The runtime vocabulary
-
-### runtime
-
-Where a session's tools actually execute. The names appear in submissions and in
-capability matrices:
-
-| Name | What it is |
-| --- | --- |
-| `container` | A managed container runtime. The default. |
-| `spot_container` | The same runtime on interruptible capacity. |
-| `lambda` | A function runtime that idles to zero cost. |
-| `microvm` | A Firecracker-class micro-VM runtime. |
-
-Which runtimes support which capabilities is generated, not asserted in prose:
-see `packages/sdk/docs/provider-runtime-capabilities.md`.
-
-### runtime size
-
-A named CPU and memory allocation for a session runtime, selected per session
-rather than per account.
+An explicit operation that creates an independent session from a source
+session. The resulting session records lineage, but has its own lifecycle and
+identity.
 
 ### subagent
 
-A child session spawned by a parent session through the `subagent` builtin.
-Children are separate submissions with their own lifecycle and their own
-identity; the parent receives a typed result and, optionally, files. Lineage is
-explicit — a child knows its parent.
+An agent orchestrated inside a session by the builtin `subagent` and
+`subagent_result` tools. It is not a separate customer session resource.
 
-### skill / instructions / tool / file / MCP server
+## Workspace and content terms
 
-The five reusable workspace resource kinds, addressed by exact, case-sensitive
-name. Each name has one overwrite-only current value. A session request names
-the resources it uses, and admission resolves those names to exact content
-evidence for that session.
+### workspace
 
-## The boundary vocabulary
+The tenancy and regional content boundary. Registered resources, secrets,
+sessions, operations, limits, and regional usage belong to one workspace.
 
-### `*.internal`
+### workspace key
 
-Six virtual hostnames the runtime addresses — `egress.internal`,
-`web.internal`, `llm.internal`, `journal.internal`, `events.internal`, and
-`aex.internal`. They do not resolve on the public internet and are not meant to.
-Each one is a request the untrusted runtime makes and a managed boundary
-terminates, validates, and credentials.
+An API key scoped to one workspace. Its value encodes only a region code and an
+indexed key identity alongside the secret; it does not encode a plane or
+workspace ID. `packages/contracts/src/api-key.ts` owns the parser.
 
-They are documented in full in [`internal-protocol.md`](internal-protocol.md).
-Read that page before concluding that published code references a missing
-service.
+### region code
 
-### egress boundary
+The compact execution-region field carried by a workspace key: `use1`, `use2`,
+`usw2`, `apne1`, or `euw1`. The SDK uses it to select the regional API without a
+discovery request.
 
-The single outbound network path for untrusted session code. Its implementation
-is part of the hosted plane and is not published; its protocol is, because the
-runtime that speaks it is.
+### registered resource
 
-### managed model access
+One current workspace value addressed by an exact, case-sensitive name. Files,
+skills, tools, instructions, and MCP servers use overwrite-by-name `set`, `get`,
+`list`, and `delete` semantics. Old values are not publicly addressable.
 
-aex holds one platform-owned model-gateway credential per plane and routes every
-model call through it. Customers name a model by its `creator/model` slug and
-supply no provider key. A submission carrying a provider key or a provider
-selection is rejected.
+### persisted files
 
-## Terms that mean something narrower than they look
+The latest durable file root produced by an explicit `persist()` operation.
+Persisted reads never wake compute and expose no historical-revision API.
 
-| Term | Not what you would guess |
-| --- | --- |
-| **runner image** | The tool bundle, not a Dockerfile. The image build lives with the container runtime. |
-| **canary** | An immutable npm prerelease bound to an exact source SHA. Not a traffic-splitting deploy. |
-| **promotion** | Moving an existing canary version to the stable dist-tag. It publishes nothing new. |
-| **plane identity** | The single commit a hosted release deploys, not a credential. |
+### live files
+
+Files in the exact retained workspace generation. Live reads are action
+surfaces: they may wake that retained generation and never substitute persisted
+bytes when the generation is unavailable.
+
+### download grant
+
+A short-lived bearer URL plus any required headers and immutable content
+evidence. Possession grants access until expiry; callers must not log or forward
+it.
+
+## Configuration terms
+
+### compute size
+
+The only public compute selector. The accepted values are `512mb`, `1gb`,
+`2gb`, `4gb`, and `8gb`. CPU, peak memory, disk, bandwidth, and connection
+capacity are service-derived facts returned in `resolvedConfig.compute`.
+
+### Hands
+
+The untrusted tool-execution side named by `network.hands`. Its public raw
+network policy is either `none` or `public_internet`. Hands is not an execution
+implementation that a caller selects.
+
+### managed model
+
+A model named by its `creator/model` slug. The hosted service brokers model
+access; customer provider keys and provider-selection fields are not part of
+the session request.
+
+### resolved configuration
+
+The complete effective configuration returned on a session. It records resolved
+registered inputs, builtin tools and harness facts, approval and network policy,
+packages, compute capacity, and continuity policy. Resolved facts are
+observable; implementation details are not independently selectable.
+
+## Observation terms
+
+### telemetry
+
+The combined observation surface for events, logs, spans, metrics, and traces.
+The signal namespaces share typed filters, cursors, queries, streams, and
+explicit completeness behavior.
+
+### gap
+
+An explicit record that admitted telemetry is incomplete. Query, stream, and
+export callers can require completeness rather than silently accepting missing
+observations.
+
+### export
+
+A durable operation that prepares a bounded telemetry extract. Export creation
+and export download are separate actions.
+
+## Deployment and release terms
+
+### plane
+
+An operational deployment target. `dev` is remote non-production and `prd` is
+remote production; `localhost` is neither plane. Plane is not a field encoded
+in a workspace key.
+
+### canary
+
+An immutable npm prerelease bound to an exact source commit. It is not a
+traffic-splitting deployment.
+
+### promotion
+
+Moving an already-published immutable canary to the stable npm dist-tag. It
+publishes no new package bytes.

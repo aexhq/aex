@@ -16,7 +16,6 @@ related:
   - references/repository-hygiene.md
   - references/architecture.md
   - references/glossary.md
-  - references/internal-protocol.md
 ---
 
 # Public repository references
@@ -33,9 +32,8 @@ remain in their executable sources.
 | Development, testing, and release routing | [`develop.md`](develop.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
-| System design and the open-core boundary | [`architecture.md`](architecture.md) |
+| Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |
 | Vocabulary the source uses without defining | [`glossary.md`](glossary.md) |
-| The `*.internal` runtime protocol | [`internal-protocol.md`](internal-protocol.md) |
 
 Future repository-wide designs, decision records, curated release logs, and
 backlogs belong here. Do not create empty placeholders: add a focused,

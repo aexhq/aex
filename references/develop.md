@@ -45,21 +45,17 @@ Never call the remote dev plane `local`. Keep real values in gitignored
 
 ## Live user tests
 
-Every file under `apps/user-tests/test/live/` must declare a coverage tier in
-`apps/user-tests/scripts/live-coverage.mjs`. A new live file with no entry fails
-the sweep, both CI matrix builders, and lint — there is no default tier.
+Strict v1 has one execution path. The live workflow uses
+`apps/user-tests/scripts/shard-files.mjs` to discover every test file under
+`apps/user-tests/test/live/` and balance files by the durations in
+`apps/user-tests/shard-durations.json`; it does not build runtime-kind or
+capability matrices.
 
-| Tier | Runs on | Pick it when |
-| --- | --- | --- |
-| `runtime-spotcheck` | every full-coverage arm | The file is one of the two per-entry-point parity anchors (one CLI, one SDK) and emits parity verdict cells. |
-| `runtime-matrix` | every full-coverage arm (`lambda` + `spot_container` on dev) | The execution runtime decides the outcome: workspace materialization, in-runtime tool execution, journal/park semantics, capacity. |
-| `runtime-agnostic` | one arm, duration-packed into shared bins | The control plane, the SDK client, or the API boundary decides the outcome and the runtime is incidental. |
-| `on-demand` | never in the default live sweep; an explicit dedicated workflow lane | Provider-family, cap-saturating, load-shaped, or otherwise probabilistic coverage. |
-
-Default to `runtime-agnostic` and justify anything higher — each promotion to
-`runtime-matrix` multiplies by the number of arms. Before adding a live file,
-check whether the assertion needs a plane at all: a case that injects a fetch, or
-asserts no HTTP request was made, belongs in `test/offline/`.
+Named product coverage belongs in
+`apps/user-tests/test/_fixtures/live-scenario-ledger.ts`. Before adding a live
+scenario, check whether it needs a remote plane at all: behavior that can be
+proved against the packed SDK and a deterministic fixture belongs under
+`test/offline/`.
 
 Contributor branch, review, and CI procedure lives in
 [`contributing.md`](contributing.md). Repository-wide artifact cleanup follows

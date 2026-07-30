@@ -33,21 +33,6 @@ or docs.
 - Private platform behavior belongs in its owning private repository. Cross-repo
   integration is expressed through public contracts and blackbox behavior.
 
-### Two deliberate exceptions, so they are not mistaken for drift
-
-- **The runtime-side `*.internal` protocol is published on purpose.** The
-  hostnames, request shapes, and header names the published runtime speaks are
-  documented in [`internal-protocol.md`](internal-protocol.md). They are already
-  compiled into shipped tool bundles, and a runtime published without its
-  protocol reads as code dumped rather than published. The *boundary
-  implementation* that terminates those hosts stays private, and that asymmetry
-  is the rule — not "no internal detail is ever named".
-- **The engine is moving into this repository.** The boundary above is written
-  for the pre-extraction repository, which owned only the client surface. As
-  runtime packages land, they are public code under the same rules: no account
-  identifiers, ARNs, parameter-store paths, region inventories, margins, or
-  private-document citations, and no hosted deployment definitions.
-
 ## Secrets
 
 - Never commit, print, inspect, fixture, or document real provider keys, API

@@ -50,6 +50,9 @@ This workspace has not released `1.0.0`.
 - Sessions are created explicitly; messages admit durable runs.
 - Workspace files, skills, tools, instructions, and MCP servers are
   overwrite-by-name registered resources.
+- Session compute is requested by capacity; callers never select an execution
+  implementation. Raw Hands networking is either `none` or
+  `public_internet`.
 - Persisted and live file reads are distinct and downloads use short-lived
   grants.
 - Events, logs, spans, metrics, traces, telemetry gaps, and telemetry exports
@@ -59,7 +62,8 @@ This workspace has not released `1.0.0`.
 
 See the [SDK quickstart](packages/sdk/docs/quickstart.md), [registered
 resources](packages/sdk/docs/resources.md), [files](packages/sdk/docs/files.md),
-and [telemetry](packages/sdk/docs/telemetry.md).
+[telemetry](packages/sdk/docs/telemetry.md), and [public
+architecture](references/architecture.md).
 
 ## Repository boundary
 
