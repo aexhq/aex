@@ -32,26 +32,6 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./internal": {
-      "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js",
-      "default": "./dist/internal.js"
-    },
-    "./ids": {
-      "types": "./dist/ids.d.ts",
-      "import": "./dist/ids.js",
-      "default": "./dist/ids.js"
-    },
-    "./subagent-runtime": {
-      "types": "./dist/subagent-runtime.d.ts",
-      "import": "./dist/subagent-runtime.js",
-      "default": "./dist/subagent-runtime.js"
-    },
-    "./testing": {
-      "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js",
-      "default": "./dist/testing.js"
-    },
     "./openapi/bootstrap.json": "./openapi/bootstrap.json",
     "./openapi/bootstrap": {
       "types": "./openapi/bootstrap.d.ts"
@@ -62,8 +42,6 @@
     }
   },
   "dependencies": {
-    "@standard-schema/spec": "1.1.0",
-    "fflate": "0.8.2",
     "zod": "4.4.3"
   },
   "scripts": {

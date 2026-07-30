@@ -9,7 +9,7 @@ import {
   redactSecrets,
   redactString,
   SecretString
-} from "../src/index.js";
+} from "../src/sdk-secrets.js";
 
 const REDACTED = "[REDACTED]";
 
@@ -20,7 +20,6 @@ describe("redactString — value-agnostic shapes", () => {
   const cases: ReadonlyArray<readonly [name: string, input: string, leak: string]> = [
     ["sk-ant key (tool-emitted, never seeded)", "key=sk-ant-api03-aBcD1234efGh5678ijKlmnop end", "sk-ant-api03-aBcD1234efGh5678ijKlmnop"],
     ["openai sk- key", "OPENAI=sk-proj-abcdefghijklmnop1234567890ABCD", "sk-proj-abcdefghijklmnop1234567890ABCD"],
-    ["apt_ workspace token", "token apt_abcdEFGH1234ijklMNOP5678 trailing", "apt_abcdEFGH1234ijklMNOP5678"],
     ["JWT", "Cookie: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N"],
     ["postgres connection string", "DB=postgresql://postgres:s3cr3tPassw0rd@db.example.test:5432/postgres now", "s3cr3tPassw0rd"],
     ["AWS access key id", "id AKIAIOSFODNN7EXAMPLE done", "AKIAIOSFODNN7EXAMPLE"],
@@ -35,22 +34,14 @@ describe("redactString — value-agnostic shapes", () => {
     });
   }
 
-  it("redacts an aex self-describing workspace key as one label (whole 6-part shape)", () => {
-    const key = "aex_dev_euw1_abc123def456_SeCr3tValue123_z9";
+  it("redacts a canonical workspace key as one label", () => {
+    const key =
+      "aex_wk_euw1_01kyrkbb27ech9vtd7kpwh7h16_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const out = redactString(`AEX_API_KEY=${key} then run`);
     expect(out).not.toContain(key);
     expect(out).toContain(REDACTED);
     expect(containsSecretLikeValue(key)).toBe(true);
-    // The canonical dashboard URL must survive (no `aex_<plane>_` shape).
     expect(redactString("https://api.aex.dev/api/sessions")).toBe("https://api.aex.dev/api/sessions");
-  });
-
-  it("redacts an aex account PAT by its aexu_ prefix", () => {
-    const pat = "aexu_abcDEF123456ghiJKL789mnoPQR";
-    const out = redactString(`token ${pat} done`);
-    expect(out).not.toContain(pat);
-    expect(out).toContain(REDACTED);
-    expect(containsSecretLikeValue(pat)).toBe(true);
   });
 
   it("redacts an Authorization: Bearer header value but keeps the header name", () => {
@@ -166,18 +157,6 @@ describe("redactSecrets — structured values", () => {
   it("redacts by key name even when the value is not secret-shaped", () => {
     const redacted = redactSecrets({ password: "shortpw" });
     expect(redacted.password).toBe(REDACTED);
-  });
-
-  it("keeps the llm_token_usd allowance readable — it is a quantity, not a credential", () => {
-    // The `402 insufficient_credits` body is read for exactly this number. The
-    // key-name heuristic matches `token` inside the metering dimension, and
-    // blanking it would leave a customer with "[REDACTED] of $2.00 left".
-    const redacted = redactSecrets({
-      error: "insufficient_credits",
-      allowanceRemaining: { llm_token_usd: 0, egress_gb: 4.2 }
-    });
-    expect(redacted.allowanceRemaining.llm_token_usd).toBe(0);
-    expect(redacted.allowanceRemaining.egress_gb).toBe(4.2);
   });
 
   it("still redacts every other token-named key", () => {

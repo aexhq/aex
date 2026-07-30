@@ -1,17 +1,4 @@
-/**
- * SSoT for the platform's STABLE API error codes.
- *
- * The server (platform `api.ts`) imports this table instead of keeping its
- * own private copy, so a route emitting a code absent from the union fails to
- * compile and adding a code without a message is caught. The SDK error factory
- * ({@link import("./error-factory.js").apiErrorFromResponse}) dispatches on the
- * code to a typed subclass; the CLI maps it to a human remedy.
- *
- * The code is the stable, machine-branchable identity of a failure — distinct
- * from the human `message`. `idempotency_conflict` and `insufficient_scope`
- * (previously message-less bare 409/403 bodies) are first-class here.
- */
-
+/** Stable v1 wire-error identities. */
 export const AEX_API_ERROR_CODES = [
   "unauthorized",
   "forbidden",
@@ -23,6 +10,35 @@ export const AEX_API_ERROR_CODES = [
   "not_found",
   "idempotency_conflict",
   "operation_idempotency_conflict",
+  "invalid_cursor",
+  "invalid_file_selection",
+  "session_not_idle",
+  "workspace_activation_required",
+  "workspace_not_live",
+  "session_deleting",
+  "session_deleted",
+  "deletion_in_progress",
+  "operation_not_cancelable",
+  "approval_not_found",
+  "approval_already_resolved",
+  "file_not_found",
+  "export_not_found",
+  "export_revoked",
+  "invalid_range",
+  "download_grant_expired",
+  "telemetry_payload_too_large",
+  "invalid_telemetry",
+  "invalid_query",
+  "invalid_metric_aggregation",
+  "unsupported_export_signal",
+  "telemetry_incomplete",
+  "export_not_ready",
+  "export_expired",
+  "invalid_network_policy",
+  "unsupported_package_ecosystem",
+  "package_resolution_failed",
+  "package_artifact_unavailable",
+  "package_integrity_mismatch",
   "invalid_auto_topup_policy",
   "payment_method_required",
   "authentication_unavailable",
@@ -30,51 +46,15 @@ export const AEX_API_ERROR_CODES = [
   "account_state_unavailable",
   "precondition_failed",
   "wrong_workspace_region",
-  "invalid_cursor",
-  "invalid_query",
-  "invalid_metric_aggregation",
-  "invalid_telemetry",
-  "telemetry_payload_too_large",
-  "telemetry_quota_exceeded",
   "observability_unavailable",
-  "telemetry_incomplete",
-  "unsupported_export_signal",
-  "export_not_found",
-  "export_not_ready",
-  "export_expired",
-  "export_revoked",
-  "session_busy",
-  "checkpoint_not_available",
-  "session_not_terminal",
-  "session_terminal",
-  "event_archive_too_large",
-  "event_archive_deadline_exceeded",
-  "unknown_workspace",
-  "workspace_inactive",
-  "workspace_concurrency_exceeded",
-  "workspace_submit_rate_exceeded",
-  "workspace_spend_cap_exceeded",
-  "workspace_cap_exceeded",
-  "insufficient_credits",
-  "account_blocked",
-  "quota_exhausted",
-  "depth_exceeded",
+  "telemetry_quota_exceeded",
   "rate_limited",
-  "out_of_memory",
-  "disk_full",
-  "content_deleted",
   "upstream_error",
   "internal_error"
 ] as const;
 
 export type AexApiErrorCode = (typeof AEX_API_ERROR_CODES)[number];
 
-/**
- * Human message per stable code. A `Record` (not `Partial`) so a code added to
- * {@link AEX_API_ERROR_CODES} without a message is a COMPILE error. These are
- * the fallback messages the factory uses when the server sends a BARE code with
- * no `message` detail.
- */
 export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   unauthorized: "The request was not authenticated.",
   forbidden: "The API key is not permitted to perform this action.",
@@ -84,9 +64,43 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   token_expired: "The API key has expired.",
   malformed_token: "The API key is malformed.",
   not_found: "The requested resource was not found.",
-  idempotency_conflict: "This idempotency key was already used with a different request body.",
+  idempotency_conflict:
+    "This idempotency key was already used with a different request body.",
   operation_idempotency_conflict:
     "This operation ID was already used with a different canonical intent.",
+  invalid_cursor: "The cursor is malformed, expired, or does not match this query.",
+  invalid_file_selection: "The file selection is invalid.",
+  session_not_idle: "The session must be idle for this action.",
+  workspace_activation_required:
+    "The live workspace must be explicitly activated for this action.",
+  workspace_not_live: "The session has no live workspace.",
+  session_deleting: "Session deletion is in progress.",
+  session_deleted: "The session has been deleted.",
+  deletion_in_progress: "A deletion operation is already in progress.",
+  operation_not_cancelable: "The operation cannot be canceled in its current state.",
+  approval_not_found: "The approval was not found.",
+  approval_already_resolved: "The approval has already been resolved.",
+  file_not_found: "The selected file was not found.",
+  export_not_found: "The telemetry export was not found.",
+  export_revoked: "The telemetry export was revoked.",
+  invalid_range: "The requested byte range is invalid.",
+  download_grant_expired: "The download grant has expired.",
+  telemetry_payload_too_large: "The telemetry batch exceeds an admitted payload bound.",
+  invalid_telemetry: "The telemetry batch contains invalid observations.",
+  invalid_query: "The observation query is not valid.",
+  invalid_metric_aggregation:
+    "The metric aggregation request is not valid for this instrument.",
+  unsupported_export_signal:
+    "The selected export format cannot represent one or more requested signals.",
+  telemetry_incomplete:
+    "The requested complete telemetry range contains a permanent gap.",
+  export_not_ready: "The telemetry export is not ready for download.",
+  export_expired: "The telemetry export has expired.",
+  invalid_network_policy: "The requested network policy is invalid.",
+  unsupported_package_ecosystem: "The package ecosystem is not supported.",
+  package_resolution_failed: "The requested package could not be resolved.",
+  package_artifact_unavailable: "The resolved package artifact is unavailable.",
+  package_integrity_mismatch: "The package artifact failed integrity verification.",
   invalid_auto_topup_policy:
     "The automatic top-up policy is not a complete valid replacement.",
   payment_method_required:
@@ -97,93 +111,43 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
     "The organization account is paused and this action is not pause-exempt.",
   account_state_unavailable:
     "The current organization account-state revision could not be established.",
-  precondition_failed:
-    "The supplied resource revision precondition does not match.",
+  precondition_failed: "The supplied resource revision precondition does not match.",
   wrong_workspace_region:
     "The workspace belongs to a different immutable execution region.",
-  invalid_cursor: "The cursor is malformed, expired, or does not match this query.",
-  invalid_query: "The observation query is not valid.",
-  invalid_metric_aggregation: "The metric aggregation request is not valid for this instrument.",
-  invalid_telemetry: "The telemetry batch contains invalid observations.",
-  telemetry_payload_too_large: "The telemetry batch exceeds an admitted payload bound.",
-  telemetry_quota_exceeded: "The telemetry request exceeds an effective workspace limit.",
-  observability_unavailable: "Durable regional observation admission or query is unavailable.",
-  telemetry_incomplete: "The requested complete telemetry range contains a permanent gap.",
-  unsupported_export_signal: "The selected export format cannot represent one or more requested signals.",
-  export_not_found: "The telemetry export was not found.",
-  export_not_ready: "The telemetry export is not ready for download.",
-  export_expired: "The telemetry export has expired.",
-  export_revoked: "The telemetry export was revoked.",
-  session_busy: "The session is busy handling another turn.",
-  checkpoint_not_available: "The session does not have a committed checkpoint available yet.",
-  session_not_terminal: "The session has not reached a terminal state yet.",
-  session_terminal: "The session has ended and cannot perform this action.",
-  event_archive_too_large: "The session event history is too large for synchronous bulk export.",
-  event_archive_deadline_exceeded: "The synchronous session event export exceeded its deadline.",
-  unknown_workspace: "The workspace could not be resolved from the API key.",
-  workspace_inactive: "The workspace no longer accepts new session work.",
-  workspace_concurrency_exceeded: "The workspace has reached its concurrent-run limit.",
-  workspace_submit_rate_exceeded: "The workspace submit-rate limit was exceeded.",
-  workspace_spend_cap_exceeded: "The workspace monthly spend cap was reached.",
-  workspace_cap_exceeded: "The organization has reached its workspace limit.",
-  insufficient_credits:
-    "The free monthly allowance and the prepaid credit balance are both exhausted.",
-  account_blocked: "The organization is blocked and cannot start new work.",
-  quota_exhausted:
-    "The request exceeds the workspace's remaining usage grant and there is no billable path for the overage.",
-  depth_exceeded: "The request would create a subagent deeper than the lineage depth ceiling.",
-  rate_limited: "Too many requests — retry after a short backoff.",
-  out_of_memory: "The runtime was killed for exceeding its memory allocation.",
-  disk_full: "A write failed because the runtime's filesystem was full.",
-  content_deleted: "The session's content was deleted after its retention window; only metadata remains.",
+  observability_unavailable:
+    "Durable regional observation admission or query is unavailable.",
+  telemetry_quota_exceeded:
+    "The telemetry request exceeds an effective workspace limit.",
+  rate_limited: "Too many requests; retry after a bounded backoff.",
   upstream_error: "An upstream provider returned an error.",
   internal_error: "The aex API encountered an internal error."
 };
 
-/** Optional per-code fix hint the CLI surfaces alongside the error message. */
 export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = {
-  insufficient_scope: "Mint an API key that includes the scope this endpoint requires.",
+  insufficient_scope:
+    "Mint an API key that includes the scope this endpoint requires.",
   idempotency_conflict:
-    "Use a fresh idempotency key, or resubmit the byte-identical request body to replay the original result.",
+    "Use a fresh idempotency key, or replay the byte-identical request.",
   operation_idempotency_conflict:
-    "Use a fresh operation ID, or resubmit the same operation with byte-identical canonical intent.",
+    "Use a fresh operation ID, or replay the same canonical intent.",
+  workspace_activation_required:
+    'Retry the live action explicitly with wake: "retained".',
+  download_grant_expired: "Explicitly request a new download grant.",
   invalid_auto_topup_policy:
-    "Replace the whole policy with whole-cent USD values: amount $10–$500 and threshold $0.01 through amount minus $0.01.",
+    "Replace the whole policy with valid whole-cent USD values.",
   payment_method_required:
-    "Open an organization billing portal session and add a usable payment method.",
+    "Open an organization billing portal session and add a payment method.",
   account_paused:
-    "Top up the reported minimum, then explicitly start the next action after access is restored.",
+    "Top up the reported minimum, then explicitly start the next action.",
   wrong_workspace_region:
     "Use the authoritative region and API URL returned with the workspace record.",
-  token_invalid: "Check the API key value and that its plane matches your baseUrl.",
-  token_expired: "Mint a new API key.",
-  token_revoked: "Mint a new API key.",
-  session_terminal: "Create or open an active session before retrying this action.",
-  checkpoint_not_available: "Wait for the current run to finish before reading checkpoint-backed session files.",
-  event_archive_too_large: "Traverse the event history with session.events.iterate().",
-  event_archive_deadline_exceeded: "Traverse the event history with session.events.iterate().",
-  workspace_inactive: "Use an active workspace; a workspace being deleted cannot accept new session work.",
-  workspace_spend_cap_exceeded: "Raise the workspace spend cap or wait for the next billing cycle.",
-  insufficient_credits:
-    "Top up the prepaid balance, or add a payment method if the organization has none saved.",
-  // Deliberately NOT a top-up prompt: credit does not lift a block, so sending a
-  // blocked customer to the payment form takes their money and changes nothing.
-  account_blocked: "Adding credit does not lift the block — contact support to resolve it.",
-  workspace_concurrency_exceeded: "Wait for in-flight sessions to finish or raise the concurrency limit.",
-  workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit.",
-  workspace_cap_exceeded: "Delete an unused workspace, or contact support to raise the organization's workspace limit.",
-  quota_exhausted:
-    "Top up the prepaid balance so usage beyond the free monthly allowance has somewhere to bill.",
-  depth_exceeded: "Spawn the subagent from a shallower session, or flatten the lineage.",
-  out_of_memory: "Re-run on a larger runtimeSize, or reduce the memory the session holds at once.",
-  disk_full: "Re-run on a larger runtimeSize, or write fewer/smaller files inside the session.",
-  content_deleted:
-    "The session content is gone after its retention window; read the session record's metadata, or start a new session."
+  token_invalid: "Check the workspace API key value.",
+  token_expired: "Mint a new workspace API key.",
+  token_revoked: "Mint a new workspace API key."
 };
 
 const API_ERROR_CODE_SET: ReadonlySet<string> = new Set(AEX_API_ERROR_CODES);
 
-/** Narrow an arbitrary value to a known {@link AexApiErrorCode}. */
 export function isAexApiErrorCode(value: unknown): value is AexApiErrorCode {
   return typeof value === "string" && API_ERROR_CODE_SET.has(value);
 }

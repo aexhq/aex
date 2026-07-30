@@ -3,7 +3,7 @@
   "info": {
     "title": "aex bootstrap API",
     "version": "0.33.0",
-    "description": "The global account, organization, workspace-placement, key, and billing API. Generated from packages/contracts/src/schemas/** and src/api-routes.ts — do not edit by hand."
+    "description": "The global account, organization, workspace-placement, key, and billing API. Generated from strict v1 contract schemas and src/api-routes.ts — do not edit by hand."
   },
   "servers": [
     {
@@ -91,6 +91,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreateRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -346,6 +356,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationCreateRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -477,6 +497,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoTopupPolicyRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -528,6 +558,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortalSessionRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -728,6 +768,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopUpCheckoutRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -779,6 +829,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationCreateRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -892,6 +952,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreateRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -983,6 +1053,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceDeleteRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "accountToken": [
@@ -1062,18 +1142,238 @@
         ],
         "additionalProperties": false
       },
-      "InlineSecrets": {
+      "ApiKeyCreateRequest": {
         "type": "object",
         "properties": {
-          "mcpServers": {
-            "$ref": "#/components/schemas/SecretsMcpServers"
+          "workspaceId": {
+            "type": "string"
           },
-          "envSecrets": {
-            "$ref": "#/components/schemas/SecretsEnvSecrets"
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
-        "additionalProperties": false,
-        "description": "The vaulted half of a submission. Excluded from the idempotency hash and never echoed back."
+        "required": [
+          "workspaceId",
+          "name",
+          "scopes"
+        ],
+        "additionalProperties": false
+      },
+      "ApprovalResponseRequest": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "deny"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "additionalProperties": false
+      },
+      "AutoTopupPolicyRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "thresholdUsd": {
+            "type": "number"
+          },
+          "amountUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "thresholdUsd",
+          "amountUsd"
+        ],
+        "additionalProperties": false
+      },
+      "FileDownloadRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "range": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "endExclusive": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "start",
+              "endExclusive"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "InvitationCreateRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member"
+            ]
+          }
+        },
+        "required": [
+          "email",
+          "role"
+        ],
+        "additionalProperties": false
+      },
+      "LiveFileDownloadRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "range": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "endExclusive": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "start",
+              "endExclusive"
+            ],
+            "additionalProperties": false
+          },
+          "wake": {
+            "type": "string",
+            "enum": [
+              "retained",
+              "never"
+            ]
+          },
+          "consistency": {
+            "type": "string",
+            "enum": [
+              "coherent",
+              "best_effort"
+            ]
+          },
+          "ifGenerationId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "LiveFileListRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recursive": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "wake": {
+            "type": "string",
+            "enum": [
+              "retained",
+              "never"
+            ]
+          },
+          "consistency": {
+            "type": "string",
+            "enum": [
+              "coherent",
+              "best_effort"
+            ]
+          },
+          "ifGenerationId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LiveFileStatRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "wake": {
+            "type": "string",
+            "enum": [
+              "retained",
+              "never"
+            ]
+          },
+          "consistency": {
+            "type": "string",
+            "enum": [
+              "coherent",
+              "best_effort"
+            ]
+          },
+          "ifGenerationId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
       },
       "Message": {
         "type": "object",
@@ -1225,6 +1525,419 @@
         },
         "required": [
           "content"
+        ],
+        "additionalProperties": false
+      },
+      "MetricAggregationRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeRange": {
+            "type": "object",
+            "properties": {
+              "gte": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              "lt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              }
+            },
+            "required": [
+              "gte",
+              "lt"
+            ],
+            "additionalProperties": false
+          },
+          "interval": {
+            "type": "string",
+            "minLength": 1
+          },
+          "groupBy": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "calculations": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "count",
+                        "sum",
+                        "min",
+                        "max",
+                        "mean",
+                        "increase",
+                        "rate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "op"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "const": "quantile"
+                    },
+                    "q": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "exclusiveMaximum": 1
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "q"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "where": {}
+        },
+        "required": [
+          "name",
+          "timeRange",
+          "interval",
+          "calculations"
+        ],
+        "additionalProperties": false
+      },
+      "ObservationListenRequest": {
+        "type": "object",
+        "properties": {
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "events",
+                "logs",
+                "spans",
+                "metrics",
+                "traces"
+              ]
+            }
+          },
+          "where": {},
+          "timeRange": {
+            "type": "object",
+            "properties": {
+              "gte": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              "lt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "order": {
+            "type": "object",
+            "properties": {
+              "by": {
+                "type": "string",
+                "enum": [
+                  "time",
+                  "accepted"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "by",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "consistency": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "available"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "caught_up"
+                  },
+                  "waitMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ObservationQuery": {
+        "type": "object",
+        "properties": {
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "events",
+                "logs",
+                "spans",
+                "metrics",
+                "traces"
+              ]
+            }
+          },
+          "where": {},
+          "timeRange": {
+            "type": "object",
+            "properties": {
+              "gte": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              "lt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "order": {
+            "type": "object",
+            "properties": {
+              "by": {
+                "type": "string",
+                "enum": [
+                  "time",
+                  "accepted"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "by",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "consistency": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "available"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "caught_up"
+                  },
+                  "waitMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "cursor": {
+            "type": "string",
+            "pattern": "^cur_"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ObservationStreamRequest": {
+        "type": "object",
+        "properties": {
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "events",
+                "logs",
+                "spans",
+                "metrics",
+                "traces"
+              ]
+            }
+          },
+          "where": {},
+          "timeRange": {
+            "type": "object",
+            "properties": {
+              "gte": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              "lt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "order": {
+            "type": "object",
+            "properties": {
+              "by": {
+                "type": "string",
+                "enum": [
+                  "time",
+                  "accepted"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "by",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "consistency": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "available"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "const": "caught_up"
+                  },
+                  "waitMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "cursor": {
+                    "type": "string",
+                    "pattern": "^cur_"
+                  }
+                },
+                "required": [
+                  "cursor"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "time": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+                  }
+                },
+                "required": [
+                  "time"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "earliest": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "earliest"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "origin"
         ],
         "additionalProperties": false
       },
@@ -2567,6 +3280,377 @@
           }
         ]
       },
+      "OrganizationCreateRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "PersistedFileListRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recursive": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "cursor": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PersistedFileStatRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "PortalSessionRequest": {
+        "type": "object",
+        "properties": {
+          "returnUrl": {
+            "type": "string",
+            "pattern": "^https:\\/\\/[^/\\s]+(?:\\/.*)?$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegisteredFileValue": {
+        "type": "object",
+        "properties": {
+          "mountPath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "inline"
+                  },
+                  "encoding": {
+                    "type": "string",
+                    "enum": [
+                      "utf8",
+                      "base64"
+                    ]
+                  },
+                  "data": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "encoding",
+                  "data",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "upload"
+                  },
+                  "uploadId": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "type",
+                  "uploadId",
+                  "sha256",
+                  "sizeBytes"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "mediaType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "0644",
+              "0755"
+            ]
+          }
+        },
+        "required": [
+          "mountPath",
+          "content",
+          "mediaType",
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "RegisteredInstructionValue": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "RegisteredMcpServerValue": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "transport": {
+            "type": "string",
+            "const": "streamable_http"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "secretName": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+                }
+              },
+              "required": [
+                "name",
+                "secretName"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "url",
+          "transport",
+          "headers"
+        ],
+        "additionalProperties": false
+      },
+      "RegisteredSkillValue": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "bundleFormat": {
+            "type": "string",
+            "const": "tar.gz"
+          },
+          "bundle": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "inline"
+                  },
+                  "encoding": {
+                    "type": "string",
+                    "enum": [
+                      "utf8",
+                      "base64"
+                    ]
+                  },
+                  "data": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "encoding",
+                  "data",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "upload"
+                  },
+                  "uploadId": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "type",
+                  "uploadId",
+                  "sha256",
+                  "sizeBytes"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "description",
+          "bundleFormat",
+          "bundle"
+        ],
+        "additionalProperties": false
+      },
+      "RegisteredToolValue": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "entry": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bundleFormat": {
+            "type": "string",
+            "const": "tar.gz"
+          },
+          "bundle": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "inline"
+                  },
+                  "encoding": {
+                    "type": "string",
+                    "enum": [
+                      "utf8",
+                      "base64"
+                    ]
+                  },
+                  "data": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "type",
+                  "encoding",
+                  "data",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "upload"
+                  },
+                  "uploadId": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "type",
+                  "uploadId",
+                  "sha256",
+                  "sizeBytes"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "description",
+          "inputSchema",
+          "entry",
+          "bundleFormat",
+          "bundle"
+        ],
+        "additionalProperties": false
+      },
       "Run": {
         "type": "object",
         "properties": {
@@ -2671,42 +3755,18 @@
         ],
         "additionalProperties": false
       },
-      "SecretsEnvSecrets": {
+      "SecretSetRequest": {
         "type": "object",
-        "propertyNames": {
-          "type": "string"
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "additionalProperties": {},
-        "description": "Per-session env-var secret values. Keys must be valid env var names; each pairs with a `submission.secretEnv` declaration."
-      },
-      "SecretsMcpServers": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "url": {
-              "type": "string"
-            },
-            "headers": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "name",
-            "url"
-          ],
-          "additionalProperties": false
-        },
-        "description": "Per-session MCP server credentials. Server names must be unique."
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
       },
       "Session": {
         "type": "object",
@@ -3326,636 +4386,285 @@
         ],
         "additionalProperties": false
       },
-      "SessionLimits": {
+      "TelemetryExportRequest": {
         "type": "object",
         "properties": {
-          "maxConcurrentChildSessions": {
-            "type": "number"
+          "query": {
+            "$ref": "#/components/schemas/ObservationQuery"
           },
-          "maxSubagentDepth": {
-            "type": "number"
-          },
-          "maxSpendUsd": {
-            "type": "number"
-          },
-          "maxTurns": {
-            "type": "number"
-          },
-          "maxStepsPerTurn": {
-            "type": "number"
-          }
-        },
-        "additionalProperties": false,
-        "description": "Per-session lineage-limit override. Shape and positivity only; clamping to the workspace and platform ceilings happens server-side in resolveSessionLimits."
-      },
-      "SessionMachine": {
-        "type": "object",
-        "properties": {
-          "spot": {
-            "type": "boolean"
-          }
-        },
-        "additionalProperties": false,
-        "description": "Capacity intent. An object with no `spot` carries no signal and is dropped; `spot: false` is preserved as an explicit request for standard capacity."
-      },
-      "SessionSubmissionRequest": {
-        "type": "object",
-        "properties": {
-          "workspaceId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1
-          },
-          "submission": {
-            "$ref": "#/components/schemas/Submission"
-          },
-          "runtimeSize": {
+          "format": {
             "type": "string",
             "enum": [
-              "0.25cpu-1gb",
-              "0.5cpu-4gb",
-              "1cpu-6gb",
-              "2cpu-8gb",
-              "4cpu-12gb"
+              "ndjson",
+              "parquet",
+              "otlp_json"
             ]
           },
-          "runtimeKind": {
+          "completeness": {
             "type": "string",
             "enum": [
-              "container",
-              "spot_container",
-              "lambda"
-            ]
-          },
-          "timeout": {
-            "type": "string"
-          },
-          "webhook": {
-            "$ref": "#/components/schemas/SessionWebhook"
-          },
-          "limits": {
-            "$ref": "#/components/schemas/SessionLimits"
-          },
-          "machine": {
-            "$ref": "#/components/schemas/SessionMachine"
-          },
-          "secrets": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/InlineSecrets"
-              },
-              {
-                "type": "null"
-              }
+              "require",
+              "allow_gaps"
             ]
           }
         },
         "required": [
-          "workspaceId",
-          "idempotencyKey",
-          "submission"
+          "query",
+          "format",
+          "completeness"
         ],
         "additionalProperties": false
       },
-      "SessionWebhook": {
+      "TelemetryGapQuery": {
         "type": "object",
         "properties": {
-          "url": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "url"
-        ],
-        "additionalProperties": false,
-        "description": "Run-callback registration. `url` must be https with no userinfo — enforced in packages/contracts/src/schemas/session-webhook.ts, and not expressible in JSON Schema."
-      },
-      "Submission": {
-        "type": "object",
-        "properties": {
-          "model": {
-            "type": "string",
-            "minLength": 1
-          },
-          "system": {
-            "type": "string",
-            "minLength": 1
-          },
-          "prompt": {
-            "$ref": "#/components/schemas/SubmissionPrompt"
-          },
-          "assets": {
-            "$ref": "#/components/schemas/SubmissionAssets"
-          },
-          "mcpServers": {
-            "$ref": "#/components/schemas/SubmissionMcpServers"
-          },
-          "secretEnv": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SubmissionSecretEnv"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "environment": {
-            "$ref": "#/components/schemas/SubmissionEnvironment"
-          },
-          "securityProfile": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "strict",
-                  "standard",
-                  "developer"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "metadata": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {}
-          },
-          "fileCapture": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SubmissionFileCapture"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "builtinTools": {
-            "anyOf": [
-              {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "const": "default"
-                  },
-                  {
-                    "type": "string",
-                    "const": "none"
-                  },
-                  {
-                    "type": "array",
-                    "items": {}
-                  }
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "outputMode": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "buffered",
-                  "stream"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "responseFormat": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SubmissionResponseFormat"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "approvalGate": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SubmissionApprovalGate"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "platform": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SubmissionPlatformInjection"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "model",
-          "prompt",
-          "assets"
-        ],
-        "additionalProperties": false
-      },
-      "SubmissionApprovalGate": {
-        "type": "object",
-        "properties": {
-          "tools": {
+          "signals": {
             "type": "array",
             "items": {
               "type": "string",
-              "minLength": 1
+              "enum": [
+                "events",
+                "logs",
+                "spans",
+                "metrics",
+                "traces"
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_retry",
+              "open",
+              "repaired"
+            ]
+          },
+          "timeRange": {
+            "type": "object",
+            "properties": {
+              "gte": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              "lt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "cursor": {
+            "type": "string",
+            "pattern": "^cur_"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "additionalProperties": false
+      },
+      "TopUpCheckoutRequest": {
+        "type": "object",
+        "properties": {
+          "amountUsd": {
+            "type": "number"
+          },
+          "successUrl": {
+            "type": "string",
+            "pattern": "^https:\\/\\/[^/\\s]+(?:\\/.*)?$"
+          },
+          "cancelUrl": {
+            "type": "string",
+            "pattern": "^https:\\/\\/[^/\\s]+(?:\\/.*)?$"
+          }
+        },
+        "required": [
+          "amountUsd"
+        ],
+        "additionalProperties": false
+      },
+      "UploadCompleteRequest": {
+        "type": "object",
+        "properties": {
+          "parts": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "partNumber": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "etag": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "partNumber",
+                "etag"
+              ],
+              "additionalProperties": false
             }
           }
         },
         "required": [
-          "tools"
+          "parts"
         ],
         "additionalProperties": false
       },
-      "SubmissionAssets": {
+      "UploadCreateRequest": {
         "type": "object",
         "properties": {
-          "files": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "const": "file"
-                },
-                "resourceId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "version": {
-                  "type": "number"
-                },
-                "assetId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "contentHash": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "name": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "mountPath": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "kind",
-                "resourceId",
-                "version",
-                "assetId",
-                "contentHash",
-                "name",
-                "mountPath"
-              ],
-              "additionalProperties": false
-            }
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           },
-          "skills": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "const": "skill"
-                },
-                "resourceId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "version": {
-                  "type": "number"
-                },
-                "assetId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "contentHash": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "name": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "description": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "kind",
-                "resourceId",
-                "version",
-                "assetId",
-                "contentHash",
-                "name",
-                "description"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "const": "tool"
-                },
-                "resourceId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "version": {
-                  "type": "number"
-                },
-                "assetId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "contentHash": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "name": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "description": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "input_schema": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "additionalProperties": {}
-                },
-                "entry": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "kind",
-                "resourceId",
-                "version",
-                "assetId",
-                "contentHash",
-                "name",
-                "description",
-                "input_schema",
-                "entry"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "instructions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "const": "instruction"
-                },
-                "resourceId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "version": {
-                  "type": "number"
-                },
-                "textHash": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "name": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "kind",
-                "resourceId",
-                "version",
-                "textHash",
-                "name"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "SubmissionEnvironment": {
-        "type": "object",
-        "properties": {
-          "networking": {
-            "$ref": "#/components/schemas/SubmissionNetworking"
-          },
-          "packages": {
-            "$ref": "#/components/schemas/SubmissionPackages"
-          },
-          "envVars": {
-            "$ref": "#/components/schemas/SubmissionEnvVars"
-          }
-        },
-        "additionalProperties": false,
-        "description": "Customer-controlled runtime environment."
-      },
-      "SubmissionEnvVars": {
-        "type": "object",
-        "propertyNames": {
-          "type": "string"
-        },
-        "additionalProperties": {}
-      },
-      "SubmissionFileCapture": {
-        "type": "object",
-        "properties": {
-          "allowedDirs": {
-            "type": "array",
-            "items": {}
-          },
-          "deniedDirs": {
-            "type": "array",
-            "items": {}
-          },
-          "captureTimeoutMs": {
-            "type": "number"
-          },
-          "maxFileBytes": {
-            "type": "number"
-          },
-          "maxTotalBytes": {
-            "type": "number"
-          },
-          "maxFiles": {
-            "type": "number"
-          }
-        },
-        "additionalProperties": false
-      },
-      "SubmissionMcpServers": {
-        "type": "array",
-        "items": {},
-        "description": "Remote MCP servers, each `{ name, url, transport? }`. Names must be unique and every URL must clear the SSRF host deny-list — enforced in packages/contracts/src/session-config.ts."
-      },
-      "SubmissionNetworking": {
-        "type": "object",
-        "properties": {
-          "mode": {
+          "sha256": {
             "type": "string",
-            "enum": [
-              "limited",
-              "open"
-            ]
+            "pattern": "^sha256:[0-9a-f]{64}$"
           },
-          "allowedHosts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "additionalProperties": false,
-        "description": "Egress policy. `mode` is required whenever `networking` is supplied — enforced in packages/contracts/src/schemas/submission-environment.ts."
-      },
-      "SubmissionPackage": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "version": {
-            "type": "string"
+          "contentType": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
-          "name"
+          "sizeBytes",
+          "sha256",
+          "contentType"
         ],
-        "additionalProperties": false,
-        "description": "Package request. `name` may carry an ecosystem prefix (\"pip:pandas\"); an unprefixed name defaults to apt and an unknown prefix is rejected."
-      },
-      "SubmissionPackages": {
-        "type": "array",
-        "items": {
-          "$ref": "#/components/schemas/SubmissionPackage"
-        }
-      },
-      "SubmissionPlatformInjection": {
-        "type": "object",
-        "properties": {
-          "systemPrompt": {
-            "type": "string",
-            "enum": [
-              "default",
-              "off"
-            ]
-          }
-        },
         "additionalProperties": false
       },
-      "SubmissionPrompt": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {}
-          }
-        ],
-        "description": "The run brief: one string, or an ordered list of non-empty parts. At least one part must carry non-whitespace text. A single string is normalised to a one-element list."
-      },
-      "SubmissionResponseFormat": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "const": "text"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "const": "json_schema"
-              },
-              "schema": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
-              "strict": {
-                "type": "boolean"
-              },
-              "name": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "kind",
-              "schema"
-            ],
-            "additionalProperties": false
-          }
-        ]
-      },
-      "SubmissionSecretEnv": {
+      "UploadPartsRequest": {
         "type": "object",
-        "propertyNames": {
-          "type": "string"
+        "properties": {
+          "partNumbers": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
         },
-        "additionalProperties": {},
-        "description": "Env-var secret bindings keyed by env name. Each value is exactly one of `{ ref }` (a workspace secret handle matching ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$) or `{ ephemeral: true }` (the value rides in `secrets.envSecrets`). Enforced in packages/contracts/src/schemas/submission-body.ts."
+        "required": [
+          "partNumbers"
+        ],
+        "additionalProperties": false
+      },
+      "UsageQuery": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "storage",
+                "compute",
+                "data_transfer"
+              ]
+            }
+          },
+          "timeRange": {
+            "type": "object",
+            "properties": {
+              "gte": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              "lt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              }
+            },
+            "required": [
+              "gte",
+              "lt"
+            ],
+            "additionalProperties": false
+          },
+          "groupBy": {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "category",
+                "region",
+                "workspace",
+                "session",
+                "run",
+                "operation"
+              ]
+            }
+          },
+          "cursor": {
+            "type": "string",
+            "pattern": "^cur_"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "timeRange"
+        ],
+        "additionalProperties": false
       },
       "WorkspaceApiKeyValue": {
         "type": "string",
         "pattern": "^aex_wk_(use1|use2|usw2|apne1|euw1)_([0-9a-hjkmnp-tv-z]{26})_([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])$"
+      },
+      "WorkspaceCreateRequest": {
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "region": {
+            "type": "string",
+            "enum": [
+              "us-east-1",
+              "us-east-2",
+              "us-west-2",
+              "ap-northeast-1",
+              "eu-west-1"
+            ]
+          }
+        },
+        "required": [
+          "organizationId",
+          "name",
+          "region"
+        ],
+        "additionalProperties": false
+      },
+      "WorkspaceDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation"
+        ],
+        "additionalProperties": false
       }
     }
   }

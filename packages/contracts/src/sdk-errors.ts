@@ -1,14 +1,8 @@
 import { redactSecrets } from "./sdk-secrets.js";
 import { isAexApiErrorCode, type AexApiErrorCode } from "./error-codes.js";
-import type { ProviderFault } from "./provider-fault.js";
 
 export type AexErrorCode =
-  | "SESSION_CONFIG_INVALID"
   | "CREDENTIAL_INVALID"
-  | "PROVIDER_ERROR"
-  | "SESSION_STATE_ERROR"
-  | "CLEANUP_ERROR"
-  | "RUNTIME_UNSUPPORTED"
   | "API_ERROR"
   | "NETWORK_ERROR";
 
@@ -24,75 +18,9 @@ export class AexError extends Error {
   }
 }
 
-export interface SessionConfigValidationDetails {
-  /** Stable public field path; human error prose is not a branching contract. */
-  readonly field: string;
-}
-
-export class SessionConfigValidationError extends AexError {
-  declare readonly details: SessionConfigValidationDetails;
-
-  /**
-   * `code` and `details.field` are the stable machine contract. An optional
-   * cause is best-effort diagnostic context and must not be used for branching.
-   */
-  constructor(
-    message: string,
-    details: SessionConfigValidationDetails,
-    options?: { readonly cause?: unknown }
-  ) {
-    super(
-      "SESSION_CONFIG_INVALID",
-      message,
-      Object.freeze({ field: details.field }),
-      options?.cause === undefined ? undefined : { cause: options.cause }
-    );
-  }
-}
-
 export class CredentialValidationError extends AexError {
   constructor(message: string, details?: unknown) {
     super("CREDENTIAL_INVALID", message, details);
-  }
-}
-
-export class ProviderError extends AexError {
-  readonly status: number | undefined;
-
-  constructor(message: string, options: { status?: number; details?: unknown } = {}) {
-    super("PROVIDER_ERROR", message, options.details);
-    this.status = options.status;
-  }
-}
-
-export class SessionStateError extends AexError {
-  /**
-   * HTTP status from a wrapped API rejection, when this state error is a
-   * bounded client-side interpretation of that rejection.
-   */
-  readonly status: number | undefined;
-  /** Stable API code from a wrapped API rejection, when available. */
-  readonly apiCode: AexApiErrorCode | undefined;
-  /** Request id from a wrapped API rejection, when available. */
-  readonly requestId: string | undefined;
-
-  constructor(message: string, details?: unknown, options?: { readonly cause?: unknown }) {
-    const detailRecord = details && typeof details === "object" && !Array.isArray(details)
-      ? (details as Record<string, unknown>)
-      : undefined;
-    const cause = options?.cause ?? detailRecord?.cause;
-    super("SESSION_STATE_ERROR", message, details, cause === undefined ? undefined : { cause });
-    const status = detailRecord?.httpStatus ?? detailRecord?.status;
-    const apiCode = detailRecord?.apiCode;
-    this.status = typeof status === "number" ? status : undefined;
-    this.apiCode = isAexApiErrorCode(apiCode) ? apiCode : undefined;
-    this.requestId = typeof detailRecord?.requestId === "string" ? detailRecord.requestId : undefined;
-  }
-}
-
-export class CleanupError extends AexError {
-  constructor(message: string, details?: unknown) {
-    super("CLEANUP_ERROR", message, details);
   }
 }
 
@@ -186,10 +114,7 @@ export type AexRateLimitErrorInit = Omit<AexApiErrorInit, "message" | "body"> & 
   readonly retryAfterMs?: number | undefined;
   /** How many transport attempts were made before giving up. Defaults to `1`. */
   readonly attempts?: number;
-  /** Whether the throttle came from the aex API plane or the upstream provider. */
-  readonly source?: "api" | "provider";
-  /** The upstream provider fault, when the throttle originated there. */
-  readonly providerFault?: ProviderFault;
+  readonly source?: "api";
 };
 
 /**
@@ -209,9 +134,7 @@ export class AexRateLimitError extends AexApiError {
   /** How many attempts were made before giving up; `1` for a single-shot rejection. */
   readonly attempts: number;
   /** Whether the throttle came from the aex API plane or the upstream provider. */
-  readonly source: "api" | "provider";
-  /** The upstream provider fault, when the throttle originated there. */
-  readonly providerFault?: ProviderFault;
+  readonly source: "api";
 
   constructor(init: AexRateLimitErrorInit) {
     const attempts = init.attempts ?? 1;
@@ -229,7 +152,6 @@ export class AexRateLimitError extends AexApiError {
     this.retryAfterMs = init.retryAfterMs;
     this.attempts = attempts;
     this.source = source;
-    if (init.providerFault !== undefined) this.providerFault = init.providerFault;
   }
 }
 
@@ -237,48 +159,14 @@ export class AexRateLimitError extends AexApiError {
 function throttleSummary(
   status: number,
   attempts: number,
-  source: "api" | "provider",
+  source: "api",
   retryAfterMs: number | undefined
 ): string {
-  const who = source === "provider" ? "upstream provider" : "aex API";
+  const who = "aex API";
   const label = status === 529 ? "overloaded" : "rate limit reached";
   const attemptsLabel = `${attempts} attempt${attempts === 1 ? "" : "s"}`;
   const wait = retryAfterMs !== undefined ? `; retry after ~${Math.ceil(retryAfterMs / 1000)}s` : "";
   return `${who} ${label} (HTTP ${status}) after ${attemptsLabel}${wait}`;
-}
-
-/**
- * 410 (WS4) — the session's CONTENT (events, messages, files, manifest,
- * archive, event stream) was deleted after its retention window; only the
- * session RECORD (metadata) remains. Carries the `sessionId`, when the content
- * was `purgedAt`, and what triggered it (`deletedBy`). Every content read AND
- * `session…stream()` surface it via the one wire→exception factory. Narrow with
- * {@link isContentDeleted}; check `session.dataState === "metadata_only"` first
- * to avoid the round-trip.
- */
-export class ContentDeletedError extends AexApiError {
-  /** The session whose content was deleted. */
-  readonly sessionId: string | undefined;
-  /** When the content was purged (ISO 8601), when the server reported it. */
-  readonly purgedAt: string | undefined;
-  /** What triggered the purge: retention-window elapse or an explicit user delete. */
-  readonly deletedBy: "retention" | "user" | undefined;
-  constructor(
-    init: AexApiErrorInit & {
-      readonly sessionId?: string | undefined;
-      readonly purgedAt?: string | undefined;
-      readonly deletedBy?: "retention" | "user" | undefined;
-    }
-  ) {
-    super(init.status, init.message, init.body, {
-      apiCode: init.apiCode,
-      requestId: init.requestId,
-      cause: init.cause
-    });
-    this.sessionId = init.sessionId;
-    this.purgedAt = init.purgedAt;
-    this.deletedBy = init.deletedBy;
-  }
 }
 
 /** True for a 401/403 authentication/authorization failure. */
@@ -301,11 +189,6 @@ export function isNotFound(err: unknown): err is AexNotFoundError {
 export function isRateLimited(err: unknown): err is AexRateLimitError {
   return err instanceof AexRateLimitError;
 }
-/** True for a 410 whose session content was deleted after its retention window. */
-export function isContentDeleted(err: unknown): err is ContentDeletedError {
-  return err instanceof ContentDeletedError;
-}
-
 /**
  * Thrown when a BFF-bound request fails BEFORE any HTTP response exists — DNS
  * failure, connection refused, TLS error, socket reset. Wraps the raw fetch

@@ -291,17 +291,9 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   // postgres / postgresql connection strings — redact the whole URI so the
   // embedded password can never survive as a substring (the `sed`-mask leak).
   /\bpostgres(?:ql)?:\/\/[^\s"']+/gi,
-  // aex workspace / proxy tokens: apt_… / ant_….
-  /\b(?:apt|ant)_[A-Za-z0-9_-]{16,}/g,
-  // aex self-describing workspace API key (one-time reveal from createWorkspace /
-  // createApiKey): aex_<plane>_<region>_<workspaceId>_<secret>_<crc>. Anchored on
-  // the full 6-part shape so the whole key masks as one label (the entropy
-  // catch-all would otherwise redact only its dense segments, leaving the
-  // `aex_<plane>_<region>_` prefix behind). Never matches `api.aex.dev`.
-  /\baex_(?:dev|prd)_[a-z0-9]+_[a-z0-9]+_[A-Za-z0-9]+_[a-z0-9]+/gi,
-  // aex account PAT (control-plane): aexu_<opaque>. Distinct prefix from the
-  // workspace-key family so a PAT masks by shape even when short.
-  /\baexu_[A-Za-z0-9_-]{16,}/g,
+  // Canonical one-time workspace API-key reveal. Match the full value so the
+  // region and key-id fields never remain beside a partially redacted secret.
+  /\baex_wk_(?:use1|use2|usw2|apne1|euw1)_[0-9a-hjkmnp-tv-z]{26}_[A-Za-z0-9_-]{43}\b/g,
   // AWS access key id + secret access key shapes.
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /\baws_secret_access_key["'\s:=]+[A-Za-z0-9/+=]{40}/gi,
@@ -345,16 +337,16 @@ const HIGH_ENTROPY_CANDIDATE = /[A-Za-z0-9+/=-]{24,}/g;
  */
 
 /**
- * Canonical aex session-id hex: exactly 32 lowercase hex chars directly preceded
- * by `ses_`. The HIGH_ENTROPY_CANDIDATE class excludes `_`, so the candidate
- * candidate for a session id is the bare hex — dense enough to trip the entropy gate.
+ * Canonical aex session-id body: exactly 26 lowercase Crockford-base32
+ * characters directly preceded by `ses_`. The HIGH_ENTROPY_CANDIDATE class
+ * excludes `_`, so the candidate is the body alone.
  * Masking it destroys the ONE identifier every error message needs for
  * traceability (`cancel via aex.sessions.open("ses_[REDACTED]")` is useless
  * guidance). A session id is not a credential: it grants nothing without the
  * bearer token. Mirrors the platform-side redactor's canonical-id exemption.
  */
-function isCanonicalSessionIdHex(input: string, matchStart: number, match: string): boolean {
-  if (!/^[0-9a-f]{32}$/.test(match)) return false;
+function isCanonicalSessionIdBody(input: string, matchStart: number, match: string): boolean {
+  if (!/^[0-9a-hjkmnp-tv-z]{26}$/.test(match)) return false;
   return input.slice(Math.max(0, matchStart - 4), matchStart) === "ses_";
 }
 
@@ -436,7 +428,7 @@ export function redactString(input: string, known: Iterable<string> = []): strin
     out
   );
   return out.replace(HIGH_ENTROPY_CANDIDATE, (match, offset: number, whole: string) =>
-    !isCanonicalSessionIdHex(whole, offset, match) &&
+    !isCanonicalSessionIdBody(whole, offset, match) &&
     !isPlatformContentDigest(match) &&
     looksHighEntropySecret(match)
       ? REDACTED
@@ -456,7 +448,7 @@ export function containsSecretLikeValue(input: string): boolean {
   HIGH_ENTROPY_CANDIDATE.lastIndex = 0;
   let candidate: RegExpExecArray | null;
   while ((candidate = HIGH_ENTROPY_CANDIDATE.exec(input)) !== null) {
-    if (isCanonicalSessionIdHex(input, candidate.index, candidate[0])) {
+    if (isCanonicalSessionIdBody(input, candidate.index, candidate[0])) {
       continue;
     }
     if (isPlatformContentDigest(candidate[0])) {
@@ -507,21 +499,6 @@ export function createRedactingStream(known: Iterable<string> = []): Transform {
   });
 }
 
-/**
- * Wire keys that contain a secret-looking word but name a QUANTITY, not a
- * credential. Same argument as the canonical-session-id exemption above: masking
- * them destroys the one number the message exists to carry, and the value grants
- * nothing to whoever reads it.
- *
- * `llm_token_usd` is the free model-usage allowance dimension. It is the field a
- * `402 insufficient_credits` body is read for — "$0.00 of $2.00 left this month"
- * — and the substring `token` in a dimension name is a coincidence of the
- * metering vocabulary, not a credential. The name is fixed by the hosted
- * allowance schema, so it cannot be spelled around on the client.
- */
-const NON_SECRET_KEYS: ReadonlySet<string> = new Set(["llm_token_usd"]);
-
 function isSecretKey(key: string): boolean {
-  if (NON_SECRET_KEYS.has(key)) return false;
   return /(?:api[_-]?key|authorization|token|secret|password|credential)/i.test(key);
 }

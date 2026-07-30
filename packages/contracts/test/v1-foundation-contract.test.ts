@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as contractRoot from "../src/index.js";
 import {
   ApiErrorSchema,
   BOOTSTRAP_API_ROUTE_DESCRIPTORS,
@@ -277,6 +278,35 @@ describe("exact v1 route authorities", () => {
       "webhook", "archive", "events/ticket", "request-approval"
     ]) {
       expect(text).not.toContain(retired);
+    }
+  });
+});
+
+describe("clean v1 contract root", () => {
+  it("does not export removed submission, runtime, archive, or compatibility owners", () => {
+    for (const removed of [
+      "parseSubmission",
+      "RuntimeKindSchema",
+      "RuntimeSizeSchema",
+      "SessionArchiveSchema",
+      "AssetRefSchema",
+      "WorkspaceResourceVersionSchema",
+      "ConnectionTicketSchema",
+      "streamCoordinatorEvents",
+      "ContentDeletedError",
+      "SessionConfigValidationError"
+    ]) {
+      expect(contractRoot).not.toHaveProperty(removed);
+    }
+    for (const removed of [
+      "checkpoint_not_available",
+      "event_archive_too_large",
+      "event_archive_deadline_exceeded",
+      "insufficient_credits",
+      "account_blocked",
+      "content_deleted"
+    ]) {
+      expect(contractRoot.AEX_API_ERROR_CODES).not.toContain(removed);
     }
   });
 });

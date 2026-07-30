@@ -1,88 +1,47 @@
-/**
- * AexApiError message extraction.
- *
- * Pins the `session_busy` translation: the 409 body carries the session's
- * CURRENT status (api contract), and the SDK surfaces it in the error message
- * so a send to a deleted session doesn't read as merely "busy".
- */
 import { describe, expect, it } from "bun:test";
-import { HttpClient } from "../src/http.js";
-import { AexApiError } from "../src/sdk-errors.js";
+import { AexApiError, HttpClient } from "../src/index.js";
 
-function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
-}
-
-function clientReturning(body: unknown, status: number, headers: Record<string, string> = {}): HttpClient {
-  return new HttpClient({
-    baseUrl: "https://api.example.test",
-    apiKey: "t",
-    fetch: async () => jsonResponse(body, status, headers)
-  });
-}
-
-describe("AexApiError message extraction", () => {
-  it("session_busy carries the session's current status", async () => {
-    const client = clientReturning(
-      { error: "session_busy", sessionId: "ses_x", status: "deleted", turnSeq: 0 },
-      409
-    );
-    const err = await client.request("/api/sessions/ses_x/messages", { method: "POST" }).then(
-      () => null,
-      (e: unknown) => e
-    );
-    expect(err).toBeInstanceOf(AexApiError);
-    expect((err as AexApiError).message).toBe("session_busy (session status: deleted)");
-    expect((err as AexApiError).status).toBe(409);
-  });
-
-  it("session_busy without a status field stays the bare code", async () => {
-    const client = clientReturning({ error: "session_busy" }, 409);
-    await expect(client.request("/api/x")).rejects.toThrow(/^session_busy$/);
-  });
-
-  it("other error codes are unchanged even when a status field exists", async () => {
-    const client = clientReturning({ error: "not_found", status: "whatever" }, 404);
-    await expect(client.request("/api/x")).rejects.toThrow(/^not_found$/);
-  });
-
-  it("surfaces the server's message detail alongside the error code", async () => {
-    const client = clientReturning(
-      {
-        error: "asset_snapshot_source_missing",
-        message: "referenced asset asset_xyz is not in the workspace store; upload and finalize it before referencing it",
-        requestId: "req-1"
-      },
-      400
-    );
-    await expect(client.request("/api/sessions", { method: "POST" })).rejects.toThrow(
-      "asset_snapshot_source_missing: referenced asset asset_xyz is not in the workspace store; upload and finalize it before referencing it"
-    );
-  });
-
-  it("adds response request ids to the redacted error body without overriding body requestId", async () => {
-    const withXRequestId = clientReturning({ error: "rate_limited" }, 429, {
-      "x-request-id": "req-header"
+describe("v1 nested API error envelope", () => {
+  it("surfaces the nested message, code, request id, and details", async () => {
+    const body = {
+      error: {
+        code: "account_paused",
+        message: "Top up before starting new work.",
+        requestId: "req_body",
+        retryable: false,
+        details: { minimumRestoreCents: "500" }
+      }
+    };
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiKey: "test",
+      fetch: async () => Response.json(body, { status: 402 })
     });
-    const headerErr = await withXRequestId.request("/api/sessions", { method: "POST" }).catch((e: unknown) => e);
-    expect((headerErr as AexApiError).body).toMatchObject({ requestId: "req-header" });
-
-    const withRequestId = clientReturning({ error: "rate_limited" }, 429, {
-      "request-id": "req-alt-header"
-    });
-    const altHeaderErr = await withRequestId.request("/api/sessions", { method: "POST" }).catch((e: unknown) => e);
-    expect((altHeaderErr as AexApiError).body).toMatchObject({ requestId: "req-alt-header" });
-
-    const bodyOnly = clientReturning({ error: "rate_limited", requestId: "req-body" }, 429, {
-      "x-request-id": "req-header"
-    });
-    const bodyErr = await bodyOnly.request("/api/sessions", { method: "POST" }).catch((e: unknown) => e);
-    expect(bodyErr).toBeInstanceOf(AexApiError);
-    expect((bodyErr as AexApiError).body).toMatchObject({ requestId: "req-body" });
+    const error = await client.request("/account").catch((caught) => caught);
+    expect(error).toBeInstanceOf(AexApiError);
+    expect((error as AexApiError).message)
+      .toBe("Top up before starting new work.");
+    expect((error as AexApiError).apiCode).toBe("account_paused");
+    expect((error as AexApiError).requestId).toBe("req_body");
+    expect((error as AexApiError).body).toEqual(body);
   });
 
-  it("does not duplicate the code when message repeats it", async () => {
-    const client = clientReturning({ error: "not_found", message: "not_found" }, 404);
-    await expect(client.request("/api/x")).rejects.toThrow(/^not_found$/);
+  it("uses a response request-id header only when the envelope omitted it", async () => {
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiKey: "test",
+      fetch: async () => Response.json({
+        error: {
+          code: "internal_error",
+          message: "failed",
+          retryable: false
+        }
+      }, {
+        status: 500,
+        headers: { "x-request-id": "req_header" }
+      })
+    });
+    const error = await client.request("/sessions").catch((caught) => caught);
+    expect((error as AexApiError).requestId).toBe("req_header");
   });
 });

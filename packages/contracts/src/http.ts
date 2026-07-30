@@ -8,7 +8,6 @@ import {
   isRetryableHttpStatus,
   tryParseRetryAfterMs
 } from "./retry-core.js";
-import { reportWireResponse } from "./wire-observer.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -405,28 +404,6 @@ export class HttpClient {
       const response = await this.#fetch(url, { ...init, headers });
       this.#trace(method, url, response.status, startedMs);
       const body = await readJson(response);
-      // C4: the harness validates real server bytes against the response
-      // schemas. Every JSON response the SDK, the CLI and the user-test suites
-      // receive passes through this one call, which is why the gate attaches
-      // here instead of at each of ~120 call sites.
-      //
-      // It stays on the INNER single attempt, not around the retry loop: the loop
-      // now lives in `withHttpRetry`, and a retried request must report each
-      // response it actually received, not just the last one.
-      //
-      // Reported BEFORE the non-2xx throw, and with the RAW body rather than the
-      // `withResponseRequestId` enrichment below: the generated spec declares an
-      // error envelope for every operation, and a harness that only ever saw 2xx
-      // could not check it. `origin` travels too — the control plane serves
-      // different bodies at two paths the data plane also uses, so matching on
-      // path alone would manufacture violations in a two-plane process.
-      reportWireResponse(() => ({
-        method,
-        origin: url.origin,
-        path: url.pathname,
-        status: response.status,
-        body
-      }));
       if (!response.ok) {
         const errorBody = withResponseRequestId(body, response.headers);
         throw apiErrorFromResponse({
@@ -461,17 +438,6 @@ export class HttpClient {
       this.#trace(method, url, response.status, startedMs);
       if (!response.ok) {
         const body = await readJson(response);
-        // C4: a download's SUCCESS body is bytes, not JSON, so there is nothing
-        // to validate on that path — but its FAILURE body is the same error
-        // envelope every other route returns, and it is the only way the harness
-        // observes the routes reached through `download()` at all.
-        reportWireResponse(() => ({
-          method,
-          origin: url.origin,
-          path: url.pathname,
-          status: response.status,
-          body
-        }));
         const errorBody = withResponseRequestId(body, response.headers);
         throw apiErrorFromResponse({
           status: response.status,
@@ -529,7 +495,20 @@ async function readJson(response: Response): Promise<unknown> {
 function withResponseRequestId(body: unknown, headers: Headers): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
   const record = body as Record<string, unknown>;
-  if (typeof record.requestId === "string" && record.requestId.trim()) return body;
+  const nested = record.error;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const error = nested as Record<string, unknown>;
+    if (typeof error.requestId === "string" && error.requestId.trim()) {
+      return body;
+    }
+    const requestId = responseRequestId(headers);
+    return requestId
+      ? { ...record, error: { ...error, requestId } }
+      : body;
+  }
+  if (typeof record.requestId === "string" && record.requestId.trim()) {
+    return body;
+  }
   const requestId = responseRequestId(headers);
   return requestId ? { ...record, requestId } : body;
 }
@@ -545,31 +524,10 @@ function responseRequestId(headers: Headers): string | undefined {
 function extractErrorMessage(body: unknown): string {
   if (body && typeof body === "object") {
     const obj = body as { readonly error?: unknown; readonly message?: unknown };
-    if (typeof obj.error === "string") {
-      // A 409 `session_busy` body carries the session's CURRENT status.
-      // Surface it: a send to a deleted (or cancelling/suspending) session
-      // otherwise reads as merely "busy", which is misleading for a session
-      // that will never accept a turn again.
-      const status = (body as { readonly status?: unknown }).status;
-      if (obj.error === "session_busy" && typeof status === "string") {
-        return `session_busy (session status: ${status})`;
-      }
-      // Most aex API rejections are `{error: <code>, message: <human detail>}`.
-      // Keep the stable code first, but don't drop the server's actionable
-      // detail (e.g. asset_snapshot_source_missing's "upload and finalize it
-      // before referencing it").
-      if (typeof obj.message === "string" && obj.message.length > 0 && obj.message !== obj.error) {
-        return `${obj.error}: ${obj.message}`;
-      }
-      return obj.error;
-    }
     if (obj.error && typeof obj.error === "object" && "message" in obj.error) {
       const message = (obj.error as { readonly message?: unknown }).message;
       if (typeof message === "string") return message;
     }
-    // aex API error envelope: `{ ok:false, code, message }`. Surface
-    // the server's message so structured rejections (e.g. runtime support)
-    // aren't flattened to the generic fallback below.
     if (typeof obj.message === "string") return obj.message;
   }
   return "aex API request failed";

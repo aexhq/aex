@@ -1,292 +1,68 @@
-/**
- * WS4 class-killer: one error factory (wire → typed subclass) backed by the
- * stable-code SSoT. Maps 409 idempotency conflicts plus 403/404/401/429 to the
- * right subclass with apiCode + requestId + cause, and keeps unrelated 409s
- * generic through an exhaustive switch over AexApiErrorCode.
- */
 import { describe, expect, it } from "bun:test";
 import {
-  apiErrorFromResponse,
-  apiErrorKindForCode,
   AEX_API_ERROR_CODES,
-  AEX_API_ERROR_MESSAGES,
-  AEX_API_ERROR_REMEDIES,
   AexApiError,
   AexAuthError,
   AexIdempotencyConflictError,
   AexNotFoundError,
   AexRateLimitError,
-  ContentDeletedError,
-  isAuthError,
-  isContentDeleted,
-  isInsufficientScope,
-  isIdempotencyConflict,
-  isNotFound,
-  isRateLimited,
-  type AexApiErrorCode
+  apiErrorFromResponse,
+  apiErrorKindForCode
 } from "../src/index.js";
 
-describe("apiErrorFromResponse (WS4)", () => {
-  it("maps 409 idempotency_conflict → AexIdempotencyConflictError", () => {
-    const err = apiErrorFromResponse({ status: 409, body: { error: "idempotency_conflict", requestId: "req-1" } });
-    expect(err).toBeInstanceOf(AexIdempotencyConflictError);
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err.apiCode).toBe("idempotency_conflict");
-    expect(err.requestId).toBe("req-1");
-    expect(isIdempotencyConflict(err)).toBe(true);
-    expect(err.message.length).toBeGreaterThan(0);
-  });
-
-  it("maps 403 insufficient_scope → AexAuthError carrying requiredScope", () => {
-    const err = apiErrorFromResponse({
-      status: 403,
-      body: { error: "insufficient_scope", requiredScope: "billing:read", requestId: "req-2" }
-    });
-    expect(err).toBeInstanceOf(AexAuthError);
-    expect(err.apiCode).toBe("insufficient_scope");
-    expect((err as AexAuthError).requiredScope).toBe("billing:read");
-    expect(isAuthError(err)).toBe(true);
-    expect(isInsufficientScope(err)).toBe(true);
-  });
-
-  it("maps 404 → AexNotFoundError", () => {
-    const err = apiErrorFromResponse({ status: 404, body: { error: "not_found" } });
-    expect(err).toBeInstanceOf(AexNotFoundError);
-    expect(isNotFound(err)).toBe(true);
-    expect(err.apiCode).toBe("not_found");
-  });
-
-  it("maps 401 token_invalid → AexAuthError", () => {
-    const err = apiErrorFromResponse({ status: 401, body: { error: "token_invalid" } });
-    expect(err).toBeInstanceOf(AexAuthError);
-    expect(err.apiCode).toBe("token_invalid");
-  });
-
-  it("maps 429 rate_limited → AexRateLimitError with retryAfterMs", () => {
-    const err = apiErrorFromResponse({ status: 429, body: { error: "rate_limited", retryAfter: 2 } });
-    expect(err).toBeInstanceOf(AexRateLimitError);
-    expect(isRateLimited(err)).toBe(true);
-    expect((err as AexRateLimitError).retryAfterMs).toBe(2000);
-  });
-
-  it("maps 410 content_deleted → ContentDeletedError carrying sessionId/purgedAt/deletedBy (WS4)", () => {
-    const body = {
-      error: "content_deleted",
-      sessionId: "sess-purged",
-      purgedAt: "2026-07-17T00:00:00.000Z",
-      deletedBy: "retention",
-      requestId: "req-410"
-    };
-    const err = apiErrorFromResponse({ status: 410, body });
-    expect(err).toBeInstanceOf(ContentDeletedError);
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(isContentDeleted(err)).toBe(true);
-    expect(err.apiCode).toBe("content_deleted");
-    expect(err.status).toBe(410);
-    expect(err.requestId).toBe("req-410");
-    const deleted = err as ContentDeletedError;
-    expect(deleted.sessionId).toBe("sess-purged");
-    expect(deleted.purgedAt).toBe("2026-07-17T00:00:00.000Z");
-    expect(deleted.deletedBy).toBe("retention");
-  });
-
-  it("tolerates a content_deleted body missing the optional purge fields", () => {
-    const err = apiErrorFromResponse({ status: 410, body: { error: "content_deleted" } });
-    expect(err).toBeInstanceOf(ContentDeletedError);
-    const deleted = err as ContentDeletedError;
-    expect(deleted.sessionId).toBeUndefined();
-    expect(deleted.purgedAt).toBeUndefined();
-    expect(deleted.deletedBy).toBeUndefined();
-    // An unrecognized `deletedBy` never leaks through the closed union.
-    const weird = apiErrorFromResponse({
-      status: 410,
-      body: { error: "content_deleted", deletedBy: "aliens" }
-    }) as ContentDeletedError;
-    expect(weird.deletedBy).toBeUndefined();
-  });
-
-  it("maps workspace_inactive to a generic 409 with stable guidance and status context", () => {
-    const body = { error: "workspace_inactive", workspaceStatus: "deleting" };
-    const err = apiErrorFromResponse({ status: 409, body });
-
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err).not.toBeInstanceOf(AexIdempotencyConflictError);
-    expect(err.apiCode).toBe("workspace_inactive");
-    expect(err.body).toEqual(body);
-    expect(err.message).toBe(AEX_API_ERROR_MESSAGES.workspace_inactive);
-    expect(AEX_API_ERROR_REMEDIES.workspace_inactive).toMatch(/active workspace/i);
-  });
-
-  it("decodes the 402 insufficient_credits body, exhausted dimension and allowances intact", () => {
-    const body = {
-      error: "insufficient_credits",
-      message: "Free model-usage allowance exhausted ($0.00 of $2.00 left this month) and the prepaid balance is $0.00.",
-      balanceUsd: 0,
-      balanceGraceFloorUsd: 0,
-      paymentMethodStatus: "none",
-      admissionState: "free",
-      exhaustedDimension: "llm_token_usd",
-      allowanceRemaining: { llm_token_usd: 0, egress_gb: 4.2 },
-      requestId: "req-402"
-    };
-    const err = apiErrorFromResponse({ status: 402, body });
-
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err.apiCode).toBe("insufficient_credits");
-    expect(err.status).toBe(402);
-    expect(err.requestId).toBe("req-402");
-    // The whole payload survives decoding — the SDK/CLI renders the allowance
-    // panel from it rather than reprinting a bare code.
-    expect(err.body).toEqual(body);
-    expect(AEX_API_ERROR_REMEDIES.insufficient_credits).toMatch(/top up/i);
-  });
-
-  it("decodes the 402 account_blocked body as a DISTINCT code whose remedy is not a top-up", () => {
-    const body = {
-      error: "account_blocked",
-      message: "This organization cannot start new work because a disputed payment is under review.",
-      reason: "dispute",
-      blockedAt: "2026-07-20T00:00:00.000Z",
-      admissionState: "carded_manual"
-    };
-    const err = apiErrorFromResponse({ status: 402, body });
-
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err.apiCode).toBe("account_blocked");
-    expect(err.apiCode).not.toBe("insufficient_credits");
-    expect(err.body).toEqual(body);
-    // Credit does not lift a block: pointing a blocked customer at the payment
-    // form takes their money and leaves them just as blocked.
-    expect(AEX_API_ERROR_REMEDIES.account_blocked).not.toMatch(/top up/i);
-    expect(AEX_API_ERROR_REMEDIES.account_blocked).toMatch(/support/i);
-  });
-
-  it("no longer recognizes the retired insufficient_balance spelling", () => {
-    const err = apiErrorFromResponse({ status: 402, body: { error: "insufficient_balance" } });
-    expect(err.apiCode).toBeUndefined();
-  });
-
-  it("does not misclassify checkpoint availability as an idempotency conflict", () => {
-    const body = { error: "checkpoint_not_available", requestId: "req-checkpoint" };
-    const err = apiErrorFromResponse({ status: 409, body });
-
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err).not.toBeInstanceOf(AexIdempotencyConflictError);
-    expect(err.apiCode).toBe("checkpoint_not_available");
-    expect(err.requestId).toBe("req-checkpoint");
-    expect(err.message).toBe(AEX_API_ERROR_MESSAGES.checkpoint_not_available);
-  });
-
-  it("does not infer idempotency from an unknown 409 body", () => {
-    const body = { error: "future_state_conflict" };
-    const err = apiErrorFromResponse({ status: 409, body });
-
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err).not.toBeInstanceOf(AexIdempotencyConflictError);
-    expect(err.apiCode).toBeUndefined();
-    expect(err.body).toEqual(body);
-  });
-
-  it("uses the precomputed message and threads cause", () => {
-    const cause = new Error("boom");
-    const err = apiErrorFromResponse({
-      status: 500,
-      body: { error: "internal_error" },
-      message: "internal_error: kaput",
-      cause
-    });
-    expect(err.message).toBe("internal_error: kaput");
-    expect(err.cause).toBe(cause);
-    expect(err.apiCode).toBe("internal_error");
-  });
-
-  it("falls back to status-based dispatch for an unknown code (apiCode undefined)", () => {
-    const err = apiErrorFromResponse({ status: 404, body: { error: "totally_unknown_code" } });
-    expect(err).toBeInstanceOf(AexNotFoundError);
-    expect(err.apiCode).toBeUndefined();
-  });
-
-  it.each([
-    { status: 413, code: "event_archive_too_large" },
-    { status: 503, code: "event_archive_deadline_exceeded" }
-  ] as const)("maps archive HTTP $status to stable generic code $code", ({ status, code }) => {
-    const err = apiErrorFromResponse({ status, body: { error: code, retryable: false } });
-
-    expect(err).toBeInstanceOf(AexApiError);
-    expect(err.apiCode).toBe(code);
-    expect(err.message).toBe(AEX_API_ERROR_MESSAGES[code]);
-  });
-
-  it("every stable code maps to a kind with no throw", () => {
-    for (const code of AEX_API_ERROR_CODES) {
-      expect(typeof apiErrorKindForCode(code)).toBe("string");
+function envelope(
+  code: (typeof AEX_API_ERROR_CODES)[number],
+  details?: Record<string, unknown>
+) {
+  return {
+    error: {
+      code,
+      message: `message:${code}`,
+      requestId: "req_accepted_v1",
+      retryable: code === "rate_limited",
+      ...(details === undefined ? {} : { details })
     }
+  };
+}
+
+describe("v1 wire error dispatch", () => {
+  it("maps auth, idempotency, not-found, and rate-limit envelopes", () => {
+    expect(apiErrorFromResponse({
+      status: 403,
+      body: envelope("insufficient_scope", { requiredScope: "billing:read" })
+    })).toBeInstanceOf(AexAuthError);
+    expect(apiErrorFromResponse({
+      status: 409,
+      body: envelope("operation_idempotency_conflict")
+    })).toBeInstanceOf(AexIdempotencyConflictError);
+    expect(apiErrorFromResponse({
+      status: 404,
+      body: envelope("file_not_found")
+    })).toBeInstanceOf(AexNotFoundError);
+    const limited = apiErrorFromResponse({
+      status: 429,
+      body: envelope("rate_limited", { retryAfterMs: 250 })
+    });
+    expect(limited).toBeInstanceOf(AexRateLimitError);
+    expect((limited as AexRateLimitError).retryAfterMs).toBe(250);
   });
 
-  it("[compile-time] exhaustive switch over AexApiErrorCode with no default", () => {
-    const kindOf = (code: AexApiErrorCode): string => {
-      switch (code) {
-        case "unauthorized":
-        case "forbidden":
-        case "insufficient_scope":
-        case "token_invalid":
-        case "token_revoked":
-        case "token_expired":
-        case "malformed_token":
-          return "auth";
-        case "idempotency_conflict":
-          return "idempotency";
-        case "not_found":
-        case "export_not_found":
-          return "not_found";
-        case "rate_limited":
-        case "workspace_concurrency_exceeded":
-        case "workspace_submit_rate_exceeded":
-          return "rate_limit";
-        case "content_deleted":
-          return "content_deleted";
-        case "session_busy":
-        case "invalid_cursor":
-        case "invalid_query":
-        case "invalid_metric_aggregation":
-        case "invalid_auto_topup_policy":
-        case "payment_method_required":
-        case "authentication_unavailable":
-        case "account_paused":
-        case "account_state_unavailable":
-        case "precondition_failed":
-        case "wrong_workspace_region":
-        case "invalid_telemetry":
-        case "telemetry_payload_too_large":
-        case "telemetry_quota_exceeded":
-        case "observability_unavailable":
-        case "telemetry_incomplete":
-        case "unsupported_export_signal":
-        case "export_not_ready":
-        case "export_expired":
-        case "export_revoked":
-        case "checkpoint_not_available":
-        case "session_not_terminal":
-        case "session_terminal":
-        case "event_archive_too_large":
-        case "event_archive_deadline_exceeded":
-        case "unknown_workspace":
-        case "workspace_inactive":
-        case "workspace_spend_cap_exceeded":
-        case "workspace_cap_exceeded":
-        case "insufficient_credits":
-        case "account_blocked":
-        case "quota_exhausted":
-        case "depth_exceeded":
-        case "out_of_memory":
-        case "disk_full":
-        case "upstream_error":
-        case "internal_error":
-          return "generic";
-        case "operation_idempotency_conflict":
-          return "idempotency";
-      }
-    };
-    expect(kindOf("not_found")).toBe("not_found");
+  it("keeps pause/account failures explicit on the generic API error", () => {
+    const paused = apiErrorFromResponse({
+      status: 402,
+      body: envelope("account_paused", { minimumRestoreCents: "500" })
+    });
+    expect(paused).toBeInstanceOf(AexApiError);
+    expect(paused.apiCode).toBe("account_paused");
+    expect(paused.requestId).toBe("req_accepted_v1");
+    expect(paused.body).toEqual(envelope("account_paused", {
+      minimumRestoreCents: "500"
+    }));
+  });
+
+  it("exhaustively classifies every stable code", () => {
+    for (const code of AEX_API_ERROR_CODES) {
+      expect(() => apiErrorKindForCode(code)).not.toThrow();
+    }
   });
 });

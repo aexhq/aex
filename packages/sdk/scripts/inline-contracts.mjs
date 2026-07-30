@@ -14,7 +14,7 @@
 //      that are not in the tarball anyway).
 //   2. Rewrite every `from "@aexhq/contracts"` in the SDK's emitted
 //      dist/*.js and dist/*.d.ts to `from "./_contracts/index.js"`,
-//      and every supported contracts subpath to its inlined sibling.
+//      and any supported contracts subpath to its inlined sibling.
 //      Files inside _contracts/ already use relative imports between
 //      siblings so no further rewriting is needed there.
 //   3. Sanity-check: no `@aexhq/contracts` string survives in the SDK's
@@ -43,29 +43,6 @@ const inlinedDir = resolve(sdkDistDir, "_contracts");
 
 const CONTRACTS_IMPORT_SPECIFIER = "@aexhq/contracts";
 const CONTRACTS_IMPORT_PREFIX = `${CONTRACTS_IMPORT_SPECIFIER}/`;
-const RUNNER_ONLY_CONTRACT_MODULES = new Set([
-  "subagent-input.d.ts",
-  "subagent-input.js",
-  "subagent-runtime.d.ts",
-  "subagent-runtime.js"
-]);
-// `@aexhq/contracts/testing` is the cross-package test kit (FakeWebSocket,
-// test-platform, stub-env, fake clocks). NO SDK source path imports the full
-// test kit — only test files do — so it must stay out of the customer tarball.
-// C4 is the one deliberate exception: live user tests need a small hidden
-// entrypoint in the installed SDK's own module graph so it can observe the
-// SDK's inlined HttpClient responses. The entrypoint imports only the two C4
-// modules below; the rest of the test kit remains excluded.
-const TEST_ONLY_CONTRACT_MODULE_PREFIX = "testing";
-const C4_CONTRACT_MODULES = new Set([
-  "testing/wire-conformance-entry.d.ts",
-  "testing/wire-conformance-entry.js",
-  "testing/wire-conformance.d.ts",
-  "testing/wire-conformance.js",
-  "testing/response-bindings.d.ts",
-  "testing/response-bindings.js"
-]);
-
 async function fileExists(path) {
   try {
     const s = await stat(path);
@@ -92,14 +69,6 @@ await cp(contractsDistDir, inlinedDir, {
   filter: (src) => {
     const rel = relative(contractsDistDir, src).replaceAll("\\", "/");
     if (rel === "") return true;
-    if (RUNNER_ONLY_CONTRACT_MODULES.has(rel)) return false;
-    if (rel === TEST_ONLY_CONTRACT_MODULE_PREFIX) return true;
-    if (rel.startsWith(`${TEST_ONLY_CONTRACT_MODULE_PREFIX}/`)) {
-      return C4_CONTRACT_MODULES.has(rel);
-    }
-    if (rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}.js` || rel === `${TEST_ONLY_CONTRACT_MODULE_PREFIX}.d.ts`) {
-      return false;
-    }
     if (src.endsWith(".js.map") || src.endsWith(".d.ts.map") || src.endsWith(".tsbuildinfo")) {
       return false;
     }

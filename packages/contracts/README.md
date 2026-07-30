@@ -1,50 +1,31 @@
 # @aexhq/contracts
 
-The public wire contracts for aex: request and response schemas, the event
-envelope, id formats, and the generated OpenAPI document for the data plane.
+The strict public v1 wire contracts for aex.
 
 ```bash
 npm i @aexhq/contracts
 ```
 
-## Who needs this
+Most TypeScript users should install `@aexhq/sdk`, which includes these
+contracts in its published build. Install this package directly when building
+another client or validating a service against the same wire.
 
-Most people do not. `@aexhq/sdk` inlines this package into its own build, so an
-SDK user already has every type without adding a dependency.
+The root export contains:
 
-Install it directly when you are:
+- bootstrap and regional route descriptors;
+- strict account, organization, workspace, billing, session, content, and
+  telemetry schemas;
+- UUIDv7 identifier and workspace API-key codecs;
+- the public error and HTTP transport vocabulary.
 
-- writing a client in TypeScript without the SDK;
-- generating a client in another language from
-  `@aexhq/contracts/openapi/data-plane.json`;
-- validating that a server or proxy you operate speaks the same wire format.
+The generated plane documents are available as:
 
-## What is in it
+- `@aexhq/contracts/openapi/bootstrap.json`
+- `@aexhq/contracts/openapi/regional.json`
 
-| Export | Contents |
-| --- | --- |
-| `@aexhq/contracts` | Session, run, workspace, and file schemas; error shapes. |
-| `@aexhq/contracts/ids` | Typed id constructors and parsers. |
-| `@aexhq/contracts/testing` | Fixtures and helpers for conformance tests. |
-| `@aexhq/contracts/subagent-runtime` | The parent/child submission contract. |
-| `@aexhq/contracts/openapi/data-plane.json` | The generated OpenAPI document. |
-
-Schemas are [Zod](https://zod.dev) and expose the
-[Standard Schema](https://standardschema.dev) interface, so they validate under
-any Standard Schema-aware validator without importing Zod yourself.
-
-## The generation direction
-
-Schemas are the source. The OpenAPI document and its TypeScript declarations are
-generated from them and committed, and CI fails when the committed output no
-longer matches (`bun run openapi:check`, `bun run openapi:types:check` at the
-repository root). Edit the schemas, never the generated document.
-
-## Stability
-
-The contracts version tracks the wire format, not the SDK. A breaking wire
-change is a major version here. `@aexhq/contracts/internal` is exempt: it exists
-for first-party runtimes and carries no compatibility promise.
+Schemas are the source. Generate and check the committed OpenAPI documents with
+`bun run openapi:generate`, `bun run openapi:check`, and their corresponding
+`openapi:types:*` commands from the repository root.
 
 ## License
 

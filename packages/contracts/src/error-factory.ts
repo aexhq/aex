@@ -13,7 +13,6 @@ import {
   AexIdempotencyConflictError,
   AexNotFoundError,
   AexRateLimitError,
-  ContentDeletedError,
   type AexApiErrorInit
 } from "./sdk-errors.js";
 import { AEX_API_ERROR_MESSAGES, isAexApiErrorCode, type AexApiErrorCode } from "./error-codes.js";
@@ -30,7 +29,7 @@ export interface ApiErrorFromResponseInput {
   readonly cause?: unknown;
 }
 
-type ApiErrorKind = "auth" | "idempotency" | "not_found" | "rate_limit" | "content_deleted" | "generic";
+type ApiErrorKind = "auth" | "idempotency" | "not_found" | "rate_limit" | "generic";
 
 /**
  * EXHAUSTIVE stable-code → subclass-kind map. There is NO `default`: adding a
@@ -53,15 +52,38 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "operation_idempotency_conflict":
       return "idempotency";
     case "not_found":
+    case "approval_not_found":
+    case "file_not_found":
     case "export_not_found":
       return "not_found";
     case "rate_limited":
-    case "workspace_concurrency_exceeded":
-    case "workspace_submit_rate_exceeded":
       return "rate_limit";
-    case "content_deleted":
-      return "content_deleted";
-    case "session_busy":
+    case "invalid_cursor":
+    case "invalid_file_selection":
+    case "session_not_idle":
+    case "workspace_activation_required":
+    case "workspace_not_live":
+    case "session_deleting":
+    case "session_deleted":
+    case "deletion_in_progress":
+    case "operation_not_cancelable":
+    case "approval_already_resolved":
+    case "export_revoked":
+    case "invalid_range":
+    case "download_grant_expired":
+    case "telemetry_payload_too_large":
+    case "invalid_telemetry":
+    case "invalid_query":
+    case "invalid_metric_aggregation":
+    case "unsupported_export_signal":
+    case "telemetry_incomplete":
+    case "export_not_ready":
+    case "export_expired":
+    case "invalid_network_policy":
+    case "unsupported_package_ecosystem":
+    case "package_resolution_failed":
+    case "package_artifact_unavailable":
+    case "package_integrity_mismatch":
     case "invalid_auto_topup_policy":
     case "payment_method_required":
     case "authentication_unavailable":
@@ -69,36 +91,8 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "account_state_unavailable":
     case "precondition_failed":
     case "wrong_workspace_region":
-    case "invalid_cursor":
-    case "invalid_query":
-    case "invalid_metric_aggregation":
-    case "invalid_telemetry":
-    case "telemetry_payload_too_large":
     case "telemetry_quota_exceeded":
     case "observability_unavailable":
-    case "telemetry_incomplete":
-    case "unsupported_export_signal":
-    case "export_not_ready":
-    case "export_expired":
-    case "export_revoked":
-    case "checkpoint_not_available":
-    case "session_not_terminal":
-    case "session_terminal":
-    case "event_archive_too_large":
-    case "event_archive_deadline_exceeded":
-    case "unknown_workspace":
-    case "workspace_inactive":
-    case "workspace_spend_cap_exceeded":
-    case "workspace_cap_exceeded":
-    // Both 402s stay on the base class. They carry OPPOSITE remedies (buy credit
-    // / do not buy credit), so a shared subclass would invite exactly the
-    // conflation the two codes exist to prevent — branch on `apiCode`.
-    case "insufficient_credits":
-    case "account_blocked":
-    case "quota_exhausted":
-    case "depth_exceeded":
-    case "out_of_memory":
-    case "disk_full":
     case "upstream_error":
     case "internal_error":
       return "generic";
@@ -134,13 +128,6 @@ export function apiErrorFromResponse(input: ApiErrorFromResponseInput): AexApiEr
       return new AexNotFoundError(init);
     case "rate_limit":
       return new AexRateLimitError({ ...init, retryAfterMs: retryAfterMsFromBody(input.body) });
-    case "content_deleted":
-      return new ContentDeletedError({
-        ...init,
-        sessionId: sessionIdFromBody(input.body),
-        purgedAt: purgedAtFromBody(input.body),
-        deletedBy: deletedByFromBody(input.body)
-      });
     case "generic":
       return new AexApiError(input.status, message, input.body, {
         apiCode,
@@ -156,22 +143,28 @@ function asRecord(body: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function apiCodeFromBody(body: unknown): AexApiErrorCode | undefined {
+function errorRecordFromBody(body: unknown): Record<string, unknown> | undefined {
   const record = asRecord(body);
+  return asRecord(record?.error) ?? record;
+}
+
+function apiCodeFromBody(body: unknown): AexApiErrorCode | undefined {
+  const record = errorRecordFromBody(body);
   if (!record) return undefined;
-  if (isAexApiErrorCode(record.error)) return record.error;
   if (isAexApiErrorCode(record.code)) return record.code;
+  if (isAexApiErrorCode(record.error)) return record.error;
   return undefined;
 }
 
 function requestIdFromBody(body: unknown): string | undefined {
-  const record = asRecord(body);
+  const record = errorRecordFromBody(body);
   const value = record?.requestId;
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 function requiredScopeFromBody(body: unknown): string | undefined {
-  const record = asRecord(body);
+  const error = errorRecordFromBody(body);
+  const record = asRecord(error?.details) ?? error;
   if (!record) return undefined;
   for (const key of ["requiredScope", "required_scope", "scope"]) {
     const value = record[key];
@@ -180,23 +173,9 @@ function requiredScopeFromBody(body: unknown): string | undefined {
   return undefined;
 }
 
-function sessionIdFromBody(body: unknown): string | undefined {
-  const value = asRecord(body)?.sessionId;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function purgedAtFromBody(body: unknown): string | undefined {
-  const value = asRecord(body)?.purgedAt;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function deletedByFromBody(body: unknown): "retention" | "user" | undefined {
-  const value = asRecord(body)?.deletedBy;
-  return value === "retention" || value === "user" ? value : undefined;
-}
-
 function retryAfterMsFromBody(body: unknown): number | undefined {
-  const record = asRecord(body);
+  const error = errorRecordFromBody(body);
+  const record = asRecord(error?.details) ?? error;
   if (!record) return undefined;
   if (typeof record.retryAfterMs === "number" && Number.isFinite(record.retryAfterMs)) {
     return record.retryAfterMs;
@@ -208,10 +187,10 @@ function retryAfterMsFromBody(body: unknown): number | undefined {
 }
 
 function fallbackMessage(apiCode: AexApiErrorCode | undefined, body: unknown): string {
-  if (apiCode !== undefined) return AEX_API_ERROR_MESSAGES[apiCode];
-  const record = asRecord(body);
+  const record = errorRecordFromBody(body);
   const message = record?.message;
   if (typeof message === "string" && message.length > 0) return message;
+  if (apiCode !== undefined) return AEX_API_ERROR_MESSAGES[apiCode];
   const error = record?.error;
   if (typeof error === "string" && error.length > 0) return error;
   return "aex API request failed";

@@ -1,42 +1,10 @@
 /**
- * What the generated OpenAPI documents describe, and under what component names.
+ * OpenAPI component registry for the accepted v1 wire.
  *
- * A build-time module. It imports **full `zod`** to build the registry (the mini
- * entrypoint tree-shakes the JSON Schema converter out) and the schemas
- * themselves from `@aexhq/contracts` source — the same objects the server
- * validates with, so there is nothing here to keep in sync with the wire.
- *
- * An explicit id is mandatory for every reused schema: without one,
- * `reused:"ref"` invents `__schema0`, `__schema1` (measured), which are
- * unreadable and unstable across unrelated edits. Ids are attached with
- * `.register(z.globalRegistry, …)` — **`.meta()` does not exist on `zod/mini`
- * schemas**, and the two entrypoints share one global registry object, so a
- * mini schema's metadata is visible to this full-zod converter.
- *
- * **What the document still understates.** Some inferred field types are
- * deliberately weaker-but-true — `prompt`, `mcpServers`, `secretEnv`,
- * `builtinTools` and the capture lists validate through ordered `z.check()`
- * ladders whose per-entry wording a typed union would destroy. Each carries a
- * registered description naming the rule and its owning module. A
- * weaker-but-true schema beats a precise-but-wrong one.
+ * Every entry is the same strict schema used by the public contracts package.
+ * Removed runtime/submission/checkpoint/archive schemas have no registry entry.
  */
 import { z } from "zod";
-import {
-  EnvironmentSchema,
-  EnvVarsSchema,
-  NetworkingSchema,
-  PackagesSchema,
-  PlatformPackageSchema
-} from "../../packages/contracts/src/schemas/submission-environment.js";
-import {
-  EnvSecretsSchema,
-  InlineSecretsSchema,
-  McpServerSecretsSchema
-} from "../../packages/contracts/src/schemas/submission-secrets.js";
-import { SessionWebhookSchema } from "../../packages/contracts/src/schemas/session-webhook.js";
-import { SessionLimitsSchema } from "../../packages/contracts/src/schemas/session-limits.js";
-import { SessionMachineSchema } from "../../packages/contracts/src/schemas/session-machine.js";
-import { SessionSubmissionRequestSchema } from "../../packages/contracts/src/schemas/submission-request.js";
 import {
   ApiErrorSchema,
   MessageSchema,
@@ -48,100 +16,143 @@ import {
   WorkspaceApiKeyValueSchema
 } from "../../packages/contracts/src/v1-resources.js";
 import {
-  ApprovalGateSchema,
-  FileCaptureSchema,
-  PlatformInjectionSchema,
-  ResponseFormatSchema,
-  SubmissionSchema
-} from "../../packages/contracts/src/schemas/submission-body.js";
-import { SubmissionAssetsSchema } from "../../packages/contracts/src/schemas/submission-assets.js";
+  ApprovalResponseRequestSchema,
+  FileDownloadRequestSchema,
+  LiveFileDownloadRequestSchema,
+  LiveFileListRequestSchema,
+  LiveFileStatRequestSchema,
+  PersistedFileListRequestSchema,
+  PersistedFileStatRequestSchema,
+  RegisteredFileValueSchema,
+  RegisteredInstructionValueSchema,
+  RegisteredMcpServerValueSchema,
+  RegisteredSkillValueSchema,
+  RegisteredToolValueSchema,
+  SecretSetRequestSchema,
+  UploadCompleteRequestSchema,
+  UploadCreateRequestSchema,
+  UploadPartsRequestSchema
+} from "../../packages/contracts/src/v1-content.js";
+import {
+  MetricAggregationRequestSchema,
+  ObservationListenRequestSchema,
+  ObservationQuerySchema,
+  ObservationStreamRequestSchema,
+  TelemetryExportRequestSchema,
+  TelemetryGapQuerySchema
+} from "../../packages/contracts/src/v1-telemetry.js";
+import {
+  ApiKeyCreateRequestSchema,
+  AutoTopupPolicyRequestSchema,
+  InvitationCreateRequestSchema,
+  OrganizationCreateRequestSchema,
+  PortalSessionRequestSchema,
+  TopUpCheckoutRequestSchema,
+  UsageQuerySchema,
+  WorkspaceCreateRequestSchema,
+  WorkspaceDeleteRequestSchema
+} from "../../packages/contracts/src/v1-account-billing.js";
 
-/**
- * Cross-field and bounds rules expressed as `.check()` are SILENTLY ABSENT from
- * generated JSON Schema (measured). Every schema that carries one states the
- * rule and its owning module here, so a spec consumer is told what the server
- * enforces even though the document cannot express it.
- */
-const RULE_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  SessionWebhook:
-    "Run-callback registration. `url` must be https with no userinfo — enforced in " +
-    "packages/contracts/src/schemas/session-webhook.ts, and not expressible in JSON Schema.",
-  SessionLimits:
-    "Per-session lineage-limit override. Shape and positivity only; clamping to the workspace and " +
-    "platform ceilings happens server-side in resolveSessionLimits.",
-  SessionMachine:
-    "Capacity intent. An object with no `spot` carries no signal and is dropped; `spot: false` is " +
-    "preserved as an explicit request for standard capacity.",
-  SubmissionNetworking:
-    "Egress policy. `mode` is required whenever `networking` is supplied — enforced in " +
-    "packages/contracts/src/schemas/submission-environment.ts.",
-  SubmissionAllowedHosts:
-    "Allowed egress hosts. Compared case-insensitively; duplicates are rejected.",
-  SubmissionPackage:
-    'Package request. `name` may carry an ecosystem prefix ("pip:pandas"); an unprefixed name ' +
-    "defaults to apt and an unknown prefix is rejected.",
-  SubmissionEnvironment: "Customer-controlled runtime environment.",
-  SecretsMcpServers: "Per-session MCP server credentials. Server names must be unique.",
-  SecretsEnvSecrets:
-    "Per-session env-var secret values. Keys must be valid env var names; each pairs with a " +
-    "`submission.secretEnv` declaration.",
-  InlineSecrets:
-    "The vaulted half of a submission. Excluded from the idempotency hash and never echoed back."
-};
-
-function register<Schema extends object>(id: string, schema: Schema): Schema {
-  z.globalRegistry.add(schema as never, {
-    id,
-    ...(RULE_DESCRIPTIONS[id] ? { description: RULE_DESCRIPTIONS[id] } : {})
-  });
+function register<Schema extends object>(
+  id: string,
+  schema: Schema
+): Schema {
+  z.globalRegistry.add(schema as never, { id });
   return schema;
 }
 
-register("SessionWebhook", SessionWebhookSchema);
-register("SessionLimits", SessionLimitsSchema);
-register("SessionMachine", SessionMachineSchema);
-register("SubmissionEnvironment", EnvironmentSchema);
-register("SubmissionNetworking", NetworkingSchema);
-register("SubmissionPackages", PackagesSchema);
-register("SubmissionPackage", PlatformPackageSchema);
-register("SubmissionEnvVars", EnvVarsSchema);
-register("InlineSecrets", InlineSecretsSchema);
-register("SecretsMcpServers", McpServerSecretsSchema);
-register("SecretsEnvSecrets", EnvSecretsSchema);
-register("SessionSubmissionRequest", SessionSubmissionRequestSchema);
-register("Submission", SubmissionSchema);
-register("SubmissionAssets", SubmissionAssetsSchema);
-register("SubmissionFileCapture", FileCaptureSchema);
-register("SubmissionResponseFormat", ResponseFormatSchema);
-register("SubmissionApprovalGate", ApprovalGateSchema);
-register("SubmissionPlatformInjection", PlatformInjectionSchema);
-register("ApiError", ApiErrorSchema);
-register("Message", MessageSchema);
-register("MessageSendRequest", MessageSendRequestSchema);
-register("Operation", OperationSchema);
-register("Run", RunSchema);
-register("Session", SessionSchema);
-register("SessionCreateRequestV1", SessionCreateRequestSchema);
-register("WorkspaceApiKeyValue", WorkspaceApiKeyValueSchema);
+for (const [id, schema] of [
+  ["ApiError", ApiErrorSchema],
+  ["Message", MessageSchema],
+  ["MessageSendRequest", MessageSendRequestSchema],
+  ["Operation", OperationSchema],
+  ["Run", RunSchema],
+  ["Session", SessionSchema],
+  ["SessionCreateRequestV1", SessionCreateRequestSchema],
+  ["WorkspaceApiKeyValue", WorkspaceApiKeyValueSchema],
+  ["OrganizationCreateRequest", OrganizationCreateRequestSchema],
+  ["InvitationCreateRequest", InvitationCreateRequestSchema],
+  ["WorkspaceCreateRequest", WorkspaceCreateRequestSchema],
+  ["WorkspaceDeleteRequest", WorkspaceDeleteRequestSchema],
+  ["ApiKeyCreateRequest", ApiKeyCreateRequestSchema],
+  ["TopUpCheckoutRequest", TopUpCheckoutRequestSchema],
+  ["PortalSessionRequest", PortalSessionRequestSchema],
+  ["AutoTopupPolicyRequest", AutoTopupPolicyRequestSchema],
+  ["PersistedFileListRequest", PersistedFileListRequestSchema],
+  ["PersistedFileStatRequest", PersistedFileStatRequestSchema],
+  ["FileDownloadRequest", FileDownloadRequestSchema],
+  ["LiveFileListRequest", LiveFileListRequestSchema],
+  ["LiveFileStatRequest", LiveFileStatRequestSchema],
+  ["LiveFileDownloadRequest", LiveFileDownloadRequestSchema],
+  ["RegisteredFileValue", RegisteredFileValueSchema],
+  ["RegisteredSkillValue", RegisteredSkillValueSchema],
+  ["RegisteredToolValue", RegisteredToolValueSchema],
+  ["RegisteredInstructionValue", RegisteredInstructionValueSchema],
+  ["RegisteredMcpServerValue", RegisteredMcpServerValueSchema],
+  ["UploadCreateRequest", UploadCreateRequestSchema],
+  ["UploadPartsRequest", UploadPartsRequestSchema],
+  ["UploadCompleteRequest", UploadCompleteRequestSchema],
+  ["SecretSetRequest", SecretSetRequestSchema],
+  ["ApprovalResponseRequest", ApprovalResponseRequestSchema],
+  ["UsageQuery", UsageQuerySchema],
+  ["ObservationQuery", ObservationQuerySchema],
+  ["ObservationStreamRequest", ObservationStreamRequestSchema],
+  ["ObservationListenRequest", ObservationListenRequestSchema],
+  ["MetricAggregationRequest", MetricAggregationRequestSchema],
+  ["TelemetryGapQuery", TelemetryGapQuerySchema],
+  ["TelemetryExportRequest", TelemetryExportRequestSchema]
+] as const) {
+  register(id, schema);
+}
 
-/** The registry the generator converts in one pass. */
 export const OPENAPI_SCHEMA_REGISTRY = z.globalRegistry;
 
-/**
- * Operation id -> request body component name.
- *
- * Only operations whose request shape is expressed as a schema appear here. An
- * operation missing from this map generates without a request body, which the
- * document states as a gap rather than as a claim that the route takes no body.
- *
- * `sessions.create` is the whole submission envelope, and the one that matters
- * most — it is the largest request surface in the API. The remaining POST
- * routes (`secrets.create`, `mcpServers.create`, `workspace.*.publish`,
- * `billing.*`, `adminBilling.*`) take bodies that are validated server-side and
- * have no schema in this package yet; binding a placeholder would assert a shape
- * nobody checks.
- */
+const observationBodies: Readonly<Record<string, string>> = Object.fromEntries(
+  ["events", "logs", "spans", "metrics", "traces", "telemetry"].flatMap(
+    (signal) => [
+      [`${signal}.query`, "ObservationQuery"],
+      [`${signal}.stream`, "ObservationStreamRequest"],
+      [`${signal}.listen`, "ObservationListenRequest"],
+      [`session.${signal}.query`, "ObservationQuery"],
+      [`session.${signal}.stream`, "ObservationStreamRequest"],
+      [`session.${signal}.listen`, "ObservationListenRequest"]
+    ]
+  )
+);
+
 export const OPENAPI_REQUEST_BODIES: Readonly<Record<string, string>> = {
+  "organizations.create": "OrganizationCreateRequest",
+  "invitations.create": "InvitationCreateRequest",
+  "workspaces.create": "WorkspaceCreateRequest",
+  "workspaces.delete": "WorkspaceDeleteRequest",
+  "apiKeys.create": "ApiKeyCreateRequest",
+  "billing.topUpCheckout": "TopUpCheckoutRequest",
+  "billing.portalSession": "PortalSessionRequest",
+  "billing.autoTopup.put": "AutoTopupPolicyRequest",
   "sessions.create": "SessionCreateRequestV1",
-  "messages.send": "MessageSendRequest"
+  "messages.send": "MessageSendRequest",
+  "files.persisted.list": "PersistedFileListRequest",
+  "files.persisted.stat": "PersistedFileStatRequest",
+  "files.persisted.download": "FileDownloadRequest",
+  "files.live.list": "LiveFileListRequest",
+  "files.live.stat": "LiveFileStatRequest",
+  "files.live.download": "LiveFileDownloadRequest",
+  "registry.files.put": "RegisteredFileValue",
+  "registry.skills.put": "RegisteredSkillValue",
+  "registry.tools.put": "RegisteredToolValue",
+  "registry.instructions.put": "RegisteredInstructionValue",
+  "registry.mcpServers.put": "RegisteredMcpServerValue",
+  "uploads.create": "UploadCreateRequest",
+  "uploads.parts": "UploadPartsRequest",
+  "uploads.complete": "UploadCompleteRequest",
+  "secrets.put": "SecretSetRequest",
+  "approvals.respond": "ApprovalResponseRequest",
+  "billing.usage.query": "UsageQuery",
+  "metrics.aggregate": "MetricAggregationRequest",
+  "session.metrics.aggregate": "MetricAggregationRequest",
+  "telemetry.gaps.query": "TelemetryGapQuery",
+  "session.telemetry.gaps.query": "TelemetryGapQuery",
+  "telemetry.exports.create": "TelemetryExportRequest",
+  "session.telemetry.exports.create": "TelemetryExportRequest",
+  ...observationBodies
 };

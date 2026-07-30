@@ -1,6 +1,9 @@
 import fc from "fast-check";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { containsSecretLikeValue, redactString } from "../src/index.js";
+import {
+  containsSecretLikeValue,
+  redactString
+} from "../src/sdk-secrets.js";
 
 /**
  * Property fuzz for the value-AGNOSTIC secret redactor. Two opposing risks:
@@ -39,8 +42,9 @@ const denseRun = (min: number, max: number) =>
 const secretShaped = fc.oneof(
   hexish(20).map((s) => `sk-ant-${s}`),
   hexish(24).map((s) => `sk-${s}`),
-  hexish(20).map((s) => `apt_${s}`),
-  hexish(20).map((s) => `ant_${s}`),
+  fc.constant(
+    "aex_wk_euw1_01kyrkbb27ech9vtd7kpwh7h16_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  ),
   // postgres connection string (whole URI must be redacted)
   fc.tuple(hexish(8), hexish(8)).map(([u, p]) => `postgresql://${u}:${p}@db.internal:5432/app`),
   // JWT-shaped header.payload.signature
@@ -129,19 +133,19 @@ describe("secret redaction (property)", () => {
     );
   });
 
-  it("keeps canonical ses_<hex32> ids intact (traceability exemption)", () => {
-    const hexChars = "0123456789abcdef".split("");
-    const sessionIdHex = fc.array(fc.constantFrom(...hexChars), { minLength: 32, maxLength: 32 }).map((a) => a.join(""));
+  it("keeps canonical ses_<base32> ids intact (traceability exemption)", () => {
+    const idChars = "0123456789abcdefghjkmnpqrstvwxyz".split("");
+    const sessionIdBody = fc
+      .array(fc.constantFrom(...idChars), { minLength: 26, maxLength: 26 })
+      .map((a) => a.join(""));
     fc.assert(
-      fc.property(sessionIdHex, (hex) => {
-        const sessionId = `ses_${hex}`;
+      fc.property(sessionIdBody, (body) => {
+        const sessionId = `ses_${body}`;
         const msg = `timed out waiting for run ${sessionId}; cancel via aex.sessions.open("${sessionId}")`;
         expect(redactString(msg)).toBe(msg);
         expect(containsSecretLikeValue(msg)).toBe(false);
-        // the exemption is POSITION-BOUND: the same hex WITHOUT the session_ prefix
-        // is still eligible for the entropy gate (no blanket hex-32 exemption)
-        const bare = redactString(hex);
-        expect(bare === hex || bare === REDACTED).toBe(true);
+        const bare = redactString(body);
+        expect(bare === body || bare === REDACTED).toBe(true);
       }),
       { numRuns: 200 }
     );

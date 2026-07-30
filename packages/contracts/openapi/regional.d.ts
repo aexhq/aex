@@ -1672,10 +1672,62 @@ export interface components {
                 };
             };
         };
-        /** @description The vaulted half of a submission. Excluded from the idempotency hash and never echoed back. */
-        InlineSecrets: {
-            mcpServers?: components["schemas"]["SecretsMcpServers"];
-            envSecrets?: components["schemas"]["SecretsEnvSecrets"];
+        ApiKeyCreateRequest: {
+            workspaceId: string;
+            name: string;
+            scopes: string[];
+        };
+        ApprovalResponseRequest: {
+            /** @enum {string} */
+            decision: "approve" | "deny";
+        };
+        AutoTopupPolicyRequest: {
+            enabled: boolean;
+            thresholdUsd: number;
+            amountUsd: number;
+        };
+        FileDownloadRequest: {
+            path: string;
+            range?: {
+                start: number;
+                endExclusive: number;
+            };
+        };
+        InvitationCreateRequest: {
+            email: string;
+            /** @enum {string} */
+            role: "admin" | "member";
+        };
+        LiveFileDownloadRequest: {
+            path: string;
+            range?: {
+                start: number;
+                endExclusive: number;
+            };
+            /** @enum {string} */
+            wake?: "retained" | "never";
+            /** @enum {string} */
+            consistency?: "coherent" | "best_effort";
+            ifGenerationId?: string;
+        };
+        LiveFileListRequest: {
+            path?: string;
+            recursive?: boolean;
+            limit?: number;
+            cursor?: string;
+            /** @enum {string} */
+            wake?: "retained" | "never";
+            /** @enum {string} */
+            consistency?: "coherent" | "best_effort";
+            ifGenerationId?: string;
+        };
+        LiveFileStatRequest: {
+            path: string;
+            /** @enum {string} */
+            wake?: "retained" | "never";
+            /** @enum {string} */
+            consistency?: "coherent" | "best_effort";
+            ifGenerationId?: string;
         };
         Message: {
             id: string;
@@ -1711,6 +1763,93 @@ export interface components {
                 mediaType?: string;
             })[];
             maxSpendCents?: number;
+        };
+        MetricAggregationRequest: {
+            name: string;
+            timeRange: {
+                gte: string;
+                lt: string;
+            };
+            interval: string;
+            groupBy?: string[];
+            calculations: ({
+                /** @enum {string} */
+                op: "count" | "sum" | "min" | "max" | "mean" | "increase" | "rate";
+            } | {
+                /** @constant */
+                op: "quantile";
+                q: number;
+            })[];
+            where?: unknown;
+        };
+        ObservationListenRequest: {
+            signals?: ("events" | "logs" | "spans" | "metrics" | "traces")[];
+            where?: unknown;
+            timeRange?: {
+                gte?: string;
+                lt?: string;
+            };
+            order?: {
+                /** @enum {string} */
+                by: "time" | "accepted";
+                /** @enum {string} */
+                direction: "asc" | "desc";
+            };
+            limit?: number;
+            consistency?: "available" | {
+                /** @constant */
+                mode: "caught_up";
+                waitMs?: number;
+            };
+        };
+        ObservationQuery: {
+            signals?: ("events" | "logs" | "spans" | "metrics" | "traces")[];
+            where?: unknown;
+            timeRange?: {
+                gte?: string;
+                lt?: string;
+            };
+            order?: {
+                /** @enum {string} */
+                by: "time" | "accepted";
+                /** @enum {string} */
+                direction: "asc" | "desc";
+            };
+            limit?: number;
+            consistency?: "available" | {
+                /** @constant */
+                mode: "caught_up";
+                waitMs?: number;
+            };
+            cursor?: string;
+        };
+        ObservationStreamRequest: {
+            signals?: ("events" | "logs" | "spans" | "metrics" | "traces")[];
+            where?: unknown;
+            timeRange?: {
+                gte?: string;
+                lt?: string;
+            };
+            order?: {
+                /** @enum {string} */
+                by: "time" | "accepted";
+                /** @enum {string} */
+                direction: "asc" | "desc";
+            };
+            limit?: number;
+            consistency?: "available" | {
+                /** @constant */
+                mode: "caught_up";
+                waitMs?: number;
+            };
+            origin: {
+                cursor: string;
+            } | {
+                time: string;
+            } | {
+                /** @constant */
+                earliest: true;
+            };
         };
         Operation: {
             id: string;
@@ -2026,6 +2165,95 @@ export interface components {
                 }[];
             };
         };
+        OrganizationCreateRequest: {
+            name: string;
+        };
+        PersistedFileListRequest: {
+            path?: string;
+            recursive?: boolean;
+            limit?: number;
+            cursor?: string;
+        };
+        PersistedFileStatRequest: {
+            path: string;
+        };
+        PortalSessionRequest: {
+            returnUrl?: string;
+        };
+        RegisteredFileValue: {
+            mountPath: string;
+            content: {
+                /** @constant */
+                type: "inline";
+                /** @enum {string} */
+                encoding: "utf8" | "base64";
+                data: string;
+                sha256: string;
+            } | {
+                /** @constant */
+                type: "upload";
+                uploadId: string;
+                sha256: string;
+                sizeBytes: number;
+            };
+            mediaType: string;
+            /** @enum {string} */
+            mode: "0644" | "0755";
+        };
+        RegisteredInstructionValue: {
+            text: string;
+        };
+        RegisteredMcpServerValue: {
+            url: string;
+            /** @constant */
+            transport: "streamable_http";
+            headers: {
+                name: string;
+                secretName: string;
+            }[];
+        };
+        RegisteredSkillValue: {
+            description: string;
+            /** @constant */
+            bundleFormat: "tar.gz";
+            bundle: {
+                /** @constant */
+                type: "inline";
+                /** @enum {string} */
+                encoding: "utf8" | "base64";
+                data: string;
+                sha256: string;
+            } | {
+                /** @constant */
+                type: "upload";
+                uploadId: string;
+                sha256: string;
+                sizeBytes: number;
+            };
+        };
+        RegisteredToolValue: {
+            description: string;
+            inputSchema: {
+                [key: string]: unknown;
+            };
+            entry: string;
+            /** @constant */
+            bundleFormat: "tar.gz";
+            bundle: {
+                /** @constant */
+                type: "inline";
+                /** @enum {string} */
+                encoding: "utf8" | "base64";
+                data: string;
+                sha256: string;
+            } | {
+                /** @constant */
+                type: "upload";
+                uploadId: string;
+                sha256: string;
+                sizeBytes: number;
+            };
+        };
         Run: {
             id: string;
             sessionId: string;
@@ -2050,18 +2278,9 @@ export interface components {
             telemetryComplete?: boolean;
             telemetryRejectionIds?: string[];
         };
-        /** @description Per-session env-var secret values. Keys must be valid env var names; each pairs with a `submission.secretEnv` declaration. */
-        SecretsEnvSecrets: {
-            [key: string]: unknown;
+        SecretSetRequest: {
+            value: string;
         };
-        /** @description Per-session MCP server credentials. Server names must be unique. */
-        SecretsMcpServers: {
-            name: string;
-            url: string;
-            headers?: {
-                [key: string]: string;
-            };
-        }[];
         Session: {
             id: string;
             workspaceId: string;
@@ -2193,156 +2412,63 @@ export interface components {
                 [key: string]: string | number | boolean | null;
             };
         };
-        /** @description Per-session lineage-limit override. Shape and positivity only; clamping to the workspace and platform ceilings happens server-side in resolveSessionLimits. */
-        SessionLimits: {
-            maxConcurrentChildSessions?: number;
-            maxSubagentDepth?: number;
-            maxSpendUsd?: number;
-            maxTurns?: number;
-            maxStepsPerTurn?: number;
-        };
-        /** @description Capacity intent. An object with no `spot` carries no signal and is dropped; `spot: false` is preserved as an explicit request for standard capacity. */
-        SessionMachine: {
-            spot?: boolean;
-        };
-        SessionSubmissionRequest: {
-            workspaceId: string;
-            idempotencyKey: string;
-            submission: components["schemas"]["Submission"];
+        TelemetryExportRequest: {
+            query: components["schemas"]["ObservationQuery"];
             /** @enum {string} */
-            runtimeSize?: "0.25cpu-1gb" | "0.5cpu-4gb" | "1cpu-6gb" | "2cpu-8gb" | "4cpu-12gb";
+            format: "ndjson" | "parquet" | "otlp_json";
             /** @enum {string} */
-            runtimeKind?: "container" | "spot_container" | "lambda";
-            timeout?: string;
-            webhook?: components["schemas"]["SessionWebhook"];
-            limits?: components["schemas"]["SessionLimits"];
-            machine?: components["schemas"]["SessionMachine"];
-            secrets?: components["schemas"]["InlineSecrets"] | null;
+            completeness: "require" | "allow_gaps";
         };
-        /** @description Run-callback registration. `url` must be https with no userinfo — enforced in packages/contracts/src/schemas/session-webhook.ts, and not expressible in JSON Schema. */
-        SessionWebhook: {
-            url: string;
-        };
-        Submission: {
-            model: string;
-            system?: string;
-            prompt: components["schemas"]["SubmissionPrompt"];
-            assets: components["schemas"]["SubmissionAssets"];
-            mcpServers?: components["schemas"]["SubmissionMcpServers"];
-            secretEnv?: components["schemas"]["SubmissionSecretEnv"] | null;
-            environment?: components["schemas"]["SubmissionEnvironment"];
-            securityProfile?: ("strict" | "standard" | "developer") | null;
-            metadata?: {
-                [key: string]: unknown;
+        TelemetryGapQuery: {
+            signals?: ("events" | "logs" | "spans" | "metrics" | "traces")[];
+            /** @enum {string} */
+            status?: "pending_retry" | "open" | "repaired";
+            timeRange?: {
+                gte?: string;
+                lt?: string;
             };
-            fileCapture?: components["schemas"]["SubmissionFileCapture"] | null;
-            builtinTools?: ("default" | "none" | unknown[]) | null;
-            outputMode?: ("buffered" | "stream") | null;
-            responseFormat?: components["schemas"]["SubmissionResponseFormat"] | null;
-            approvalGate?: components["schemas"]["SubmissionApprovalGate"] | null;
-            platform?: components["schemas"]["SubmissionPlatformInjection"] | null;
+            cursor?: string;
+            limit?: number;
         };
-        SubmissionApprovalGate: {
-            tools: string[];
+        TopUpCheckoutRequest: {
+            amountUsd: number;
+            successUrl?: string;
+            cancelUrl?: string;
         };
-        SubmissionAssets: {
-            files?: {
-                /** @constant */
-                kind: "file";
-                resourceId: string;
-                version: number;
-                assetId: string;
-                contentHash: string;
-                name: string;
-                mountPath: string;
-            }[];
-            skills?: {
-                /** @constant */
-                kind: "skill";
-                resourceId: string;
-                version: number;
-                assetId: string;
-                contentHash: string;
-                name: string;
-                description: string;
-            }[];
-            tools?: {
-                /** @constant */
-                kind: "tool";
-                resourceId: string;
-                version: number;
-                assetId: string;
-                contentHash: string;
-                name: string;
-                description: string;
-                input_schema: {
-                    [key: string]: unknown;
-                };
-                entry: string;
-            }[];
-            instructions?: {
-                /** @constant */
-                kind: "instruction";
-                resourceId: string;
-                version: number;
-                textHash: string;
-                name: string;
+        UploadCompleteRequest: {
+            parts: {
+                partNumber: number;
+                etag: string;
             }[];
         };
-        /** @description Customer-controlled runtime environment. */
-        SubmissionEnvironment: {
-            networking?: components["schemas"]["SubmissionNetworking"];
-            packages?: components["schemas"]["SubmissionPackages"];
-            envVars?: components["schemas"]["SubmissionEnvVars"];
+        UploadCreateRequest: {
+            sizeBytes: number;
+            sha256: string;
+            contentType: string;
         };
-        SubmissionEnvVars: {
-            [key: string]: unknown;
+        UploadPartsRequest: {
+            partNumbers: number[];
         };
-        SubmissionFileCapture: {
-            allowedDirs?: unknown[];
-            deniedDirs?: unknown[];
-            captureTimeoutMs?: number;
-            maxFileBytes?: number;
-            maxTotalBytes?: number;
-            maxFiles?: number;
-        };
-        /** @description Remote MCP servers, each `{ name, url, transport? }`. Names must be unique and every URL must clear the SSRF host deny-list — enforced in packages/contracts/src/session-config.ts. */
-        SubmissionMcpServers: unknown[];
-        /** @description Egress policy. `mode` is required whenever `networking` is supplied — enforced in packages/contracts/src/schemas/submission-environment.ts. */
-        SubmissionNetworking: {
-            /** @enum {string} */
-            mode?: "limited" | "open";
-            allowedHosts?: string[];
-        };
-        /** @description Package request. `name` may carry an ecosystem prefix ("pip:pandas"); an unprefixed name defaults to apt and an unknown prefix is rejected. */
-        SubmissionPackage: {
-            name: string;
-            version?: string;
-        };
-        SubmissionPackages: components["schemas"]["SubmissionPackage"][];
-        SubmissionPlatformInjection: {
-            /** @enum {string} */
-            systemPrompt?: "default" | "off";
-        };
-        /** @description The run brief: one string, or an ordered list of non-empty parts. At least one part must carry non-whitespace text. A single string is normalised to a one-element list. */
-        SubmissionPrompt: string | unknown[];
-        SubmissionResponseFormat: {
-            /** @constant */
-            kind: "text";
-        } | {
-            /** @constant */
-            kind: "json_schema";
-            schema: {
-                [key: string]: unknown;
+        UsageQuery: {
+            categories?: ("storage" | "compute" | "data_transfer")[];
+            timeRange: {
+                gte: string;
+                lt: string;
             };
-            strict?: boolean;
-            name?: string;
-        };
-        /** @description Env-var secret bindings keyed by env name. Each value is exactly one of `{ ref }` (a workspace secret handle matching ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$) or `{ ephemeral: true }` (the value rides in `secrets.envSecrets`). Enforced in packages/contracts/src/schemas/submission-body.ts. */
-        SubmissionSecretEnv: {
-            [key: string]: unknown;
+            groupBy?: ("category" | "region" | "workspace" | "session" | "run" | "operation")[];
+            cursor?: string;
+            limit?: number;
         };
         WorkspaceApiKeyValue: string;
+        WorkspaceCreateRequest: {
+            organizationId: string;
+            name: string;
+            /** @enum {string} */
+            region: "us-east-1" | "us-east-2" | "us-west-2" | "ap-northeast-1" | "eu-west-1";
+        };
+        WorkspaceDeleteRequest: {
+            confirmation: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -2359,7 +2485,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsageQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2386,7 +2516,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2413,7 +2547,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2440,7 +2578,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2467,7 +2609,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2494,7 +2640,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2521,7 +2671,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2548,7 +2702,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricAggregationRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2575,7 +2733,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2602,7 +2764,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2629,7 +2795,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2892,7 +3062,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalResponseRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -2983,7 +3157,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3012,7 +3190,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3041,7 +3223,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3072,7 +3258,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveFileDownloadRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3101,7 +3291,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveFileListRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3130,7 +3324,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveFileStatRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3161,7 +3359,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileDownloadRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3190,7 +3392,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersistedFileListRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3219,7 +3425,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersistedFileStatRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3279,7 +3489,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3308,7 +3522,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3337,7 +3555,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3430,7 +3652,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricAggregationRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3459,7 +3685,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3488,7 +3718,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3517,7 +3751,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3636,7 +3874,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3665,7 +3907,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3694,7 +3940,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3756,7 +4006,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelemetryExportRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3909,7 +4163,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelemetryGapQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3938,7 +4196,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3967,7 +4229,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -3996,7 +4262,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4055,7 +4325,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4084,7 +4358,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4113,7 +4391,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4171,7 +4453,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4198,7 +4484,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4225,7 +4515,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4254,7 +4548,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelemetryExportRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4401,7 +4699,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelemetryGapQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4428,7 +4730,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4542,7 +4848,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4569,7 +4879,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4596,7 +4910,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationListenRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4623,7 +4941,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationQuery"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4650,7 +4972,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationStreamRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4764,7 +5090,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredFileValue"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4880,7 +5210,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredInstructionValue"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -4996,7 +5330,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredMcpServerValue"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5112,7 +5450,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecretSetRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5259,7 +5601,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredSkillValue"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5375,7 +5721,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredToolValue"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5433,7 +5783,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadCreateRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5493,7 +5847,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadCompleteRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5522,7 +5880,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadPartsRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {

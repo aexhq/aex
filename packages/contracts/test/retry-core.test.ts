@@ -8,7 +8,7 @@ import {
   parseRetryAfterMs,
   RATE_LIMIT_HTTP_STATUS,
   RETRYABLE_HTTP_STATUS
-} from "../src/internal.js";
+} from "../src/retry-core.js";
 
 describe("internal retry core", () => {
   it("classifies retryable and rate-limit HTTP statuses", () => {

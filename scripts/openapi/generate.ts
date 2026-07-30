@@ -239,7 +239,7 @@ const PLANES: readonly PlaneSpec[] = [
     title: "aex bootstrap API",
     description:
       "The global account, organization, workspace-placement, key, and billing API. " +
-      "Generated from packages/contracts/src/schemas/** and src/api-routes.ts — do not edit by hand.",
+      "Generated from strict v1 contract schemas and src/api-routes.ts — do not edit by hand.",
     servers: [
       { url: "https://api.aex.dev", description: "bootstrap" }
     ],
@@ -252,7 +252,7 @@ const PLANES: readonly PlaneSpec[] = [
     title: "aex regional workspace API",
     description:
       "The region-pinned workspace and session API. Generated from " +
-      "packages/contracts/src/schemas/** and src/api-routes.ts — do not edit by hand.",
+      "strict v1 contract schemas and src/api-routes.ts — do not edit by hand.",
     servers: [
       { url: "https://us-east-1.api.aex.dev", description: "us-east-1" },
       { url: "https://us-east-2.api.aex.dev", description: "us-east-2" },
