@@ -140,10 +140,10 @@ describe("v1 observation query, iterate, stream, and listen", () => {
     expect(calls[1]!.body).toMatchObject({ cursor: "cur_next" });
   });
 
-  it("parses NDJSON frames without WebSocket/tickets and preserves rotate checkpoints", async () => {
+  it("parses NDJSON frames without WebSocket/tickets and preserves cursor rotation", async () => {
     const frames: ObservationFrame[] = [
       { type: "records", records: [log], cursor: "cur_1" },
-      { type: "checkpoint", cursor: "cur_1" },
+      { type: "cursor", cursor: "cur_1" },
       { type: "rotate", cursor: "cur_1" }
     ];
     const { client, calls } = recordingClient(() =>

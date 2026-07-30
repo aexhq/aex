@@ -315,7 +315,7 @@ export const ObservationFrameSchema = z.discriminatedUnion("type", [
     cursor: z.string().check(z.regex(/^cur_/))
   }),
   z.strictObject({
-    type: z.literal("checkpoint"),
+    type: z.literal("cursor"),
     cursor: z.string().check(z.regex(/^cur_/))
   }),
   z.strictObject({

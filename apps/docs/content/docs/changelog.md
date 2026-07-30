@@ -7,26 +7,27 @@ description: "Recent public SDK, CLI, and docs changes."
 
 This page tracks public developer-facing changes. See the canonical
 [`@aexhq/sdk` changelog](https://github.com/aexhq/aex/blob/main/packages/sdk/CHANGELOG.md)
-for the complete version history.
+for package-by-package history.
 
-## 0.42.0
+## Prelaunch v1 refresh
 
-- Reorganized the SDK around `aex.sessions`, session-owned messages, events,
-  files, and webhooks, plus versioned resources under `aex.workspace`.
-- Added checkpoint-aware session file access and memory-bounded event iterators.
-- Made terminal run events the consistency boundary for session state, usage,
-  checkpoints, and files.
-- Added automatic immutable canary publication and evidence-backed npm
-  promotion.
+- Made session lifecycle actions explicit: create, stop, persist, fork, discard,
+  and delete are separate operations.
+- Replaced runtime selectors with one compute-size choice and a resolved compute
+  description on the session.
+- Made registered files, skills, tools, instructions, and MCP servers
+  name-addressed. Setting the same name replaces its current value.
+- Added persisted and live file APIs. Live reads may explicitly wake retained
+  compute; persisted reads never do.
+- Added logs, spans, metrics, traces, and the unified telemetry query, stream,
+  listen, gap, and export APIs.
+- Added effective workspace-limit reads and explicit account/workspace admission
+  state.
+- Removed customer callback delivery, public recovery images, runtime selection, resource
+  history/copy operations, and compatibility aliases before launch.
 
-## Current docs refresh
+## Documentation
 
-- Added top-level examples, integrations, support, and changelog pages.
-- Added a clearer reference entry point for SDK, CLI, events, and provider/runtime capabilities.
-- Tightened mobile code-panel layout so long commands scroll within the page instead of widening the viewport.
-
-## Recently documented surfaces
-
-- Durable sessions, file capture, events, runtime sizes, and provider/model capabilities.
-- Workspace secrets, credentials, webhooks, retries, limits, and billing guides.
-- CLI parity for start, status, wait, events, tail, inspect, files, download, cancel, delete, auth, models, providers, tools, and runtime sizes.
+- Updated the quickstart, examples, integrations, SDK reference, CLI reference,
+  registered-resource guide, file guide, telemetry guide, limits, and billing
+  pages for the strict v1 surface.

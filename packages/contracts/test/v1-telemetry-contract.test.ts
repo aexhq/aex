@@ -69,7 +69,7 @@ describe("v1 bounded observation protocol", () => {
     })).toBe(false);
     for (const frame of [
       { type: "records", records: [], cursor: "cur_1" },
-      { type: "checkpoint", cursor: "cur_1" },
+      { type: "cursor", cursor: "cur_1" },
       { type: "rotate", cursor: "cur_1" },
       { type: "gap", gapId: newId("telemetryGap"), cursor: "cur_1" }
     ]) {
