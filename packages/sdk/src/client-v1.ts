@@ -1512,7 +1512,7 @@ export class BillingClient {
 
   portalSession(
     organizationId: string,
-    request: PortalSessionRequest = {},
+    request: PortalSessionRequest,
     options: IdempotencyOptions = {}
   ): Promise<HostedBillingSession> {
     return this.#hosted(

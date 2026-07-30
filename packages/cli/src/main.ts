@@ -569,7 +569,7 @@ async function billing(ctx: Context, action: string | undefined, args: readonly 
   if (action === "portal") {
     return ctx.api.billing.portalSession(
       arg(args, 0, "organizationId"),
-      await request(ctx, {}),
+      await request(ctx),
       idempotency(ctx)
     );
   }

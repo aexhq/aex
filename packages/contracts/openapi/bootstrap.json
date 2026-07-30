@@ -3475,6 +3475,9 @@
             "pattern": "^https:\\/\\/[^/\\s]+(?:\\/.*)?$"
           }
         },
+        "required": [
+          "returnUrl"
+        ],
         "additionalProperties": false
       },
       "RegisteredFileDownloadRequest": {
@@ -5626,7 +5629,9 @@
           }
         },
         "required": [
-          "amountUsd"
+          "amountUsd",
+          "successUrl",
+          "cancelUrl"
         ],
         "additionalProperties": false
       },

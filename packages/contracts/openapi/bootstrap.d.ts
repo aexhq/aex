@@ -907,7 +907,7 @@ export interface components {
             path: string;
         };
         PortalSessionRequest: {
-            returnUrl?: string;
+            returnUrl: string;
         };
         RegisteredFileDownloadRequest: {
             range?: {
@@ -1421,8 +1421,8 @@ export interface components {
         };
         TopUpCheckoutRequest: {
             amountUsd: number;
-            successUrl?: string;
-            cancelUrl?: string;
+            successUrl: string;
+            cancelUrl: string;
         };
         Upload: {
             id: string;

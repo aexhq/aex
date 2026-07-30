@@ -230,14 +230,14 @@ export const TopUpCheckoutRequestSchema = z.strictObject({
   amountUsd: z.number().check(
     z.refine((value) => isWholeCentUsd(value) && value > 0)
   ),
-  successUrl: z.optional(httpsUrl),
-  cancelUrl: z.optional(httpsUrl)
+  successUrl: httpsUrl,
+  cancelUrl: httpsUrl
 });
 export type TopUpCheckoutRequest =
   z.infer<typeof TopUpCheckoutRequestSchema>;
 
 export const PortalSessionRequestSchema = z.strictObject({
-  returnUrl: z.optional(httpsUrl)
+  returnUrl: httpsUrl
 });
 export type PortalSessionRequest =
   z.infer<typeof PortalSessionRequestSchema>;

@@ -283,7 +283,11 @@ describe("v1 bootstrap billing and immutable statements", () => {
     const { client, calls } = recordingClient(() =>
       json({ url: "https://billing.example.test", expiresAt: later }));
 
-    await client.billing.topUpCheckout(ORGID, { amountUsd: 25 });
+    await client.billing.topUpCheckout(ORGID, {
+      amountUsd: 25,
+      successUrl: "https://app.example.test/billing/success",
+      cancelUrl: "https://app.example.test/billing/cancel"
+    });
     await client.billing.portalSession(ORGID, { returnUrl: "https://app.example.test" });
 
     expect(calls.map(({ url }) => url.pathname)).toEqual([

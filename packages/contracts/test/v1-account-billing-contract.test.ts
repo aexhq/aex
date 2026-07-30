@@ -10,8 +10,10 @@ import {
   InvitationSchema,
   NewApiKeySchema,
   OrganizationSchema,
+  PortalSessionRequestSchema,
   REGIONAL_API_ROUTE_DESCRIPTORS,
   StatementSchema,
+  TopUpCheckoutRequestSchema,
   UsagePageSchema,
   UsageQuerySchema,
   WorkspaceCreateRequestSchema,
@@ -138,6 +140,19 @@ describe("v1 account, organization, workspace, and key contracts", () => {
 });
 
 describe("v1 billing, statements, and regional usage", () => {
+  it("requires explicit HTTPS return URLs for hosted billing sessions", () => {
+    expect(accepts(TopUpCheckoutRequestSchema, {
+      amountUsd: 20,
+      successUrl: "https://app.example.test/billing/success",
+      cancelUrl: "https://app.example.test/billing/cancel"
+    })).toBe(true);
+    expect(accepts(TopUpCheckoutRequestSchema, { amountUsd: 20 })).toBe(false);
+    expect(accepts(PortalSessionRequestSchema, {
+      returnUrl: "https://app.example.test/billing"
+    })).toBe(true);
+    expect(accepts(PortalSessionRequestSchema, {})).toBe(false);
+  });
+
   it("keeps auto-topup USD field names with exact whole-cent replacement", () => {
     expect(accepts(AutoTopupPolicyRequestSchema, {
       enabled: false,
