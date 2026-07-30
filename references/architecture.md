@@ -129,15 +129,21 @@ one host to allow rather than a fan-out.
 
 ## Composition
 
-Reusable inputs — files, skills, tools, instructions — are published once into a
-workspace as immutable, content-addressed, named versions, and then referenced
-from a submission as exact pinned refs under `assets`. Publishing and using are
-separate operations.
+Reusable inputs — files, skills, tools, instructions, and MCP servers — live in
+overwrite-only workspace registries. Each exact, case-sensitive name has one
+current value and one monotonic revision. A session request names the resources
+it uses; admission resolves those names to exact content evidence so later
+overwrites do not change the admitted session.
 
-**Why.** A submission that carried its inputs inline would make every run's
-behaviour irreproducible and every large input a repeated upload. A pinned ref
-makes a run's exact inputs recoverable after the fact, which is what makes a
-session auditable at all.
+Large byte inputs use disposable upload staging. A registry PUT consumes the
+ready upload and returns only the current resource plus its checksum/size
+descriptor. Upload IDs and inline bytes are never registry output, and old
+registry bytes have no addressable public route.
+
+**Why.** A submission that carried reusable inputs inline would repeat large
+uploads and make workspace policy harder to manage. Resolving a current name at
+admission keeps the caller-facing model small while retaining exact execution
+evidence.
 
 ## The open-core boundary
 
@@ -189,11 +195,10 @@ cannot land without the public artifact changing with it.
 - **One behavioural contract, several hosts.** A runtime is a placement decision.
   Two hosts that disagree about behaviour is a bug in one of them, not a
   documented difference.
-- **One byte-upload path.** Every workspace resource kind uses the same
-  presigned direct upload and finalize into immutable content-addressed assets.
-- **One submission resource shape.** Reusable inputs appear only as exact refs
-  under `assets`. Builtin tools, secrets, and MCP configuration stay separate
-  fields.
+- **One byte-upload path.** Every byte-bearing workspace registry uses the same
+  checksummed direct-upload staging and completion flow.
+- **One submission resource shape.** Reusable inputs appear only as registered
+  names. Builtin tools, secrets, and request policy stay separate fields.
 - **One evidence path.** Every writer commits through the same control decision
   and reads through the same journal and projection helpers. A second way to
   record what happened is a second version of what happened.

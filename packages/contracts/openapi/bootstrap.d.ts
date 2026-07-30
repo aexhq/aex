@@ -384,6 +384,21 @@ export interface components {
             thresholdUsd: number;
             amountUsd: number;
         };
+        BlobDescriptor: {
+            sha256: string;
+            sizeBytes: number;
+        };
+        DownloadGrant: {
+            url: string;
+            headers?: {
+                [key: string]: string;
+            };
+            expiresAt: string;
+            sizeBytes: number;
+            authorizedBytes: number;
+            measurementId: string;
+            sha256: string;
+        };
         FileDownloadRequest: {
             path: string;
             range?: {
@@ -878,7 +893,13 @@ export interface components {
         PortalSessionRequest: {
             returnUrl?: string;
         };
-        RegisteredFileValue: {
+        RegisteredFileDownloadRequest: {
+            range?: {
+                start: number;
+                endExclusive: number;
+            };
+        };
+        RegisteredFileInput: {
             mountPath: string;
             content: {
                 /** @constant */
@@ -898,8 +919,27 @@ export interface components {
             /** @enum {string} */
             mode: "0644" | "0755";
         };
+        RegisteredFileValue: {
+            mountPath: string;
+            content: components["schemas"]["BlobDescriptor"];
+            mediaType: string;
+            /** @enum {string} */
+            mode: "0644" | "0755";
+        };
+        RegisteredInstructionInput: {
+            text: string;
+        };
         RegisteredInstructionValue: {
             text: string;
+        };
+        RegisteredMcpServerInput: {
+            url: string;
+            /** @constant */
+            transport: "streamable_http";
+            headers: {
+                name: string;
+                secretName: string;
+            }[];
         };
         RegisteredMcpServerValue: {
             url: string;
@@ -910,8 +950,157 @@ export interface components {
                 secretName: string;
             }[];
         };
+        RegisteredResource: {
+            /** @constant */
+            kind: "file";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredFileValue"];
+        } | {
+            /** @constant */
+            kind: "skill";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredSkillValue"];
+        } | {
+            /** @constant */
+            kind: "tool";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredToolValue"];
+        } | {
+            /** @constant */
+            kind: "instruction";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredInstructionValue"];
+        } | {
+            /** @constant */
+            kind: "mcp_server";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredMcpServerValue"];
+        };
+        RegisteredResourcePage: {
+            items: ({
+                /** @constant */
+                kind: "file";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "skill";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "tool";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "instruction";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "mcp_server";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            })[];
+            nextCursor?: string;
+        };
+        RegisteredSkillInput: {
+            description: string;
+            /** @constant */
+            bundleFormat: "tar.gz";
+            bundle: {
+                /** @constant */
+                type: "inline";
+                /** @enum {string} */
+                encoding: "utf8" | "base64";
+                data: string;
+                sha256: string;
+            } | {
+                /** @constant */
+                type: "upload";
+                uploadId: string;
+                sha256: string;
+                sizeBytes: number;
+            };
+        };
         RegisteredSkillValue: {
             description: string;
+            /** @constant */
+            bundleFormat: "tar.gz";
+            bundle: components["schemas"]["BlobDescriptor"];
+        };
+        RegisteredToolInput: {
+            description: string;
+            inputSchema: {
+                [key: string]: unknown;
+            };
+            entry: string;
             /** @constant */
             bundleFormat: "tar.gz";
             bundle: {
@@ -937,20 +1126,12 @@ export interface components {
             entry: string;
             /** @constant */
             bundleFormat: "tar.gz";
-            bundle: {
-                /** @constant */
-                type: "inline";
-                /** @enum {string} */
-                encoding: "utf8" | "base64";
-                data: string;
-                sha256: string;
-            } | {
-                /** @constant */
-                type: "upload";
-                uploadId: string;
-                sha256: string;
-                sizeBytes: number;
-            };
+            bundle: components["schemas"]["BlobDescriptor"];
+        };
+        RegistryPutResult: {
+            /** @enum {string} */
+            status: "created" | "replaced" | "unchanged";
+            resource: components["schemas"]["RegisteredResource"];
         };
         Run: {
             id: string;
@@ -1133,10 +1314,22 @@ export interface components {
             successUrl?: string;
             cancelUrl?: string;
         };
+        Upload: {
+            id: string;
+            /** @enum {string} */
+            state: "pending" | "uploading" | "ready" | "aborted";
+            sizeBytes: number;
+            sha256: string;
+            contentType: string;
+            createdAt: string;
+            expiresAt: string;
+        };
         UploadCompleteRequest: {
             parts: {
                 partNumber: number;
                 etag: string;
+                sizeBytes: number;
+                sha256: string;
             }[];
         };
         UploadCreateRequest: {
@@ -1145,7 +1338,21 @@ export interface components {
             contentType: string;
         };
         UploadPartsRequest: {
-            partNumbers: number[];
+            parts: {
+                partNumber: number;
+                sizeBytes: number;
+                sha256: string;
+            }[];
+        };
+        UploadPartsResponse: {
+            parts: {
+                partNumber: number;
+                url: string;
+                headers?: {
+                    [key: string]: string;
+                };
+                expiresAt: string;
+            }[];
         };
         UsageQuery: {
             categories?: ("storage" | "compute" | "data_transfer")[];

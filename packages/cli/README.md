@@ -37,6 +37,7 @@ Downloads mint and consume one short-lived grant:
 aex files persisted download <sessionId> <path> --output <file|->
 aex files live download <sessionId> <path> --output <file|-> \
   --wake retained --consistency coherent
+aex workspace files download <name> --output <file|->
 aex telemetry download <exportId> --output <file|->
 aex billing statements download <statementId> \
   --organization <organizationId> --output <file|->

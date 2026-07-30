@@ -195,7 +195,7 @@ export function isRateLimited(err: unknown): err is AexRateLimitError {
  * rejection (whose undici form is a bare `TypeError: fetch failed` with the
  * useful code hidden on `cause.code`) into a message that names the request
  * and the transport failure, e.g.
- * `POST api.aex.dev/api/assets/presign failed: ECONNREFUSED (connect ECONNREFUSED 127.0.0.1:443)`.
+ * `POST api.aex.dev/api/sessions failed: ECONNREFUSED (connect ECONNREFUSED 127.0.0.1:443)`.
  * The original rejection is preserved on `cause`.
  */
 export class AexNetworkError extends AexError {

@@ -17,21 +17,34 @@ import {
 } from "../../packages/contracts/src/v1-resources.js";
 import {
   ApprovalResponseRequestSchema,
+  BlobDescriptorSchema,
+  DownloadGrantSchema,
   FileDownloadRequestSchema,
   LiveFileDownloadRequestSchema,
   LiveFileListRequestSchema,
   LiveFileStatRequestSchema,
   PersistedFileListRequestSchema,
   PersistedFileStatRequestSchema,
+  RegisteredFileDownloadRequestSchema,
+  RegisteredFileInputSchema,
   RegisteredFileValueSchema,
+  RegisteredInstructionInputSchema,
   RegisteredInstructionValueSchema,
+  RegisteredMcpServerInputSchema,
   RegisteredMcpServerValueSchema,
+  RegisteredResourcePageSchema,
+  RegisteredResourceSchema,
+  RegisteredSkillInputSchema,
   RegisteredSkillValueSchema,
+  RegisteredToolInputSchema,
   RegisteredToolValueSchema,
+  RegistryPutResultSchema,
   SecretSetRequestSchema,
   UploadCompleteRequestSchema,
   UploadCreateRequestSchema,
-  UploadPartsRequestSchema
+  UploadPartsRequestSchema,
+  UploadPartsResponseSchema,
+  UploadSchema
 } from "../../packages/contracts/src/v1-content.js";
 import {
   MetricAggregationRequestSchema,
@@ -84,14 +97,27 @@ for (const [id, schema] of [
   ["LiveFileListRequest", LiveFileListRequestSchema],
   ["LiveFileStatRequest", LiveFileStatRequestSchema],
   ["LiveFileDownloadRequest", LiveFileDownloadRequestSchema],
+  ["RegisteredFileDownloadRequest", RegisteredFileDownloadRequestSchema],
+  ["RegisteredFileInput", RegisteredFileInputSchema],
+  ["RegisteredSkillInput", RegisteredSkillInputSchema],
+  ["RegisteredToolInput", RegisteredToolInputSchema],
+  ["RegisteredInstructionInput", RegisteredInstructionInputSchema],
+  ["RegisteredMcpServerInput", RegisteredMcpServerInputSchema],
+  ["BlobDescriptor", BlobDescriptorSchema],
   ["RegisteredFileValue", RegisteredFileValueSchema],
   ["RegisteredSkillValue", RegisteredSkillValueSchema],
   ["RegisteredToolValue", RegisteredToolValueSchema],
   ["RegisteredInstructionValue", RegisteredInstructionValueSchema],
   ["RegisteredMcpServerValue", RegisteredMcpServerValueSchema],
+  ["RegisteredResource", RegisteredResourceSchema],
+  ["RegisteredResourcePage", RegisteredResourcePageSchema],
+  ["RegistryPutResult", RegistryPutResultSchema],
+  ["DownloadGrant", DownloadGrantSchema],
   ["UploadCreateRequest", UploadCreateRequestSchema],
   ["UploadPartsRequest", UploadPartsRequestSchema],
   ["UploadCompleteRequest", UploadCompleteRequestSchema],
+  ["Upload", UploadSchema],
+  ["UploadPartsResponse", UploadPartsResponseSchema],
   ["SecretSetRequest", SecretSetRequestSchema],
   ["ApprovalResponseRequest", ApprovalResponseRequestSchema],
   ["UsageQuery", UsageQuerySchema],
@@ -137,11 +163,12 @@ export const OPENAPI_REQUEST_BODIES: Readonly<Record<string, string>> = {
   "files.live.list": "LiveFileListRequest",
   "files.live.stat": "LiveFileStatRequest",
   "files.live.download": "LiveFileDownloadRequest",
-  "registry.files.put": "RegisteredFileValue",
-  "registry.skills.put": "RegisteredSkillValue",
-  "registry.tools.put": "RegisteredToolValue",
-  "registry.instructions.put": "RegisteredInstructionValue",
-  "registry.mcpServers.put": "RegisteredMcpServerValue",
+  "registry.files.put": "RegisteredFileInput",
+  "registry.files.download": "RegisteredFileDownloadRequest",
+  "registry.skills.put": "RegisteredSkillInput",
+  "registry.tools.put": "RegisteredToolInput",
+  "registry.instructions.put": "RegisteredInstructionInput",
+  "registry.mcpServers.put": "RegisteredMcpServerInput",
   "uploads.create": "UploadCreateRequest",
   "uploads.parts": "UploadPartsRequest",
   "uploads.complete": "UploadCompleteRequest",
@@ -155,4 +182,22 @@ export const OPENAPI_REQUEST_BODIES: Readonly<Record<string, string>> = {
   "telemetry.exports.create": "TelemetryExportRequest",
   "session.telemetry.exports.create": "TelemetryExportRequest",
   ...observationBodies
+};
+
+const registryResponses = Object.fromEntries(
+  ["files", "skills", "tools", "instructions", "mcpServers"].flatMap(
+    (kind) => [
+      [`registry.${kind}.list`, "RegisteredResourcePage"],
+      [`registry.${kind}.get`, "RegisteredResource"],
+      [`registry.${kind}.put`, "RegistryPutResult"]
+    ]
+  )
+);
+
+export const OPENAPI_RESPONSE_BODIES: Readonly<Record<string, string>> = {
+  ...registryResponses,
+  "registry.files.download": "DownloadGrant",
+  "uploads.create": "Upload",
+  "uploads.parts": "UploadPartsResponse",
+  "uploads.complete": "Upload"
 };

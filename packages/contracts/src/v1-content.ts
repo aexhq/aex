@@ -140,23 +140,59 @@ export const BlobInputSchema = z.discriminatedUnion("type", [
 ]);
 export type BlobInput = z.infer<typeof BlobInputSchema>;
 
-export const RegisteredFileValueSchema = z.strictObject({
+export const BlobDescriptorSchema = z.strictObject({
+  sha256,
+  sizeBytes: nonNegativeInteger
+});
+export type BlobDescriptor = z.infer<typeof BlobDescriptorSchema>;
+
+export const RegisteredFileInputSchema = z.strictObject({
   mountPath: nonEmptyString,
   content: BlobInputSchema,
+  mediaType: nonEmptyString,
+  mode: z.enum(["0644", "0755"])
+});
+export const RegisteredSkillInputSchema = z.strictObject({
+  description: z.string(),
+  bundleFormat: z.literal("tar.gz"),
+  bundle: BlobInputSchema
+});
+export const RegisteredToolInputSchema = z.strictObject({
+  description: z.string(),
+  inputSchema: z.record(z.string(), z.unknown()),
+  entry: nonEmptyString,
+  bundleFormat: z.literal("tar.gz"),
+  bundle: BlobInputSchema
+});
+export const RegisteredInstructionInputSchema = z.strictObject({
+  text: z.string()
+});
+export const RegisteredMcpServerInputSchema = z.strictObject({
+  url: nonEmptyString,
+  transport: z.literal("streamable_http"),
+  headers: z.array(z.strictObject({
+    name: nonEmptyString,
+    secretName: RegisteredNameSchema
+  }))
+});
+
+export const RegisteredFileValueSchema = z.strictObject({
+  mountPath: nonEmptyString,
+  content: BlobDescriptorSchema,
   mediaType: nonEmptyString,
   mode: z.enum(["0644", "0755"])
 });
 export const RegisteredSkillValueSchema = z.strictObject({
   description: z.string(),
   bundleFormat: z.literal("tar.gz"),
-  bundle: BlobInputSchema
+  bundle: BlobDescriptorSchema
 });
 export const RegisteredToolValueSchema = z.strictObject({
   description: z.string(),
   inputSchema: z.record(z.string(), z.unknown()),
   entry: nonEmptyString,
   bundleFormat: z.literal("tar.gz"),
-  bundle: BlobInputSchema
+  bundle: BlobDescriptorSchema
 });
 export const RegisteredInstructionValueSchema = z.strictObject({
   text: z.string()
@@ -170,6 +206,11 @@ export const RegisteredMcpServerValueSchema = z.strictObject({
   }))
 });
 
+export type RegisteredFileInput = z.infer<typeof RegisteredFileInputSchema>;
+export type RegisteredSkillInput = z.infer<typeof RegisteredSkillInputSchema>;
+export type RegisteredToolInput = z.infer<typeof RegisteredToolInputSchema>;
+export type RegisteredInstructionInput = z.infer<typeof RegisteredInstructionInputSchema>;
+export type RegisteredMcpServerInput = z.infer<typeof RegisteredMcpServerInputSchema>;
 export type RegisteredFileValue = z.infer<typeof RegisteredFileValueSchema>;
 export type RegisteredSkillValue = z.infer<typeof RegisteredSkillValueSchema>;
 export type RegisteredToolValue = z.infer<typeof RegisteredToolValueSchema>;
@@ -211,9 +252,33 @@ export const RegisteredResourceSummarySchema = z.discriminatedUnion("kind", [
   registeredSummaryVariant("instruction"),
   registeredSummaryVariant("mcp_server")
 ]);
+export const RegisteredResourcePageSchema =
+  PageSchema(RegisteredResourceSummarySchema);
 export type RegisteredResource = z.infer<typeof RegisteredResourceSchema>;
 export type RegisteredResourceSummary = z.infer<typeof RegisteredResourceSummarySchema>;
+export type RegisteredResourcePage = z.infer<typeof RegisteredResourcePageSchema>;
 export type RegisteredResourceKind = RegisteredResource["kind"];
+export interface RegisteredResourceInputByKind {
+  readonly file: RegisteredFileInput;
+  readonly skill: RegisteredSkillInput;
+  readonly tool: RegisteredToolInput;
+  readonly instruction: RegisteredInstructionInput;
+  readonly mcp_server: RegisteredMcpServerInput;
+}
+export type RegisteredResourceInput<K extends RegisteredResourceKind> =
+  RegisteredResourceInputByKind[K];
+
+export const RegistryPutResultSchema = z.strictObject({
+  status: z.enum(["created", "replaced", "unchanged"]),
+  resource: RegisteredResourceSchema
+});
+export type RegistryPutResult = z.infer<typeof RegistryPutResultSchema>;
+
+export const RegisteredFileDownloadRequestSchema = z.strictObject({
+  range: z.optional(ByteRangeSchema)
+});
+export type RegisteredFileDownloadRequest =
+  z.infer<typeof RegisteredFileDownloadRequestSchema>;
 
 export const UploadCreateRequestSchema = z.strictObject({
   sizeBytes: nonNegativeInteger,
@@ -221,18 +286,24 @@ export const UploadCreateRequestSchema = z.strictObject({
   contentType: nonEmptyString
 });
 export const UploadPartsRequestSchema = z.strictObject({
-  partNumbers: z.array(positiveInteger).check(
+  parts: z.array(z.strictObject({
+    partNumber: positiveInteger,
+    sizeBytes: positiveInteger,
+    sha256
+  })).check(
     z.minLength(1),
-    z.refine((parts) => new Set(parts).size === parts.length)
+    z.refine((parts) => new Set(parts.map(({ partNumber }) => partNumber)).size === parts.length)
   )
 });
 export const UploadCompleteRequestSchema = z.strictObject({
   parts: z.array(z.strictObject({
     partNumber: positiveInteger,
-    etag: nonEmptyString
+    etag: nonEmptyString,
+    sizeBytes: positiveInteger,
+    sha256
   })).check(
     z.minLength(1),
-    z.refine((parts) => new Set(parts.map(({ partNumber }) => partNumber)).size === parts.length)
+    z.refine((parts) => parts.every(({ partNumber }, index) => partNumber === index + 1))
   )
 });
 export const UploadSchema = z.strictObject({

@@ -137,11 +137,12 @@ Children are separate submissions with their own lifecycle and their own
 identity; the parent receives a typed result and, optionally, files. Lineage is
 explicit — a child knows its parent.
 
-### skill / instructions / tool / file
+### skill / instructions / tool / file / MCP server
 
-The four kinds of reusable, version-pinned workspace resource a submission can
-reference under `assets`. Publishing is separate from using: you publish a
-resource once and pin a specific version into any number of sessions.
+The five reusable workspace resource kinds, addressed by exact, case-sensitive
+name. Each name has one overwrite-only current value. A session request names
+the resources it uses, and admission resolves those names to exact content
+evidence for that session.
 
 ## The boundary vocabulary
 

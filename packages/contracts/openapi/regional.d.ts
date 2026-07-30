@@ -1362,7 +1362,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** registry.files.list */
+        /**
+         * registry.files.list
+         * @description Current-view name-keyset pagination. This registry list is not a snapshot: deletes disappear, replacements may be observed, and names inserted at or before the cursor boundary may be missed. The opaque cursor does not bind page limit.
+         */
         get: operations["registry.files.list"];
         put?: never;
         post?: never;
@@ -1372,7 +1375,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/files/{fileId}": {
+    "/api/workspace/files/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1391,6 +1394,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspace/files/{name}/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** registry.files.download */
+        post: operations["registry.files.download"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspace/instructions": {
         parameters: {
             query?: never;
@@ -1398,7 +1418,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** registry.instructions.list */
+        /**
+         * registry.instructions.list
+         * @description Current-view name-keyset pagination. This registry list is not a snapshot: deletes disappear, replacements may be observed, and names inserted at or before the cursor boundary may be missed. The opaque cursor does not bind page limit.
+         */
         get: operations["registry.instructions.list"];
         put?: never;
         post?: never;
@@ -1408,7 +1431,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/instructions/{instructionId}": {
+    "/api/workspace/instructions/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1427,14 +1450,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/mcp\\-servers": {
+    "/api/workspace/mcp-servers": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** registry.mcpServers.list */
+        /**
+         * registry.mcpServers.list
+         * @description Current-view name-keyset pagination. This registry list is not a snapshot: deletes disappear, replacements may be observed, and names inserted at or before the cursor boundary may be missed. The opaque cursor does not bind page limit.
+         */
         get: operations["registry.mcpServers.list"];
         put?: never;
         post?: never;
@@ -1444,7 +1470,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/mcp\\-servers/{mcp\\ServerId}": {
+    "/api/workspace/mcp-servers/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1523,7 +1549,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** registry.skills.list */
+        /**
+         * registry.skills.list
+         * @description Current-view name-keyset pagination. This registry list is not a snapshot: deletes disappear, replacements may be observed, and names inserted at or before the cursor boundary may be missed. The opaque cursor does not bind page limit.
+         */
         get: operations["registry.skills.list"];
         put?: never;
         post?: never;
@@ -1533,7 +1562,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/skills/{skillId}": {
+    "/api/workspace/skills/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1559,7 +1588,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** registry.tools.list */
+        /**
+         * registry.tools.list
+         * @description Current-view name-keyset pagination. This registry list is not a snapshot: deletes disappear, replacements may be observed, and names inserted at or before the cursor boundary may be missed. The opaque cursor does not bind page limit.
+         */
         get: operations["registry.tools.list"];
         put?: never;
         post?: never;
@@ -1569,7 +1601,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/tools/{toolId}": {
+    "/api/workspace/tools/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1685,6 +1717,21 @@ export interface components {
             enabled: boolean;
             thresholdUsd: number;
             amountUsd: number;
+        };
+        BlobDescriptor: {
+            sha256: string;
+            sizeBytes: number;
+        };
+        DownloadGrant: {
+            url: string;
+            headers?: {
+                [key: string]: string;
+            };
+            expiresAt: string;
+            sizeBytes: number;
+            authorizedBytes: number;
+            measurementId: string;
+            sha256: string;
         };
         FileDownloadRequest: {
             path: string;
@@ -2180,7 +2227,13 @@ export interface components {
         PortalSessionRequest: {
             returnUrl?: string;
         };
-        RegisteredFileValue: {
+        RegisteredFileDownloadRequest: {
+            range?: {
+                start: number;
+                endExclusive: number;
+            };
+        };
+        RegisteredFileInput: {
             mountPath: string;
             content: {
                 /** @constant */
@@ -2200,8 +2253,27 @@ export interface components {
             /** @enum {string} */
             mode: "0644" | "0755";
         };
+        RegisteredFileValue: {
+            mountPath: string;
+            content: components["schemas"]["BlobDescriptor"];
+            mediaType: string;
+            /** @enum {string} */
+            mode: "0644" | "0755";
+        };
+        RegisteredInstructionInput: {
+            text: string;
+        };
         RegisteredInstructionValue: {
             text: string;
+        };
+        RegisteredMcpServerInput: {
+            url: string;
+            /** @constant */
+            transport: "streamable_http";
+            headers: {
+                name: string;
+                secretName: string;
+            }[];
         };
         RegisteredMcpServerValue: {
             url: string;
@@ -2212,8 +2284,157 @@ export interface components {
                 secretName: string;
             }[];
         };
+        RegisteredResource: {
+            /** @constant */
+            kind: "file";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredFileValue"];
+        } | {
+            /** @constant */
+            kind: "skill";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredSkillValue"];
+        } | {
+            /** @constant */
+            kind: "tool";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredToolValue"];
+        } | {
+            /** @constant */
+            kind: "instruction";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredInstructionValue"];
+        } | {
+            /** @constant */
+            kind: "mcp_server";
+            name: string;
+            revision: number;
+            /** @constant */
+            state: "current";
+            sha256: string;
+            sizeBytes: number;
+            createdAt: string;
+            updatedAt: string;
+            value: components["schemas"]["RegisteredMcpServerValue"];
+        };
+        RegisteredResourcePage: {
+            items: ({
+                /** @constant */
+                kind: "file";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "skill";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "tool";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "instruction";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            } | {
+                /** @constant */
+                kind: "mcp_server";
+                name: string;
+                revision: number;
+                /** @constant */
+                state: "current";
+                sha256: string;
+                sizeBytes: number;
+                createdAt: string;
+                updatedAt: string;
+            })[];
+            nextCursor?: string;
+        };
+        RegisteredSkillInput: {
+            description: string;
+            /** @constant */
+            bundleFormat: "tar.gz";
+            bundle: {
+                /** @constant */
+                type: "inline";
+                /** @enum {string} */
+                encoding: "utf8" | "base64";
+                data: string;
+                sha256: string;
+            } | {
+                /** @constant */
+                type: "upload";
+                uploadId: string;
+                sha256: string;
+                sizeBytes: number;
+            };
+        };
         RegisteredSkillValue: {
             description: string;
+            /** @constant */
+            bundleFormat: "tar.gz";
+            bundle: components["schemas"]["BlobDescriptor"];
+        };
+        RegisteredToolInput: {
+            description: string;
+            inputSchema: {
+                [key: string]: unknown;
+            };
+            entry: string;
             /** @constant */
             bundleFormat: "tar.gz";
             bundle: {
@@ -2239,20 +2460,12 @@ export interface components {
             entry: string;
             /** @constant */
             bundleFormat: "tar.gz";
-            bundle: {
-                /** @constant */
-                type: "inline";
-                /** @enum {string} */
-                encoding: "utf8" | "base64";
-                data: string;
-                sha256: string;
-            } | {
-                /** @constant */
-                type: "upload";
-                uploadId: string;
-                sha256: string;
-                sizeBytes: number;
-            };
+            bundle: components["schemas"]["BlobDescriptor"];
+        };
+        RegistryPutResult: {
+            /** @enum {string} */
+            status: "created" | "replaced" | "unchanged";
+            resource: components["schemas"]["RegisteredResource"];
         };
         Run: {
             id: string;
@@ -2435,10 +2648,22 @@ export interface components {
             successUrl?: string;
             cancelUrl?: string;
         };
+        Upload: {
+            id: string;
+            /** @enum {string} */
+            state: "pending" | "uploading" | "ready" | "aborted";
+            sizeBytes: number;
+            sha256: string;
+            contentType: string;
+            createdAt: string;
+            expiresAt: string;
+        };
         UploadCompleteRequest: {
             parts: {
                 partNumber: number;
                 etag: string;
+                sizeBytes: number;
+                sha256: string;
             }[];
         };
         UploadCreateRequest: {
@@ -2447,7 +2672,21 @@ export interface components {
             contentType: string;
         };
         UploadPartsRequest: {
-            partNumbers: number[];
+            parts: {
+                partNumber: number;
+                sizeBytes: number;
+                sha256: string;
+            }[];
+        };
+        UploadPartsResponse: {
+            parts: {
+                partNumber: number;
+                url: string;
+                headers?: {
+                    [key: string]: string;
+                };
+                expiresAt: string;
+            }[];
         };
         UsageQuery: {
             categories?: ("storage" | "compute" | "data_transfer")[];
@@ -5037,7 +5276,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResourcePage"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5055,7 +5296,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                fileId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5066,7 +5307,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResource"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5086,15 +5329,46 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                fileId: string;
+                name: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisteredFileValue"];
+                "application/json": components["schemas"]["RegisteredFileInput"];
             };
         };
+        responses: {
+            /** @description Success. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryPutResult"];
+                };
+            };
+            /** @description Error envelope. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    "registry.files.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Success. */
             "2XX": {
@@ -5114,23 +5388,31 @@ export interface operations {
             };
         };
     };
-    "registry.files.delete": {
+    "registry.files.download": {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
-                fileId: string;
+                name: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredFileDownloadRequest"];
+            };
+        };
         responses: {
             /** @description Success. */
             "2XX": {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["DownloadGrant"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5157,7 +5439,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResourcePage"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5175,7 +5459,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                instructionId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5186,7 +5470,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResource"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5206,13 +5492,13 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                instructionId: string;
+                name: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisteredInstructionValue"];
+                "application/json": components["schemas"]["RegisteredInstructionInput"];
             };
         };
         responses: {
@@ -5221,7 +5507,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegistryPutResult"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5239,7 +5527,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                instructionId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5277,7 +5565,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResourcePage"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5295,7 +5585,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                "mcp\\ServerId": string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5306,7 +5596,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResource"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5326,13 +5618,13 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                "mcp\\ServerId": string;
+                name: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisteredMcpServerValue"];
+                "application/json": components["schemas"]["RegisteredMcpServerInput"];
             };
         };
         responses: {
@@ -5341,7 +5633,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegistryPutResult"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5359,7 +5653,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                "mcp\\ServerId": string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5548,7 +5842,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResourcePage"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5566,7 +5862,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                skillId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5577,7 +5873,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResource"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5597,13 +5895,13 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                skillId: string;
+                name: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisteredSkillValue"];
+                "application/json": components["schemas"]["RegisteredSkillInput"];
             };
         };
         responses: {
@@ -5612,7 +5910,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegistryPutResult"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5630,7 +5930,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                skillId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5668,7 +5968,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResourcePage"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5686,7 +5988,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                toolId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5697,7 +5999,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegisteredResource"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5717,13 +6021,13 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                toolId: string;
+                name: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisteredToolValue"];
+                "application/json": components["schemas"]["RegisteredToolInput"];
             };
         };
         responses: {
@@ -5732,7 +6036,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["RegistryPutResult"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5750,7 +6056,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                toolId: string;
+                name: string;
             };
             cookie?: never;
         };
@@ -5794,7 +6100,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Upload"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5858,7 +6166,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Upload"];
+                };
             };
             /** @description Error envelope. */
             default: {
@@ -5891,7 +6201,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["UploadPartsResponse"];
+                };
             };
             /** @description Error envelope. */
             default: {

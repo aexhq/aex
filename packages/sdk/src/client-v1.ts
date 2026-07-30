@@ -56,7 +56,9 @@ import {
   type PersistedFileListRequest,
   type PersistedFileStatRequest,
   type PortalSessionRequest,
+  type RegisteredFileDownloadRequest,
   type RegisteredResource,
+  type RegisteredResourceInput,
   type RegisteredResourceKind,
   type RegisteredResourceSummary,
   type RunStatusV1,
@@ -1541,6 +1543,10 @@ type RegisteredResourceFor<K extends RegisteredResourceKind> =
   Extract<RegisteredResource, { readonly kind: K }>;
 type RegisteredSummaryFor<K extends RegisteredResourceKind> =
   Extract<RegisteredResourceSummary, { readonly kind: K }>;
+export type RegistryPutResultFor<K extends RegisteredResourceKind> = {
+  readonly status: "created" | "replaced" | "unchanged";
+  readonly resource: RegisteredResourceFor<K>;
+};
 
 const REGISTRY_PATHS = {
   file: "files",
@@ -1579,10 +1585,10 @@ export class RegisteredResourceClient<K extends RegisteredResourceKind> {
 
   async set(
     name: string,
-    value: RegisteredResourceFor<K>["value"],
+    value: RegisteredResourceInput<K>,
     options: RevisionMutationOptions = {}
-  ): Promise<RegisteredResourceFor<K>> {
-    const resource = await this.#http.request<RegisteredResourceFor<K>>(
+  ): Promise<RegistryPutResultFor<K>> {
+    const result = await this.#http.request<RegistryPutResultFor<K>>(
       `/api/workspace/${this.#path}/${encodeURIComponent(assertRegisteredName(name))}`,
       {
         method: "PUT",
@@ -1590,7 +1596,10 @@ export class RegisteredResourceClient<K extends RegisteredResourceKind> {
         body: JSON.stringify(value)
       }
     );
-    return this.#check(resource, name);
+    return {
+      ...result,
+      resource: this.#check(result.resource, name)
+    };
   }
 
   async delete(name: string, options: RevisionOptions = {}): Promise<void> {
@@ -1611,6 +1620,30 @@ export class RegisteredResourceClient<K extends RegisteredResourceKind> {
       );
     }
     return resource;
+  }
+}
+
+export class RegisteredFileClient extends RegisteredResourceClient<"file"> {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    super(http, "file");
+    this.#http = http;
+  }
+
+  download(
+    name: string,
+    request: RegisteredFileDownloadRequest = {},
+    options: IdempotencyOptions = {}
+  ): Promise<DownloadGrant> {
+    return this.#http.request<DownloadGrant>(
+      `/api/workspace/files/${encodeURIComponent(assertRegisteredName(name))}/downloads`,
+      {
+        method: "POST",
+        headers: idempotencyHeaders(options),
+        body: JSON.stringify(request)
+      }
+    );
   }
 }
 
@@ -1726,7 +1759,7 @@ export class WorkspaceSecretsClient {
 
 export class WorkspaceClient {
   readonly #http: HttpClient;
-  readonly files: RegisteredResourceClient<"file">;
+  readonly files: RegisteredFileClient;
   readonly skills: RegisteredResourceClient<"skill">;
   readonly tools: RegisteredResourceClient<"tool">;
   readonly instructions: RegisteredResourceClient<"instruction">;
@@ -1736,7 +1769,7 @@ export class WorkspaceClient {
 
   constructor(http: HttpClient) {
     this.#http = http;
-    this.files = new RegisteredResourceClient(http, "file");
+    this.files = new RegisteredFileClient(http);
     this.skills = new RegisteredResourceClient(http, "skill");
     this.tools = new RegisteredResourceClient(http, "tool");
     this.instructions = new RegisteredResourceClient(http, "instruction");

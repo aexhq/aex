@@ -27,6 +27,7 @@ describe("v1 resource grammar", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("sessions create|list|get|stop|persist|fork|delete");
     expect(cap.stdout).toContain("files live|persisted");
+    expect(cap.stdout).toContain("workspace files download <name>");
     expect(cap.stdout).not.toContain("aex start");
     expect(cap.stdout).not.toContain("suspend");
   });
@@ -163,7 +164,10 @@ describe("v1 resource grammar", () => {
         expect(headers.get("idempotency-key")).toBe("overwrite-1");
         expect(call.body).toEqual(value);
         expect(call.url).not.toContain("versions");
-        return json({ kind: "file", name: "notes", value, revision: 8 });
+        return json({
+          status: "replaced",
+          resource: { kind: "file", name: "notes", value, revision: 8 }
+        });
       }
     });
     await executeCli(cap.io);
@@ -275,6 +279,48 @@ describe("durable operations and downloads", () => {
     expect(cap.calls[1]?.body).toEqual({ path: "out/result.txt" });
     expect(new Headers(cap.calls[1]?.init.headers).get("idempotency-key")).toBe("download-1");
     expect(cap.calls[2]?.url).toBe("https://objects.example/grant");
+  });
+
+  test("registered-file download binds the current name and never prints its grant", async () => {
+    const bytes = new TextEncoder().encode("current");
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    const cap = makeHarness({
+      args: [
+        "workspace", "files", "download", "report",
+        "--range", "0:7", "--output", "report.txt",
+        "--idempotency-key", "registered-download-1", ...API
+      ],
+      fetch: (call) => {
+        if (call.url.endsWith("/api/workspace/files/report/downloads")) {
+          return json({
+            url: "https://objects.example/current-report",
+            expiresAt: "2026-07-30T01:00:00.000Z",
+            sizeBytes: bytes.byteLength,
+            authorizedBytes: bytes.byteLength,
+            measurementId: newId("measurement"),
+            sha256: digest
+          });
+        }
+        return new Response(bytes);
+      }
+    });
+
+    await executeCli(cap.io);
+
+    expect(cap.exitCode).toBe(0);
+    expect(cap.stdout).toBe("");
+    expect(cap.stderr).not.toContain("objects.example");
+    expect(cap.writes.get("C:\\cli-test\\report.txt")).toEqual(bytes);
+    expect(cap.calls[0]?.url).toBe(
+      "https://regional.example/api/workspace/files/report/downloads"
+    );
+    expect(cap.calls[0]?.body).toEqual({
+      range: { start: 0, endExclusive: 7 }
+    });
+    expect(new Headers(cap.calls[0]?.init.headers).get("idempotency-key")).toBe(
+      "registered-download-1"
+    );
+    expect(cap.calls[1]?.url).toBe("https://objects.example/current-report");
   });
 
   test("an existing output fails before a download grant is minted", async () => {

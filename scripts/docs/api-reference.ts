@@ -51,6 +51,7 @@ export interface JsonSchemaNode {
 export interface OpenApiOperation {
   readonly operationId?: string;
   readonly summary?: string;
+  readonly description?: string;
   readonly tags?: readonly string[];
   readonly parameters?: readonly {
     readonly name: string;

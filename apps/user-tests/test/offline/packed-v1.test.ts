@@ -41,7 +41,9 @@ describe("packed strict v1 artifacts", () => {
       runStatus: "succeeded",
       persistedBytes: 4,
       liveGeneration: "gen_01kyrrm24kffnsxd9we2qzav00",
+      registryStatus: "replaced",
       registryRevision: 2,
+      registeredFileBytes: 4,
       streamFrames: ["checkpoint"],
       exportId: "exp_01kyrrm24kftatca1xh1j0g5nx",
       accountError: "account_paused",
@@ -164,16 +166,43 @@ const fetch = async (input, init = {}) => {
   }
   if (method === "PUT" && url.pathname === "/api/workspace/instructions/rules") {
     return json({
-      kind: "instruction",
-      name: "rules",
-      revision: 2,
-      state: "current",
-      sha256: HASH,
-      sizeBytes: 8,
-      createdAt: NOW,
-      updatedAt: NOW,
-      value: body
+      status: "replaced",
+      resource: {
+        kind: "instruction",
+        name: "rules",
+        revision: 2,
+        state: "current",
+        sha256: HASH,
+        sizeBytes: 8,
+        createdAt: NOW,
+        updatedAt: NOW,
+        value: body
+      }
     });
+  }
+  if (method === "PUT" && url.pathname === "/api/workspace/files/repository-context") {
+    return json({
+      status: "created",
+      resource: {
+        kind: "file",
+        name: "repository-context",
+        revision: 1,
+        state: "current",
+        sha256: HASH,
+        sizeBytes: 4,
+        createdAt: NOW,
+        updatedAt: NOW,
+        value: {
+          mountPath: "context.txt",
+          content: { sha256: HASH, sizeBytes: 4 },
+          mediaType: "text/plain",
+          mode: "0644"
+        }
+      }
+    });
+  }
+  if (method === "POST" && url.pathname === "/api/workspace/files/repository-context/downloads") {
+    return json(grant, 201);
   }
   if (method === "POST" && url.pathname.endsWith("/files/persisted/downloads")) {
     return json(grant, 201);
@@ -269,8 +298,33 @@ const registered = await aex.workspace.instructions.set(
   { text: "be exact" },
   { ifRevision: 1, idempotencyKey: "overwrite-rules" }
 );
+assert.equal(registered.status, "replaced");
+assert.equal(registered.resource.revision, 2);
 assert.equal(Object.hasOwn(aex.workspace.instructions, "versions"), false);
 assert.equal(Object.hasOwn(aex.workspace.instructions, "history"), false);
+
+const registeredFile = await aex.workspace.files.set(
+  "repository-context",
+  {
+    mountPath: "context.txt",
+    content: {
+      type: "inline",
+      encoding: "utf8",
+      data: "test",
+      sha256: HASH
+    },
+    mediaType: "text/plain",
+    mode: "0644"
+  },
+  { idempotencyKey: "create-repository-context" }
+);
+assert.deepEqual(registeredFile.resource.value.content, {
+  sha256: HASH,
+  sizeBytes: 4
+});
+assert.equal(Object.hasOwn(registeredFile.resource.value.content, "data"), false);
+assert.equal(Object.hasOwn(registeredFile.resource.value.content, "uploadId"), false);
+await aex.workspace.files.download("repository-context");
 
 const persisted = await opened.files.persisted.download({ path: "report.txt" });
 const live = await opened.files.live.download({
@@ -311,7 +365,9 @@ process.stdout.write(JSON.stringify({
   runStatus: run.status,
   persistedBytes: persisted.authorizedBytes,
   liveGeneration: live.workspaceAccess.generationId,
-  registryRevision: registered.revision,
+  registryStatus: registered.status,
+  registryRevision: registered.resource.revision,
+  registeredFileBytes: registeredFile.resource.value.content.sizeBytes,
   streamFrames,
   exportId: exportResult.exportId,
   accountError,

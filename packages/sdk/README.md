@@ -25,8 +25,10 @@ The SDK exposes explicit bootstrap resources (`account`, `organizations`,
 usage). Long-running mutations return durable operation handles.
 
 The SDK exposes only the strict v1 resource model. Registered inputs are
-overwrite-by-name resources; persisted/live file reads and telemetry exports
-remain explicit.
+overwrite-by-name resources whose PUT result reports `created`, `replaced`, or
+`unchanged`. Returned byte-bearing values contain checksum/size descriptors,
+never inline bytes or upload IDs. Persisted/live file reads, current registered
+file downloads, and telemetry exports remain explicit.
 
 The `aex` command is published separately by `@aexhq/cli`.
 

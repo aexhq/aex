@@ -60,7 +60,7 @@ function registryRoutes(
   path: "files" | "skills" | "tools" | "instructions" | "mcp-servers"
 ): readonly AuthenticatedApiRouteDescriptor[] {
   const escaped = path.replace("-", "\\-");
-  return [
+  const routes: AuthenticatedApiRouteDescriptor[] = [
     regional(`registry.${name}.list`, "GET", new RegExp(`^/workspace/${escaped}$`), `/workspace/${path}`, "resources:read"),
     regional(`registry.${name}.get`, "GET", new RegExp(`^/workspace/${escaped}/[^/]+$`), `/workspace/${path}/example`, "resources:read"),
     regional(
@@ -73,6 +73,17 @@ function registryRoutes(
     ),
     regional(`registry.${name}.delete`, "DELETE", new RegExp(`^/workspace/${escaped}/[^/]+$`), `/workspace/${path}/example`, "resources:write")
   ];
+  if (name === "files") {
+    routes.push(regional(
+      "registry.files.download",
+      "POST",
+      /^\/workspace\/files\/[^/]+\/downloads$/,
+      "/workspace/files/example/downloads",
+      "resources:read",
+      "idempotency-key"
+    ));
+  }
+  return routes;
 }
 
 function observationRoutes(

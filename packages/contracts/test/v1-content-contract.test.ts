@@ -2,14 +2,18 @@ import { describe, expect, it } from "bun:test";
 import {
   ApprovalResponseRequestSchema,
   ApprovalSchema,
+  BlobDescriptorSchema,
   BlobInputSchema,
   DownloadGrantSchema,
   FileDownloadRequestSchema,
   FileEntrySchema,
   LiveFileDownloadRequestSchema,
   LiveFileListRequestSchema,
+  RegisteredFileDownloadRequestSchema,
+  RegisteredFileInputSchema,
   RegisteredResourceSchema,
   RegisteredResourceSummarySchema,
+  RegistryPutResultSchema,
   REGIONAL_API_ROUTE_DESCRIPTORS,
   SecretMetadataSchema,
   SecretRevocationSchema,
@@ -89,10 +93,8 @@ describe("v1 overwrite-only registries and uploads", () => {
       value: {
         mountPath: "bin/bootstrap.sh",
         content: {
-          type: "inline",
-          encoding: "utf8",
-          data: "echo ready",
-          sha256: hash
+          sha256: hash,
+          sizeBytes: 12
         },
         mediaType: "text/x-shellscript",
         mode: "0755"
@@ -110,6 +112,34 @@ describe("v1 overwrite-only registries and uploads", () => {
       uploadId: newId("upload"),
       sha256: hash,
       sizeBytes: 12
+    })).toBe(true);
+    expect(accepts(BlobDescriptorSchema, {
+      sha256: hash,
+      sizeBytes: 12
+    })).toBe(true);
+    expect(accepts(BlobDescriptorSchema, {
+      type: "upload",
+      uploadId: newId("upload"),
+      sha256: hash,
+      sizeBytes: 12
+    })).toBe(false);
+    expect(accepts(RegisteredFileInputSchema, {
+      mountPath: "bin/bootstrap.sh",
+      content: {
+        type: "inline",
+        encoding: "utf8",
+        data: "echo ready",
+        sha256: hash
+      },
+      mediaType: "text/x-shellscript",
+      mode: "0755"
+    })).toBe(true);
+    for (const status of ["created", "replaced", "unchanged"]) {
+      expect(accepts(RegistryPutResultSchema, { status, resource: file })).toBe(true);
+    }
+    expect(accepts(RegistryPutResultSchema, file)).toBe(false);
+    expect(accepts(RegisteredFileDownloadRequestSchema, {
+      range: { start: 0, endExclusive: 12 }
     })).toBe(true);
     expect(accepts(RegisteredResourceSchema, {
       ...summary,
@@ -133,11 +163,34 @@ describe("v1 overwrite-only registries and uploads", () => {
       sha256: hash,
       contentType: "application/gzip"
     })).toBe(true);
-    expect(accepts(UploadPartsRequestSchema, { partNumbers: [1, 2] })).toBe(true);
-    expect(accepts(UploadPartsRequestSchema, { partNumbers: [1, 1] })).toBe(false);
-    expect(accepts(UploadCompleteRequestSchema, {
-      parts: [{ partNumber: 1, etag: "\"etag\"" }]
+    expect(accepts(UploadPartsRequestSchema, {
+      parts: [
+        { partNumber: 1, sizeBytes: 6, sha256: hash },
+        { partNumber: 2, sizeBytes: 6, sha256: hash }
+      ]
     })).toBe(true);
+    expect(accepts(UploadPartsRequestSchema, {
+      parts: [
+        { partNumber: 1, sizeBytes: 6, sha256: hash },
+        { partNumber: 1, sizeBytes: 6, sha256: hash }
+      ]
+    })).toBe(false);
+    expect(accepts(UploadCompleteRequestSchema, {
+      parts: [{
+        partNumber: 1,
+        etag: "\"etag\"",
+        sizeBytes: 12,
+        sha256: hash
+      }]
+    })).toBe(true);
+    expect(accepts(UploadCompleteRequestSchema, {
+      parts: [{
+        partNumber: 2,
+        etag: "\"etag\"",
+        sizeBytes: 12,
+        sha256: hash
+      }]
+    })).toBe(false);
     expect(accepts(UploadSchema, {
       id: newId("upload"),
       state: "ready",
@@ -204,6 +257,7 @@ describe("v1 content route authority", () => {
       "registry.files.get",
       "registry.files.put",
       "registry.files.delete",
+      "registry.files.download",
       "uploads.create",
       "uploads.parts",
       "uploads.complete",
@@ -232,6 +286,7 @@ describe("v1 content route authority", () => {
       ["registry.files.get", "GET", "resources:read", "none"],
       ["registry.files.put", "PUT", "resources:write", "idempotency-key"],
       ["registry.files.delete", "DELETE", "resources:write", "none"],
+      ["registry.files.download", "POST", "resources:read", "idempotency-key"],
       ["uploads.create", "POST", "resources:write", "idempotency-key"],
       ["uploads.parts", "POST", "resources:write", "none"],
       ["uploads.complete", "POST", "resources:write", "idempotency-key"],

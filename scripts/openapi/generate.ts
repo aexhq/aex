@@ -32,7 +32,11 @@ import {
   type AuthenticatedApiRouteDescriptor
 } from "../../packages/contracts/src/api-routes.js";
 import { idPatternSource } from "../../packages/contracts/src/ids.js";
-import { OPENAPI_SCHEMA_REGISTRY, OPENAPI_REQUEST_BODIES } from "./registry.js";
+import {
+  OPENAPI_REQUEST_BODIES,
+  OPENAPI_RESPONSE_BODIES,
+  OPENAPI_SCHEMA_REGISTRY
+} from "./registry.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const outputDir = resolve(repoRoot, "packages/contracts/openapi");
@@ -81,6 +85,7 @@ export function toPathTemplate(pattern: RegExp): {
     .replace(/^\^/, "")
     .replace(/\$$/, "")
     .replace(/\[\^\\?\/\]\+/g, VARIABLE)
+    .replace(/\\-/g, "-")
     .replace(/\\\//g, "/");
   const parameters: string[] = [];
   const segments = source.split("/").filter((segment) => segment.length > 0);
@@ -99,6 +104,9 @@ function parameterName(precedingSegment: string | undefined, position: number): 
   if (precedingSegment === undefined || precedingSegment.includes("__PARAM__")) {
     return `param${position + 1}`;
   }
+  if (["files", "skills", "tools", "instructions", "mcp-servers"].includes(precedingSegment)) {
+    return "name";
+  }
   const singular = precedingSegment
     .replace(/ies$/, "y")
     .replace(/s$/, "")
@@ -112,6 +120,7 @@ function operationFor(
   parameters: readonly string[]
 ) {
   const requestBody = OPENAPI_REQUEST_BODIES[descriptor.name];
+  const responseBody = OPENAPI_RESPONSE_BODIES[descriptor.name];
   const idempotencyParameter =
     descriptor.idempotency === "operation-id"
       ? {
@@ -140,6 +149,14 @@ function operationFor(
   return {
     operationId: descriptor.name,
     summary: descriptor.name,
+    ...(descriptor.name.startsWith("registry.") && descriptor.name.endsWith(".list")
+      ? {
+          description:
+            "Current-view name-keyset pagination. This registry list is not a snapshot: " +
+            "deletes disappear, replacements may be observed, and names inserted at or before " +
+            "the cursor boundary may be missed. The opaque cursor does not bind page limit."
+        }
+      : {}),
     tags: [descriptor.name.split(".")[0] ?? "api"],
     ...(allParameters.length > 0 ? { parameters: allParameters } : {}),
     ...(requestBody
@@ -159,7 +176,18 @@ function operationFor(
     // declaration itself.
     security: [{ [plane.securityScheme]: descriptor.requiredScope ? [descriptor.requiredScope] : [] }],
     responses: {
-      "2XX": { description: "Success." },
+      "2XX": {
+        description: "Success.",
+        ...(responseBody
+          ? {
+              content: {
+                "application/json": {
+                  schema: { $ref: `#/components/schemas/${responseBody}` }
+                }
+              }
+            }
+          : {})
+      },
       default: {
         description: "Error envelope.",
         content: {

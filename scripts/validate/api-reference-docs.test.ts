@@ -34,6 +34,35 @@ describe("generated HTTP API reference page", () => {
     expect(operationIds(document).length).toBeGreaterThan(0);
   });
 
+  it("publishes the strict-v1 registered-content wire contract", () => {
+    const files = document.paths["/api/workspace/files/{name}"];
+    const download = document.paths["/api/workspace/files/{name}/downloads"];
+    const list = document.paths["/api/workspace/files"]?.get;
+    const schemas = document.components?.schemas;
+
+    expect(files?.put?.requestBody?.content?.["application/json"]?.schema?.$ref)
+      .toBe("#/components/schemas/RegisteredFileInput");
+    expect(files?.put?.responses?.["2XX"]?.content?.["application/json"]?.schema?.$ref)
+      .toBe("#/components/schemas/RegistryPutResult");
+    expect(download?.post?.operationId).toBe("registry.files.download");
+    expect(download?.post?.responses?.["2XX"]?.content?.["application/json"]?.schema?.$ref)
+      .toBe("#/components/schemas/DownloadGrant");
+    expect(list?.description).toContain("Current-view name-keyset pagination");
+    expect(list?.description).toContain("not a snapshot");
+    expect(schemas?.BlobDescriptor?.required).toEqual(["sha256", "sizeBytes"]);
+    expect(schemas?.RegisteredFileValue?.properties?.content?.$ref)
+      .toBe("#/components/schemas/BlobDescriptor");
+    expect(schemas?.RegistryPutResult?.properties?.status?.enum)
+      .toEqual(["created", "replaced", "unchanged"]);
+    expect(schemas?.UploadPartsRequest?.properties?.parts?.items?.required)
+      .toEqual(["partNumber", "sizeBytes", "sha256"]);
+    expect(schemas?.UploadCompleteRequest?.properties?.parts?.items?.required)
+      .toEqual(["partNumber", "etag", "sizeBytes", "sha256"]);
+    expect(Object.keys(document.paths).some(
+      (path) => /\/(?:versions|copy|history)(?:\/|$)/.test(path)
+    )).toBe(false);
+  });
+
   it("renders the same bytes for the same document", () => {
     expect(renderApiReferenceMarkdown(document)).toBe(renderApiReferenceMarkdown(document));
   });

@@ -320,6 +320,11 @@ interface RegistryLike {
   get(name: string): Promise<unknown>;
   set(name: string, value: never, options?: { idempotencyKey?: string; ifRevision?: number }): Promise<unknown>;
   delete(name: string, options?: { ifRevision?: number }): Promise<void>;
+  download?(
+    name: string,
+    request?: { range?: { start: number; endExclusive: number } },
+    options?: { idempotencyKey?: string }
+  ): Promise<DownloadGrant>;
 }
 
 async function registered(ctx: Context, client: RegistryLike, args: readonly string[]) {
@@ -334,7 +339,48 @@ async function registered(ctx: Context, client: RegistryLike, args: readonly str
     await client.delete(name, revision(ctx));
     return { deleted: true };
   }
-  throw new UsageError("registered resources support list|get|set|delete");
+  if (action === "download") {
+    if (client.download === undefined) {
+      throw new UsageError("only registered files support download");
+    }
+    await preflightDownload(ctx);
+    let selectedRange = rangeRequest(ctx);
+    if (has(ctx.parsed, "resume")) {
+      const output = requiredFlag(ctx, "output");
+      if (output === "-") throw new UsageError("--resume requires file output");
+      const part = `${resolve(ctx.io.cwd(), output)}.part`;
+      if (!await exists(ctx, part)) {
+        throw new UsageError("--resume requires an existing .part file");
+      }
+      const partialBytes = (await ctx.io.readFileBytes!(part)).byteLength;
+      const start = (selectedRange.range?.start ?? 0) + partialBytes;
+      const endExclusive = selectedRange.range?.endExclusive
+        ?? registeredFileSize(await client.get(name));
+      if (start >= endExclusive) {
+        throw new UsageError("partial file already covers the selected range");
+      }
+      selectedRange = { range: { start, endExclusive } };
+    }
+    await consumeDownload(
+      ctx,
+      await client.download(name, selectedRange, idempotency(ctx)),
+      true
+    );
+    return undefined;
+  }
+  throw new UsageError("registered resources support list|get|set|delete; files also support download");
+}
+
+function registeredFileSize(resource: unknown): number {
+  const size = (
+    resource as {
+      readonly value?: { readonly content?: { readonly sizeBytes?: unknown } };
+    }
+  ).value?.content?.sizeBytes;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) {
+    throw new Error("registered file response has no valid content size");
+  }
+  return size;
 }
 
 async function secrets(ctx: Context, args: readonly string[]) {
@@ -885,6 +931,7 @@ Usage:
   aex runs list|get <sessionId> [runId]
   aex operations list|get|wait|cancel
   aex workspace get|discard|files|skills|tools|instructions|mcp-servers|secrets|uploads
+  aex workspace files download <name> --output <file|->
   aex files live|persisted list|stat|download
   aex approvals list|get|respond
   aex events|logs|spans|metrics|traces query|stream|listen [--session ID]

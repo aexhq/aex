@@ -45,9 +45,15 @@ describe("canonical strict-v1 package documentation", () => {
 
     expect(resources).toContain("aex.workspace.instructions.set");
     expect(resources).toContain("overwrite");
+    expect(resources).toContain('"created" | "replaced" | "unchanged"');
+    expect(resources).toMatch(/current-view name\s+keyset/);
+    expect(resources).toContain("sizeBytes");
+    expect(resources).toContain("partNumber");
     expect(resources).not.toContain("versions");
     expect(files).toContain("session.files.persisted.download");
     expect(files).toContain("session.files.live.download");
+    expect(files).toContain("aex.workspace.files.download");
+    expect(files).toContain("/api/workspace/files/{name}/downloads");
     expect(files).toContain("short-lived grant");
     expect(telemetry).toContain("session.telemetry.query");
     expect(telemetry).toContain("session.telemetry.stream");

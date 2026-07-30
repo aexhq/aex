@@ -207,16 +207,21 @@ describe("v1 workspace registries, uploads, and secrets", () => {
         const { value: _value, ...summary } = resource;
         return json({ items: [summary] });
       }
+      if (call.method === "PUT") {
+        return json({ status: "unchanged", resource });
+      }
       return json(resource);
     });
 
     expect((await client.workspace.instructions.list()).items).toHaveLength(1);
     await client.workspace.instructions.get("review");
-    await client.workspace.instructions.set(
+    const put = await client.workspace.instructions.set(
       "review",
       { text: "Review carefully." },
       { ifRevision: 2 }
     );
+    expect(put.status).toBe("unchanged");
+    expect(put.resource.revision).toBe(3);
     await client.workspace.instructions.delete("review");
 
     expect(calls.map(({ method, url }) => `${method} ${url.pathname}`)).toEqual([
@@ -239,6 +244,63 @@ describe("v1 workspace registries, uploads, and secrets", () => {
         expect((registry as unknown as Record<string, unknown>)[removed]).toBeUndefined();
       }
     }
+  });
+
+  it("returns descriptor-only file values and downloads the exact current name", async () => {
+    const input = {
+      mountPath: "reports/current.txt",
+      content: {
+        type: "inline",
+        encoding: "utf8",
+        data: "hello",
+        sha256: hash
+      },
+      mediaType: "text/plain",
+      mode: "0644"
+    } as const;
+    const output = {
+      ...input,
+      content: { sha256: hash, sizeBytes: 5 }
+    };
+    const resource = {
+      kind: "file",
+      name: "current-report",
+      revision: 1,
+      state: "current",
+      sha256: hash,
+      sizeBytes: 5,
+      value: output,
+      createdAt: at,
+      updatedAt: at
+    } as const;
+    const { client, calls } = clientWith((call) => {
+      if (call.method === "PUT") {
+        return json({ status: "created", resource });
+      }
+      if (call.url.pathname.endsWith("/downloads")) return json(grant);
+      return json(resource);
+    });
+
+    const put = await client.workspace.files.set("current-report", input);
+    const downloaded = await client.workspace.files.download(
+      "current-report",
+      { range: { start: 0, endExclusive: 5 } },
+      { idempotencyKey: "download-current-report" }
+    );
+
+    expect(put.resource.value.content).toEqual({ sha256: hash, sizeBytes: 5 });
+    expect(downloaded).toEqual(grant);
+    expect(calls.map(({ method, url }) => `${method} ${url.pathname}`)).toEqual([
+      "PUT /api/workspace/files/current-report",
+      "POST /api/workspace/files/current-report/downloads"
+    ]);
+    expect(calls[0]!.body).toEqual(input);
+    expect(calls[1]!.body).toEqual({
+      range: { start: 0, endExclusive: 5 }
+    });
+    expect(calls[1]!.headers.get("idempotency-key")).toBe(
+      "download-current-report"
+    );
   });
 
   it("stages uploads through create/parts/completion/abort only", async () => {
@@ -273,9 +335,16 @@ describe("v1 workspace registries, uploads, and secrets", () => {
       sha256: hash,
       contentType: "application/gzip"
     });
-    await client.workspace.uploads.parts(UID, { partNumbers: [1] });
+    await client.workspace.uploads.parts(UID, {
+      parts: [{ partNumber: 1, sizeBytes: 12, sha256: hash }]
+    });
     await client.workspace.uploads.complete(UID, {
-      parts: [{ partNumber: 1, etag: "\"etag\"" }]
+      parts: [{
+        partNumber: 1,
+        etag: "\"etag\"",
+        sizeBytes: 12,
+        sha256: hash
+      }]
     });
     await client.workspace.uploads.abort(UID);
 
@@ -288,6 +357,17 @@ describe("v1 workspace registries, uploads, and secrets", () => {
     expect(calls[0]!.headers.get("idempotency-key")).toBeTruthy();
     expect(calls[1]!.headers.get("idempotency-key")).toBeNull();
     expect(calls[2]!.headers.get("idempotency-key")).toBeTruthy();
+    expect(calls[1]!.body).toEqual({
+      parts: [{ partNumber: 1, sizeBytes: 12, sha256: hash }]
+    });
+    expect(calls[2]!.body).toEqual({
+      parts: [{
+        partNumber: 1,
+        etag: "\"etag\"",
+        sizeBytes: 12,
+        sha256: hash
+      }]
+    });
   });
 
   it("keeps secret reads metadata-only and exposes explicit revocation", async () => {

@@ -35,5 +35,21 @@ const liveGrant = await session.files.live.download({
 });
 ```
 
+Registered workspace files have a separate current-name download:
+
+```ts
+const currentGrant = await aex.workspace.files.download(
+  "repository-context",
+  { range: { start: 0, endExclusive: 4096 } },
+  { idempotencyKey: "download-repository-context" }
+);
+```
+
+That call maps to
+`POST /api/workspace/files/{name}/downloads`. The grant is bound to the exact
+current name, revision, content SHA-256, and requested range at admission. A
+later overwrite cannot retarget an already-issued grant, and old bytes have no
+addressable read route.
+
 The live response includes `workspaceAccess`, which identifies the generation
 that answered the request. Persisted reads never wake a workspace.
