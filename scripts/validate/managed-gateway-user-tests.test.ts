@@ -34,18 +34,17 @@ describe("managed-gateway user-test policy", () => {
     }
   });
 
-  it("keeps the on-demand Anthropic submission on the managed surface", () => {
-    const path = join(liveRoot, "providers", "live-sdk-anthropic-managed.test.ts");
+  it("keeps the declared dev smoke on the managed model surface", () => {
+    const path = join(liveRoot, "v1-session.user.test.ts");
     const source = readFileSync(path, "utf8");
     expect(source).toContain('"anthropic/claude-haiku-4-5"');
     expect(source).not.toContain('provider: "anthropic"');
     expect(source).not.toMatch(/\bapiKeys\s*:/);
   });
 
-  it("keeps the installed CLI live path free of removed provider flags", () => {
-    // edge-cli.user.test.ts absorbed live-cli-installed.test.ts on 2026-07-27 and
-    // is the CLI entry point for the runtime-spotcheck tier.
-    const source = readFileSync(join(liveRoot, "edge-cli.user.test.ts"), "utf8");
+  it("keeps the clean-installed CLI coverage free of removed provider flags", () => {
+    const source = readFileSync(join(userTestsRoot, "test", "offline", "packed-v1.test.ts"), "utf8");
+    expect(source).toContain('join(install.cliDir, "dist", "cli.mjs")');
     expect(source).not.toMatch(/--provider\b|--[a-z0-9-]+-api-key\b/);
   });
 });

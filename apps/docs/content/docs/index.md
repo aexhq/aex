@@ -4,52 +4,43 @@
 # Edit the source and run `bun run docs:generate`. A hand edit here is
 # reverted by the next `bun run lint`, which regenerates via `prelint`.
 title: "Overview"
-description: "aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI."
+description: "Explicit durable agent sessions through the strict aex v1 API."
 ---
 
 # aex
 
-aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
+Explicit durable agent sessions through the strict aex v1 API.
 
-Open durable agent sessions, send turns, stream events, capture files, and compose agents with skills, files, MCP, secrets, networking controls, and subagents across the managed runtime.
+Create sessions, admit messages and runs, manage overwrite-by-name workspace resources, read persisted or live files through grants, and query or export telemetry.
 
 ## Feature areas
 
-- **Agent runtime.** Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
-- **Durable infrastructure.** Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
-- **Agent composition.** Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls.
-- **Subagents.** Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
-- **Managed model access.** Name any model by its Vercel AI Gateway `creator/model` slug — the platform's managed key routes it. No provider selection, no provider API keys.
-- **Typed control surface.** Strongly typed SDK inputs, CLI parity, workspace secrets, assistant text modes, and file capture policy.
+- **Sessions and runs.** Explicit session creation, message admission, durable run polling, and operation-backed lifecycle changes.
+- **Registered resources and files.** Overwrite-by-name inputs plus distinct persisted and live file reads with short-lived download grants.
+- **Telemetry.** Query, stream, aggregate, inspect gaps, and create durable telemetry exports.
+- **Account and billing.** Bootstrap resources for accounts, organizations, workspaces, API keys, balances, usage, and statements.
 
 ## First run
 
 ### TypeScript
 
 ```ts
-import { Aex, Sizes } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-
+const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
 const session = await aex.sessions.create({
-  model: "anthropic/claude-haiku-4-5",
-  system: "You are a concise engineering assistant.",
-  runtime: { size: Sizes.CPU_0_25_1GB },
-  overrides: { idleTtl: "3m" }
+  model: "anthropic/claude-haiku-4-5"
 });
-
-const result = await session.messages.send("Write a short report and save it as a file.").finished();
-console.log(result.status, result.text);
+const { run } = await session.messages.send("Summarize this repository.");
+const result = await run.result();
+console.log(result.id, result.status);
 ```
 
 ### CLI
 
 ```bash
-aex start \
-  --api-key "$AEX_API_KEY" \
-  --model anthropic/claude-haiku-4-5 \
-  --prompt "Write a short report and save it as a file." \
-  --follow
+bun add --global @aexhq/cli
+aex sessions create --request @session.json --api-key "$AEX_WORKSPACE_API_KEY"
 ```
 
 ## Next
@@ -57,4 +48,3 @@ aex start \
 - [Quickstart](/docs/guides/quickstart/)
 - [Features](/docs/features/)
 - [Composition](/docs/concepts/composition/)
-- [Provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)

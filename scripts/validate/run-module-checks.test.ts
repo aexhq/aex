@@ -24,8 +24,11 @@ describe("module lanes are declared by the module, not assumed by the runner", (
     expect(() => planModuleLanes(repoRoot, "ghost")).toThrow(/unknown public module/);
   });
 
-  it("prebuilds workspace dependencies in dependency order", () => {
-    expect(dependencyBuildPlan(repoRoot, "user-tests")).toEqual([{ id: "contracts", name: "@aexhq/contracts" }]);
+  it("prebuilds only declared workspace dependencies in dependency order", () => {
+    expect(dependencyBuildPlan(repoRoot, "user-tests")).toEqual([]);
+    expect(dependencyBuildPlan(repoRoot, "sdk")).toEqual([
+      { id: "contracts", name: "@aexhq/contracts" }
+    ]);
   });
 });
 
@@ -53,14 +56,14 @@ describe("a failing lane does not hide the lanes after it", () => {
     expect(outcome.results.every((entry) => entry.status === 0)).toBe(true);
   });
 
-  it("materializes contracts before user-test typechecking in a fresh lane", () => {
+  it("keeps the clean-install harness independent of workspace product imports", () => {
     const attempted: string[] = [];
     const outcome = runModuleLanes(repoRoot, "user-tests", (_root, name, lane) => {
       attempted.push(`${name}:${lane}`);
       return 0;
     });
-    expect(attempted).toEqual(["@aexhq/contracts:build", "@aexhq/user-tests:typecheck", "@aexhq/user-tests:lint"]);
-    expect(outcome.prerequisites).toEqual([{ id: "contracts", name: "@aexhq/contracts", status: 0 }]);
+    expect(attempted).toEqual(["@aexhq/user-tests:typecheck", "@aexhq/user-tests:lint"]);
+    expect(outcome.prerequisites).toEqual([]);
     expect(outcome.ok).toBe(true);
   });
 });

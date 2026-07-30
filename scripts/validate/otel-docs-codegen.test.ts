@@ -6,18 +6,17 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const canonicalPath = resolve(repoRoot, "packages/sdk/docs/telemetry.md");
 const generatorPath = resolve(repoRoot, "scripts/docs/generate-all.mjs");
 
-describe("external telemetry documentation ownership", () => {
-  it("keeps telemetry prose in the canonical SDK docs", () => {
+describe("strict-v1 telemetry documentation ownership", () => {
+  it("keeps telemetry prose and current SDK examples in the canonical SDK docs", () => {
     expect(existsSync(canonicalPath), "packages/sdk/docs/telemetry.md must be the prose source").toBe(true);
     if (!existsSync(canonicalPath)) return;
     const docs = readFileSync(canonicalPath, "utf8");
-    expect(docs).toMatch(/session\.otel\.traces\(\)/);
-    expect(docs).toMatch(/session\.otel\.logs\(\)/);
-    expect(docs).toMatch(/aex otel <session-id>/);
-    expect(docs).toMatch(/OTLP\/HTTP JSON/i);
-    expect(docs).toMatch(/gen_ai.*pre-1\.0/is);
-    expect(docs).toMatch(/journal.*source of truth/is);
-    expect(docs).toMatch(/Jaeger|collector/i);
+    expect(docs).toMatch(/session\.telemetry\.query\(/);
+    expect(docs).toMatch(/session\.telemetry\.stream\(/);
+    expect(docs).toMatch(/session\.telemetry\.export\(/);
+    expect(docs).toMatch(/session\.telemetry\.exports\.download\(/);
+    expect(docs).toMatch(/aex\.telemetry\.otlp\.(?:logs|traces|metrics)\(/);
+    expect(docs).not.toMatch(/session\.otel\b|aex otel\b/);
   });
 
   it("routes telemetry through the docs generator instead of a hand-maintained site copy", () => {

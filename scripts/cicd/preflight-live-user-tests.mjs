@@ -1,52 +1,47 @@
 #!/usr/bin/env bun
-import { setTimeout as sleep } from "node:timers/promises";
 import { appendFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { parseRuntimeCapabilities } from "./runtime-capabilities.mjs";
 
 const REQUIRED_ENV = ["AEX_API_URL", "AEX_API_KEY"];
 const DEFAULT_ATTEMPTS = 4;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 8_000;
-const DEFAULT_MIN_MAX_CONCURRENT_SESSIONS = 1;
-const DEFAULT_REQUIRED_SCOPES = ["sessions:read", "sessions:write", "files:read"];
-const REQUIRED_PARITY_RUNTIME_KINDS = ["container", "spot_container", "lambda"];
-const REQUIRED_PARITY_RUNTIME_KIND_SET = new Set(REQUIRED_PARITY_RUNTIME_KINDS);
 
 class PreflightFatalError extends Error {}
 
 export function retryDelayMs(attempt, options = {}) {
-  const baseDelayMs = positiveInt(options.baseDelayMs, DEFAULT_BASE_DELAY_MS);
-  const maxDelayMs = positiveInt(options.maxDelayMs, DEFAULT_MAX_DELAY_MS);
-  return Math.min(maxDelayMs, baseDelayMs * attempt);
+  const base = positiveInt(options.baseDelayMs, DEFAULT_BASE_DELAY_MS);
+  const maximum = positiveInt(options.maxDelayMs, DEFAULT_MAX_DELAY_MS);
+  return Math.min(maximum, base * attempt);
 }
 
 export function retryAfterDelayMs(value, attempt, options = {}) {
-  const maxDelayMs = positiveInt(options.maxDelayMs, DEFAULT_MAX_DELAY_MS);
+  const maximum = positiveInt(options.maxDelayMs, DEFAULT_MAX_DELAY_MS);
   const seconds = Number.parseInt(String(value ?? "").trim(), 10);
-  if (!Number.isInteger(seconds) || seconds < 1) return retryDelayMs(attempt, options);
-  return Math.min(maxDelayMs, seconds * 1000);
+  return Number.isInteger(seconds) && seconds >= 1
+    ? Math.min(maximum, seconds * 1_000)
+    : retryDelayMs(attempt, options);
 }
 
-export function isRetryableWhoamiStatus(status) {
+export function isRetryablePreflightStatus(status) {
   return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
 }
 
 export function fetchFailureCode(error) {
   for (const candidate of causeCandidates(error)) {
-    if (typeof candidate.code === "string" && candidate.code.trim() !== "") return candidate.code;
+    if (typeof candidate.code === "string" && candidate.code.trim()) return candidate.code;
     if (typeof candidate.name === "string" && /AbortError|TimeoutError/.test(candidate.name)) return candidate.name;
-    const message = typeof candidate.message === "string" ? candidate.message : "";
-    const codeMatch = /\b(E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)\b/.exec(message);
-    if (codeMatch?.[1]) return codeMatch[1];
+    const match = /\b(E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)\b/.exec(String(candidate.message ?? ""));
+    if (match?.[1]) return match[1];
   }
   return "unknown";
 }
 
 export function isRetryableFetchFailure(error) {
-  const code = fetchFailureCode(error);
-  return code === "unknown" || new Set([
+  return new Set([
+    "unknown",
     "AbortError",
     "ECONNABORTED",
     "ECONNREFUSED",
@@ -61,7 +56,7 @@ export function isRetryableFetchFailure(error) {
     "UND_ERR_CONNECT_TIMEOUT",
     "UND_ERR_HEADERS_TIMEOUT",
     "UND_ERR_SOCKET"
-  ]).has(code);
+  ]).has(fetchFailureCode(error));
 }
 
 export async function checkLiveUserTestsPreflight(options = {}) {
@@ -77,111 +72,66 @@ export async function checkLiveUserTestsPreflight(options = {}) {
   }
 
   const apiUrl = parseApiUrl(env.AEX_API_URL, env);
+  const expectedHost = String(env.AEX_EXPECTED_API_HOST ?? "").trim();
+  if (expectedHost && apiUrl.hostname !== expectedHost) {
+    throw new PreflightFatalError(
+      `live-user-tests AEX_API_URL host=${apiUrl.hostname} does not match expected host=${expectedHost}.`
+    );
+  }
   const attempts = envInt(env, "LIVE_USER_TEST_PREFLIGHT_ATTEMPTS", DEFAULT_ATTEMPTS, 10);
   const timeoutMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 120_000);
   const baseDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS", DEFAULT_BASE_DELAY_MS, 60_000);
   const maxDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_MAX_MS", DEFAULT_MAX_DELAY_MS, 120_000);
-  const minMaxConcurrentSessions = strictEnvPositiveInt(
-    env,
-    "LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS",
-    DEFAULT_MIN_MAX_CONCURRENT_SESSIONS,
-    10_000
-  );
-  const maxMaxConcurrentSessions = optionalPositiveInt(env.LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS, 10_000);
-  const requiredScopes = parseRequiredScopes(env.LIVE_USER_TEST_REQUIRED_SCOPES);
-  const requiredParityRuntimeKinds = parseRequiredParityRuntimeKinds(env.LIVE_USER_TEST_REQUIRED_RUNTIME_KINDS);
-  const expectedApiHost = String(env.AEX_EXPECTED_API_HOST ?? "").trim();
-  if (expectedApiHost && apiUrl.hostname !== expectedApiHost) {
-    throw new PreflightFatalError(
-      `live-user-tests AEX_API_URL host=${apiUrl.hostname} does not match expected host=${expectedApiHost}.`
-    );
-  }
-  const url = new URL("/api/whoami", apiUrl);
+  const url = new URL("/api/sessions?limit=1", apiUrl);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const res = await fetchWithTimeout(fetchImpl, url, env.AEX_API_KEY, timeoutMs);
-      const text = await res.text().catch(() => "");
-      const body = parseJsonObject(text);
-      const requestId = responseRequestId(res);
-      if (!res.ok) {
-        const bodyCode = bodyCodeOf(body);
-        if (attempt < attempts && isRetryableWhoamiStatus(res.status)) {
-          const delayMs = retryAfterDelayMs(res.headers.get("retry-after"), attempt, { baseDelayMs, maxDelayMs });
+      const response = await fetchWithTimeout(fetchImpl, url, env.AEX_API_KEY, timeoutMs);
+      const requestId = responseRequestId(response);
+      const body = parseJsonObject(await response.text().catch(() => ""));
+      if (!response.ok) {
+        if (attempt < attempts && isRetryablePreflightStatus(response.status)) {
+          const delay = retryAfterDelayMs(response.headers.get("retry-after"), attempt, {
+            baseDelayMs,
+            maxDelayMs
+          });
           err.write(
-            `live-user-tests /api/whoami transient HTTP ${res.status} (bodyCode=${bodyCode}, requestId=${requestId}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delayMs}ms\n`
+            `live-user-tests /api/sessions transient HTTP ${response.status} ` +
+              `(requestId=${requestId}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delay}ms\n`
           );
-          await sleepFn(delayMs);
+          await sleepFn(delay);
           continue;
         }
         throw new PreflightFatalError(
-          `live-user-tests /api/whoami preflight failed (status=${res.status}, requestId=${requestId}, bodyCode=${bodyCode}). Check the AEX_API_URL/AEX_API_KEY pairing.`
+          `live-user-tests /api/sessions preflight failed ` +
+            `(status=${response.status}, requestId=${requestId}, bodyCode=${bodyCodeOf(body)}).`
         );
       }
-
-      const maxConcurrentSessions = body?.limits?.maxConcurrentSessions;
-      if (!Number.isInteger(maxConcurrentSessions)) {
+      if (!Array.isArray(body.items)) {
         throw new PreflightFatalError(
-          `live-user-tests /api/whoami response did not include integer limits.maxConcurrentSessions (requestId=${requestId}).`
+          `live-user-tests /api/sessions response did not contain an items array (requestId=${requestId}).`
         );
-      }
-      if (maxConcurrentSessions < minMaxConcurrentSessions) {
-        throw new PreflightFatalError(
-          `live-user-tests workspace maxConcurrentSessions=${maxConcurrentSessions} is below required minimum ${minMaxConcurrentSessions} (requestId=${requestId}).`
-        );
-      }
-      if (maxMaxConcurrentSessions !== null && maxConcurrentSessions > maxMaxConcurrentSessions) {
-        throw new PreflightFatalError(
-          `live-user-tests workspace maxConcurrentSessions=${maxConcurrentSessions} is above allowed maximum ${maxMaxConcurrentSessions} (requestId=${requestId}).`
-        );
-      }
-      const scopes = new Set(Array.isArray(body?.scopes) ? body.scopes.filter((scope) => typeof scope === "string") : []);
-      const missingScopes = requiredScopes.filter((scope) => !scopes.has(scope));
-      if (missingScopes.length > 0) {
-        throw new PreflightFatalError(
-          `live-user-tests /api/whoami token is missing required scope(s): ${missingScopes.join(", ")} (requestId=${requestId}).`
-        );
-      }
-      let runtimeCapabilities;
-      if (requiredParityRuntimeKinds.length > 0) {
-        try {
-          runtimeCapabilities = parseRuntimeCapabilities(body?.runtimeCapabilities);
-        } catch (error) {
-          throw new PreflightFatalError(
-            `live-user-tests /api/whoami ${error instanceof Error ? error.message : String(error)} (requestId=${requestId}).`
-          );
-        }
-        const missingParityRuntimes = requiredParityRuntimeKinds.filter(
-          (runtime) => !runtimeCapabilities.availableRuntimeKinds.includes(runtime)
-        );
-        if (missingParityRuntimes.length > 0) {
-          const reasons = missingParityRuntimes.map(
-            (runtime) => `${runtime}:${runtimeCapabilities.unavailable[runtime]?.code ?? "not_reported"}`
-          );
-          throw new PreflightFatalError(
-            `live-user-tests workspace is missing required runtime parity kind(s): ${reasons.join(", ")} (requestId=${requestId}).`
-          );
-        }
       }
       out.write(
-        `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentSessions=${maxConcurrentSessions}, requiredScopes=${requiredScopes.join(",")}, requiredRuntimeKinds=${requiredParityRuntimeKinds.join(",") || "(none)"}, attempt=${attempt}/${attempts}).\n`
+        `live-user-tests /api/sessions preflight passed ` +
+          `(status=${response.status}, requestId=${requestId}, attempt=${attempt}/${attempts}).\n`
       );
-      return { status: res.status, requestId, maxConcurrentSessions, requiredScopes, requiredParityRuntimeKinds, runtimeCapabilities, attempt, attempts };
+      return { status: response.status, requestId, attempt, attempts };
     } catch (error) {
       if (error instanceof PreflightFatalError) throw error;
       if (attempt < attempts && isRetryableFetchFailure(error)) {
-        const delayMs = retryDelayMs(attempt, { baseDelayMs, maxDelayMs });
+        const delay = retryDelayMs(attempt, { baseDelayMs, maxDelayMs });
         err.write(
-          `live-user-tests /api/whoami transient fetch failure (code=${fetchFailureCode(error)}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delayMs}ms\n`
+          `live-user-tests /api/sessions transient fetch failure ` +
+            `(code=${fetchFailureCode(error)}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delay}ms\n`
         );
-        await sleepFn(delayMs);
+        await sleepFn(delay);
         continue;
       }
       throw error;
     }
   }
-
-  throw new Error("live-user-tests /api/whoami preflight retry loop exhausted.");
+  throw new Error("live-user-tests /api/sessions preflight retry loop exhausted.");
 }
 
 async function fetchWithTimeout(fetchImpl, url, token, timeoutMs) {
@@ -201,73 +151,34 @@ async function fetchWithTimeout(fetchImpl, url, token, timeoutMs) {
 function parseJsonObject(text) {
   try {
     const parsed = text ? JSON.parse(text) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return parsed !== null && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
   }
 }
 
 function bodyCodeOf(body) {
-  return typeof body?.error === "string" ? body.error : typeof body?.code === "string" ? body.code : "(none)";
+  return typeof body.error === "string"
+    ? body.error
+    : typeof body.code === "string"
+      ? body.code
+      : "(none)";
 }
 
-function responseRequestId(res) {
-  return (
-    res.headers.get("x-amzn-requestid") ??
-    res.headers.get("x-request-id") ??
-    res.headers.get("apigw-requestid") ??
-    "unknown"
-  );
+function responseRequestId(response) {
+  return response.headers.get("x-amzn-requestid") ??
+    response.headers.get("x-request-id") ??
+    response.headers.get("apigw-requestid") ??
+    "unknown";
 }
 
-function envInt(env, name, fallback, max) {
-  return positiveInt(env[name], fallback, max);
-}
-
-function strictEnvPositiveInt(env, name, fallback, max) {
-  const value = env[name];
-  if (value === undefined) return fallback;
-  const raw = String(value).trim();
-  const parsed = Number(raw);
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
-    throw new PreflightFatalError(`${name} must be an integer between 1 and ${max}.`);
-  }
-  return parsed;
-}
-
-function optionalPositiveInt(value, max) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  return positiveInt(raw, 0, max);
-}
-
-function parseRequiredScopes(value) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return DEFAULT_REQUIRED_SCOPES;
-  return raw
-    .split(",")
-    .map((scope) => scope.trim())
-    .filter((scope) => scope.length > 0);
-}
-
-function parseRequiredParityRuntimeKinds(value) {
-  if (value === undefined) return [...REQUIRED_PARITY_RUNTIME_KINDS];
-  const raw = String(value).trim();
-  if (!raw) return [];
-  const kinds = raw.split(",").map((kind) => kind.trim()).filter(Boolean);
-  const unknown = kinds.filter((kind) => !REQUIRED_PARITY_RUNTIME_KIND_SET.has(kind));
-  if (unknown.length > 0 || new Set(kinds).size !== kinds.length) {
-    throw new PreflightFatalError(
-      `LIVE_USER_TEST_REQUIRED_RUNTIME_KINDS must contain unique values from ${REQUIRED_PARITY_RUNTIME_KINDS.join(", ")}.`
-    );
-  }
-  return kinds;
-}
-
-function positiveInt(value, fallback, max = Number.POSITIVE_INFINITY) {
+function positiveInt(value, fallback, maximum = Number.POSITIVE_INFINITY) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.min(parsed, max);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.min(parsed, maximum) : fallback;
+}
+
+function envInt(env, name, fallback, maximum) {
+  return positiveInt(env[name], fallback, maximum);
 }
 
 function parseApiUrl(value, env) {
@@ -280,7 +191,10 @@ function parseApiUrl(value, env) {
   if (parsed.protocol !== "https:") {
     throw new PreflightFatalError(`live-user-tests AEX_API_URL must use https (host=${parsed.host}).`);
   }
-  if (String(env.LIVE_USER_TEST_ALLOW_PRIVATE_API_URL ?? "").trim().toLowerCase() !== "true" && isPrivateHost(parsed.hostname)) {
+  if (
+    String(env.LIVE_USER_TEST_ALLOW_PRIVATE_API_URL ?? "").trim().toLowerCase() !== "true" &&
+    isPrivateHost(parsed.hostname)
+  ) {
     throw new PreflightFatalError(`live-user-tests AEX_API_URL host=${parsed.hostname} is not a public live endpoint.`);
   }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
@@ -295,8 +209,12 @@ function isPrivateHost(hostname) {
   if (host === "::1" || host === "[::1]") return true;
   const ipv4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (!ipv4) return false;
-  const [a, b] = ipv4.slice(1, 3).map((part) => Number.parseInt(part, 10));
-  return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  const [first, second] = ipv4.slice(1, 3).map((part) => Number.parseInt(part, 10));
+  return first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
 }
 
 function causeCandidates(error) {
@@ -307,9 +225,7 @@ function causeCandidates(error) {
     seen.add(value);
     out.push(value);
     visit(value.cause);
-    if (Array.isArray(value.errors)) {
-      for (const inner of value.errors) visit(inner);
-    }
+    if (Array.isArray(value.errors)) value.errors.forEach(visit);
   };
   visit(error);
   return out;
@@ -317,14 +233,9 @@ function causeCandidates(error) {
 
 if (fileURLToPath(import.meta.url) === process.argv[1]) {
   checkLiveUserTestsPreflight()
-    .then((result) => {
+    .then(() => {
       const githubOutput = String(process.env.GITHUB_OUTPUT ?? "").trim();
-      if (!githubOutput) return;
-      const capabilityOutput = result.runtimeCapabilities
-        ? `runtime_capabilities=${JSON.stringify(result.runtimeCapabilities)}\n` +
-          `runtime_kinds=${JSON.stringify(result.runtimeCapabilities.availableRuntimeKinds)}\n`
-        : "";
-      appendFileSync(githubOutput, capabilityOutput + `max_concurrent_sessions=${result.maxConcurrentSessions}\n`);
+      if (githubOutput) appendFileSync(githubOutput, "preflight_status=passed\n");
     })
     .catch((error) => {
       process.stderr.write(`::error::${error instanceof Error ? error.message : String(error)}\n`);

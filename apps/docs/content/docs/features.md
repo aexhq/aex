@@ -9,30 +9,22 @@ description: "Public feature areas supported by aex."
 
 # Features
 
-aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
+Explicit durable agent sessions through the strict aex v1 API.
 
-## Agent runtime
+## Sessions and runs
 
-Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
+Explicit session creation, message admission, durable run polling, and operation-backed lifecycle changes.
 
-## Durable infrastructure
+## Registered resources and files
 
-Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
+Overwrite-by-name inputs plus distinct persisted and live file reads with short-lived download grants.
 
-## Agent composition
+## Telemetry
 
-Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls.
+Query, stream, aggregate, inspect gaps, and create durable telemetry exports.
 
-## Subagents
+## Account and billing
 
-Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
-
-## Managed model access
-
-Name any model by its Vercel AI Gateway `creator/model` slug — the platform's managed key routes it. No provider selection, no provider API keys.
-
-## Typed control surface
-
-Strongly typed SDK inputs, CLI parity, workspace secrets, assistant text modes, and file capture policy.
+Bootstrap resources for accounts, organizations, workspaces, API keys, balances, usage, and statements.
 
 For product boundaries and unsupported claims, see [Limits](/docs/guides/limits/).

@@ -6,8 +6,6 @@
   "pages": [
     "sessions",
     "composition",
-    "providers-and-runtimes",
-    "agent-tools",
-    "subagents"
+    "agent-tools"
   ]
 }

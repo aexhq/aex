@@ -24,9 +24,9 @@ The SDK exposes explicit bootstrap resources (`account`, `organizations`,
 (`sessions`, operations, files, registries, secrets, approvals, telemetry, and
 usage). Long-running mutations return durable operation handles.
 
-There is no one-shot `start`, runtime selector, checkpoint/suspend/resume,
-child-session, webhook, archive, polling-event, combined workspace-key
-creation, or legacy subscription surface.
+The SDK exposes only the strict v1 resource model. Registered inputs are
+overwrite-by-name resources; persisted/live file reads and telemetry exports
+remain explicit.
 
 The `aex` command is published separately by `@aexhq/cli`.
 

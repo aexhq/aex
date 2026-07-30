@@ -12,7 +12,6 @@ import {
 } from "./workflow-test-helpers.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const POST_FINISH_READ_AUDIT_MARKER = "@aex-reliability-audit: post-finish-read";
 
 function liveScenarioFiles(): readonly string[] {
   const root = resolve(repoRoot, "apps/user-tests/test/live");
@@ -28,10 +27,6 @@ function liveScenarioFiles(): readonly string[] {
   };
   visit(root);
   return files.sort();
-}
-
-function postFinishReadAuditFiles(): readonly string[] {
-  return liveScenarioFiles().filter((path) => readRepoFile(path).includes(POST_FINISH_READ_AUDIT_MARKER));
 }
 
 function templateSource(node: ts.TemplateLiteral): string {
@@ -158,10 +153,14 @@ describe("live scenario reliability", () => {
     }
   });
 
-  it("does not suppress post-finish session reads", () => {
-    const auditedFiles = postFinishReadAuditFiles();
-    expect(auditedFiles.length, "at least one live scenario must opt into the post-finish read audit").toBeGreaterThan(0);
-    for (const path of auditedFiles) {
+  it("awaits the terminal run, performs explicit cleanup, and suppresses no session reads", () => {
+    const files = liveScenarioFiles();
+    expect(files).toEqual(["apps/user-tests/test/live/v1-session.user.test.ts"]);
+    for (const path of files) {
+      const source = readRepoFile(path);
+      expect(source).toContain("accepted.run.result(");
+      expect(source).toContain("session.delete({ cascade: true })");
+      expect(source).toContain("deletion.result(");
       expect(suppressedSessionReads(path), path).toEqual([]);
     }
   });
@@ -192,15 +191,12 @@ describe("live scenario reliability", () => {
     const job = workflowJob(workflow, "live-user-tests");
     const step = workflowStepRunning(job, /\btest:user:files\b/);
 
-    expect(jobNeeds(job)).toEqual(
-      expect.arrayContaining(["prepare-artifact", "live-user-tests-preflight", "prepare-live-test-matrix"])
-    );
-    expect(job.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}");
+    expect(jobNeeds(job)).toEqual(["prepare-artifacts", "preflight"]);
+    expect(job.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-artifacts.outputs.matrix) }}");
     expect(job.strategy?.["max-parallel"]).toBeUndefined();
-    expect(step.env?.AEX_USER_TEST_MAX_WORKERS).toBe(1);
-    expect(step.env?.TEST_FILE).toBe("${{ matrix.file }}");
+    expect(step.env?.TEST_FILES).toBe("${{ matrix.file }}");
     expect(step.run).toMatch(/\btest:user:files\b/);
-    expect(step.run).toMatch(/\$TEST_FILE/);
+    expect(step.run).toMatch(/\$TEST_FILES/);
     expect(step.run).not.toMatch(/--shard(?:\s|$)/);
   });
 });

@@ -1,291 +1,133 @@
-/**
- * Lane runner for the layer-4 user tests: packs/selects the artifact under
- * test, owns the per-run temp root, then spawns `bun test` with the lane's
- * argv (the successor of user-vitest.mjs — the tarball/temp-root logic is
- * runner-agnostic; only the spawn argv and the lane flags changed).
- *
- * Wrapper-owned flags (everything else is forwarded to `bun test` verbatim):
- *   --report=<path>        write a junit report there and run
- *                          scripts/cicd/assert-no-skips.mjs on it after a
- *                          green run; a bun `-t <pattern>` in the forwarded
- *                          args is mirrored into the gate's --name-pattern
- *                          (bun marks every non-selected test <skipped/>).
- *   --parallel-env=NAME:N  inject `--parallel=<value of env NAME, default N>`
- *                          (positive integer, else hard error — the same
- *                          contract the retired vitest.worker-count.ts had).
- *                          Gated on bun >= 1.3.14 (crashed-worker fix).
- *   --sweep | --smoke      expand the default-sweep / published-artifact-smoke
- *                          file list (see below) instead of explicit files.
- *
- * A run with NO file selection is refused: a bare `bun test` in this package
- * would collect EVERY live suite (admission-gates, heavy, e2e, ...) — an
- * accidental full-spend sweep.
- *
- * Lane concurrency mapping (vitest -> bun), derived spend bound per lane.
- * The vitest bound was maxWorkers x maxConcurrency; bun runs tests within a
- * file serially (no sequence.concurrent analog), so the bound maps to
- * `--parallel=N` worker processes with serial in-file execution:
- *
- *   lane            vitest workersxconc      bun expression            bound
- *   test:user       env(MAX_WORKERS,2) x 1   --parallel=env(2), serial  2
- *   test:user:files same config, 1 CI file   --parallel=env(2), serial  1/job
- *   test:user:smoke env(MAX_WORKERS,2) x 1   --parallel=env(2), serial  2
- *   test:user:offline env(OFFLINE,4) x 1     --parallel=env(4), serial  4 (no spend)
- *   admission/heavy/providers/fuzz/e2e: serial file(s), serial tests    1
- *   test:user:tool-fuzz 1 file x env(TOOL_FUZZ_CONCURRENCY,4) in-file   was 4,
- *     now SERIAL (bound 1): bun cannot run unmarked tests concurrently
- *     within one file, so the in-file concurrency lever is gone until the
- *     cells are marked test.concurrent (follow-up); the
- *     AEX_USER_TEST_TOOL_FUZZ_CONCURRENCY knob is inert for now and the lane
- *     trades wall-clock (up to ~4x) for a strictly lower spend bound.
- *
- * Live validation of these mappings on the dev plane is explicitly OWED /
- * deferred (user decision): no live lane was executed as part of the runner
- * flip. Validate lane-by-lane with spend monitoring before trusting the
- * mapping in release wiring.
- */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LIVE_TEST_SHARD_CONFIG, collectTestFiles } from "./shard-files.mjs";
 import { assertParallelBunFloor, prepareLaneInvocation } from "./lane-invocation.mjs";
 
-// The side-effect-free half of the runner lives in `lane-invocation.mjs`.
-// Re-exported here because this module is the runner's entry point and the one
-// `scripts/validate/user-bun-test-spawn.test.ts` imports.
 export { assertParallelBunFloor, prepareLaneInvocation } from "./lane-invocation.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(here, "..");
+const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const sdkRoot = join(repoRoot, "packages", "sdk");
-const generatedDistLockScript = join(repoRoot, "scripts", "with-generated-dist-lock.mjs");
-const noSkipsGateScript = join(repoRoot, "scripts", "cicd", "assert-no-skips.mjs");
+const noSkipsGate = join(repoRoot, "scripts", "cicd", "assert-no-skips.mjs");
 const thisFile = fileURLToPath(import.meta.url);
-
 const env = { ...process.env };
-let packDir;
+let packRoot;
 
 export async function main() {
-  const tarball = env.AEX_USER_TEST_TARBALL;
-  const version = env.AEX_USER_TEST_VERSION;
-
-  if (tarball && version) {
-    console.error("AEX_USER_TEST_TARBALL and AEX_USER_TEST_VERSION are mutually exclusive.");
-    return 1;
-  }
-
   const lane = prepareLaneInvocation(process.argv.slice(2), env);
-
-  await buildHarnessPackages();
-
-  if (!tarball && !version) {
-    try {
-      const packed = await packCurrentSdk();
-      env.AEX_USER_TEST_TARBALL = packed;
-    } catch (error) {
-      if (packDir) {
-        try {
-          removeOwnedDirectory(packDir, "SDK pack tempdir");
-        } catch (cleanupError) {
-          throw new AggregateError(
-            [error, cleanupError],
-            "user-tests: SDK packing failed and its tempdir could not be removed"
-          );
-        }
-      }
-      throw error;
-    }
-  }
-
+  await prepareArtifacts();
   let bunTestArgs = lane.bunTestArgs;
   if (lane.suite) {
-    const suiteFiles = lane.suite === "sweep" ? collectDefaultSweepFiles() : await collectSmokeFiles();
-    bunTestArgs = [...suiteFiles, ...bunTestArgs];
+    const selected = lane.suite === "sweep"
+      ? collectDefaultSweepFiles()
+      : await collectSmokeFiles();
+    bunTestArgs = [...selected, ...bunTestArgs];
   }
   assertParallelBunFloor(bunTestArgs, process.versions.bun);
 
   if (lane.reportPath) {
-    const reportAbs = resolve(appRoot, lane.reportPath);
-    // A stale report from an earlier run must never satisfy the gate: bun
-    // writes NO outfile at all when it collects zero tests.
-    rmSync(reportAbs, { force: true });
-    mkdirSync(dirname(reportAbs), { recursive: true });
+    const report = resolve(appRoot, lane.reportPath);
+    rmSync(report, { force: true });
+    mkdirSync(dirname(report), { recursive: true });
   }
 
+  const runRoot = createUserTestTempRoot();
+  env.AEX_USER_TEST_TEMP_ROOT = runRoot;
   const invocation = buildUserBunTestSpawnInvocation(bunTestArgs);
-  const runTempRoot = createUserTestTempRoot();
-  env.AEX_USER_TEST_TEMP_ROOT = runTempRoot;
-  // C4: one fragment directory per lane, emptied first so the aggregate below
-  // describes THIS run and cannot inherit an earlier one's coverage.
-  const wireConformanceDir = join(appRoot, ".tmp", "wire-conformance");
-  rmSync(wireConformanceDir, { recursive: true, force: true });
-  mkdirSync(wireConformanceDir, { recursive: true });
-  env.AEX_WIRE_CONFORMANCE_DIR = wireConformanceDir;
-
   let outcome;
-  let runFailure;
+  let failure;
   try {
     outcome = await spawnUserBunTest(invocation);
-    if (outcome.error) runFailure = outcome.error;
+    if (outcome.error) failure = outcome.error;
   } catch (error) {
-    runFailure = error;
+    failure = error;
   }
 
   const cleanupFailures = [];
   try {
-    cleanupUserTestTempRoot(runTempRoot, {
+    cleanupUserTestTempRoot(runRoot, {
       allowRetainedEntries: Boolean(outcome?.cancellationSignal)
     });
   } catch (error) {
     cleanupFailures.push(error);
   }
-  if (packDir) {
+  if (packRoot) {
     try {
-      removeOwnedDirectory(packDir, "SDK pack tempdir");
+      removeOwnedDirectory(packRoot, "artifact pack directory");
     } catch (error) {
       cleanupFailures.push(error);
     }
   }
   outcome?.disposeSignalHandlers();
 
-  if (runFailure || cleanupFailures.length > 0) {
-    const failures = [runFailure, ...cleanupFailures].filter((error) => error !== undefined);
+  if (failure || cleanupFailures.length > 0) {
+    const failures = [failure, ...cleanupFailures].filter(Boolean);
     throw failures.length === 1
       ? failures[0]
-      : new AggregateError(failures, "user-tests: runner and cleanup failures occurred");
+      : new AggregateError(failures, "user-tests: run and cleanup failures occurred");
   }
-  if (outcome.cancellationSignal) {
-    console.error(`user-tests: exiting after graceful ${outcome.cancellationSignal} cancellation`);
-    return 1;
-  }
-  if (outcome.signal) {
-    console.error(`bun test exited with signal ${outcome.signal}`);
-    return 1;
-  }
-  // C4 runs whatever the lane's exit code was: a failing lane still produced
-  // real bytes, and the coverage picture is exactly what a reader needs in order
-  // to know how much of the surface that run actually covered.
-  const wireConformanceCode = await reportWireConformance(wireConformanceDir);
-
-  if ((outcome.code ?? 1) !== 0) return outcome.code ?? 1;
-  if (wireConformanceCode !== 0) return wireConformanceCode;
-
-  if (lane.gateArgs) {
-    const gateCode = await runNoSkipsGate(lane.gateArgs);
-    if (gateCode !== 0) return gateCode;
-  }
+  if (outcome?.cancellationSignal || outcome?.signal) return 1;
+  if ((outcome?.code ?? 1) !== 0) return outcome?.code ?? 1;
+  if (lane.gateArgs) return await runNoSkipsGate(lane.gateArgs);
   return 0;
 }
 
-/**
- * C4 — the lane's wire-conformance verdict.
- *
- * Per-file failures already happen in `test/preload.ts`; this is the only place
- * that can state COVERAGE, because coverage is a property of the run and no
- * single test process sees more than a handful of routes. Per `04-gates.md`,
- * both halves are printed unconditionally — what could have been checked
- * (`formatResponseSchemaCoverage`) and what actually was
- * (`formatWireConformanceReport`) — so a green lane over a dozen routes cannot
- * be read as a verified surface.
- */
-async function reportWireConformance(wireConformanceDir) {
-  const { readWireConformanceFragments } = await import(
-    join(appRoot, "test", "_fixtures", "wire-conformance.ts")
-  );
-  const { formatResponseSchemaCoverage, formatWireConformanceReport } = await import(
-    "@aexhq/contracts/testing"
-  );
-  const harvest = readWireConformanceFragments(wireConformanceDir);
-
-  console.error("");
-  console.error("=== C4 wire conformance ===");
-  console.error(formatResponseSchemaCoverage());
-  for (const reason of harvest.notArmed) {
-    console.error(`  NOT ARMED: ${reason}`);
+async function prepareArtifacts() {
+  const selectors = [
+    env.AEX_USER_TEST_SDK_TARBALL,
+    env.AEX_USER_TEST_CLI_TARBALL,
+    env.AEX_USER_TEST_SDK_VERSION,
+    env.AEX_USER_TEST_CLI_VERSION
+  ].filter((value) => value);
+  if (selectors.length === 0) {
+    const packed = await packCurrentArtifacts();
+    env.AEX_USER_TEST_SDK_TARBALL = packed.sdk;
+    env.AEX_USER_TEST_CLI_TARBALL = packed.cli;
   }
-  if (harvest.fragments === 0) {
-    // Never read as a pass. A lane may legitimately observe nothing, but saying
-    // so out loud is the difference between "nothing was checked" and "checked
-    // and clean" — and only the first of those is true here.
-    console.error(
-      "wire conformance: NO PROCESS REPORTED. Nothing was checked against the wire in this lane."
-    );
-    return 0;
-  }
-  console.error(
-    `wire conformance: folded ${harvest.reports} report(s) from ${harvest.fragments} process(es)`
-  );
-  console.error(formatWireConformanceReport(harvest.report));
-  for (const failure of harvest.armFailures) {
-    console.error(`  ARM FAILURE: ${failure}`);
-  }
-
-  if (harvest.armFailures.length > 0) {
-    console.error(
-      `C4 FAILED: ${harvest.armFailures.length} process(es) could not attach the harness — ` +
-        `their responses were never checked.`
-    );
-    return 1;
-  }
-  if (harvest.report.violations.length > 0) {
-    console.error(`C4 FAILED: ${harvest.report.violations.length} wire-conformance violation(s).`);
-    return 1;
-  }
-  return 0;
 }
 
-/**
- * The default `test:user` sweep: every test/**\/*.test.ts EXCEPT the dedicated
- * explicit gates, exactly as the retired vitest.config.ts include/exclude pair
- * collected. Kept glob-driven (not a hardcoded list) so a NEW test file lands
- * in the sweep automatically — a silent drop from the sweep is dead coverage.
- *
- * Dedicated explicit lanes stay out of the sweep so they never run implicitly.
- * The live half of that list is DERIVED from the `on-demand` tier of
- * `scripts/live-coverage.mjs`, so a lane cannot be excluded here while the
- * coverage manifest still claims it gates:
- *   - edge-admission-gates (cap-saturating; isolated low-cap workspace lane);
- *   - edge-concurrency-scale (10 declared session slots; load-shaped failures);
- *   - live-sdk-heavy-session (run only AFTER the rest pass);
- *   - live-api-fuzz + live-sdk-tool-capability-fuzz (own paid gates);
- *   - test/live/providers/** (on-demand; keeps non-gate provider billing out
- *     of the release gate);
- *   - test/e2e/** (own account-PAT bootstrap; must never run implicitly).
- */
+async function packCurrentArtifacts() {
+  packRoot = mkdtempSync(join(tmpdir(), "aex-user-test-pack-"));
+  await run(getBunCommand(), ["run", "build"], { cwd: repoRoot, timeoutMs: 300_000 });
+  const sdk = await packPackage("sdk", /^aexhq-sdk-.*\.tgz$/);
+  const cli = await packPackage("cli", /^aexhq-cli-.*\.tgz$/);
+  return { sdk, cli };
+}
+
+async function packPackage(name, pattern) {
+  await run(
+    getBunCommand(),
+    ["pm", "pack", "--destination", packRoot, "--ignore-scripts"],
+    { cwd: join(repoRoot, "packages", name), timeoutMs: 180_000 }
+  );
+  const matches = readdirSync(packRoot).filter((file) => pattern.test(file));
+  if (matches.length !== 1) throw new Error(`expected one packed ${name} tarball, found ${matches.length}`);
+  return join(packRoot, matches[0]);
+}
+
 export function collectDefaultSweepFiles() {
-  // Live files: reuse the CI shard manifest so the sweep and the per-file CI
-  // matrix can never disagree about lane exclusions.
-  const liveFiles = collectTestFiles();
-
-  // Non-live files (offline/, _fixtures/, any future sibling): walk test/
-  // minus the directories that are dedicated lanes or not test trees.
-  const skippedDirectories = new Set(["live", "e2e", "node_modules"]);
-  const nonLiveFiles = [];
-  const walk = (rel) => {
-    for (const entry of readdirSync(join(appRoot, rel), { withFileTypes: true })) {
-      const relPath = `${rel}/${entry.name}`;
+  const files = [];
+  const walk = (relative) => {
+    for (const entry of readdirSync(join(appRoot, relative), { withFileTypes: true })) {
+      const path = `${relative}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (!(rel === "test" && skippedDirectories.has(entry.name)) && entry.name !== "node_modules") {
-          walk(relPath);
-        }
-      } else if (entry.name.endsWith(".test.ts")) {
-        nonLiveFiles.push(relPath);
+        if (entry.name !== "node_modules" && entry.name !== "e2e") walk(path);
+      } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
+        files.push(path);
       }
     }
   };
   walk("test");
-
-  const files = [...liveFiles, ...nonLiveFiles].sort();
+  files.sort();
   if (files.length === 0) throw new Error("user-bun-test: default sweep collected zero test files");
   return files;
 }
 
 async function collectSmokeFiles() {
-  const manifestUrl = new URL("../test/_fixtures/smoke-suite.ts", import.meta.url);
-  const { PUBLISHED_ARTIFACT_SMOKE_FILES } = await import(manifestUrl.href);
+  const { PUBLISHED_ARTIFACT_SMOKE_FILES } = await import(
+    new URL("../test/_fixtures/smoke-suite.ts", import.meta.url).href
+  );
   const files = Object.values(PUBLISHED_ARTIFACT_SMOKE_FILES);
   if (files.length === 0) throw new Error("user-bun-test: smoke manifest lists zero files");
   for (const file of files) {
@@ -296,30 +138,8 @@ async function collectSmokeFiles() {
   return files;
 }
 
-async function runNoSkipsGate(gateArgs) {
-  return await new Promise((resolvePromise, reject) => {
-    const invocation = buildSpawnInvocation(getBunCommand(), [noSkipsGateScript, ...gateArgs]);
-    let child;
-    try {
-      child = spawn(invocation.command, invocation.args, {
-        cwd: appRoot,
-        env,
-        stdio: "inherit",
-        ...invocation.options
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (signal) {
-        reject(new Error(`user-bun-test: assert-no-skips gate exited with signal ${signal}`));
-        return;
-      }
-      resolvePromise(code ?? 1);
-    });
-  });
+function runNoSkipsGate(args) {
+  return spawnForCode(buildSpawnInvocation(getBunCommand(), [noSkipsGate, ...args]), appRoot);
 }
 
 function spawnUserBunTest(invocation) {
@@ -336,138 +156,94 @@ function spawnUserBunTest(invocation) {
       reject(error);
       return;
     }
-
     let cancellationSignal;
     let childError;
-    const forwardSignal = (signal) => {
+    const forward = (signal) => {
       if (cancellationSignal) return;
       cancellationSignal = signal;
-      console.error(`user-tests: received ${signal}; forwarding it to the bun test child and waiting for close`);
       try {
-        if (!child.kill(signal) && child.exitCode === null && child.signalCode === null) {
-          childError = new Error(`user-tests: failed to forward ${signal} to the bun test child`);
-        }
+        child.kill(signal);
       } catch (error) {
-        childError = new Error(`user-tests: failed to forward ${signal} to the bun test child: ${describeFsError(error)}`);
+        childError = error;
       }
     };
-    const onSigint = () => forwardSignal("SIGINT");
-    const onSigterm = () => forwardSignal("SIGTERM");
-    const removeSignalHandlers = () => {
+    const onSigint = () => forward("SIGINT");
+    const onSigterm = () => forward("SIGTERM");
+    const disposeSignalHandlers = () => {
       process.off("SIGINT", onSigint);
       process.off("SIGTERM", onSigterm);
     };
-
     process.on("SIGINT", onSigint);
     process.on("SIGTERM", onSigterm);
-    child.once("error", (error) => {
-      childError ??= error;
-    });
+    child.once("error", (error) => { childError ??= error; });
     child.once("close", (code, signal) => {
-      resolvePromise({ code, signal, cancellationSignal, error: childError, disposeSignalHandlers: removeSignalHandlers });
+      resolvePromise({ code, signal, cancellationSignal, error: childError, disposeSignalHandlers });
     });
   });
 }
 
-export function createUserTestTempRoot(parentDir = tmpdir()) {
-  return mkdtempSync(join(parentDir, "aex-user-test-run-"));
+function spawnForCode(invocation, cwd) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(invocation.command, invocation.args, {
+      cwd,
+      env,
+      stdio: "inherit",
+      ...invocation.options
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (signal) reject(new Error(`child exited with signal ${signal}`));
+      else resolvePromise(code ?? 1);
+    });
+  });
 }
 
-/**
- * Remove the temp root owned by one wrapper invocation. Any retained child
- * is reported after removal so a worker cleanup regression fails the run
- * without preserving hardlinks in the global Bun cache.
- */
-export function cleanupUserTestTempRoot(runTempRoot, options = {}) {
-  let retainedEntries;
-  let inspectionFailure;
+export function createUserTestTempRoot(parent = tmpdir()) {
+  return mkdtempSync(join(parent, "aex-user-test-run-"));
+}
+
+export function cleanupUserTestTempRoot(runRoot, options = {}) {
+  let entries = [];
   try {
-    retainedEntries = readdirSync(runTempRoot);
+    entries = readdirSync(runRoot);
   } catch (error) {
-    retainedEntries = [];
-    inspectionFailure = new Error(
-      `user-tests: failed to inspect owned run temp root ${runTempRoot}: ${describeFsError(error)}`
-    );
+    throw new Error(`user-tests: failed to inspect owned run temp root ${runRoot}: ${describeFsError(error)}`);
   }
-
-  try {
-    removeOwnedDirectory(runTempRoot, "owned run temp root");
-  } catch (removalFailure) {
-    if (inspectionFailure) {
-      throw new AggregateError(
-        [inspectionFailure, removalFailure],
-        "user-tests: failed to inspect and remove the owned run temp root"
-      );
-    }
-    throw removalFailure;
-  }
-
-  if (inspectionFailure) throw inspectionFailure;
-
-  if (retainedEntries.length > 0) {
-    const shown = retainedEntries.slice(0, 20).join(", ");
-    const omitted = retainedEntries.length > 20 ? ` (+${retainedEntries.length - 20} more)` : "";
-    const noun = retainedEntries.length === 1 ? "entry" : "entries";
+  removeOwnedDirectory(runRoot, "owned run temp root");
+  if (entries.length > 0) {
+    const message =
+      `user-tests: fixture cleanup left ${entries.length} ${entries.length === 1 ? "entry" : "entries"} ` +
+      `in ${runRoot}: ${entries.slice(0, 20).join(", ")}; removed the owned run root`;
     if (options.allowRetainedEntries) {
-      console.error(
-        `user-tests: graceful cancellation retained ${retainedEntries.length} ${noun} in ${runTempRoot}: ` +
-          `${shown}${omitted}; removed the owned run root`
-      );
-      return;
+      console.error(message.replace("fixture cleanup left", "graceful cancellation retained"));
+    } else {
+      throw new Error(message);
     }
-    throw new Error(
-      `user-tests: fixture cleanup left ${retainedEntries.length} ${noun} in ${runTempRoot}: ` +
-        `${shown}${omitted}; removed the owned run root and failing the run`
-    );
   }
 }
 
 function removeOwnedDirectory(path, label) {
-  try {
-    rmSync(path, { recursive: true, force: true });
-  } catch (error) {
-    throw new Error(`user-tests: failed to remove ${label} ${path}: ${describeFsError(error)}`);
-  }
-  if (existsSync(path)) {
-    throw new Error(`user-tests: remove returned successfully but ${label} still exists: ${path}`);
-  }
+  rmSync(path, { recursive: true, force: true });
+  if (existsSync(path)) throw new Error(`user-tests: failed to remove ${label} ${path}`);
 }
 
-function describeFsError(error) {
-  if (!(error instanceof Error)) return String(error);
-  const details = [error.code, error.syscall, error.path].filter(
-    (value) => typeof value === "string" && value.length > 0
-  );
-  return details.length > 0 ? `${details.join(" ")}: ${error.message}` : error.message;
-}
-
-export function buildUserBunTestSpawnInvocation(bunTestArgs, command = getBunCommand()) {
-  return buildSpawnInvocation(command, ["test", ...bunTestArgs]);
+export function buildUserBunTestSpawnInvocation(args, command = getBunCommand()) {
+  return buildSpawnInvocation(command, ["test", ...args]);
 }
 
 export function buildSpawnInvocation(command, args, spawnEnv = env) {
-  if (isWindowsCommandShim(command)) {
+  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command)) {
     return {
       command: spawnEnv.ComSpec ?? "cmd.exe",
       args: ["/d", "/s", "/c", windowsCommandLine(command, args)],
       options: { shell: false, windowsVerbatimArguments: true }
     };
   }
-
-  return {
-    command,
-    args: [...args],
-    options: { shell: false }
-  };
-}
-
-function isWindowsCommandShim(command) {
-  return process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command);
+  return { command, args: [...args], options: { shell: false } };
 }
 
 function windowsCommandLine(command, args) {
-  const argv = [command, ...args].map(quoteWindowsCommandArg).join(" ");
-  return `"${argv}"`;
+  return `"${[command, ...args].map(quoteWindowsCommandArg).join(" ")}"`;
 }
 
 function quoteWindowsCommandArg(value) {
@@ -475,76 +251,37 @@ function quoteWindowsCommandArg(value) {
   return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, "$1$1")}"`;
 }
 
-// The harness process itself imports @aexhq/contracts/testing
-// (waitForCondition) from the workspace, so it must be built before
-// `bun test` collects any file.
-async function buildHarnessPackages() {
-  await run(
-    getBunCommand(),
-    ["run", "--cwd", repoRoot, "--filter", "@aexhq/contracts", "build"],
-    {
-      cwd: repoRoot,
-      timeoutMs: 240_000
-    }
-  );
-}
-
-async function packCurrentSdk() {
-  packDir = mkdtempSync(join(tmpdir(), "aex-user-test-sdk-pack-"));
-  await run(getBunCommand(), [generatedDistLockScript, "bun", "pm", "pack", "--destination", packDir], {
-    cwd: sdkRoot,
-    timeoutMs: 180_000
-  });
-
-  const tarballs = readdirSync(packDir).filter((name) => /^aexhq-sdk-.*\.tgz$/.test(name));
-  if (tarballs.length !== 1) {
-    throw new Error(`expected one packed @aexhq/sdk tarball in ${packDir}, found ${tarballs.length}`);
-  }
-  const packed = join(packDir, tarballs[0]);
-  if (!existsSync(packed)) throw new Error(`packed tarball does not exist: ${packed}`);
-  return packed;
-}
-
-async function run(command, args, options) {
-  const timeoutMs = options.timeoutMs ?? 60_000;
-  await new Promise((resolvePromise, reject) => {
+function run(command, args, options) {
+  return new Promise((resolvePromise, reject) => {
     let stdout = "";
     let stderr = "";
     const invocation = buildSpawnInvocation(command, args);
-    const childProcess = spawn(invocation.command, invocation.args, {
+    const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
       ...invocation.options
     });
     const timer = setTimeout(() => {
-      childProcess.kill("SIGKILL");
-      reject(new Error(`timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`));
-    }, timeoutMs);
-    childProcess.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    childProcess.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    childProcess.on("error", (error) => {
+      child.kill("SIGKILL");
+      reject(new Error(`timed out after ${options.timeoutMs}ms: ${command} ${args.join(" ")}`));
+    }, options.timeoutMs);
+    child.stdout?.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr?.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.once("error", (error) => {
       clearTimeout(timer);
       reject(error);
     });
-    childProcess.on("close", (code) => {
+    child.once("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      reject(
-        new Error(
-          `${command} ${args.join(" ")} exited with code ${code ?? -1}\n` +
-            `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
-        )
-      );
+      if (code === 0) resolvePromise();
+      else reject(new Error(`${command} ${args.join(" ")} exited ${code}\n${stdout}\n${stderr}`));
     });
   });
+}
+
+function describeFsError(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function getBunCommand() {

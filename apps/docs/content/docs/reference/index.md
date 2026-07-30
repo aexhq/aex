@@ -1,15 +1,18 @@
 ---
-title: Reference overview
-description: Generated reference entry point for the SDK, CLI, HTTP API, and event contracts.
-icon: Braces
+# GENERATED FILE - do not edit.
+# Written by `scripts/docs/generate-all.mjs`.
+# Edit the source and run `bun run docs:generate`. A hand edit here is
+# reverted by the next `bun run lint`, which regenerates via `prelint`.
+title: "Reference overview"
+description: "Generated reference entry point for the SDK, CLI, and HTTP API."
 ---
 
-The reference pages are generated or copied from generated SDK docs during the docs build:
+# Reference
 
-- [SDK](/docs/reference/sdk/) comes from the exported TypeScript SDK surface.
-- [CLI](/docs/reference/cli/) comes from `aex --help`.
-- [HTTP API](/docs/reference/api/) comes from the generated OpenAPI document — which is itself generated from the wire schemas the server validates with.
-- [Events](/docs/reference/events/) comes from the public event constants and guards.
-- [Provider runtime capabilities](/docs/reference/provider-runtime-capabilities/) comes from the public provider/runtime capability registry and generated SDK matrix.
+These pages are generated from the public v1 implementation:
 
-The guides remain the place to learn workflows. Reference pages are for exact names, exported symbols, and command syntax.
+- [SDK](/docs/reference/sdk/) documents the exported TypeScript surface.
+- [CLI](/docs/reference/cli/) documents the separately published command-line package.
+- [HTTP API](/docs/reference/api/) documents the generated OpenAPI contract.
+
+Use the guides for workflows and these pages for exact public names.

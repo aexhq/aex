@@ -181,27 +181,20 @@ describe("user-bun-test lane argument processing", () => {
     expect(laneInvocationError(["--sweep", "test/offline"], {})).toMatch(/either a suite selector or explicit files/);
   });
 
-  it("collects the default sweep exactly as the retired vitest.config.ts glob did", () => {
+  it("collects every current strict-v1 scenario and no deleted dedicated lane", () => {
     const files = callRunnerValue<string[]>("mod.collectDefaultSweepFiles()");
 
-    // Spot invariants of the vitest include/exclude pair this replaces:
-    // include test/**/*.test.ts; exclude the four dedicated-lane files,
-    // providers/**, e2e/** and node_modules/**.
-    expect(files.length).toBeGreaterThan(30);
+    expect(files).toHaveLength(3);
     expect(new Set(files).size).toBe(files.length);
     expect(files).toContain("test/_fixtures/install.test.ts");
-    expect(files).toContain("test/offline/install.test.ts");
-    expect(files).toContain("test/live/live-sdk-comprehensive.test.ts");
+    expect(files).toContain("test/offline/packed-v1.test.ts");
+    expect(files).toContain("test/live/v1-session.user.test.ts");
     for (const file of files) {
       expect(file).toMatch(/^test\/.*\.test\.ts$/);
       expect(file).not.toMatch(/^test\/e2e\//);
-      expect(file).not.toMatch(/^test\/live\/providers\//);
       expect(file).not.toContain("node_modules");
+      expect(file).not.toMatch(/runtime|capabilit|parity|webhook|checkpoint|archive/i);
     }
-    expect(files).not.toContain("test/live/edge-admission-gates.user.test.ts");
-    expect(files).not.toContain("test/live/live-sdk-heavy-session.test.ts");
-    expect(files).not.toContain("test/live/live-api-fuzz.test.ts");
-    expect(files).not.toContain("test/live/live-sdk-tool-capability-fuzz.test.ts");
   });
 
   it("gates `--parallel` behind the crashed-worker-safe bun floor", () => {
@@ -284,8 +277,8 @@ describe("user-bun-test temp-root ownership", () => {
         env: {
           ...process.env,
           AEX_USER_TEST_BUN: fakeBun,
-          AEX_USER_TEST_TARBALL: fakeTarball,
-          AEX_USER_TEST_VERSION: ""
+          AEX_USER_TEST_SDK_TARBALL: fakeTarball,
+          AEX_USER_TEST_CLI_TARBALL: fakeTarball
         },
         encoding: "utf8"
       });
@@ -330,8 +323,8 @@ describe("user-bun-test temp-root ownership", () => {
             ...process.env,
             AEX_USER_TEST_BUN: fakeBun,
             AEX_USER_TEST_SIGNAL_READY: readyFile,
-            AEX_USER_TEST_TARBALL: fakeTarball,
-            AEX_USER_TEST_VERSION: ""
+            AEX_USER_TEST_SDK_TARBALL: fakeTarball,
+            AEX_USER_TEST_CLI_TARBALL: fakeTarball
           },
           stdio: ["ignore", "pipe", "pipe"]
         });

@@ -4,32 +4,19 @@ title: Testing
 
 # Testing
 
-aex uses test-first development.
-For repository changes, default the first meaningful test to blackbox behavior
-from requirements, public contracts, docs, logs, or user-visible evidence before
-reading or changing implementation.
-
-Workspace-wide commands:
+The repository keeps deterministic package tests separate from clean-install
+and live user tests:
 
 ```text
-bun run lint                                      # typecheck/build prerequisites + lint
-bun run test                                      # unit, all packages, deterministic
-bun run test:user:offline                         # clean Bun install of packed/published SDK, no live API
-bun run test:user                                 # live hosted API user tests
-bun run test:user:heavy                           # explicit heavy live canary
-bun run docs:build                                # generated docs + Next build
-bun run pack:sdk                                  # SDK pack dry-run + public boundary check
+bun run build
+bun run lint
+bun run typecheck
+bun run test:unit
+bun run test:validate
+bun run test:user:offline
 ```
 
-Unit tests are deterministic and may use fakes. Offline user tests install the
-packed or published SDK into clean Bun temp projects and do not need provider
-credentials.
-
-When neither `AEX_USER_TEST_TARBALL` nor `AEX_USER_TEST_VERSION` is set, the
-user-test fixture packs the current workspace SDK into a tempdir and installs
-that artifact. CI or release validation can pin an explicit artifact with
-exactly one of `AEX_USER_TEST_TARBALL` or `AEX_USER_TEST_VERSION`.
-
-Live user tests run against a hosted aex API and fail loudly when required env
-is missing: `AEX_API_URL` and `AEX_API_KEY`. Model access uses the managed
-gateway; no customer provider key is part of test configuration.
+The offline user suite packs both `@aexhq/sdk` and `@aexhq/cli`, installs them
+into a fresh Bun project, and exercises the strict v1 resource flow without a
+hosted API. The manually dispatched live workflow runs the declared dev
+scenario with `AEX_API_URL` and `AEX_API_KEY`.

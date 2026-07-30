@@ -23,11 +23,8 @@
  *   3. Every declared kind mints exactly one form, and refuses its neighbours.
  *
  * DELIBERATELY out of scope:
- *   - `packages/contracts/src/session-config.ts`'s `SKILL_ID_PATTERN`
- *     (`^skl_[A-Za-z0-9_-]{8,128}$`) and `SKILL_NAME_PATTERN`. `skl` has no
- *     entry in `ID_PREFIXES`, so the anchored scan cannot reach either one; the
- *     skill-bundle id is owned by its own server-side CHECK constraint, not by
- *     this module. Asserted below so the exclusion is a decision, not a gap.
+ *   - registered resource names and normalized file paths. They are names and
+ *     paths under the v1 wire contract, not prefixed resource IDs.
  *   - `randomUUID` for non-entity values: a request id, a lease owner, a
  *     continuation token, a temp-file suffix. Those are not identifiers of
  *     anything the id owner names.
@@ -36,10 +33,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
-// A relative source import, the convention every other `scripts/validate` suite
-// uses (`canonical-api-docs.test.ts`, `runtime-capabilities.test.ts`): the
-// validation tree runs with cwd pinned inside `scripts/validate`, where the
-// workspace package name does not resolve.
+// A relative source import keeps the validator bound to the checkout under test
+// even when the package has not been installed or published.
 import {
   ID_KINDS,
   ID_PREFIXES,
@@ -168,21 +163,15 @@ describe("no hand-written id shape outside the owner", () => {
     }
   });
 
-  it("does not reach the skill patterns, whose prefix this module does not own", () => {
-    // `SKILL_ID_PATTERN` / `SKILL_NAME_PATTERN` in
-    // packages/contracts/src/session-config.ts describe a skill bundle, whose
-    // `skl` prefix has no `ID_PREFIXES` entry. They are out of this gate's scope
-    // by construction rather than by exemption — adding `skl` to the owner would
-    // bring them in, which is the correct way for that to change.
+  it("does not treat registered names as resource identifiers", () => {
     const pattern = shapeLiteralPattern();
     for (const outOfScope of [
-      "export const SKILL_ID_PATTERN = /^skl_[A-Za-z0-9_-]{8,128}$/;",
-      "export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;"
+      "export const REGISTERED_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;",
+      "export const NORMALIZED_PATH = /^[^\\\\\\0]+$/;"
     ]) {
       pattern.lastIndex = 0;
       expect(outOfScope).not.toMatch(pattern);
     }
-    expect(Object.values(ID_PREFIXES)).not.toContain("skl");
   });
 });
 
@@ -207,8 +196,8 @@ describe("one generator per entity", () => {
   it("would catch a deliberate violation, and leaves non-entity uuids alone", () => {
     const minting = mintingPattern();
     for (const violation of [
-      "return `sec_${randomUUID()}`;",
-      'return `wres_${randomUUID().replaceAll("-", "")}`;'
+      "return `ses_${randomUUID()}`;",
+      'return `op_${randomUUID().replaceAll("-", "")}`;'
     ]) {
       minting.lastIndex = 0;
       expect(violation).toMatch(minting);

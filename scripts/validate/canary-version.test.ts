@@ -58,20 +58,16 @@ describe("canary versioning", () => {
     expect(Bun.semver.order(buildCanaryVersion({ baseVersion: "0.46.4", sha: SHA_A, run: "1" }), "0.46.4-canary")).toBe(1);
   });
 
-  it("updates only the package version and exported SDK version in a release checkout", () => {
+  it("updates only the package version in a release checkout", () => {
     const root = join(tmpdir(), `aex-canary-version-${process.pid}-${Date.now()}`);
     const sdk = join(root, "packages", "sdk");
     mkdirSync(join(sdk, "src"), { recursive: true });
     writeFileSync(join(sdk, "package.json"), '{"name":"@aexhq/sdk","version":"0.1.0"}\n');
-    writeFileSync(join(sdk, "src", "version.ts"), 'export const SDK_VERSION = "0.1.0";\n');
 
     applySdkVersion(root, "0.1.0-canary.42.gabcdef0");
 
     expect(JSON.parse(readFileSync(join(sdk, "package.json"), "utf8")).version).toBe(
       "0.1.0-canary.42.gabcdef0"
-    );
-    expect(readFileSync(join(sdk, "src", "version.ts"), "utf8")).toContain(
-      'SDK_VERSION = "0.1.0-canary.42.gabcdef0"'
     );
   });
 

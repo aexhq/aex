@@ -31,43 +31,31 @@ const publicSurface = await readPublicSurface();
 const guideSources = [
   ["quickstart.md", "quickstart"],
   ["authentication.md", "authentication"],
-  ["session-config.md", "session-config"],
-  ["session-record.md", "session-record"],
+  ["resources.md", "resources"],
+  ["files.md", "files"],
+  ["telemetry.md", "telemetry"],
+  ["networking.md", "networking"],
   ["limits.md", "limits"],
-  ["defaults.md", "defaults"],
-  ["limits-and-quotas.md", "limits-and-quotas"],
   ["errors.md", "errors"],
   ["retries.md", "retries"],
-  ["secrets.md", "secrets"],
-  ["credentials.md", "credentials"],
-  ["networking.md", "networking"],
-  ["skills.md", "skills"],
-  ["vision-skills.md", "vision-skills"],
-  ["mcp.md", "mcp"],
-  ["files.md", "files"],
-  ["events.md", "events"],
-  ["telemetry.md", "telemetry"],
-  ["webhooks.md", "webhooks"],
   ["billing.md", "billing"],
-  ["cleanup.md", "cleanup"]
+  ["release.md", "release"],
+  ["testing.md", "testing"]
 ];
 
 const conceptSources = [
   ["sessions.md", "sessions"],
   ["composition.md", "composition"],
-  ["providers-and-runtimes.md", "providers-and-runtimes"],
-  ["agent-tools.md", "agent-tools"],
-  ["subagents.md", "subagents"]
+  ["agent-tools.md", "agent-tools"]
 ];
 
 const appDocRoutes = new Map([
   ...conceptSources.map(([file, slug]) => [file, `/docs/concepts/${slug}/`]),
   ...guideSources.map(([file, slug]) => [file, `/docs/guides/${slug}/`]),
   ["product-boundaries.md", "/docs/guides/limits/"],
-  ["provider-runtime-capabilities.md", "/docs/reference/provider-runtime-capabilities/"]
 ]);
 
-const referencePages = ["index", "sdk", "cli", "api", "events", "provider-runtime-capabilities"];
+const referencePages = ["index", "sdk", "cli", "api"];
 
 // ---------------------------------------------------------------------------
 // DO-NOT-EDIT banners.
@@ -132,10 +120,9 @@ function withMetaBanner(meta) {
 await syncOverviewPages();
 await syncConcepts();
 await syncGuides();
-await syncGeneratedCapabilityReference();
+await syncReferenceNavigation();
 await generateCliReference();
 await generateApiReference();
-await generateEventReference();
 await generateSdkReference();
 await generateLlmsFiles();
 
@@ -183,7 +170,6 @@ async function syncOverviewPages() {
       "- [Quickstart](/docs/guides/quickstart/)",
       "- [Features](/docs/features/)",
       "- [Composition](/docs/concepts/composition/)",
-      "- [Provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)",
       ""
     ].join("\n")
   });
@@ -263,9 +249,11 @@ async function syncGuides() {
   }
 }
 
-async function syncGeneratedCapabilityReference() {
+async function syncReferenceNavigation() {
   const outDir = resolve(contentRoot, "reference");
   await mkdir(outDir, { recursive: true });
+  await rm(resolve(outDir, "events.md"), { force: true });
+  await rm(resolve(outDir, "provider-runtime-capabilities.md"), { force: true });
   await writeFile(
     resolve(outDir, "meta.json"),
     `${JSON.stringify(
@@ -280,24 +268,28 @@ async function syncGeneratedCapabilityReference() {
     )}\n`,
     "utf8"
   );
-
-  const source = resolve(repoRoot, "packages", "sdk", "docs", "provider-runtime-capabilities.md");
-  const raw = await readFile(source, "utf8");
-  await writeFile(
-    resolve(outDir, "provider-runtime-capabilities.md"),
-    withMarkdownBanner(
-      rewritePackageDocLinks(raw),
-      "packages/sdk/docs/provider-runtime-capabilities.md"
-    ),
-    "utf8"
-  );
+  await writeMarkdown(resolve(outDir, "index.md"), {
+    title: "Reference overview",
+    description: "Generated reference entry point for the SDK, CLI, and HTTP API.",
+    body: [
+      "# Reference",
+      "",
+      "These pages are generated from the public v1 implementation:",
+      "",
+      "- [SDK](/docs/reference/sdk/) documents the exported TypeScript surface.",
+      "- [CLI](/docs/reference/cli/) documents the separately published command-line package.",
+      "- [HTTP API](/docs/reference/api/) documents the generated OpenAPI contract.",
+      "",
+      "Use the guides for workflows and these pages for exact public names.",
+      ""
+    ].join("\n")
+  });
 }
 
 async function generateCliReference() {
-  const cli = resolve(repoRoot, "packages", "sdk", "dist", "cli.mjs");
+  const cli = resolve(repoRoot, "packages", "cli", "dist", "cli.mjs");
   if (!existsSync(cli) || (await latestSourceMtime()) > (await mtimeMs(cli))) {
-    await runBun(["run", "--filter", "@aexhq/contracts", "build"]);
-    await runBun(["run", "--filter", "@aexhq/sdk", "build"]);
+    await runBun(["run", "--filter", "@aexhq/cli", "build"]);
   }
   const { stdout } = await execFileAsync(process.execPath, [cli, "--help"], {
     cwd: repoRoot,
@@ -332,44 +324,6 @@ async function generateApiReference() {
     title: API_REFERENCE_TITLE,
     description: API_REFERENCE_DESCRIPTION,
     body: renderApiReferenceMarkdown(spec)
-  });
-}
-
-async function generateEventReference() {
-  const envelope = await readFile(resolve(repoRoot, "packages", "contracts", "src", "event-envelope.ts"), "utf8");
-
-  const eventTypes = readConstArray(envelope, "AEX_EVENT_TYPES");
-  const sources = readConstArray(envelope, "AEX_EVENT_SOURCES");
-  const channels = readConstArray(envelope, "AEX_EVENT_CHANNELS");
-  const levels = readConstArray(envelope, "AEX_LOG_LEVELS");
-
-  const body = [
-    "# Events",
-    "",
-    "Generated from `packages/contracts/src/event-envelope.ts`.",
-    "",
-    "## Coordinator Envelope Types",
-    "",
-    markdownList(eventTypes),
-    "",
-    "## Sources",
-    "",
-    markdownList(sources),
-    "",
-    "## Channels",
-    "",
-    markdownList(channels),
-    "",
-    "## Log Levels",
-    "",
-    markdownList(levels),
-    ""
-  ].join("\n");
-
-  await writeMarkdown(resolve(contentRoot, "reference", "events.md"), {
-    title: "Events",
-    description: "Generated event vocabulary reference.",
-    body
   });
 }
 
@@ -427,7 +381,7 @@ async function generateLlmsFiles() {
     "",
     publicSurface.description,
     "",
-    "Models are named by their Vercel AI Gateway `creator/model` slug and routed through the platform's managed key — no provider selection, no provider API keys.",
+    "Models use a managed `creator/model` slug; the session request does not select an execution implementation.",
     "",
     "## Feature areas",
     "",
@@ -440,8 +394,8 @@ async function generateLlmsFiles() {
     `- [Quickstart](${publicDocsBase}/guides/quickstart/)`,
     `- [Sessions](${publicDocsBase}/concepts/sessions/)`,
     `- [Composition](${publicDocsBase}/concepts/composition/)`,
-    `- [Providers & Runtimes](${publicDocsBase}/concepts/providers-and-runtimes/)`,
-    `- [Secrets](${publicDocsBase}/guides/secrets/)`,
+    `- [Registered Resources](${publicDocsBase}/guides/resources/)`,
+    `- [Telemetry](${publicDocsBase}/guides/telemetry/)`,
     `- [Limits](${publicDocsBase}/guides/limits/)`,
     "",
     "## Guides",
@@ -453,8 +407,6 @@ async function generateLlmsFiles() {
     `- [SDK](${publicDocsBase}/reference/sdk/)`,
     `- [CLI](${publicDocsBase}/reference/cli/)`,
     `- [HTTP API](${publicDocsBase}/reference/api/)`,
-    `- [Events](${publicDocsBase}/reference/events/)`,
-    `- [Provider Runtime Capabilities](${publicDocsBase}/reference/provider-runtime-capabilities/)`,
     ""
   ].join("\n");
   await writeFile(resolve(publicRoot, "llms.txt"), summary, "utf8");
@@ -468,8 +420,6 @@ async function generateLlmsFiles() {
     fullParts.push(`\n\n# ${titleForSlug(slug)}\n`);
     fullParts.push(await readFile(resolve(repoRoot, "packages", "sdk", "docs", file), "utf8"));
   }
-  fullParts.push("\n\n# Provider Runtime Capabilities\n");
-  fullParts.push(await readFile(resolve(repoRoot, "packages", "sdk", "docs", "provider-runtime-capabilities.md"), "utf8"));
   await writeFile(resolve(publicRoot, "llms-full.txt"), fullParts.join("\n"), "utf8");
 }
 

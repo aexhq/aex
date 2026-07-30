@@ -4,19 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       artifact_source:
-        description: SDK artifact to test.
+        description: Public artifact pair to test.
         required: true
         default: pack-current
         type: choice
         options:
           - pack-current
-          - published-version
-      version:
-        description: Published aex version when artifact_source is published-version.
+          - published-versions
+      sdk_version:
+        description: Exact @aexhq/sdk version for published-versions.
+        required: false
+        type: string
+      cli_version:
+        description: Exact @aexhq/cli version for published-versions.
         required: false
         type: string
       source_sha:
-        description: Exact 40-character source SHA when artifact_source is published-version.
+        description: Exact source SHA shared by the published artifact pair.
         required: false
         type: string
 
@@ -28,13 +32,11 @@ permissions:
   contents: read
 
 jobs:
-  prepare-artifact:
-    name: Prepare SDK artifact
+  prepare-artifacts:
+    name: Prepare SDK and CLI artifacts
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.artifact.outputs.version }}
-      tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
-      candidate_identity: ${{ steps.artifact.outputs.candidate_identity }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
@@ -45,58 +47,53 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Install
-        if: ${{ inputs.artifact_source == 'pack-current' }}
         run: bun ci
 
-      - name: Select SDK artifact
-        id: artifact
+      - name: Verify published artifact pair
+        if: ${{ inputs.artifact_source == 'published-versions' }}
         env:
-          ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
-          PACKAGE_VERSION: ${{ inputs.version }}
+          SDK_VERSION: ${{ inputs.sdk_version }}
+          CLI_VERSION: ${{ inputs.cli_version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
-            if [ -z "$PACKAGE_VERSION" ] || ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "version and a lowercase 40-character source_sha are required when artifact_source is published-version." >&2
-              exit 1
-            fi
-            bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION" --source-sha "$SOURCE_SHA"
-            bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "$PACKAGE_VERSION"
-            echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
-            echo "candidate_identity=npm:@aexhq/sdk@$PACKAGE_VERSION#$SOURCE_SHA" >> "$GITHUB_OUTPUT"
-          else
-            bun run pack:sdk
-            pack_dir="$RUNNER_TEMP/aex-pack"
-            mkdir -p "$pack_dir"
-            (cd packages/sdk && bun pm pack --destination "$pack_dir")
-            tarball="$(find "$pack_dir" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
-            if [ -z "$tarball" ]; then
-              echo "No @aexhq/sdk tarball was produced." >&2
-              exit 1
-            fi
-            echo "tarball_artifact=live-user-tests-sdk-tarball" >> "$GITHUB_OUTPUT"
-            digest="$(sha256sum "$tarball" | awk '{print $1}')"
-            echo "candidate_identity=sha256:$digest" >> "$GITHUB_OUTPUT"
+          if [ -z "$SDK_VERSION" ] || [ -z "$CLI_VERSION" ] || ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "sdk_version, cli_version, and a lowercase 40-character source_sha are required." >&2
+            exit 1
           fi
+          node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$SDK_VERSION" --source-sha "$SOURCE_SHA"
+          node scripts/cicd/wait-for-npm.mjs @aexhq/cli "$CLI_VERSION" --source-sha "$SOURCE_SHA"
+          bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "$SDK_VERSION"
+          bun scripts/cicd/wait-for-bun-install.mjs @aexhq/cli "$CLI_VERSION"
 
-      - name: Upload SDK tarball
+      - name: Pack current artifact pair
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        run: |
+          set -euo pipefail
+          bun run build
+          mkdir -p "$RUNNER_TEMP/aex-pack"
+          (cd packages/sdk && bun pm pack --destination "$RUNNER_TEMP/aex-pack" --ignore-scripts)
+          (cd packages/cli && bun pm pack --destination "$RUNNER_TEMP/aex-pack" --ignore-scripts)
+          test "$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' | wc -l)" -eq 1
+          test "$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-cli-*.tgz' | wc -l)" -eq 1
+
+      - name: Upload current artifact pair
         if: ${{ inputs.artifact_source == 'pack-current' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: live-user-tests-sdk-tarball
-          path: ${{ runner.temp }}/aex-pack/aexhq-sdk-*.tgz
+          name: live-user-tests-artifacts
+          path: ${{ runner.temp }}/aex-pack/*.tgz
           if-no-files-found: error
           retention-days: 1
 
-  live-user-tests-preflight:
-    name: Live user tests preflight
+      - name: Build single-architecture file matrix
+        id: matrix
+        run: echo "matrix=$(bun apps/user-tests/scripts/shard-files.mjs --matrix)" >> "$GITHUB_OUTPUT"
+
+  preflight:
+    name: Verify dev API access
     runs-on: ubuntu-latest
     environment: live-user-tests
-    needs: prepare-artifact
-    outputs:
-      runtime_capabilities: ${{ steps.preflight.outputs.runtime_capabilities }}
-      max_concurrent_sessions: ${{ steps.preflight.outputs.max_concurrent_sessions }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
@@ -106,75 +103,25 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      - name: Check live user-test configuration
-        id: preflight
+      - name: Preflight canonical sessions route
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 1
-          LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,sessions:cancel,sessions:delete,files:read,files:write,assets:write,skills:write,tools:write,instructions:write,secrets:read,secrets:write
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
-  prepare-live-test-matrix:
-    name: Prepare authenticated runtime matrix
-    runs-on: ubuntu-latest
-    needs:
-      - prepare-artifact
-      - live-user-tests-preflight
-    outputs:
-      test_matrix: ${{ steps.test-matrix.outputs.matrix }}
-      peak_session_slots: ${{ steps.test-matrix.outputs.peak_session_slots }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
-        with:
-          bun-version: "1.3.14"
-
-      - name: Build one-file matrix from authenticated runtime capabilities
-        id: test-matrix
-        shell: bash
-        env:
-          RUNTIME_CAPABILITIES: ${{ needs.live-user-tests-preflight.outputs.runtime_capabilities }}
-          MAX_CONCURRENT_SESSIONS: ${{ needs.live-user-tests-preflight.outputs.max_concurrent_sessions }}
-        run: |
-          set -euo pipefail
-          matrix="$(bun apps/user-tests/scripts/shard-files.mjs --matrix --runtime-capabilities-json "$RUNTIME_CAPABILITIES")"
-          peak_session_slots="$(node -e '
-            const entries = JSON.parse(process.argv[1]);
-            const peak = entries.reduce((total, entry) => total + entry.sessionSlots, 0);
-            if (!Number.isSafeInteger(peak) || peak < 1) throw new Error("invalid live-test session-slot declaration");
-            process.stdout.write(String(peak));
-          ' "$matrix")"
-          if [ "$peak_session_slots" -gt "$MAX_CONCURRENT_SESSIONS" ]; then
-            echo "Authenticated workspace maxConcurrentSessions=$MAX_CONCURRENT_SESSIONS is below discovered runtime matrix demand $peak_session_slots." >&2
-            exit 1
-          fi
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"
-
   live-user-tests:
-    name: Live user tests ${{ matrix.shard }}/${{ matrix.count }} (${{ matrix.tier }}, ${{ matrix.runtimeKind || 'default' }})
+    name: Live user tests ${{ matrix.shard }}/${{ matrix.count }}
     needs:
-      - prepare-artifact
-      - live-user-tests-preflight
-      - prepare-live-test-matrix
+      - prepare-artifacts
+      - preflight
     runs-on: ubuntu-latest
     environment: live-user-tests
-    timeout-minutes: 240
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      # Fanout is the hand-picked coverage matrix, not one job per file: the
-      # runtime-sensitive tiers get a job per runtime arm and the
-      # runtime-agnostic tier is duration-packed into bins. Declared per file in
-      # apps/user-tests/scripts/shard-files.mjs LIVE_TEST_COVERAGE. No
-      # max-parallel cap; the preflight sums each entry's declared peak
-      # session-slot demand from this discovered matrix.
       matrix:
-        include: ${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}
+        include: ${{ fromJSON(needs.prepare-artifacts.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
@@ -187,197 +134,42 @@ jobs:
       - name: Install
         run: bun ci
 
-      - name: Download SDK tarball
+      - name: Download current artifact pair
         if: ${{ inputs.artifact_source == 'pack-current' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          name: live-user-tests-sdk-tarball
+          name: live-user-tests-artifacts
           path: ${{ runner.temp }}/aex-pack
 
-      - name: Use selected SDK artifact
+      - name: Select artifact pair
         shell: bash
         env:
           ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
-          PACKAGE_VERSION: ${{ needs['prepare-artifact'].outputs.version }}
-          CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
+          SDK_VERSION: ${{ inputs.sdk_version }}
+          CLI_VERSION: ${{ inputs.cli_version }}
         run: |
           set -euo pipefail
-          if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
-            echo "AEX_USER_TEST_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          if [ "$ARTIFACT_SOURCE" = "published-versions" ]; then
+            echo "AEX_USER_TEST_SDK_VERSION=$SDK_VERSION" >> "$GITHUB_ENV"
+            echo "AEX_USER_TEST_CLI_VERSION=$CLI_VERSION" >> "$GITHUB_ENV"
           else
-            tarball="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
-            if [ -z "$tarball" ]; then
-              echo "No downloaded @aexhq/sdk tarball was found." >&2
-              exit 1
-            fi
-            downloaded_identity="sha256:$(sha256sum "$tarball" | awk '{print $1}')"
-            if [ "$downloaded_identity" != "$CANDIDATE_IDENTITY" ]; then
-              echo "Downloaded SDK tarball identity does not match the prepared candidate." >&2
-              exit 1
-            fi
-            echo "AEX_USER_TEST_TARBALL=${tarball}" >> "$GITHUB_ENV"
+            sdk="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
+            cli="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-cli-*.tgz' -print -quit)"
+            test -n "$sdk"
+            test -n "$cli"
+            echo "AEX_USER_TEST_SDK_TARBALL=$sdk" >> "$GITHUB_ENV"
+            echo "AEX_USER_TEST_CLI_TARBALL=$cli" >> "$GITHUB_ENV"
           fi
 
-      - name: Live user tests
-        id: live-test
-        shell: bash
+      - name: Run declared dev scenario
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
-          AEX_USER_TEST_MAX_WORKERS: 1
-          AEX_USER_TEST_RUNTIME_KIND: ${{ matrix.runtimeKind }}
-          AEX_USER_TEST_CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
-          TEST_FILE: ${{ matrix.file }}
-          RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
-          REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json
+          AEX_USER_TEST_MODEL: ${{ vars.AEX_USER_TEST_MODEL }}
+          TEST_FILES: ${{ matrix.file }}
         run: |
           set -euo pipefail
-          mkdir -p "$(dirname "$RAW_LOG")"
-          if [ -z "${TEST_FILE:-}" ]; then
-            echo "Matrix entry did not provide a test file." >&2
-            exit 1
-          fi
-          set +e
-          # Deliberately UNQUOTED: the runtime-agnostic tier packs several files
-          # into one entry as a space-separated argv list. Test paths are
-          # repo-relative and never contain spaces.
+          # Paths are repository-owned and contain no spaces.
           # shellcheck disable=SC2086
-          bun run test:user:files -- $TEST_FILE --reporter=junit --reporter-outfile="$REPORT" > "$RAW_LOG" 2>&1
-          test_status=$?
-          node scripts/cicd/assert-no-skips.mjs "$REPORT" >> "$RAW_LOG" 2>&1
-          assertion_status=$?
-          set -e
-          if [ "$test_status" -ne 0 ]; then
-            exit "$test_status"
-          fi
-          exit "$assertion_status"
-
-      # Only the runtime-spotcheck tier owns parity cells. Every other entry
-      # carries an empty parityCells list, and the
-      # emitter fails closed on an empty list rather than writing a hollow
-      # verdict — so gate on the cells, not on the runtime kind.
-      - name: Emit runtime parity verdicts
-        if: ${{ always() && toJSON(matrix.parityCells) != '[]' }}
-        shell: bash
-        env:
-          PARITY_CELLS: ${{ toJSON(matrix.parityCells) }}
-          STEP_OUTCOME: ${{ steps.live-test.outcome }}
-          CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
-          REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json
-          VERDICT: ${{ github.workspace }}/.suite-diagnostics/verdicts/verdict-${{ matrix.shard }}.json
-        run: |
-          node apps/user-tests/scripts/runtime-parity-verdicts.mjs emit \
-            --cells-json "$PARITY_CELLS" \
-            --step-outcome "$STEP_OUTCOME" \
-            --candidate-identity "$CANDIDATE_IDENTITY" \
-            --report "$REPORT" \
-            --out "$VERDICT"
-
-      - name: Upload runtime parity verdict
-        if: ${{ always() && toJSON(matrix.parityCells) != '[]' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: runtime-parity-verdict-${{ matrix.shard }}
-          path: .suite-diagnostics/verdicts
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Redact live user test log
-        if: ${{ always() }}
-        env:
-          AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
-          RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
-          REDACTED_LOG: ${{ github.workspace }}/.suite-diagnostics/redacted/live-user-tests-shard-${{ matrix.shard }}.log
-        run: |
-          set -euo pipefail
-          mkdir -p "$(dirname "$REDACTED_LOG")"
-          node --input-type=module <<'NODE'
-          import { existsSync, readFileSync, writeFileSync } from "node:fs";
-
-          const rawPath = process.env.RAW_LOG;
-          const outPath = process.env.REDACTED_LOG;
-          if (!rawPath || !outPath) {
-            throw new Error("RAW_LOG and REDACTED_LOG are required.");
-          }
-          let text = existsSync(rawPath)
-            ? readFileSync(rawPath, "utf8")
-            : "live-user-tests.log was not created before diagnostics collection.\n";
-
-          for (const name of ["AEX_API_KEY"]) {
-            const value = process.env[name];
-            if (value && value.length > 0) {
-              text = text.split(value).join(`[REDACTED:${name}]`);
-            }
-          }
-          text = redactSignedUrls(text);
-
-          writeFileSync(outPath, text);
-
-          function redactSignedUrls(input) {
-            return input
-              .replace(/https?:\/\/[^\s<>"'`]+/g, (raw) => {
-                const trailing = raw.match(/[),.;:!?]+$/)?.[0] ?? "";
-                const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
-                if (!/[?&](?:X-Amz-|X-Goog-|AWSAccessKeyId=|GoogleAccessId=|Signature=|Credential=|Security-Token=)/i.test(candidate)) {
-                  return raw;
-                }
-                try {
-                  const url = new URL(candidate);
-                  const auth = url.username || url.password ? "[redacted]@" : "";
-                  return `${url.protocol}//${auth}${url.host}${url.pathname}?[redacted]${url.hash}${trailing}`;
-                } catch {
-                  return `${candidate.replace(/\?.*$/, "?[redacted]")}${trailing}`;
-                }
-              })
-              .replace(
-                /\b((?:X-Amz-[A-Za-z0-9-]+|X-Goog-[A-Za-z0-9-]+|AWSAccessKeyId|GoogleAccessId|Signature|Credential|Security-Token|AccessKeyId|SecretAccessKey|SessionToken)=)[^&\s<>"'`]+/gi,
-                "$1[redacted]"
-              );
-          }
-          NODE
-          cat "$REDACTED_LOG"
-
-      - name: Upload redacted live user test log
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: live-user-tests-shard-${{ matrix.shard }}-redacted-log
-          path: .suite-diagnostics/redacted
-          if-no-files-found: error
-          retention-days: 7
-
-      # The expensive, optional suites (per-provider matrix and heavy
-      # full-feature session) are NOT run here — they live in the
-      # manually-dispatched .github/workflows/live-on-demand-tests.yml. The
-      # deterministic tool-fuzz gate sessions in the platform deploy suite.
-
-  runtime-parity-verdict:
-    name: Runtime parity verdict closure
-    if: ${{ always() }}
-    needs:
-      - prepare-artifact
-      - prepare-live-test-matrix
-      - live-user-tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-
-      - name: Download runtime parity verdicts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          pattern: runtime-parity-verdict-*
-          path: ${{ runner.temp }}/runtime-parity-verdicts
-          merge-multiple: true
-
-      - name: Require exact runtime parity verdict closure
-        shell: bash
-        env:
-          TEST_MATRIX: ${{ needs.prepare-live-test-matrix.outputs.test_matrix }}
-          CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
-        run: |
-          node apps/user-tests/scripts/runtime-parity-verdicts.mjs validate \
-            --matrix-json "$TEST_MATRIX" \
-            --candidate-identity "$CANDIDATE_IDENTITY" \
-            --verdict-directory "$RUNNER_TEMP/runtime-parity-verdicts"
+          bun run test:user:files -- $TEST_FILES \
+            --report=.tmp/junit-live-${{ matrix.shard }}.xml

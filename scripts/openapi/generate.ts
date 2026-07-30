@@ -31,6 +31,7 @@ import {
   REGIONAL_API_ROUTE_DESCRIPTORS,
   type AuthenticatedApiRouteDescriptor
 } from "../../packages/contracts/src/api-routes.js";
+import { idPatternSource } from "../../packages/contracts/src/ids.js";
 import { OPENAPI_SCHEMA_REGISTRY, OPENAPI_REQUEST_BODIES } from "./registry.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -117,7 +118,7 @@ function operationFor(
           name: "Aex-Operation-Id",
           in: "header" as const,
           required: true,
-          schema: { type: "string" as const, pattern: "^op_[0-9a-hjkmnp-tv-z]{26}$" }
+          schema: { type: "string" as const, pattern: idPatternSource("operation") }
         }
       : descriptor.idempotency === "idempotency-key"
         ? {

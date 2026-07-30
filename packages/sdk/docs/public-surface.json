@@ -1,73 +1,44 @@
 {
-  "brand": "aex",
-  "productName": "Agent Executor",
-  "oneLine": "aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.",
-  "description": "Open durable agent sessions, send turns, stream events, capture files, and compose agents with skills, files, MCP, secrets, networking controls, and subagents across the managed runtime.",
-  "alpha": {
-    "label": "Alpha testing",
-    "description": "Access is limited to invited testers while we harden the hosted runtime, dashboard, and SDK workflows."
-  },
-  "installCommand": "npm i @aexhq/sdk",
+  "productName": "aex",
+  "oneLine": "Explicit durable agent sessions through the strict aex v1 API.",
+  "description": "Create sessions, admit messages and runs, manage overwrite-by-name workspace resources, read persisted or live files through grants, and query or export telemetry.",
   "examples": {
     "typescriptLines": [
-      "import { Aex, Sizes } from \"@aexhq/sdk\";",
+      "import { Aex } from \"@aexhq/sdk\";",
       "",
-      "const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });",
-      "",
+      "const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);",
       "const session = await aex.sessions.create({",
-      "  model: \"anthropic/claude-haiku-4-5\",",
-      "  system: \"You are a concise engineering assistant.\",",
-      "  runtime: { size: Sizes.CPU_0_25_1GB },",
-      "  overrides: { idleTtl: \"3m\" }",
+      "  model: \"anthropic/claude-haiku-4-5\"",
       "});",
-      "",
-      "const result = await session.messages.send(\"Write a short report and save it as a file.\").finished();",
-      "console.log(result.status, result.text);"
+      "const { run } = await session.messages.send(\"Summarize this repository.\");",
+      "const result = await run.result();",
+      "console.log(result.id, result.status);"
     ],
     "cliLines": [
-      "aex start \\",
-      "  --api-key \"$AEX_API_KEY\" \\",
-      "  --model anthropic/claude-haiku-4-5 \\",
-      "  --prompt \"Write a short report and save it as a file.\" \\",
-      "  --follow"
+      "bun add --global @aexhq/cli",
+      "aex sessions create --request @session.json --api-key \"$AEX_WORKSPACE_API_KEY\""
     ]
   },
   "featureAreas": [
     {
-      "slug": "agent-runtime",
-      "href": "/docs/features/#agent-runtime",
-      "title": "Agent runtime",
-      "description": "Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents."
+      "title": "Sessions and runs",
+      "href": "/docs/concepts/sessions/",
+      "description": "Explicit session creation, message admission, durable run polling, and operation-backed lifecycle changes."
     },
     {
-      "slug": "durable-infrastructure",
-      "href": "/docs/features/#durable-infrastructure",
-      "title": "Durable infrastructure",
-      "description": "Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes."
+      "title": "Registered resources and files",
+      "href": "/docs/guides/resources/",
+      "description": "Overwrite-by-name inputs plus distinct persisted and live file reads with short-lived download grants."
     },
     {
-      "slug": "agent-composition",
-      "href": "/docs/features/#agent-composition",
-      "title": "Agent composition",
-      "description": "Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls."
+      "title": "Telemetry",
+      "href": "/docs/guides/telemetry/",
+      "description": "Query, stream, aggregate, inspect gaps, and create durable telemetry exports."
     },
     {
-      "slug": "subagents",
-      "href": "/docs/features/#subagents",
-      "title": "Subagents",
-      "description": "Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation."
-    },
-    {
-      "slug": "managed-model-access",
-      "href": "/docs/features/#managed-model-access",
-      "title": "Managed model access",
-      "description": "Name any model by its Vercel AI Gateway `creator/model` slug — the platform's managed key routes it. No provider selection, no provider API keys."
-    },
-    {
-      "slug": "typed-control-surface",
-      "href": "/docs/features/#typed-control-surface",
-      "title": "Typed control surface",
-      "description": "Strongly typed SDK inputs, CLI parity, workspace secrets, assistant text modes, and file capture policy."
+      "title": "Account and billing",
+      "href": "/docs/guides/billing/",
+      "description": "Bootstrap resources for accounts, organizations, workspaces, API keys, balances, usage, and statements."
     }
   ]
 }

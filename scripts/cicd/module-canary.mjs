@@ -6,9 +6,9 @@
  * `canary-version.mjs` and `release-source.mjs` answer the same two questions for
  * the SDK alone. Once every public module publishes its own npm canary, those
  * answers become per-module, so this file generalises them WITHOUT forking the
- * implementation: the SDK path still runs `applySdkVersion` / `applyReleaseSource`
- * verbatim, because the SDK additionally carries a `SDK_VERSION` export that a
- * generic package.json writer would leave stale.
+ * implementation: the SDK path still runs `applySdkVersion` /
+ * `applyReleaseSource` verbatim because its source tag and registry metadata
+ * remain the release selector used by the hosted deployment.
  *
  * Source-tag shape is a declared exception rather than a hidden one. The SDK keeps
  * the flat `canary/<version>` tag because the private release parses exactly that

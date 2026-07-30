@@ -1,64 +1,83 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { posix, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { describe, expect, it } from "bun:test";
-import { ASSET_ARCHIVE_LIMITS } from "../../packages/contracts/src/session-config.js";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");
-const publicDocs = [
-  "README.md",
-  "packages/sdk/README.md",
-  "packages/sdk/docs",
-  "apps/docs/content/docs"
+const sdkDocs = resolve(repoRoot, "packages", "sdk", "docs");
+const deletedGuides = [
+  "provider-runtime-capabilities.md",
+  "session-config.md",
+  "session-record.md",
+  "webhooks.md",
+  "concepts/providers-and-runtimes.md",
+  "concepts/subagents.md"
 ] as const;
 
-const bareRoute = /\b(?:GET|POST|PUT|PATCH|DELETE) \/(?!api(?:\/|\b))(?:sessions|assets|secrets|whoami|workspace|billing|webhook|mcp-servers)\b/;
-const legacyRootResource = /\b(?:aex|client)\.(?:files|messages|secrets)\./;
+describe("canonical strict-v1 package documentation", () => {
+  it("removes guides whose only subject was a deleted public surface", () => {
+    for (const guide of deletedGuides) {
+      expect(existsSync(resolve(sdkDocs, guide)), guide).toBe(false);
+    }
+  });
 
-describe("canonical public API documentation", () => {
-  it("uses /api routes and the hierarchical SDK resource surface", () => {
+  it("teaches explicit sessions, durable runs and the separate CLI package", () => {
+    const root = readFileSync(resolve(repoRoot, "README.md"), "utf8");
+    const sdk = readFileSync(resolve(repoRoot, "packages/sdk/README.md"), "utf8");
+    const cli = readFileSync(resolve(repoRoot, "packages/cli/README.md"), "utf8");
+    const quickstart = readFileSync(resolve(sdkDocs, "quickstart.md"), "utf8");
+
+    for (const text of [root, sdk, quickstart]) {
+      expect(text).toContain("aex.sessions.create");
+      expect(text).toContain("session.messages.send");
+      expect(text).toContain("run.result");
+    }
+    expect(root).toContain("@aexhq/cli");
+    expect(sdk).toContain("published separately by `@aexhq/cli`");
+    expect(cli).toContain("sessions create");
+    expect(root).not.toContain("npx aex start");
+    expect(root).not.toContain("Bundles the CLI");
+  });
+
+  it("documents overwrite registries, explicit file grants, and telemetry resources", () => {
+    const resources = readFileSync(resolve(sdkDocs, "resources.md"), "utf8");
+    const files = readFileSync(resolve(sdkDocs, "files.md"), "utf8");
+    const telemetry = readFileSync(resolve(sdkDocs, "telemetry.md"), "utf8");
+
+    expect(resources).toContain("aex.workspace.instructions.set");
+    expect(resources).toContain("overwrite");
+    expect(resources).not.toContain("versions");
+    expect(files).toContain("session.files.persisted.download");
+    expect(files).toContain("session.files.live.download");
+    expect(files).toContain("short-lived grant");
+    expect(telemetry).toContain("session.telemetry.query");
+    expect(telemetry).toContain("session.telemetry.stream");
+    expect(telemetry).toContain("session.telemetry.export");
+  });
+
+  it("contains no stale code examples for removed SDK and wire concepts", () => {
     const findings: string[] = [];
-    for (const entry of publicDocs) {
-      for (const file of filesUnder(resolve(repoRoot, entry))) {
-        readFileSync(file, "utf8").split(/\r?\n/).forEach((line, index) => {
-          if (bareRoute.test(line) || legacyRootResource.test(line)) {
-            findings.push(`${relative(repoRoot, file).replaceAll("\\", "/")}:${index + 1}: ${line.trim()}`);
-          }
-        });
+    const forbidden = [
+      /\bAssetRef\b/,
+      /\bSDK_VERSION\b/,
+      /\bavailableRuntimeKinds\b/,
+      /\bcanonicalSha256\b/,
+      /\bFile\.from(?:Path|Url|Bytes)\b/,
+      /\bSkill\.from(?:Dir|Url)\b/,
+      /\bTool\.from(?:Dir|Url)\b/,
+      /\bruntime\s*:/,
+      /\.archiveLink\s*\(/,
+      /\.webhooks\b/,
+      /\bcheckpointId\b/,
+      /\bFargate\b/
+    ];
+    for (const file of filesUnder(sdkDocs)) {
+      for (const [index, line] of readFileSync(file, "utf8").split(/\r?\n/).entries()) {
+        if (forbidden.some((pattern) => pattern.test(line))) {
+          findings.push(`${relative(repoRoot, file).replaceAll("\\", "/")}:${index + 1}: ${line.trim()}`);
+        }
       }
     }
     expect(findings).toEqual([]);
-  });
-
-  it("teaches File.mountPath as a directory rather than a destination filename", () => {
-    const quickstart = readFileSync(resolve(repoRoot, "packages/sdk/docs/quickstart.md"), "utf8");
-    const files = readFileSync(resolve(repoRoot, "packages/sdk/docs/files.md"), "utf8");
-    const example = /File\.fromPath\("([^"]+)",\s*\{\s*mountPath:\s*"([^"]+)"/.exec(quickstart);
-    const sourceName = posix.basename(example?.[1] ?? "");
-    const mountDirectory = example?.[2] ?? "";
-    const resolvedPath = `${mountDirectory.replace(/\/$/, "")}/${sourceName}`;
-
-    expect(sourceName).not.toBe("");
-    expect(posix.basename(mountDirectory)).not.toBe(sourceName);
-    expect(files).toContain(`\`${resolvedPath}\``);
-    expect(files).toContain("`mountPath` is always a destination directory");
-    expect(files).toContain("storage slug; it never renames the mounted file");
-  });
-
-  it("documents the same usable asset envelope enforced by public authoring", () => {
-    const limits = readFileSync(resolve(repoRoot, "packages/sdk/docs/limits-and-quotas.md"), "utf8");
-    const files = readFileSync(resolve(repoRoot, "packages/sdk/docs/files.md"), "utf8");
-
-    expect(ASSET_ARCHIVE_LIMITS).toEqual({
-      maxCompressedBytes: 16 * 1024 * 1024,
-      maxDecompressedBytes: 128 * 1024 * 1024,
-      maxEntries: 1_000,
-      maxMetadataBytes: 8 * 1024 * 1024
-    });
-    expect(limits).toContain("Compressed archive bytes | 16 MiB maximum");
-    expect(limits).toContain("Expanded archive bytes | 128 MiB maximum");
-    expect(limits).toContain("Materialized files and safe symlinks | 1,000 maximum per archive");
-    expect(limits).toContain("Fidelity metadata | 8 MiB maximum");
-    expect(files).toContain("1,000 materialized files or safe symlinks");
   });
 });
 
@@ -67,6 +86,6 @@ function filesUnder(path: string): string[] {
   return readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
     const child = resolve(path, entry.name);
     if (entry.isDirectory()) return filesUnder(child);
-    return entry.isFile() && /\.(?:md|ts|mjs)$/.test(entry.name) ? [child] : [];
+    return entry.isFile() && /\.(?:md|json)$/.test(entry.name) ? [child] : [];
   });
 }

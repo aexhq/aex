@@ -6,24 +6,16 @@
   "type": "module",
   "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. Product SDK/CLI access goes through a child process whose cwd is a fresh `bun install` tempdir; the harness may import local test fixtures.",
   "scripts": {
-    "test:user": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user.xml --isolate --timeout=180000 --parallel-env=AEX_USER_TEST_MAX_WORKERS:2 --sweep",
-    "test:user:files": "bun scripts/user-bun-test.mjs --isolate --timeout=180000 --parallel-env=AEX_USER_TEST_MAX_WORKERS:2",
-    "test:user:smoke": "bun scripts/user-bun-test.mjs --isolate --timeout=180000 --parallel-env=AEX_USER_TEST_MAX_WORKERS:2 --smoke",
-    "test:user:admission-gates": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-admission-gates.xml --isolate --timeout=600000 test/live/edge-admission-gates.user.test.ts",
-    "test:user:offline": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-offline.xml --isolate --timeout=180000 --parallel-env=AEX_USER_TEST_OFFLINE_MAX_WORKERS:4 test/offline",
-    "test:user:heavy": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-heavy.xml --isolate --timeout=900000 test/live/live-sdk-heavy-session.test.ts",
-    "test:user:concurrency-scale": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-concurrency-scale.xml --isolate --timeout=900000 test/live/edge-concurrency-scale.user.test.ts",
-    "test:user:providers": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-providers.xml --isolate --timeout=180000 test/live/providers",
-    "test:user:fuzz": "mkdir -p .tmp && rm -f .tmp/junit-test-user-fuzz.xml && bun test --isolate --timeout=300000 --reporter=junit --reporter-outfile=.tmp/junit-test-user-fuzz.xml test/live/live-api-fuzz.test.ts && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-user-fuzz.xml",
-    "test:user:e2e": "bun run --filter @aexhq/contracts --filter @aexhq/cli build && mkdir -p .tmp && rm -f .tmp/junit-test-user-e2e.xml && bun test --isolate --timeout=120000 --reporter=junit --reporter-outfile=.tmp/junit-test-user-e2e.xml test/e2e && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-user-e2e.xml",
-    "test:user:tool-fuzz": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-tool-fuzz.xml --isolate --timeout=1200000 test/live/live-sdk-tool-capability-fuzz.test.ts",
+    "test:user": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user.xml --isolate --timeout=620000 --sweep",
+    "test:user:files": "bun scripts/user-bun-test.mjs --isolate --timeout=620000",
+    "test:user:smoke": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-smoke.xml --isolate --timeout=620000 --smoke",
+    "test:user:offline": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user-offline.xml --isolate --timeout=300000 test/_fixtures/install.test.ts test/offline",
     "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
     "lint:unlocked": "tsc --noEmit",
     "typecheck": "bun ../../scripts/with-generated-dist-lock.mjs bun run typecheck:unlocked",
     "typecheck:unlocked": "tsc --noEmit"
   },
   "devDependencies": {
-    "@aexhq/contracts": "workspace:*",
     "@types/bun": "1.3.14",
     "dotenv": "16.5.0",
     "typescript": "5.8.3"

@@ -4,132 +4,42 @@ title: Quickstart
 
 # Quickstart
 
-## Install
+Install the SDK:
 
 ```bash
-npm i @aexhq/sdk
+npm install @aexhq/sdk
 ```
 
-Set an aex workspace key. Model access needs no provider key — the managed
-gateway routes every model:
-
-```bash
-export AEX_API_KEY="<your-aex-api-key>"
-```
-
-The workspace key needs `sessions:read`, `sessions:write`, and `files:read` for
-this workflow. Add `billing:read` when the application also reads cost and
-billing-account resources.
-
-## Run a session
+Create an explicit session, admit a message, then wait on its durable run:
 
 ```ts
-import { Aex, Sizes } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_KEY!);
+const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
 const session = await aex.sessions.create({
-  model: "anthropic/claude-haiku-4-5",
-  system: "You are a concise engineering assistant.",
-  runtime: Sizes.CPU_0_25_1GB,
+  model: "anthropic/claude-haiku-4-5"
 });
-
-const run = session.messages.send("Write a short report and save it as a file.");
-for await (const event of run) {
-  console.log(event.type, event.runId);
-}
-
-const result = await run.finished();
-console.log(result.status, result.costUsd, result.text);
-```
-
-`finished()` resolves only after `RUN_FINISHED` or `RUN_ERROR`. A
-`RUN_FINISHED` result is checkpoint-consistent: its session record, cost,
-usage, messages, and files all reflect the same committed run. A `RUN_ERROR`
-that failed before a checkpoint has `files: []` and no `checkpoint`.
-
-Held outcomes remain explicit. `suspended` and `awaiting_approval` are not
-reported as successful runs, and `result.ok` is true only for `succeeded`.
-
-## Reopen and continue
-
-```ts
-const resumed = await aex.sessions.open(session.id);
-if (resumed.record.acceptsMessages) {
-  await resumed.messages.send("Validate the report and summarize the result.").finished();
-}
-```
-
-`record.currentRun` describes active work and `record.lastRun` describes the
-most recently completed or held run.
-
-## Publish reusable inputs
-
-Workspace resources are versioned and immutable when submitted. Publish local
-drafts first, then pass the returned pinned refs under `assets`:
-
-```ts
-import { File } from "@aexhq/sdk";
-
-const source = await aex.workspace.files.publish(
-  await File.fromPath("./input.csv", { mountPath: "/workspace/input" })
+const { run } = await session.messages.send(
+  "Summarize this repository.",
+  { idempotencyKey: "summarize-repository" }
 );
-
-const withInput = await aex.sessions.create({
-  model: "anthropic/claude-haiku-4-5",
-  assets: { files: [source] },
-  builtinTools: "default",
-});
-```
-
-The same pattern applies to `aex.workspace.skills`, `.tools`, and
-`.instructions`. Raw uploaded bytes are assets; workspace resources add typed,
-versioned meaning to those bytes.
-
-## Read checkpointed files
-
-```ts
-const completed = await withInput.messages.send("Create output/report.md").finished();
-const snapshot = await withInput.files.list({
-  checkpointId: completed.checkpoint?.checkpointId
+const result = await run.result({
+  pollIntervalMs: 1_000,
+  timeoutMs: 300_000
 });
 
-console.log(snapshot.revision, snapshot.files);
-const report = await withInput.files.findOne({ filename: "report.md" });
-if (report) {
-  console.log((await withInput.files.read(report)).text);
-}
+console.log(result.id, result.status, result.outputMessageIds);
 ```
 
-Session file IDs are meaningful only with their checkpoint. File objects carry
-`checkpointId`, and ID selectors must include it.
+`run.result()` polls the canonical run resource. A timeout detaches this
+client-side wait; it does not cancel the run.
 
-## One-shot convenience
-
-`aex.start()` is the one retained convenience for create, send, and finish:
-
-```ts
-const result = await aex.start({
-  model: "anthropic/claude-haiku-4-5",
-  message: "Summarize this repository.",
-});
-
-console.log(result.sessionId, result.status, result.text);
-```
-
-The bundled CLI provides the same one-shot workflow:
+The command-line interface is a separate install:
 
 ```bash
-npx aex start \
-  --api-key "$AEX_API_KEY" \
-  --model anthropic/claude-haiku-4-5 \
-  --prompt "Write a short report and save it as a file." \
-  --follow
+bun add --global @aexhq/cli
+aex sessions create --request @session.json --api-key "$AEX_WORKSPACE_API_KEY"
 ```
 
-## Next
-
-- [Composition](concepts/composition.md)
-- [Events](events.md)
-- [Files](files.md)
-- [Webhooks](webhooks.md)
-- [Provider/runtime capabilities](provider-runtime-capabilities.md)
+Next: [registered resources](resources.md), [files](files.md), and
+[telemetry](telemetry.md).

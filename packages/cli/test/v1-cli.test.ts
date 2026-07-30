@@ -73,18 +73,18 @@ describe("v1 resource grammar", () => {
       args: ["events", "query", "--session", sessionId, "--query", JSON.stringify(query), ...API],
       fetch: (call) => {
         if (call.url.endsWith(`/api/sessions/${sessionId}`)) {
-          expect(call.init.method ?? "GET").toBe("GET");
           return json({ id: sessionId, workspaceId, status: "idle" });
         }
-        expect(call.url).toBe(`https://regional.example/api/sessions/${sessionId}/events/query`);
-        expect(call.init.method).toBe("POST");
-        expect(call.body).toEqual(query);
         return json({ items: [], coverage: { complete: true } });
       }
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(2);
+    expect(cap.calls[0]?.init.method ?? "GET").toBe("GET");
+    expect(cap.calls[1]?.url).toBe(`https://regional.example/api/sessions/${sessionId}/events/query`);
+    expect(cap.calls[1]?.init.method).toBe("POST");
+    expect(cap.calls[1]?.body).toEqual(query);
   });
 
   test("query JSON can come from piped stdin", async () => {
@@ -192,11 +192,8 @@ describe("durable operations and downloads", () => {
       ],
       fetch: (call) => {
         if (call.url.endsWith(`/api/sessions/${sessionId}/stops`)) {
-          expect(call.init.method).toBe("POST");
           return json({ ...base, status: "pending" }, 202);
         }
-        expect(call.url).toBe(`https://regional.example/api/operations/${operationId}`);
-        expect(call.init.method ?? "GET").toBe("GET");
         return json({ ...base, status: "succeeded", result: {} });
       }
     });
@@ -204,6 +201,9 @@ describe("durable operations and downloads", () => {
     expect(cap.exitCode).toBe(0);
     expect(JSON.parse(cap.stdout).status).toBe("succeeded");
     expect(cap.calls).toHaveLength(2);
+    expect(cap.calls[0]?.init.method).toBe("POST");
+    expect(cap.calls[1]?.url).toBe(`https://regional.example/api/operations/${operationId}`);
+    expect(cap.calls[1]?.init.method ?? "GET").toBe("GET");
     expect(cap.calls.some((call) => call.url.endsWith(`/api/sessions/${sessionId}`))).toBeFalse();
   });
 
@@ -252,8 +252,6 @@ describe("durable operations and downloads", () => {
         }
         if (call.url.endsWith("/files/persisted/downloads")) {
           grants += 1;
-          expect(call.body).toEqual({ path: "out/result.txt" });
-          expect(new Headers(call.init.headers).get("idempotency-key")).toBe("download-1");
           return json({
             url: "https://objects.example/grant",
             expiresAt: "2026-07-30T01:00:00.000Z",
@@ -263,7 +261,6 @@ describe("durable operations and downloads", () => {
             sha256: digest
           }, 201);
         }
-        expect(call.url).toBe("https://objects.example/grant");
         return new Response(bytes);
       }
     });
@@ -274,6 +271,10 @@ describe("durable operations and downloads", () => {
     expect(cap.writes.get("C:\\cli-test\\result.txt")).toEqual(bytes);
     expect(cap.stdout).toBe("");
     expect(cap.stderr).not.toContain("objects.example");
+    expect(cap.calls).toHaveLength(3);
+    expect(cap.calls[1]?.body).toEqual({ path: "out/result.txt" });
+    expect(new Headers(cap.calls[1]?.init.headers).get("idempotency-key")).toBe("download-1");
+    expect(cap.calls[2]?.url).toBe("https://objects.example/grant");
   });
 
   test("an existing output fails before a download grant is minted", async () => {

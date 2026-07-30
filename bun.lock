@@ -49,7 +49,6 @@
       "name": "@aexhq/user-tests",
       "version": "0.1.0",
       "devDependencies": {
-        "@aexhq/contracts": "workspace:*",
         "@types/bun": "1.3.14",
         "dotenv": "16.5.0",
         "typescript": "5.8.3",
@@ -61,11 +60,9 @@
       "bin": {
         "aex": "./dist/cli.mjs",
       },
-      "dependencies": {
+      "devDependencies": {
         "@aexhq/contracts": "workspace:*",
         "@aexhq/sdk": "workspace:*",
-      },
-      "devDependencies": {
         "@types/bun": "1.3.14",
         "esbuild": "^0.28.0",
       },
@@ -83,6 +80,9 @@
     "packages/sdk": {
       "name": "@aexhq/sdk",
       "version": "0.46.5",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
       "devDependencies": {
         "@aexhq/contracts": "workspace:*",
         "@types/bun": "1.3.14",

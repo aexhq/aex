@@ -29,7 +29,7 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "public-boundary: checked SDK exports/deps, SDK Bun pack, public import direction, " +
+  "public-boundary: checked SDK exports/deps, SDK Bun pack, per-package public import direction, " +
     "public surface language, and public deployment claims."
 );
 console.log("public-boundary: contracts inline baseline contains only curated public contract modules.");
@@ -91,11 +91,14 @@ function checkContractsInlineBaseline() {
 }
 
 function checkPublicImportDirection() {
-  const publicRoots = baseline.publicSourceRoots.map((root) => resolve(repoRoot, root));
-  const allowedAexImports = new Set(baseline.temporaryAllowedPublicImports);
+  const rootPolicies = baseline.publicSourceRoots.map(({ dir, allowedAexImports }) => ({
+    root: resolve(repoRoot, dir),
+    allowedAexImports: new Set(allowedAexImports)
+  }));
+  const publicRoots = rootPolicies.map(({ root }) => root);
   const offenders = [];
 
-  for (const root of publicRoots) {
+  for (const { root, allowedAexImports } of rootPolicies) {
     for (const file of walk(root, isSourceFile)) {
       const text = readFileSync(file, "utf8");
       for (const specifier of importSpecifiers(text)) {
@@ -172,8 +175,8 @@ function checkPublicSurfaceLanguage() {
   for (const file of publicDocFiles()) {
     textFiles.set(file, "public docs");
   }
-  for (const root of baseline.publicSourceRoots) {
-    for (const file of walk(resolve(repoRoot, root), isSourceFile)) {
+  for (const { dir } of baseline.publicSourceRoots) {
+    for (const file of walk(resolve(repoRoot, dir), isSourceFile)) {
       textFiles.set(file, "public source");
     }
   }
@@ -260,7 +263,7 @@ function checkSdkBunPack() {
     failures.push(`SDK Bun pack path leak(s):\n${pathOffenders.map((o) => `  ${o}`).join("\n")}`);
   }
 
-  const missingBuiltFiles = ["dist/index.js", "dist/index.d.ts", "dist/cli.mjs"].filter((required) => !files.includes(required));
+  const missingBuiltFiles = ["dist/index.js", "dist/index.d.ts"].filter((required) => !files.includes(required));
   if (missingBuiltFiles.length > 0) {
     failures.push(
       `SDK Bun pack is missing built file(s): ${missingBuiltFiles.join(", ")}. ` +

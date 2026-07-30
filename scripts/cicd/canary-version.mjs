@@ -90,23 +90,12 @@ export function applySdkVersion(repoRoot, version) {
   }
 
   const packagePath = resolve(repoRoot, "packages", "sdk", "package.json");
-  const versionSourcePath = resolve(repoRoot, "packages", "sdk", "src", "version.ts");
   const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
   if (packageJson.name !== "@aexhq/sdk") {
     throw new Error(`unexpected package at ${packagePath}: ${packageJson.name ?? "(missing name)"}`);
   }
   packageJson.version = version;
   writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
-
-  const versionSource = readFileSync(versionSourcePath, "utf8");
-  const replacement = versionSource.replace(
-    /export const SDK_VERSION = "[^"]+";/,
-    `export const SDK_VERSION = "${version}";`
-  );
-  if (replacement === versionSource) {
-    throw new Error(`SDK_VERSION export was not found in ${versionSourcePath}`);
-  }
-  writeFileSync(versionSourcePath, replacement, "utf8");
 }
 
 function parseArgs(argv) {

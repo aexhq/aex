@@ -2,7 +2,7 @@
  * The generated-docs banner gate.
  *
  * WHY. `apps/docs/content/docs/` is written by `scripts/docs/generate-all.mjs`,
- * and eleven of its outputs are also tracked in Git while their siblings are
+ * and some of its outputs are also tracked in Git while their siblings are
  * gitignored. Nothing in those files said "generated", so an external
  * documentation pull request against one of them would be reviewed, merged, and
  * then silently reverted by the next `bun run lint` — which regenerates through
@@ -57,10 +57,9 @@ function generatedRelativePaths(): string[] {
     "guides/meta.json",
     ...slugs("guideSources").map((slug) => `guides/${slug}.md`),
     "reference/meta.json",
-    "reference/provider-runtime-capabilities.md",
+    "reference/index.md",
     "reference/cli.md",
     "reference/api.md",
-    "reference/events.md",
     "reference/sdk/index.md"
   ];
 }
@@ -69,7 +68,8 @@ function trackedUnder(path: string): string[] {
   return execFileSync("git", ["ls-files", "--", path], { cwd: repoRoot, encoding: "utf8" })
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0)
+    .filter((line) => existsSync(resolve(repoRoot, line)));
 }
 
 const generated = generatedRelativePaths();
@@ -79,7 +79,7 @@ describe("generated documentation carries a do-not-edit banner", () => {
   it("finds the generator's output set", () => {
     // The derivation above reads the generator source. If it silently resolved
     // to nothing, every assertion below would pass vacuously.
-    expect(generated.length).toBeGreaterThan(25);
+    expect(generated.length).toBeGreaterThan(20);
     expect(generated).toContain("guides/quickstart.md");
     expect(generated).toContain("concepts/sessions.md");
   });
@@ -116,7 +116,7 @@ describe("generated documentation carries a do-not-edit banner", () => {
 
   it("leaves hand-authored pages unbannered", () => {
     // The wrong fix for a failure above is pasting the banner into a page a
-    // human owns. These four plus the reference index are hand-authored.
+    // human owns.
     const handAuthored = trackedUnder("apps/docs/content/docs")
       .map((path) => path.slice("apps/docs/content/docs/".length))
       .filter((path) => !generatedSet.has(path));
@@ -125,7 +125,6 @@ describe("generated documentation carries a do-not-edit banner", () => {
       "changelog.md",
       "examples.md",
       "integrations.md",
-      "reference/index.md",
       "support.md"
     ]);
 

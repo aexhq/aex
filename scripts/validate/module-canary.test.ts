@@ -29,7 +29,6 @@ function workspaceCopy(): string {
   cpSync(resolve(repoRoot, "package.json"), resolve(dir, "package.json"));
   for (const relative of [
     "packages/sdk/package.json",
-    "packages/sdk/src/version.ts",
     "packages/contracts/package.json",
     "packages/cli/package.json",
     "apps/docs/package.json",
@@ -113,9 +112,7 @@ describe("applying a canary binds the package to the exact tested source", () =>
     expect(manifest.aexRelease).toEqual({ sourceSha: SHA, upstream: {} });
   });
 
-  it("also rewrites the SDK's exported version constant", () => {
-    // A generic package.json writer would leave `SDK_VERSION` stale, so the shipped
-    // SDK would report a version it is not.
+  it("records the SDK version and exact release source in package metadata", () => {
     const root = workspaceCopy();
     const applied = applyModuleCanary(root, "sdk", {
       version: "0.46.4-canary.7.gabcdef0",
@@ -128,9 +125,6 @@ describe("applying a canary binds the package to the exact tested source", () =>
       upstream: applied.upstream
     });
     expect(manifestAt(root, "packages/sdk/package.json").devDependencies).toMatchObject(applied.upstream);
-    expect(readFileSync(resolve(root, "packages/sdk/src/version.ts"), "utf8")).toContain(
-      'export const SDK_VERSION = "0.46.4-canary.7.gabcdef0";'
-    );
   });
 
   it("refuses a mutable version, a bad sha, and a private module", () => {
@@ -170,18 +164,18 @@ describe("upstream package versions are recorded as release identity", () => {
     const expected = moduleUpstreamCanaryVersions(repoRoot, "cli", SHA, "7");
 
     expect(applied.upstream).toEqual(expected);
-    expect((packed.dependencies as Record<string, string>)["@aexhq/contracts"]).toBe(
+    expect((packed.devDependencies as Record<string, string>)["@aexhq/contracts"]).toBe(
       expected["@aexhq/contracts"]
     );
-    expect((packed.dependencies as Record<string, string>)["@aexhq/sdk"]).toBe(
+    expect((packed.devDependencies as Record<string, string>)["@aexhq/sdk"]).toBe(
       expected["@aexhq/sdk"]
     );
     expect(moduleUpstreamVersions(root, "cli")).toEqual(expected);
     expect(verifyPackedModuleManifest(root, "cli", packed, { version, sha: SHA, run: "7" })).toEqual(expected);
 
-    (packed.dependencies as Record<string, string>)["@aexhq/contracts"] = "workspace:*";
+    (packed.devDependencies as Record<string, string>)["@aexhq/contracts"] = "workspace:*";
     expect(() => verifyPackedModuleManifest(root, "cli", packed, { version, sha: SHA, run: "7" })).toThrow(
-      /dependencies.@aexhq\/contracts/
+      /devDependencies.@aexhq\/contracts/
     );
   });
 });
