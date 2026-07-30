@@ -6,6 +6,10 @@
  * do not accept the retired runtime/checkpoint/session-management model.
  */
 import * as z from "zod/mini";
+import {
+  WORKSPACE_API_KEY_PATTERN,
+  isWorkspaceApiKeyValue
+} from "./api-key.js";
 import { isId, type Id, type IdKind } from "./ids.js";
 
 const timestamp = z.string().check(
@@ -64,13 +68,8 @@ export type Region = z.infer<typeof RegionSchema>;
  * checksum, or CRC field in the value.
  */
 export const WorkspaceApiKeyValueSchema = z.string().check(
-  z.regex(
-    /^aex_wk_(use1|use2|usw2|apne1|euw1)_([0-9a-hjkmnp-tv-z]{26})_([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])$/
-  ),
-  z.refine((value) => {
-    const suffix = value.split("_")[3];
-    return suffix !== undefined && isId("apiKey", `key_${suffix}`);
-  })
+  z.regex(WORKSPACE_API_KEY_PATTERN),
+  z.refine(isWorkspaceApiKeyValue)
 );
 export type WorkspaceApiKeyValue = z.infer<typeof WorkspaceApiKeyValueSchema>;
 

@@ -140,15 +140,20 @@ export function nextHttpRetryDelayMs(args: {
 const SAFE_READ_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /**
- * Safe reads are retry-eligible directly; any mutation is eligible only when it
- * carries a stable `Idempotency-Key`, so a replayed write cannot double-bill.
+ * Safe reads are retry-eligible directly. A mutation is eligible only when it
+ * carries one of the two stable replay identities: `Idempotency-Key` for
+ * ordinary mutations or `Aex-Operation-Id` for durable-operation admission.
  */
 export function isHttpRetryEligible(input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]): boolean {
   const request = typeof Request !== "undefined" && input instanceof Request ? input : undefined;
   const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
   if (SAFE_READ_METHODS.has(method)) return true;
-  const idempotencyKey = new Headers(init?.headers ?? request?.headers).get("idempotency-key");
-  return typeof idempotencyKey === "string" && idempotencyKey.trim().length > 0;
+  const headers = new Headers(init?.headers ?? request?.headers);
+  const idempotencyKey = headers.get("idempotency-key");
+  const operationId = headers.get("aex-operation-id");
+  return [idempotencyKey, operationId].some(
+    (value) => typeof value === "string" && value.trim().length > 0
+  );
 }
 
 /**
