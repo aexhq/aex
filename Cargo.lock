@@ -819,17 +819,28 @@ dependencies = [
 name = "aex-regional-http"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-wire",
+ "async-trait",
  "axum",
+ "base64 0.23.0",
+ "bytes",
+ "hmac 0.13.0",
  "http 1.5.0",
+ "http-body-util",
  "lambda_http",
  "lambda_runtime",
+ "proptest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
+ "tokio",
  "tower",
  "tower-http 0.7.0",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -2711,6 +2722,7 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "serde",
  "thiserror",
 ]
 
@@ -5416,7 +5428,10 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "sha2 0.11.0",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -5425,6 +5440,7 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
  "thiserror",
 ]
 
@@ -5433,7 +5449,13 @@ name = "regional-session-api"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-regional-http",
  "aex-telemetry-schema",
+ "aex-wire",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
 ]
 
@@ -5442,7 +5464,9 @@ name = "regional-stream"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-regional-http",
  "aex-telemetry-schema",
+ "aex-wire",
  "thiserror",
 ]
 
@@ -6006,7 +6030,10 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "blake3",
+ "serde",
  "thiserror",
+ "xxhash-rust",
 ]
 
 [[package]]

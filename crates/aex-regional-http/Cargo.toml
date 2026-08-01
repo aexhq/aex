@@ -7,34 +7,54 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
 
 [package.metadata.aex]
-owner = "regional-stores"
+owner = "regional-services"
 role = "composition"
 artifact = "none"
 layers = ["unit"]
-concerns = ["contract", "security"]
+concerns = ["contract", "property", "fault", "security"]
 seams = []
 security_tier = "public_edge"
 risk = ["untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+primitives = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the regional-stores stream; the cases land with the crate's own implementation"
 live_suite = "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
 
 [dependencies]
 axum.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+hmac.workspace = true
 http.workspace = true
 lambda_http.workspace = true
 lambda_runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+zeroize.workspace = true
 aex-wire = { path = "../aex-wire" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+
+[dev-dependencies]
+http-body-util.workspace = true
+proptest.workspace = true
+
+[[test]]
+name = "primitives"
+path = "tests/primitives.rs"

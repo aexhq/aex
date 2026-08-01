@@ -22,10 +22,31 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-managed-web",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-mcp",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-test-support",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
     "detail": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-tool-catalog",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -103,13 +124,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-regional-http",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -219,27 +233,6 @@
   {
     "reason_class": "awaiting_owner",
     "subject": "services/regional-otlp",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-stream",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
@@ -519,13 +512,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "workers/content-lifecycle-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "workers/finance-reconcile",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -568,24 +554,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "workers/regional-secret-key-admin",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "workers/runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/session-operation-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -698,13 +670,6 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-workload-unowned",
     "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LOAD-STREAM-SOCKETS",
-    "owner": "regional-services",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-stream`"
   },
   {
     "reason_class": "pending_workload",

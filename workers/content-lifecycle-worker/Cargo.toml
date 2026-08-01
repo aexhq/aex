@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
@@ -24,8 +25,9 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the regional-services stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+lifecycle = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "content-lifecycle-worker"
@@ -34,4 +36,13 @@ path = "src/main.rs"
 [dependencies]
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+serde.workspace = true
 thiserror.workspace = true
+
+[[test]]
+name = "lifecycle"
+path = "tests/lifecycle.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

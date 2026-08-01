@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
@@ -24,14 +25,26 @@ security_tier = "secret"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the regional-services stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+secrets = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "regional-secret-api"
 path = "src/main.rs"
 
 [dependencies]
+aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+sha2.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
+
+[[test]]
+name = "secrets"
+path = "tests/secrets.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"
