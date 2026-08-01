@@ -23,6 +23,7 @@ pub mod interval;
 pub mod keys;
 pub mod measurement;
 pub mod meter;
+pub mod projection;
 pub mod quantity;
 pub mod shape;
 pub mod wire_pending;
@@ -41,6 +42,9 @@ pub use measurement::{
     SourceReceipt,
 };
 pub use meter::{BaseUnit, Category, Meter, ObservabilityMeter, PublicCategory, TokenClass};
+pub use projection::{
+    Generation, MAX_GENERATION, ProjectionKey, ProjectionKeyError, ProjectionKeys,
+};
 pub use quantity::{MAX_QUANTITY, Quantity, QuantityError};
 pub use shape::{ComputeShape, HandsShape, ShapeUnit};
 pub use wire_pending::{ActorRef, Timestamp};
