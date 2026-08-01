@@ -327,6 +327,19 @@ required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vul
 alarm_spec = "regional-observation-api"
 live_suite = "aex-live-regional-observation-api"
 
+
+# Request-scaled and scale-to-zero. 1,024 MiB is what the bounded page walk
+# needs: the 32 MiB read budget plus the base-table `BatchGetItem` fan-in for a
+# page whose residual predicate needs customer attributes. The 30 s timeout is
+# the API deadline plus the 500 ms the budget reserves for rendering, so a query
+# that cannot make progress is ended by its own budget rather than by Lambda.
+# Concurrency is bounded separately from admission on purpose: a query flood must
+# never take decode memory away from OTLP.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 30
+reserved_concurrency = 40
+
 [[unit]]
 id = "regional-otlp"
 kind = "rust-lambda"
@@ -344,6 +357,19 @@ ready_path = "/internal/readyz"
 required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-otlp"
 live_suite = "aex-live-regional-otlp"
+
+
+# **Dedicated memory and reserved concurrency**, which is the mechanism O-ROLES
+# exists to provide: the whole-region decode footprint is
+# `reserved_concurrency x AEX_OTLP_DECODED_MAX` = 20 x 16 MiB = 320 MiB, so
+# decompression can never starve query, export or sockets. 3,008 MiB gives the
+# 55 % decode budget room for one 16 MiB payload plus its normalized form; the
+# 30 s timeout is the staged-commit protocol's worst case (two transactions plus
+# 80 materialization writes) with margin.
+[unit.lambda]
+memory_mb = 3008
+timeout_s = 30
+reserved_concurrency = 20
 
 [[unit]]
 id = "regional-stream"
@@ -478,6 +504,16 @@ required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vul
 alarm_spec = "observation-reconciler"
 live_suite = "aex-live-observation-reconciler"
 
+
+# One concurrent invocation per duty shard. 512 MiB holds one bounded due-scan
+# page and its staged-page replay; the 300 s timeout is the EventBridge minute
+# schedule with room for a full page of retries, and the reservation keeps a
+# stuck duty from consuming the account's whole concurrency pool.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 300
+reserved_concurrency = 8
+
 [[unit]]
 id = "observation-export-launcher"
 kind = "rust-lambda"
@@ -494,6 +530,16 @@ required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability",
 alarm_spec = "observation-export-launcher"
 live_suite = "aex-live-observation-export-launcher"
 
+
+# Low concurrency by design: the launcher holds no observation read permission
+# at all, so its only work is a due-scan, a conditional claim and one `RunTask`.
+# 60 s covers `RunTask` plus the `ListTasks` identity reconciliation an unknown
+# launch outcome needs.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 60
+reserved_concurrency = 4
+
 [[unit]]
 id = "observation-export-task"
 kind = "rust-oci-task"
@@ -508,6 +554,20 @@ config_schema_version = 1
 required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "observation-export-task"
 live_suite = "aex-live-observation-export-task"
+
+
+# One-shot Fargate task, one export. 4 GiB against a 512 MiB working budget
+# leaves the reservation model (page buffer, encoder scratch, one 16 MiB
+# multipart part, one 64 MiB row group) provably inside the task, so a multi-GB
+# export has a flat memory profile. `desired_count = 0` because nothing is
+# long-lived: the launcher starts exactly one task per admitted export. The
+# 120 s stop timeout is the multipart abort plus checkpoint flush.
+[unit.fargate]
+cpu = 2048
+memory_mb = 4096
+desired_count = 0
+stop_timeout_s = 120
+port = 0
 
 [[unit]]
 id = "usage-storage-worker"

@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
@@ -24,15 +25,47 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+duty = "unit"
+startup = "smoke"
+resource_envelope = "e2e"
 
 [[bin]]
 name = "observation-reconciler"
 path = "src/main.rs"
 
 [dependencies]
+aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-sqs.workspace = true
+lambda_runtime.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+aws-smithy-http-client.workspace = true
+aws-smithy-runtime-api.workspace = true
+aws-smithy-types.workspace = true
+http.workspace = true
+
+[[test]]
+name = "duty"
+path = "tests/duty.rs"
+
+[[test]]
+name = "startup"
+path = "tests/startup.rs"
+
+[[test]]
+name = "resource_envelope"
+path = "tests/resource_envelope.rs"

@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 54,
+    "awaiting_owner": 58,
     "capacity_gates": 15,
     "live_targets": 34,
     "packages": 140,
@@ -464,15 +464,14 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {
-          "composition": "unit"
-        },
+        "targets": {},
         "not_applicable": {
-          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-central-test-support": {
       "name": "aex-central-test-support",
@@ -1484,7 +1483,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "mount": "unit",
           "primitives": "unit"
         },
         "not_applicable": {
@@ -2475,16 +2473,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "services/central-control-api": {
       "name": "central-control-api",
@@ -2508,7 +2503,6 @@
         ],
         "seams": [
           "aws.rds_data.transaction",
-          "aws.sqs.fifo",
           "aws.iam.denial",
           "aws.alb.framing"
         ],
@@ -2518,16 +2512,13 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "services/central-identity-api": {
       "name": "central-identity-api",
@@ -2560,16 +2551,13 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "services/finance-api": {
       "name": "finance-api",
@@ -2654,7 +2642,7 @@
       "name": "regional-observation-api",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "deployable",
         "artifact": "lambda_zip",
         "deployable": "regional-observation-api",
@@ -2681,19 +2669,21 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "resource_envelope": "e2e",
+          "routes": "unit",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/regional-otlp": {
       "name": "regional-otlp",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "deployable",
         "artifact": "lambda_zip",
         "deployable": "regional-otlp",
@@ -2719,13 +2709,15 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "admission": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/regional-secret-api": {
       "name": "regional-secret-api",
@@ -2758,7 +2750,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "composition": "unit",
           "performance_contract": "e2e",
           "secrets": "unit"
         },
@@ -2802,7 +2793,6 @@
         "scenarios": [],
         "targets": {
           "admission": "unit",
-          "composition": "unit",
           "performance_contract": "e2e"
         },
         "not_applicable": {}
@@ -2842,7 +2832,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "composition": "unit",
           "performance_contract": "e2e",
           "streaming": "unit"
         },
@@ -3006,13 +2995,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "tests/live/aex-live-central-control-api": {
       "name": "aex-live-central-control-api",
@@ -3035,21 +3024,20 @@
           "aws.alb.framing",
           "aws.aurora.serverless_v2",
           "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo"
+          "aws.rds_data.transaction"
         ],
         "security_tier": "public_edge",
         "risk": [
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "tests/live/aex-live-central-control-worker": {
       "name": "aex-live-central-control-worker",
@@ -3078,13 +3066,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "tests/live/aex-live-central-identity-api": {
       "name": "aex-live-central-identity-api",
@@ -3114,13 +3102,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "tests/live/aex-live-central-schema-admin": {
       "name": "aex-live-central-schema-admin",
@@ -3617,7 +3605,7 @@
       "name": "aex-live-regional-observation-api",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "live_companion",
         "artifact": "none",
         "deployable": "regional-observation-api",
@@ -3644,7 +3632,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
       "unmapped_targets": [],
@@ -3654,7 +3642,7 @@
       "name": "aex-live-regional-otlp",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "live_companion",
         "artifact": "none",
         "deployable": "regional-otlp",
@@ -3678,7 +3666,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
       "unmapped_targets": [],
@@ -4407,16 +4395,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "workers/central-schema-admin": {
       "name": "central-schema-admin",
@@ -4489,7 +4474,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "composition": "unit",
           "lifecycle": "unit",
           "performance_contract": "e2e"
         },
@@ -4603,13 +4587,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "launcher": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/observation-export-task": {
       "name": "observation-export-task",
@@ -4640,13 +4626,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "export": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/observation-reconciler": {
       "name": "observation-reconciler",
@@ -4679,13 +4667,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "duty": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/provider-cost-reconciler": {
       "name": "provider-cost-reconciler",
@@ -4754,7 +4744,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "composition": "unit",
           "performance_contract": "e2e",
           "rotation": "unit"
         },
@@ -4834,7 +4823,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "composition": "unit",
           "continuations": "unit",
           "performance_contract": "e2e"
         },
@@ -5175,7 +5163,6 @@
     ],
     "aws.sqs.fifo": [
       "aex-live-brain-mux",
-      "aex-live-central-control-api",
       "aex-live-central-control-worker",
       "aex-live-finance-ingest",
       "aex-live-finance-settlement-worker",

@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
@@ -24,15 +25,47 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+export = "unit"
+startup = "smoke"
+resource_envelope = "e2e"
 
 [[bin]]
 name = "observation-export-task"
 path = "src/main.rs"
 
 [dependencies]
+aex-observation-domain = { path = "../../crates/aex-observation-domain" }
+aex-observation-export = { path = "../../crates/aex-observation-export" }
 aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
+aex-otlp-admission = { path = "../../crates/aex-otlp-admission" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-lc-rs.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-s3.workspace = true
+axum.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true
+
+[[test]]
+name = "export"
+path = "tests/export.rs"
+
+[[test]]
+name = "startup"
+path = "tests/startup.rs"
+
+[[test]]
+name = "resource_envelope"
+path = "tests/resource_envelope.rs"

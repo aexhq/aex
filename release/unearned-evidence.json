@@ -106,20 +106,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "services/regional-observation-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-otlp",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
@@ -212,16 +198,16 @@
   {
     "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
   },
   {
     "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
   },
   {
     "reason_class": "awaiting_owner",
@@ -320,27 +306,6 @@
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/observation-export-launcher",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/observation-export-task",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/observation-reconciler",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -660,28 +625,28 @@
   {
     "reason_class": "requires_deployment",
     "subject": "services/regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
     "subject": "services/regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
     "subject": "services/regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
     "subject": "services/regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -1024,28 +989,28 @@
   {
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -2186,35 +2151,35 @@
   {
     "reason_class": "requires_live_seam",
     "subject": "services/regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "services/regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "services/regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "services/regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "services/regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
@@ -2837,49 +2802,49 @@
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-otlp",
-    "owner": "regional-services",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },

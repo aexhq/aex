@@ -1,46 +1,43 @@
 //! `regional-otlp` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: bounded OTLP admission and the durable observation receipt.
+//! Exclusive responsibility: bounded OTLP admission and the durable observation
+//! receipt.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! This deployable runs on **dedicated memory and reserved concurrency**, which
+//! is the whole point of splitting it from the query role: decode memory is
+//! bounded by `reserved concurrency × decoded ceiling`, so decompression can
+//! never starve query, export or sockets. Overload is an explicit retryable
+//! failure raised *before* unbounded allocation, never an OOM kill.
 
-/// Validated start-up configuration for `regional-otlp`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// The observation-authority `DynamoDB` table.
-    pub resource: String,
-    /// Maximum decompressed OTLP batch size in bytes.
-    pub budget: u32,
-}
+mod admission;
+mod authority;
+mod config;
+mod edge;
+mod mount;
 
-/// Why `regional-otlp` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
-    },
-}
+use std::sync::Arc;
+
+use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
+use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_otlp_admission::MemoryBudget;
+use aex_wire::dispatch::RequestLimits;
+
+use crate::admission::{CustodyManifests, OtlpService};
+use crate::authority::AdmissionAuthority;
+use crate::config::{Config, ConfigError, REQUIRED_VARS};
+use crate::edge::{AUDIENCE, Ed25519Anchors, HttpAssertionSource, RequestAuthority};
+use crate::mount::AppState;
+
+/// The capability grant this deployable is allowed to hold.
+pub const ROLE: Role = Role::Otlp;
+
+/// The dependencies this deployable proves before it reports ready.
+pub const REQUIRED_PROBES: &[Probe] = &[
+    Probe::ObservationTable,
+    Probe::ObservationBucket,
+    Probe::RedactionKey,
+    Probe::IngressGate,
+];
 
 /// Why `regional-otlp` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -60,95 +57,189 @@ pub enum RunError {
         /// The outstanding probe.
         probe: &'static str,
     },
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`regional-otlp` has no implementation yet")]
-    NotImplemented,
+    /// The edge could not be composed.
+    #[error("the authenticated edge could not be composed: {reason}")]
+    Edge {
+        /// What failed.
+        reason: String,
+    },
+    /// A start-up probe failed against a real resource.
+    #[error("a start-up probe failed: {reason}")]
+    Probe {
+        /// What failed.
+        reason: String,
+    },
+    /// The Lambda runtime stopped.
+    #[error("the runtime stopped: {reason}")]
+    Runtime {
+        /// What failed.
+        reason: String,
+    },
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the observation-authority `DynamoDB` table.
-pub const RESOURCE_VAR: &str = "AEX_OBSERVATION_TABLE";
-/// Environment variable naming maximum decompressed OTLP batch size in bytes.
-pub const BUDGET_VAR: &str = "AEX_MAX_DECODED_BYTES";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
-impl Config {
-    /// Reads and validates the configuration of `regional-otlp` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
-        }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
-    }
-}
-
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `regional-otlp` until it stops.
+/// Asserts the observed capability grant and the readiness probe set.
 ///
 /// # Errors
 ///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Returns [`RunError::Capability`] when the process holds a capability its role
+/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
+/// probe that has not passed is never assumed.
+pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError> {
+    assert_grant(ROLE, observed).map_err(|violation| RunError::Capability {
+        capability: violation.capability.as_str(),
+    })?;
+    match readiness(REQUIRED_PROBES, passed) {
+        Readiness::Ready => Ok(()),
+        Readiness::NotReady { outstanding } => Err(RunError::NotReady {
+            probe: outstanding.as_str(),
+        }),
+    }
+}
+
+/// Builds every adapter, proves every probe and serves until the runtime stops.
+///
+/// # Errors
+///
+/// Returns the typed failure of the first start-up stage that refused. Nothing
+/// is served before every declared probe has actually passed.
+pub async fn run(config: Config) -> Result<(), RunError> {
+    let aws = aws_config::from_env()
+        .region(aws_config::Region::new(config.region.as_str()))
+        .load()
+        .await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let s3 = aws_sdk_s3::Client::new(&aws);
+    let secrets = aws_sdk_secretsmanager::Client::new(&aws);
+
+    let authority = AdmissionAuthority::new(
+        dynamodb.clone(),
+        s3,
+        config.observation_table.clone(),
+        config.observation_bucket.clone(),
+        config.region,
+    );
+
+    let mut passed = Vec::new();
+    authority.probe().await.map_err(|error| RunError::Probe {
+        reason: error.to_string(),
+    })?;
+    passed.push(Probe::ObservationTable);
+    passed.push(Probe::ObservationBucket);
+
+    let redaction_key = resolve_redaction_key(&secrets, &config.redaction_key_ref).await?;
+    passed.push(Probe::RedactionKey);
+
+    authority
+        .ingress_gate()
+        .await
+        .map_err(|error| RunError::Probe {
+            reason: error.to_string(),
+        })?;
+    passed.push(Probe::IngressGate);
+
+    compose(ROLE.granted(), &passed)?;
+
+    let source = HttpAssertionSource::new(&config.central_authz_url, AUDIENCE, config.region)
+        .map_err(|error| RunError::Edge {
+            reason: error.to_string(),
+        })?;
+    let anchors = Ed25519Anchors::new(config.trust_anchors.clone());
+    if anchors.is_empty() {
+        return Err(RunError::Edge {
+            reason: "no assertion trust anchor resolved".to_owned(),
+        });
+    }
+    tracing::info!(anchors = anchors.len(), "assertion trust anchors resolved");
+    let edge = RequestAuthority::new(
+        source,
+        anchors,
+        AUDIENCE,
+        config.region,
+        config.assertion_cache_bytes,
+    )
+    .map_err(|error| RunError::Edge {
+        reason: error.to_string(),
+    })?;
+
+    let service = OtlpService::new(
+        authority,
+        CustodyManifests::new(dynamodb, config.secret_custody_table.clone()),
+        config.limits,
+        MemoryBudget::new(config.memory_budget_bytes),
+        config.reserve_wait,
+        redaction_key,
+    );
+    let state = Arc::new(AppState {
+        edge: Arc::new(edge),
+        service: Arc::new(service),
+        limits: RequestLimits {
+            max_json_body_bytes: RequestLimits::DEFAULT_JSON_BODY_BYTES,
+            max_otlp_body_bytes: config.limits.encoded_max,
+        },
+        ready: true,
+        release_digest: release_digest(),
+    });
+    lambda_http::run(mount::router(state))
+        .await
+        .map_err(|error| RunError::Runtime {
+            reason: error.to_string(),
+        })
+}
+
+/// Resolves the regional redaction key.
+///
+/// The key never reaches a log, a span attribute or an error message: the only
+/// thing a failure reports is that the reference did not resolve.
+async fn resolve_redaction_key(
+    secrets: &aws_sdk_secretsmanager::Client,
+    reference: &str,
+) -> Result<Vec<u8>, RunError> {
+    use base64::Engine as _;
+
+    let response = secrets
+        .get_secret_value()
+        .secret_id(reference)
+        .send()
+        .await
+        .map_err(|error| RunError::Probe {
+            reason: format!("the redaction key reference did not resolve: {error}"),
+        })?;
+    let material = response.secret_string().ok_or_else(|| RunError::Probe {
+        reason: "the redaction key reference carries no string value".to_owned(),
+    })?;
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(material.trim())
+        .map_err(|_| RunError::Probe {
+            reason: "the redaction key is not base64".to_owned(),
+        })?;
+    if key.len() < 32 {
+        return Err(RunError::Probe {
+            reason: "the redaction key is shorter than 32 bytes".to_owned(),
+        });
+    }
+    Ok(key)
+}
+
+/// The release digest both health endpoints report.
+fn release_digest() -> String {
+    std::env::var("AEX_RELEASE_DIGEST").unwrap_or_else(|_| "unreleased".to_owned())
+}
+
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("regional-otlp: refusing to start: {error}");
+            eprintln!(
+                "regional-otlp: required configuration: {}",
+                REQUIRED_VARS.join(", ")
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -159,23 +250,10 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
-}
-
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("regional-otlp: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
+    let outcome = run(config).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {
@@ -192,153 +270,10 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
-
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (RESOURCE_VAR, "aex-regional_otlp-fixture".to_owned()),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
-    }
-
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
-
-    #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-regional_otlp-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
-    }
-
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-}
-
-// --- composition ------------------------------------------------------------
-
-/// The capability grant this deployable is allowed to hold.
-///
-/// Asserted at startup: a role that observes a capability outside its grant
-/// refuses to start rather than running with more authority than it declared.
-pub const ROLE: aex_observation_store_aws::composition::Role =
-    aex_observation_store_aws::composition::Role::Otlp;
-
-/// The dependencies this deployable proves before it reports ready.
-pub const REQUIRED_PROBES: &[aex_observation_store_aws::health::Probe] = &[
-    aex_observation_store_aws::health::Probe::ObservationTable,
-    aex_observation_store_aws::health::Probe::ObservationBucket,
-    aex_observation_store_aws::health::Probe::RedactionKey,
-    aex_observation_store_aws::health::Probe::IngressGate,
-];
-
-/// Asserts the observed capability grant and the readiness probe set.
-///
-/// # Errors
-///
-/// Returns [`RunError::Capability`] when the process holds a capability its role
-/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
-/// probe that has not passed is never assumed.
-pub fn compose(
-    observed: &[aex_observation_store_aws::composition::Capability],
-    passed: &[aex_observation_store_aws::health::Probe],
-) -> Result<(), RunError> {
-    aex_observation_store_aws::composition::assert_grant(ROLE, observed).map_err(|violation| {
-        RunError::Capability {
-            capability: violation.capability.as_str(),
-        }
-    })?;
-    match aex_observation_store_aws::health::readiness(REQUIRED_PROBES, passed) {
-        aex_observation_store_aws::health::Readiness::Ready => Ok(()),
-        aex_observation_store_aws::health::Readiness::NotReady { outstanding } => {
-            Err(RunError::NotReady {
-                probe: outstanding.as_str(),
-            })
-        }
-    }
-}
-
-#[cfg(test)]
-mod composition_tests {
-    use super::{REQUIRED_PROBES, ROLE, RunError, compose};
     use aex_observation_store_aws::composition::Capability;
+    use aex_observation_store_aws::health::Probe;
+
+    use super::{REQUIRED_PROBES, ROLE, RunError, compose};
 
     #[test]
     fn its_own_grant_and_a_complete_probe_set_start() {
@@ -354,15 +289,38 @@ mod composition_tests {
     }
 
     #[test]
-    fn an_unproven_probe_is_never_assumed() {
-        if let Some(first) = REQUIRED_PROBES.first() {
-            let error = compose(ROLE.granted(), &[]).expect_err("refused");
-            match error {
-                RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
-                other => panic!("expected a readiness failure, got {other:?}"),
-            }
+    fn the_admission_edge_can_never_link_a_read_or_delete_capability() {
+        // A capability an admission role must not hold is refused by name, not
+        // by convention: a read capability here would turn the ingest edge into
+        // a data path it has no business being.
+        for forbidden in [
+            Capability::ReadBodies,
+            Capability::ReadAuthority,
+            Capability::DeleteBodies,
+            Capability::DeleteObservations,
+            Capability::WriteExportObjects,
+            Capability::LaunchExportTasks,
+        ] {
+            assert!(
+                !ROLE.granted().contains(&forbidden),
+                "`{}` must not be in the OTLP grant",
+                forbidden.as_str()
+            );
+            let error = compose(&[forbidden], REQUIRED_PROBES).expect_err("refused");
+            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
         }
-        assert!(!ROLE.granted().is_empty());
-        assert!(!Capability::ALL.is_empty());
+    }
+
+    #[test]
+    fn an_unproven_probe_is_never_assumed() {
+        let first = REQUIRED_PROBES.first().expect("a probe set is declared");
+        let error = compose(ROLE.granted(), &[]).expect_err("refused");
+        match error {
+            RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+            other => panic!("expected a readiness failure, got {other:?}"),
+        }
+        // Proving a prefix is not proving the set.
+        let error = compose(ROLE.granted(), &[Probe::ObservationTable]).expect_err("refused");
+        assert!(matches!(error, RunError::NotReady { .. }), "{error:?}");
     }
 }

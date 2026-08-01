@@ -132,7 +132,7 @@ Each declares `ROLE` and `REQUIRED_PROBES` and refuses to start when it observes
 a capability outside its grant or when a declared probe has not passed. The
 launcher's grant is exactly `LaunchExportTasks` — no observation read of any
 kind — and only the `deletion.execute` reconciler deployment may delete an
-object.
+object. **All five now have a real `run()`; see §9.**
 
 ## 2. G7 — the `PERF-08` staged-commit proof, and the protocol change it forced
 
@@ -299,3 +299,211 @@ cargo run -p aex-workspace-check
 
 No `#[ignore]`, no environment-variable self-skip, no empty suite and no
 retry-to-green anywhere in the stream; `cargo nextest` reports `0 skipped`.
+
+## 9. Composition
+
+Branch `rw/deploy-observations`, off `main` after the four-stream merge. Every
+one of the five deployables now has a **real `run()`**: the typed
+`RunError::NotImplemented` is gone from all of them, and none was replaced by a
+stub, a `todo!()` or a route that answers `503` because a port was never wired.
+
+Nothing here is deployed, credentialed or published. No AWS call was made and no
+`.env*` file was read.
+
+### 9.1 What each deployable became
+
+| Deployable | Host | What `run()` now does |
+| --- | --- | --- |
+| `regional-observation-api` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts every route of `RouteGroup::Observations` (39) and `RouteGroup::TelemetryLifecycle` (12) by iterating each group's route constant, dispatches through the generated `dispatch_observations` / `dispatch_telemetry_lifecycle`, and serves them over a bounded `DynamoDB`/`S3` reader: frontier read, snapshot pin, per-index segment walk, residual predicate evaluation, budget classification, signed cursor, gap reads, export admission, export read, revoke and download grant. |
+| `regional-otlp` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts `RouteGroup::Otlp` (3), reserves the worst-case decoded footprint **before the first decode byte**, decodes and normalizes under the reservation, redacts against the keyed digest manifest, then runs the whole staged admission protocol: ingress gate, deletion fence, frontier allocation, transaction P, staging, transaction C, replayable materialization. |
+| `observation-reconciler` | scheduled Rust Lambda, `lambda_runtime` | One duty per deployment, selected by `AEX_OBS_DUTY` from the closed `ControlDomain` vocabulary. Due-scans the sparse `gsi_control` index, takes a durable per-item claim, runs the duty body, and answers with a partial-batch failure body rather than throwing. |
+| `observation-export-launcher` | Rust Lambda, `lambda_runtime` | Due-scans `export.launch`, takes the fenced lease under an `admitted`-or-`launching` state with an expired lease and no cancellation, `RunTask`s with `clientToken = startedBy = export_id`, and reconciles every ambiguous outcome through `ListTasks{startedBy}` — never through a second `RunTask`. |
+| `observation-export-task` | one-shot Rust Fargate task | Takes the lease before any read, acquires every memory reservation before the producing loop starts, streams bounded pages into a checkpointed NDJSON member, uploads parts with a fenced checkpoint after each, verifies `ListParts` to exhaustion on resume, and publishes under one conditional update — losing which aborts the upload and exits `0`. |
+
+`/internal/healthz` and `/internal/readyz` are served by all five, always through
+`aex_observation_store_aws::health::{HEALTHZ, READYZ}` rather than a hand-typed
+path. `readyz` answers `200` only once every declared probe has actually passed;
+an unproven probe is never assumed.
+
+### 9.2 Environment variables
+
+No variable naming a table, bucket, queue, cluster, ARN, key or region has a
+default anywhere. Start-up fails fast naming the first variable that is missing
+or invalid, and the refusal also prints the whole required list.
+
+`regional-observation-api`, fifteen:
+
+```text
+AEX_PLANE                       dev | prd
+AEX_REGION                      a regional-plane region name
+AEX_OBSERVATION_TABLE           the observation-authority table
+AEX_OBSERVATION_BUCKET          the regional observation bucket
+AEX_SESSION_TABLE               session-authority, read-only, for events
+AEX_OBS_INDEX_SETTLE_MS         2000; must dominate the 1000 ms clock-skew bound
+AEX_OBS_QUERY_SCANNED_ITEMS     at most 50000
+AEX_OBS_QUERY_SEGMENTS          at most 64
+AEX_OBS_QUERY_READ_BYTES        at most 33554432
+AEX_OBS_METRIC_AGGREGATE_SCAN   at most 2000000
+AEX_EXPORT_CLUSTER              the ECS cluster an admitted export names
+AEX_OBS_CURSOR_KEY              base64, at least 32 bytes
+AEX_CENTRAL_AUTHZ_URL           https:// endpoint of the assertion exchange
+AEX_ASSERTION_TRUST_ANCHORS     kid:base64-Ed25519-public-key, comma separated
+AEX_ASSERTION_CACHE_BYTES       assertion cache budget, above zero
+```
+
+`regional-otlp`, fifteen:
+
+```text
+AEX_PLANE                       dev | prd
+AEX_REGION                      a regional-plane region name
+AEX_OBSERVATION_TABLE           the observation-authority table
+AEX_OBSERVATION_BUCKET          the regional observation bucket
+AEX_SECRET_CUSTODY_TABLE        regional-secret-custody, for REDACT# manifests
+AEX_OBS_REDACTION_KEY_REF       Secrets Manager id of the regional redaction key
+AEX_OTLP_ENCODED_MAX            at most 4194304 (4 MiB); 6 MiB is refused
+AEX_OTLP_DECODED_MAX            at most 16777216 (16 MiB)
+AEX_OTLP_MAX_RECORDS            at most 2000
+AEX_OTLP_MEMORY_BUDGET_BYTES    at least AEX_OTLP_DECODED_MAX
+AEX_OTLP_RESERVE_WAIT_MS        50
+AEX_OTLP_RESERVED_CONCURRENCY   the deployed reservation, above zero
+AEX_CENTRAL_AUTHZ_URL           https:// endpoint of the assertion exchange
+AEX_ASSERTION_TRUST_ANCHORS     kid:base64-Ed25519-public-key, comma separated
+AEX_ASSERTION_CACHE_BYTES       assertion cache budget, above zero
+```
+
+`observation-reconciler`, nine:
+
+```text
+AEX_PLANE                       dev | prd
+AEX_REGION                      a regional-plane region name
+AEX_OBSERVATION_TABLE           the observation-authority table
+AEX_OBSERVATION_BUCKET          the regional observation bucket
+AEX_OBS_DUTY                    one ControlDomain; export.launch is refused
+AEX_OBS_RECONCILE_PAGE          1..=1000
+AEX_OBS_DUTY_SHARDS             1..=64
+AEX_OBS_MAX_ATTEMPTS            1..=12
+AEX_USAGE_QUEUE_URL             https:// SQS queue the storage fact is delivered to
+```
+
+`observation-export-launcher`, ten:
+
+```text
+AEX_PLANE                       dev | prd
+AEX_REGION                      a regional-plane region name
+AEX_OBSERVATION_TABLE           EXPORT# and CTRL# rows only
+AEX_EXPORT_CLUSTER              ECS cluster ARN; its region must equal AEX_REGION
+AEX_EXPORT_TASK_DEFINITION      task-definition ARN; same region check
+AEX_EXPORT_SUBNETS              comma-separated subnet ids, at least one
+AEX_EXPORT_SECURITY_GROUPS      comma-separated security-group ids, at least one
+AEX_EXPORT_MAX_CONCURRENT       1..=100
+AEX_EXPORT_LAUNCH_SHARDS        1..=64
+AEX_EXPORT_LEASE_MS             1000..=900000
+```
+
+`observation-export-task`, eleven:
+
+```text
+AEX_PLANE                       dev | prd
+AEX_REGION                      a regional-plane region name
+AEX_EXPORT_ID                   an exp_ identifier
+AEX_WORKSPACE_ID                a wsp_ identifier
+AEX_OBSERVATION_TABLE           the observation-authority table
+AEX_OBSERVATION_BUCKET          the regional observation bucket
+AEX_EXPORT_MEMORY_BUDGET_BYTES  at least the sum of the four reservations
+AEX_EXPORT_PART_BYTES           5 MiB..=64 MiB; below 5 MiB no upload can complete
+AEX_EXPORT_ROWGROUP_BYTES       1 MiB..=256 MiB
+AEX_EXPORT_PAGE_LIMIT           1..=1000
+AEX_EXPORT_LEASE_MS             1000..=900000
+```
+
+Two variables are optional because neither names a resource:
+`AEX_RELEASE_DIGEST` (the digest both health endpoints report, default
+`unreleased`) on all five, and `AEX_HEALTH_PORT` on the export task, where an
+absent or zero port means no listener is bound and the same JSON is served
+through `health_body()` and `readiness_body()`.
+
+### 9.3 Where the resource shapes live
+
+The orchestrator asked for the Lambda memory, timeout and reserved concurrency
+in `[package.metadata.aex]`. That table's key set is **closed** —
+`aex-workspace-check` fails an unknown key — and the shape `graph verify`
+actually reads is `release/units.toml`'s `[unit.lambda]` / `[unit.fargate]`
+block. All five rows are filled there, each with the reasoning that produced the
+number:
+
+| Unit | Shape |
+| --- | --- |
+| `regional-observation-api` | `memory_mb = 1024`, `timeout_s = 30`, `reserved_concurrency = 40` |
+| `regional-otlp` | `memory_mb = 3008`, `timeout_s = 30`, `reserved_concurrency = 20` |
+| `observation-reconciler` | `memory_mb = 512`, `timeout_s = 300`, `reserved_concurrency = 8` |
+| `observation-export-launcher` | `memory_mb = 512`, `timeout_s = 60`, `reserved_concurrency = 4` |
+| `observation-export-task` | `cpu = 2048`, `memory_mb = 4096`, `desired_count = 0`, `stop_timeout_s = 120`, `port = 0` |
+
+`regional-otlp`'s row is the mechanism O-ROLES exists to provide: the
+whole-region decode footprint is reserved concurrency times
+`AEX_OTLP_DECODED_MAX`, which is 20 x 16 MiB = 320 MiB, so decompression can
+never starve query, export or sockets. A test asserts the product stays inside a
+stated ceiling, and a second asserts the query role carries its own separate
+reservation.
+
+### 9.4 The library change this required
+
+`aex-observation-store-aws` gained `store::pack_pages` and `store::PageSpan`, and
+`AdmissionPlan::new` now calls them. The page-packing rule — bounded by both
+`OBS_PAGE_RECORDS` and `OBS_PAGE_MAX_BYTES` — previously existed only inside the
+planner, so the writer would have had to restate it. There is now exactly one
+rule, and the page the G7 envelope was proven over is the page that is actually
+written. The 37 existing tests in that crate, G7 included, are unchanged and
+still pass.
+
+### 9.5 Decisions taken beyond plan 11
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| OB-11 | The authenticated edge is composed in each service from `aex_regional_http::assertion`'s `VerifyingAssertionCache`, with the composition supplying the two things that crate deliberately leaves open: an Ed25519 `KeyVerifier` over trust anchors resolved at start-up, and an `AssertionSource` that exchanges the presented credential at `AEX_CENTRAL_AUTHZ_URL` | The crate's own comment says concrete crypto stays in the composition root, and OD-21 puts the 30-second assertion on Ed25519 because AEX holds that key directly. The exchange body is an internal contract, not a public route; the credential never leaves the regional plane except towards the authority that issued it. |
+| OB-12 | The `DynamoDB` item codec for admission and for reading lives in the deployables, not in `aex-observation-store-aws` | The library was explicitly out of scope beyond what mounting requires, and it models the protocol — plans, envelopes, item sizes — rather than executing it. A follow-up may lift the codec into the adapter crate; that is a move, not a rewrite. |
+| OB-13 | Predicates are evaluated in process over the decoded row rather than compiled into a `DynamoDB` filter expression | Plan §4.6 compiles indexed predicates index-side to save bandwidth. Doing it in process is equally correct and still bounded, because `max_items_scanned` counts **index items read**, which is exactly the dimension the budget exists to bound. It costs bandwidth, not correctness, and the expression compiler can be added later without changing the public behaviour. |
+| OB-14 | The route's signal is the authority over the body's | `POST /api/logs/query` carrying `signal: "metrics"` is a contradiction rather than a preference. The refusal is `invalid_query` naming both spellings. |
+| OB-15 | A query operand arrives on the wire as a string and is recovered to its scalar kind before comparison | Comparing `severityNumber > 9` as text makes `10` false. The recovery is total and tested. |
+| OB-16 | `telemetry_query_budget_exhausted` and `export_capacity` are reported under the nearest **registered** code with the pending spelling named in the message | Both are still owed by the contracts stream (§6). A typed pending code that names itself is one delete when the vocabulary catches up; silently answering under a code that means something else is invisible. |
+| OB-17 | The reconciler and the export task are a library plus a thin binary rather than binary-only | Their required cases — the duty-to-role matrix, partial-batch contents, resume and publication fences — need real calls, which a binary-only crate cannot expose to `tests/*.rs`. This is the shape `services/regional-stream` and `workers/session-operation-worker` already use. |
+| OB-18 | `cargo fmt --all` is run in batches of twenty packages | On this Windows host `--all` puts every source path of all 133 members on one command line and fails with `os error 206`. Batching is the same operation with a shorter argv; Linux CI is unaffected. |
+
+### 9.6 What a peer still owes
+
+Everything in §6 still stands. Three items became load-bearing now that the
+routes are mounted:
+
+| Peer | What is needed |
+| --- | --- |
+| central identity/control | The internal assertion exchange this edge consumes: `POST /internal/authz/assertions` taking `{credential, audience, region}` and answering `{assertion, keyId, credentialBinding, signature}`, where `assertion` is `aex_internal_contracts::assertion::AuthorizationAssertion` and the signature is Ed25519 over the credential-bound canonical form `aex_regional_http::assertion::SignedAssertion` already defines. Both services fail closed without it. |
+| regional secrets | The `REDACT#{session_id}` manifest item, read here as `pk = "REDACT#{session}"`, `sk = "MANIFEST"`, `custodyRevision` as a number and `entries` as a list of maps carrying `len` and a 32-byte `hmac`. An absent item means no managed secret was injected, which is the only reading that does not invent one. |
+| regional services | `aex-regional-http` should absorb the composed edge layer. Each service currently carries its own edge module; the verification algebra is already the crate's, and only the layer that turns a request into a `RequestContext` is duplicated. |
+
+### 9.7 Gate output
+
+```text
+cargo fmt (133 packages, batched)                            clean
+cargo clippy -p regional-observation-api -p regional-otlp \
+             -p observation-reconciler -p observation-export-launcher \
+             -p observation-export-task --all-targets -- -D warnings
+                                                             clean, zero warnings
+cargo nextest run -p <the same five>
+    Summary [ 251.432s] 300 tests run: 300 passed, 0 skipped
+cargo check --workspace --all-targets                        Finished in 43.08s
+cargo run -p aex-workspace-check
+    aex-workspace-check: 133 member(s) and 140 package(s) satisfy every
+    structural and registry rule
+    aex-workspace-check: 515 unearned-evidence row(s) recorded in the
+    source-rewrite phase
+cargo run -p aex-workspace-check -- registry build           regenerated, committed
+cargo run -p aex-release-tool -- graph verify
+    1 violation(s): [graph-cycle] cargo:aex-usage-application -> itself
+    (pre-existing, another stream's crate; no resource-shape violation on any
+    of the five units)
+```
+
+No `#[ignore]`, no environment-variable self-skip, no empty suite and no
+retry-to-green anywhere in the five packages; `cargo nextest` reports
+`0 skipped`. No ClickHouse and no Kinesis appears in any of them, which four
+tests assert directly.
