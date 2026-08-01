@@ -6,15 +6,17 @@
 //! substitutes a default for something the authority is supposed to know.
 
 use aex_wire::ids::{
-    AgentId, MessageId, OperationId, OrganizationId, RunId, SessionId, WorkspaceId,
+    AgentId, ApprovalId, ContentHash, GenerationId, MessageId, OperationId, OrganizationId,
+    ResourceName, RunId, SessionId, ToolCallId, WorkspaceId,
 };
 
 use crate::attr::{CodecError, Item, ItemBuilder, Row, b, boolean, n, s, stamp};
 use crate::keys;
 use crate::replay::{Receipt, parse_intent};
 use crate::wire_pending::{
-    AgentControl, Body, JournalEntry, Message, Run, SessionEvent, SessionHead, SessionLifecycle,
-    SessionStatus, StoredOperation,
+    AgentControl, Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body,
+    JournalEntry, Message, Run, SessionEvent, SessionHead, SessionLifecycle, SessionStatus,
+    StoredOperation,
 };
 
 /// The `itemType` of a session head.
@@ -29,6 +31,8 @@ pub const SESSION_EVENT: &str = "session_event";
 pub const AGENT_CONTROL: &str = "agent_control";
 /// The `itemType` of a journal entry.
 pub const JOURNAL_ENTRY: &str = "journal_entry";
+/// The `itemType` of a tool approval.
+pub const APPROVAL: &str = "approval";
 /// The `itemType` of a durable operation.
 pub const OPERATION: &str = "operation";
 /// The `itemType` of an idempotency receipt.
@@ -412,6 +416,124 @@ pub fn decode_journal(item: &Item) -> Result<JournalEntry, CodecError> {
     })
 }
 
+/// Reads a `sha256:<hex>` digest attribute.
+fn digest(row: &Row<'_>, attribute: &'static str) -> Result<ContentHash, CodecError> {
+    ContentHash::parse(row.string(attribute)?).map_err(|error| CodecError::Malformed {
+        item_type: APPROVAL,
+        attribute,
+        reason: error.to_string(),
+    })
+}
+
+/// Encodes one tool approval.
+///
+/// All eleven bound fields are written. The wire publishes seven of them; the
+/// other four are what `respond` revalidates against, and an approval that
+/// could not be revalidated would have to be dispatched on trust.
+#[must_use]
+pub fn encode_approval(approval: &Approval) -> Item {
+    let key = keys::approval(approval.binding.session, approval.approval);
+    ItemBuilder::new(APPROVAL)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set("approvalId", s(approval.approval.to_string()))
+        .set("workspaceId", s(approval.workspace.to_string()))
+        .set("sessionId", s(approval.binding.session.to_string()))
+        .set("runId", s(approval.binding.run.to_string()))
+        .set("agentId", s(approval.binding.agent.to_string()))
+        .set("toolCallId", s(approval.binding.tool_call.to_string()))
+        .set("toolName", s(approval.binding.tool.to_string()))
+        .set(
+            "argumentDigest",
+            s(approval.binding.argument_digest.to_wire()),
+        )
+        .set(
+            "implementationDigest",
+            s(approval.binding.implementation_digest.to_wire()),
+        )
+        .set("configDigest", s(approval.binding.config_digest.to_wire()))
+        .set_opt(
+            "expectedGenerationId",
+            approval
+                .binding
+                .expected_generation
+                .map(|generation| s(generation.to_string())),
+        )
+        .set(
+            "expectedCustodyRevision",
+            n(approval.binding.expected_custody),
+        )
+        .set(
+            "expectedConfigRevision",
+            n(approval.binding.expected_config_revision),
+        )
+        .set("status", s(approval.status.as_str()))
+        .set_opt(
+            "cancelCause",
+            approval.cancel_cause.map(|cause| s(cause.as_str())),
+        )
+        .set("createdAt", stamp(approval.created_at))
+        .set("expiresAt", stamp(approval.expires_at))
+        .set_opt("resolvedAt", approval.resolved_at.map(stamp))
+        .build()
+}
+
+/// Decodes one tool approval and re-checks its ownership.
+///
+/// # Errors
+///
+/// [`CodecError`] as for every decode here. A status or cancel cause outside its
+/// closed vocabulary is a refusal rather than a guess: an approval read as the
+/// wrong state decides whether a tool call runs.
+pub fn decode_approval(item: &Item, asserted: WorkspaceId) -> Result<Approval, CodecError> {
+    let row = Row::bind(item, APPROVAL)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    let status_text = row.enumerated("status", keys::APPROVAL_STATUSES)?;
+    let status = ApprovalStatus::parse(status_text).ok_or(CodecError::Malformed {
+        item_type: APPROVAL,
+        attribute: "status",
+        reason: "outside the closed approval status vocabulary".to_owned(),
+    })?;
+    let cancel_cause = match row.opt_string("cancelCause")? {
+        None => None,
+        Some(stored) => Some(
+            ApprovalCancelCause::parse(stored).ok_or(CodecError::Malformed {
+                item_type: APPROVAL,
+                attribute: "cancelCause",
+                reason: "outside the closed cancel-cause vocabulary".to_owned(),
+            })?,
+        ),
+    };
+    let tool =
+        ResourceName::parse(row.string("toolName")?).map_err(|error| CodecError::Malformed {
+            item_type: APPROVAL,
+            attribute: "toolName",
+            reason: error.to_string(),
+        })?;
+    Ok(Approval {
+        approval: row.id::<ApprovalId>("approvalId")?,
+        workspace: asserted,
+        binding: ApprovalBinding {
+            session: row.id::<SessionId>("sessionId")?,
+            run: row.id::<RunId>("runId")?,
+            agent: row.id::<AgentId>("agentId")?,
+            tool_call: row.id::<ToolCallId>("toolCallId")?,
+            tool,
+            argument_digest: digest(&row, "argumentDigest")?,
+            implementation_digest: digest(&row, "implementationDigest")?,
+            config_digest: digest(&row, "configDigest")?,
+            expected_generation: row.opt_id::<GenerationId>("expectedGenerationId")?,
+            expected_custody: row.u64("expectedCustodyRevision")?,
+            expected_config_revision: row.u64("expectedConfigRevision")?,
+        },
+        status,
+        cancel_cause,
+        created_at: row.timestamp("createdAt")?,
+        expires_at: row.timestamp("expiresAt")?,
+        resolved_at: row.opt_timestamp("resolvedAt")?,
+    })
+}
+
 /// Encodes one durable operation record.
 #[must_use]
 pub fn encode_operation(operation: &StoredOperation) -> Item {
@@ -516,13 +638,14 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        SESSION_HEAD, decode_event, decode_head, decode_message, decode_run, encode_event,
-        encode_head, encode_message, encode_run,
+        SESSION_HEAD, decode_approval, decode_event, decode_head, decode_message, decode_run,
+        encode_approval, encode_event, encode_head, encode_message, encode_run,
     };
     use crate::attr::CodecError;
     use crate::keys;
     use crate::wire_pending::{
-        Body, Message, Run, SessionEvent, SessionHead, SessionLifecycle, SessionStatus,
+        Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body, Message, Run,
+        SessionEvent, SessionHead, SessionLifecycle, SessionStatus,
     };
 
     fn stamp(millis: i64) -> Timestamp {
@@ -672,6 +795,130 @@ mod tests {
             decode_run(&encoded, workspace(1)),
             Err(CodecError::Malformed { .. })
         ));
+    }
+
+    fn approval() -> Approval {
+        use aex_wire::ids::{ApprovalId, ContentHash, GenerationId, ResourceName, ToolCallId};
+
+        Approval {
+            approval: ApprovalId::from_uuid7(Uuid7::compose(1, [6; 10])),
+            workspace: workspace(1),
+            binding: ApprovalBinding {
+                session: SessionId::from_uuid7(Uuid7::compose(1, [1; 10])),
+                run: RunId::from_uuid7(Uuid7::compose(1, [5; 10])),
+                agent: AgentId::from_uuid7(Uuid7::compose(1, [3; 10])),
+                tool_call: ToolCallId::from_uuid7(Uuid7::compose(1, [7; 10])),
+                tool: ResourceName::parse("web.fetch").expect("a resource name"),
+                argument_digest: ContentHash::of(b"arguments"),
+                implementation_digest: ContentHash::of(b"implementation"),
+                config_digest: ContentHash::of(b"config"),
+                expected_generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [8; 10]))),
+                expected_custody: 4,
+                expected_config_revision: 9,
+            },
+            status: ApprovalStatus::Pending,
+            cancel_cause: None,
+            created_at: stamp(1_000),
+            expires_at: stamp(61_000),
+            resolved_at: None,
+        }
+    }
+
+    #[test]
+    fn an_approval_round_trips_with_all_eleven_bound_fields() {
+        let original = approval();
+        let encoded = encode_approval(&original);
+        assert_eq!(
+            decode_approval(&encoded, original.workspace).expect("decodes"),
+            original
+        );
+
+        // Every bound field the domain names reaches a stored attribute; a
+        // binding that lost one could not be revalidated at decision time.
+        for attribute in [
+            "sessionId",
+            "runId",
+            "agentId",
+            "toolCallId",
+            "toolName",
+            "argumentDigest",
+            "implementationDigest",
+            "configDigest",
+            "expectedGenerationId",
+            "expectedCustodyRevision",
+            "expectedConfigRevision",
+        ] {
+            assert!(
+                encoded.contains_key(attribute),
+                "`{attribute}` is not stored"
+            );
+        }
+    }
+
+    #[test]
+    fn a_withdrawn_approval_round_trips_with_its_cause() {
+        let withdrawn = Approval {
+            status: ApprovalStatus::Cancelled,
+            cancel_cause: Some(ApprovalCancelCause::BindingDrift),
+            resolved_at: Some(stamp(2_000)),
+            ..approval()
+        };
+        assert_eq!(
+            decode_approval(&encode_approval(&withdrawn), withdrawn.workspace).expect("decodes"),
+            withdrawn
+        );
+    }
+
+    #[test]
+    fn an_approval_from_another_workspace_is_rejected_after_read() {
+        let encoded = encode_approval(&approval());
+        let error = decode_approval(&encoded, workspace(9)).expect_err("another workspace");
+        assert!(matches!(error, CodecError::WrongTenant { .. }), "{error}");
+    }
+
+    #[test]
+    fn an_approval_status_or_cause_outside_its_vocabulary_is_refused_rather_than_guessed() {
+        let mut invented = encode_approval(&approval());
+        invented.insert("status".to_owned(), crate::attr::s("maybe"));
+        assert!(decode_approval(&invented, workspace(1)).is_err());
+
+        let mut caused = encode_approval(&approval());
+        caused.insert(
+            "cancelCause".to_owned(),
+            crate::attr::s("the moon was wrong"),
+        );
+        assert!(decode_approval(&caused, workspace(1)).is_err());
+    }
+
+    #[test]
+    fn an_approval_that_names_no_expiry_is_refused_rather_than_read_as_open_ended() {
+        // "When it stops being decidable" is a fact about the raised approval. A
+        // reader that saw the attribute missing and carried on would publish an
+        // approval that never expires.
+        let mut endless = encode_approval(&approval());
+        endless.remove("expiresAt");
+        assert!(matches!(
+            decode_approval(&endless, workspace(1)),
+            Err(CodecError::Missing {
+                attribute: "expiresAt",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_approval_lives_in_its_session_partition_under_the_listed_prefix() {
+        let encoded = encode_approval(&approval());
+        let partition = keys::session_partition(approval().binding.session);
+        assert_eq!(encoded[crate::attr::PK], crate::attr::s(partition));
+        let sort = encoded[crate::attr::SK]
+            .as_s()
+            .expect("a string sort key")
+            .clone();
+        assert!(
+            sort.starts_with(keys::approval_prefix()),
+            "`{sort}` is outside the listed range"
+        );
     }
 
     #[test]

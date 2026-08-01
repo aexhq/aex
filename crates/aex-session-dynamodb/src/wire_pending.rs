@@ -23,7 +23,8 @@
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::OrganizationId;
 use aex_wire::ids::{
-    AgentId, ApiKeyId, ApprovalId, MessageId, OperationId, RunId, SessionId, WorkspaceId,
+    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, MessageId, OperationId, ResourceName,
+    RunId, SessionId, ToolCallId, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 
@@ -715,34 +716,161 @@ pub struct FeedFrontier {
     pub covered_through: Timestamp,
 }
 
-// TODO(cross-stream): the marker named the decision, not the record. The record is
-// `aex_session_domain::approval::Approval`, whose bound call is a single
-// `approval::ApprovalBinding` rather than five loose digest strings, and whose
-// `approval::ApprovalDecision` is a two-arm `Approve`/`Deny` enum. Adopting it moves
-// binding validation out of this adapter.
+// TODO(cross-stream): the record is `aex_session_domain::approval::Approval`. The
+// shapes below now mirror it field for field — one `ApprovalBinding` of eleven bound
+// fields, a four-arm status and a seven-arm cancel cause — so adopting the peer type
+// is an import plus two newtype conversions rather than a decode change. Two values
+// are held as `u64` here because the peer types (`aex_secret_domain::CustodyRevision`
+// and the configuration revision) belong to crates this adapter deliberately does not
+// link.
+/// The exact call one approval authorizes.
+///
+/// All eleven bound fields are persisted, not the seven the wire publishes.
+/// `respond` revalidates the whole binding at decision time, so a row that stored
+/// only the public subset could not tell an approver's binding from the current
+/// one — and failing closed on drift is the entire point of the record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalBinding {
+    /// The session.
+    pub session: SessionId,
+    /// The run.
+    pub run: RunId,
+    /// The agent.
+    pub agent: AgentId,
+    /// The tool call.
+    pub tool_call: ToolCallId,
+    /// The canonical tool name.
+    pub tool: ResourceName,
+    /// The canonical argument digest.
+    pub argument_digest: ContentHash,
+    /// The tool implementation digest.
+    pub implementation_digest: ContentHash,
+    /// The resolved configuration digest.
+    pub config_digest: ContentHash,
+    /// The workspace generation the call expects.
+    pub expected_generation: Option<GenerationId>,
+    /// The custody revision the call expects.
+    pub expected_custody: u64,
+    /// The configuration revision the call expects.
+    pub expected_config_revision: u64,
+}
+
+/// Where an approval is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ApprovalStatus {
+    /// Waiting for a decision.
+    Pending,
+    /// Approved; the bound call may run.
+    Approved,
+    /// Denied; the bound call will not run.
+    Denied,
+    /// Withdrawn without a decision.
+    Cancelled,
+}
+
+impl ApprovalStatus {
+    /// The stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parses a stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "pending" => Some(Self::Pending),
+            "approved" => Some(Self::Approved),
+            "denied" => Some(Self::Denied),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+
+    /// Whether no transition leaves this status.
+    #[must_use]
+    pub const fn is_resolved(self) -> bool {
+        !matches!(self, Self::Pending)
+    }
+}
+
+/// Why a pending approval was withdrawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ApprovalCancelCause {
+    /// A stop operation asked for it.
+    StopRequested,
+    /// The run was cancelled.
+    RunCancelled,
+    /// The session is being trashed.
+    SessionTrashing,
+    /// The account is paused.
+    AccountPaused,
+    /// The workspace generation is gone.
+    ContinuityLost,
+    /// The bound tool call itself was cancelled.
+    ToolCallCancelled,
+    /// The binding drifted between request and decision.
+    BindingDrift,
+}
+
+impl ApprovalCancelCause {
+    /// The stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StopRequested => "stop_requested",
+            Self::RunCancelled => "run_cancelled",
+            Self::SessionTrashing => "session_trashing",
+            Self::AccountPaused => "account_paused",
+            Self::ContinuityLost => "continuity_lost",
+            Self::ToolCallCancelled => "tool_call_cancelled",
+            Self::BindingDrift => "binding_drift",
+        }
+    }
+
+    /// Parses a stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "stop_requested" => Some(Self::StopRequested),
+            "run_cancelled" => Some(Self::RunCancelled),
+            "session_trashing" => Some(Self::SessionTrashing),
+            "account_paused" => Some(Self::AccountPaused),
+            "continuity_lost" => Some(Self::ContinuityLost),
+            "tool_call_cancelled" => Some(Self::ToolCallCancelled),
+            "binding_drift" => Some(Self::BindingDrift),
+            _ => None,
+        }
+    }
+}
+
 /// One approval, as the store holds it.
+///
+/// `workspace` is carried so the post-read tenancy check has something to
+/// compare, exactly as every other row here does; `expires_at` is carried
+/// because "when it stops being decidable" is a fact about the raised approval
+/// and cannot be recomputed by a reader that holds only the approval.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Approval {
     /// Which approval.
     pub approval: ApprovalId,
-    /// Its run.
-    pub run: RunId,
-    /// Its agent.
-    pub agent: AgentId,
-    /// The bound tool call.
-    pub tool_call_id: String,
-    /// The tool.
-    pub tool_name: String,
-    /// The digest of the arguments the decision is bound to.
-    pub argument_digest: String,
-    /// The digest of the implementation the decision is bound to.
-    pub implementation_digest: String,
-    /// The generation the decision is bound to.
-    pub expected_generation_id: String,
+    /// Its workspace.
+    pub workspace: WorkspaceId,
+    /// The exact call it authorizes, including its session.
+    pub binding: ApprovalBinding,
     /// Its status.
-    pub status: &'static str,
+    pub status: ApprovalStatus,
+    /// Why it was withdrawn, when it was.
+    pub cancel_cause: Option<ApprovalCancelCause>,
     /// When it was raised.
     pub created_at: Timestamp,
-    /// When it was decided.
-    pub decided_at: Option<Timestamp>,
+    /// When it stops being decidable.
+    pub expires_at: Timestamp,
+    /// When it settled.
+    pub resolved_at: Option<Timestamp>,
 }

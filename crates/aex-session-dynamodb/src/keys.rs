@@ -100,6 +100,16 @@ pub fn approval(session: SessionId, approval: ApprovalId) -> Key {
     Key::new(session_partition(session), format!("APPROVAL#{approval}"))
 }
 
+/// The approval range prefix.
+///
+/// Approval identities are time-ordered, so one `begins_with` range over this
+/// prefix lists a session's approvals oldest first without a filter expression
+/// and without an index.
+#[must_use]
+pub fn approval_prefix() -> &'static str {
+    "APPROVAL#"
+}
+
 /// The bounded agent registry entry inside the session partition.
 #[must_use]
 pub fn agent_index(session: SessionId, agent: AgentId) -> Key {
@@ -300,6 +310,17 @@ pub const RUN_STATUSES: &[&str] = &[
 
 /// Every approval status value.
 pub const APPROVAL_STATUSES: &[&str] = &["pending", "approved", "denied", "cancelled"];
+
+/// Every reason a pending approval is withdrawn.
+pub const APPROVAL_CANCEL_CAUSES: &[&str] = &[
+    "stop_requested",
+    "run_cancelled",
+    "session_trashing",
+    "account_paused",
+    "continuity_lost",
+    "tool_call_cancelled",
+    "binding_drift",
+];
 
 /// Every effect state value.
 pub const EFFECT_STATES: &[&str] = &["prepared", "dispatched", "settled", "unknown"];
