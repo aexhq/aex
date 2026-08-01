@@ -1,7 +1,7 @@
 //! Shared axum composition and the fixed error-precedence order.
 
 use aex_wire::error::PrecedenceStage;
-use aex_wire::routes::Plane;
+use aex_wire::routes::{Plane, RouteId, TransportKind, route};
 use aex_wire::types::Region;
 
 use crate::capability::CompositionManifest;
@@ -9,6 +9,49 @@ use crate::wire_pending::{RegionalSecretApi, RegionalSessionApi, RegionalStreamA
 
 /// One-to-one with the wire-contract precedence table.
 pub const EDGE_PRECEDENCE: [PrecedenceStage; 13] = PrecedenceStage::ALL;
+
+/// Exactly one deployable owner for every generated regional route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteOwner {
+    /// Finite session/resource API.
+    SessionApi,
+    /// Plaintext secret/provider-credential admission API.
+    SecretApi,
+    /// Long-lived NDJSON service.
+    Stream,
+    /// Observation query/export peer.
+    ObservationApi,
+    /// OTLP admission peer.
+    Otlp,
+}
+
+/// Resolves a generated route to its one regional deployable.
+#[must_use]
+pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
+    let descriptor = route(id);
+    if descriptor.plane != Plane::Regional {
+        return None;
+    }
+    if descriptor.transport == TransportKind::Ndjson {
+        return Some(RouteOwner::Stream);
+    }
+    if descriptor.fragment == "otlp" {
+        return Some(RouteOwner::Otlp);
+    }
+    if matches!(descriptor.fragment, "observations" | "telemetry-lifecycle") {
+        return Some(RouteOwner::ObservationApi);
+    }
+    if matches!(
+        id,
+        RouteId::SecretPut
+            | RouteId::SecretDelete
+            | RouteId::SecretRevoke
+            | RouteId::ProviderCredentialRegister
+    ) {
+        return Some(RouteOwner::SecretApi);
+    }
+    Some(RouteOwner::SessionApi)
+}
 
 /// Shared edge services passed to each generated router.
 #[derive(Debug, Clone)]

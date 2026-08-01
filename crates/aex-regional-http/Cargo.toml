@@ -52,6 +52,7 @@ aex-wire = { path = "../aex-wire" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 
 [dev-dependencies]
+http-body-util.workspace = true
 proptest.workspace = true
 
 [[test]]

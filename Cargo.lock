@@ -728,6 +728,7 @@ dependencies = [
  "bytes",
  "hmac 0.13.0",
  "http 1.5.0",
+ "http-body-util",
  "lambda_http",
  "lambda_runtime",
  "proptest",

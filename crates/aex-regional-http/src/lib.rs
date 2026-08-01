@@ -19,6 +19,7 @@ pub mod context;
 pub mod cursor;
 pub mod envelope;
 pub mod error;
+pub mod health;
 pub mod idempotency;
 pub mod limits;
 pub mod page;

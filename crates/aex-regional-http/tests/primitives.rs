@@ -35,14 +35,16 @@ use aex_wire::idempotency::{PrincipalKind, PrincipalScope};
 use aex_wire::ids::{
     OperationId, OrganizationId, PrefixedId, SessionId, UserId, Uuid7, WorkspaceId,
 };
-use aex_wire::routes::{BodyClass, RouteId};
+use aex_wire::routes::{BodyClass, Plane, RouteId, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{HttpMethod, Region, RequestId, Timestamp};
 use async_trait::async_trait;
 use http::{HeaderMap, HeaderValue};
+use http_body_util::BodyExt as _;
 use proptest::prelude::*;
 use serde_json::json;
 use time::OffsetDateTime;
+use tower::ServiceExt as _;
 
 fn workspace(seed: u8) -> WorkspaceId {
     WorkspaceId::from_uuid7(Uuid7::compose(1, [seed; 10]))
@@ -439,6 +441,36 @@ fn edge_precedence_is_the_complete_wire_table() {
 }
 
 #[test]
+fn every_generated_regional_route_has_exactly_one_owner() {
+    use aex_regional_http::router::{RouteOwner, route_owner};
+
+    for id in RouteId::ALL {
+        if route(*id).plane == Plane::Regional {
+            assert!(route_owner(*id).is_some(), "{id}");
+        } else {
+            assert_eq!(route_owner(*id), None, "{id}");
+        }
+    }
+    assert_eq!(route_owner(RouteId::SecretPut), Some(RouteOwner::SecretApi));
+    assert_eq!(
+        route_owner(RouteId::ProviderCredentialRegister),
+        Some(RouteOwner::SecretApi)
+    );
+    assert_eq!(
+        route_owner(RouteId::SecretGet),
+        Some(RouteOwner::SessionApi)
+    );
+    assert_eq!(
+        route_owner(RouteId::SessionObservationsEventsListen),
+        Some(RouteOwner::Stream)
+    );
+    assert_eq!(
+        route_owner(RouteId::SessionObservationsEventsQuery),
+        Some(RouteOwner::ObservationApi)
+    );
+}
+
+#[test]
 fn assertions_expire_to_the_millisecond_and_bind_every_authority_fact() {
     let credential = PresentedCredential::new(b"aex_wk_fixture".to_vec()).expect("credential");
     let signed = signed(&credential, 1_000 + MAX_LIFETIME_MS);
@@ -693,4 +725,49 @@ fn record_frames_split_at_two_hundred_without_dropping() {
         ),
         Err(FrameSplitError::RecordTooLarge)
     );
+}
+
+#[tokio::test]
+async fn health_and_readiness_paths_are_internal_no_store_and_fail_closed() {
+    let healthy = aex_regional_http::health::router(aex_regional_http::health::Readiness::ready(
+        "sha256:release",
+    ));
+    let response = healthy
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/healthz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+
+    let not_ready = aex_regional_http::health::router(
+        aex_regional_http::health::Readiness::not_ready(
+            "sha256:release",
+            ["cursor_key_ring", "authority_reader"],
+        )
+        .expect("readiness"),
+    );
+    let response = not_ready
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/readyz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 503);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(value["status"], "not_ready");
+    assert_eq!(value["unavailable"].as_array().expect("array").len(), 2);
 }
