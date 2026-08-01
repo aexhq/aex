@@ -26,6 +26,7 @@ scenarios = []
 errors_and_routes = "unit"
 ids = "unit"
 primitives = "unit"
+server_and_client = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"

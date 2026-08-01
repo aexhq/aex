@@ -10,9 +10,11 @@
 #![allow(clippy::match_same_arms, reason = "one arm per row")]
 #![allow(clippy::too_many_lines, reason = "one arm per row")]
 
+pub mod client;
 pub mod errors;
 pub mod ids;
 pub mod limits;
 pub mod models;
 pub mod routes;
 pub mod scopes;
+pub mod server;
