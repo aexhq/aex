@@ -2,7 +2,7 @@
 //! identically to numeric and chronological order at the registered magnitudes.
 
 use aex_observation_domain::keys::{
-    self, BucketHour, KeyError, ObservationWakeKey, ScopeKey, SEQ_WIDTH,
+    self, BucketHour, KeyError, ObservationWakeKey, SEQ_WIDTH, ScopeKey,
 };
 use aex_observation_domain::signal::Signal;
 use aex_wire::ids::PrefixedId;
@@ -17,12 +17,12 @@ fn session(suffix: &str) -> ScopeKey {
 
 fn workspace(suffix: &str) -> ScopeKey {
     ScopeKey::Workspace(
-        PrefixedId::parse(&format!("ws_{suffix}")).expect("fixture workspace id parses"),
+        PrefixedId::parse(&format!("wsp_{suffix}")).expect("fixture workspace id parses"),
     )
 }
 
-const SUFFIX_A: &str = "01j0000000000000000000000a";
-const SUFFIX_B: &str = "01j0000000000000000000000b";
+const SUFFIX_A: &str = "0000000001e40r2081040g2081";
+const SUFFIX_B: &str = "0000000002e81840g2081040g2";
 
 #[test]
 fn scope_keys_round_trip_through_their_rendering() {
@@ -36,7 +36,7 @@ fn scope_keys_round_trip_through_their_rendering() {
 #[test]
 fn a_session_scope_renders_with_the_session_discriminator() {
     assert_eq!(session(SUFFIX_A).to_key(), format!("S#ses_{SUFFIX_A}"));
-    assert_eq!(workspace(SUFFIX_B).to_key(), format!("W#ws_{SUFFIX_B}"));
+    assert_eq!(workspace(SUFFIX_B).to_key(), format!("W#wsp_{SUFFIX_B}"));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn every_key_template_round_trips_its_components() {
             assert_eq!(
                 parsed,
                 ObservationWakeKey {
-                    scope: scope.clone(),
+                    scope,
                     signal: *signal,
                     abucket: bucket,
                     shard,
@@ -124,14 +124,17 @@ fn every_key_template_round_trips_its_components() {
         }
     }
     assert_eq!(keys::observation_sk(42), keys::pad_seq(42));
-    assert_eq!(keys::segment_pk(&scope, Signal::Logs), "SEG#S#ses_01j0000000000000000000000a#logs");
+    assert_eq!(
+        keys::segment_pk(&scope, Signal::Logs),
+        "SEG#S#ses_0000000001e40r2081040g2081#logs"
+    );
     assert_eq!(
         keys::time_segment_pk(&scope, Signal::Logs),
-        "SEGT#S#ses_01j0000000000000000000000a#logs"
+        "SEGT#S#ses_0000000001e40r2081040g2081#logs"
     );
     assert_eq!(
         keys::frontier_pk(&scope),
-        "FRONT#S#ses_01j0000000000000000000000a"
+        "FRONT#S#ses_0000000001e40r2081040g2081"
     );
     assert_eq!(keys::frontier_sk(Signal::Metrics), "SIG#metrics");
     assert_eq!(keys::DELETION_SK, "DELETION");
@@ -145,19 +148,19 @@ fn parse_observation_pk_rejects_every_other_item_family() {
         keys::segment_pk(&scope, Signal::Logs),
         keys::time_segment_pk(&scope, Signal::Logs),
         keys::frontier_pk(&scope),
-        "BATCH#ws_01j0000000000000000000000a#bch_01j0000000000000000000000a".to_owned(),
-        "REJECT#ws_01j0000000000000000000000a#0".to_owned(),
-        "SERIES#ws_01j0000000000000000000000a#00ff".to_owned(),
-        "SERIESCT#ws_01j0000000000000000000000a".to_owned(),
-        "QUOTA#ws_01j0000000000000000000000a".to_owned(),
-        "GAP#S#ses_01j0000000000000000000000a".to_owned(),
-        "SPOOL#ws_01j0000000000000000000000a#01".to_owned(),
-        "EXPORT#ws_01j0000000000000000000000a#exp_01j0000000000000000000000a".to_owned(),
+        "BATCH#wsp_0000000001e40r2081040g2081#bch_0000000001e40r2081040g2081".to_owned(),
+        "REJECT#wsp_0000000001e40r2081040g2081#0".to_owned(),
+        "SERIES#wsp_0000000001e40r2081040g2081#00ff".to_owned(),
+        "SERIESCT#wsp_0000000001e40r2081040g2081".to_owned(),
+        "QUOTA#wsp_0000000001e40r2081040g2081".to_owned(),
+        "GAP#S#ses_0000000001e40r2081040g2081".to_owned(),
+        "SPOOL#wsp_0000000001e40r2081040g2081#01".to_owned(),
+        "EXPORT#wsp_0000000001e40r2081040g2081#exp_0000000001e40r2081040g2081".to_owned(),
         "GATE#eu-west-1".to_owned(),
         "CTRL#spool.repair#00".to_owned(),
-        "IDEM#ws_01j0000000000000000000000a#otlp.logs#ff".to_owned(),
+        "IDEM#wsp_0000000001e40r2081040g2081#otlp.logs#ff".to_owned(),
         "OBS#".to_owned(),
-        "OBSX#S#ses_01j0000000000000000000000a#logs#2026-08-01T09#00".to_owned(),
+        "OBSX#S#ses_0000000001e40r2081040g2081#logs#2026-08-01T09#00".to_owned(),
         String::new(),
     ];
     for pk in foreign {
@@ -166,14 +169,17 @@ fn parse_observation_pk_rejects_every_other_item_family() {
             "`{pk}` must not classify as an observation wake key"
         );
     }
-    assert!(keys::parse_observation_pk(&keys::observation_pk(&scope, Signal::Logs, bucket, 0)).is_some());
+    assert!(
+        keys::parse_observation_pk(&keys::observation_pk(&scope, Signal::Logs, bucket, 0))
+            .is_some()
+    );
 }
 
 #[test]
 fn parse_observation_pk_rejects_the_events_signal() {
     // `events` live in `session-authority`; an `OBS#…#events#…` key can never be
     // written here, so classifying one would hide a corrupt item.
-    let pk = "OBS#S#ses_01j0000000000000000000000a#events#2026-08-01T09#00";
+    let pk = "OBS#S#ses_0000000001e40r2081040g2081#events#2026-08-01T09#00";
     assert!(keys::parse_observation_pk(pk).is_none());
 }
 
@@ -197,19 +203,24 @@ proptest! {
     /// rendered key has exactly the field count its template declares.
     #[test]
     fn accepted_components_never_inject_a_separator(raw in ".{0,64}") {
+        // The messages are spelled out rather than left to `stringify!`, because
+        // a `\u{ffff}` escape inside a generated format string is itself a
+        // format placeholder.
         if let Ok(component) = keys::component(&raw) {
-            prop_assert!(!component.as_str().contains('#'));
-            prop_assert!(!component.as_str().contains('\0'));
-            prop_assert!(!component.as_str().contains('\u{ffff}'));
-            prop_assert!(!component.as_str().is_empty());
-        } else {
+            prop_assert!(!component.as_str().contains('#'), "accepted component carries the separator");
+            prop_assert!(!component.as_str().contains('\0'), "accepted component carries NUL");
             prop_assert!(
-                raw.is_empty()
-                    || raw.contains('#')
-                    || raw.contains('\0')
-                    || raw.contains('\u{ffff}')
-                    || raw.len() > keys::COMPONENT_MAX_BYTES
+                !component.as_str().contains('\u{ffff}'),
+                "accepted component carries the sentinel"
             );
+            prop_assert!(!component.as_str().is_empty(), "accepted component is empty");
+        } else {
+            let refusable = raw.is_empty()
+                || raw.contains('#')
+                || raw.contains('\0')
+                || raw.contains('\u{ffff}')
+                || raw.len() > keys::COMPONENT_MAX_BYTES;
+            prop_assert!(refusable, "a benign component was refused");
         }
     }
 

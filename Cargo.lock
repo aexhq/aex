@@ -588,8 +588,11 @@ dependencies = [
 name = "aex-observation-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-wire",
  "blake3",
+ "proptest",
  "serde",
+ "sha2 0.11.0",
  "thiserror",
  "time",
  "uuid",

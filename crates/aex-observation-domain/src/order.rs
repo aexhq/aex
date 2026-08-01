@@ -7,7 +7,7 @@
 
 use std::cmp::Ordering;
 
-use aex_wire::generated::ids::ObservationId;
+use aex_wire::ids::ObservationId;
 use aex_wire::types::Timestamp;
 
 use crate::signal::Signal;
@@ -78,11 +78,11 @@ impl Direction {
     }
 }
 
-impl From<aex_wire::generated::models::ObservationOrder> for Direction {
-    fn from(value: aex_wire::generated::models::ObservationOrder) -> Self {
+impl From<aex_wire::models::ObservationOrder> for Direction {
+    fn from(value: aex_wire::models::ObservationOrder) -> Self {
         match value {
-            aex_wire::generated::models::ObservationOrder::Ascending => Self::Ascending,
-            aex_wire::generated::models::ObservationOrder::Descending => Self::Descending,
+            aex_wire::models::ObservationOrder::Ascending => Self::Ascending,
+            aex_wire::models::ObservationOrder::Descending => Self::Descending,
         }
     }
 }
@@ -152,7 +152,7 @@ pub struct SegmentPosition {
 mod tests {
     use super::{Direction, OrderBy, OrderTuple};
     use crate::signal::Signal;
-    use aex_wire::generated::ids::ObservationId;
+    use aex_wire::ids::ObservationId;
     use aex_wire::ids::{PrefixedId, Uuid7};
     use aex_wire::types::Timestamp;
 

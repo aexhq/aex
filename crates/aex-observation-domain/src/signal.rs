@@ -5,7 +5,7 @@
 //! through a `SemanticEventSource` port (decision O-01). Anything that formats a
 //! storage key checks [`Signal::in_observation_authority`] first.
 
-use aex_wire::generated::models::ObservationSignal;
+use aex_wire::models::ObservationSignal;
 
 /// One observable signal.
 ///
@@ -36,12 +36,8 @@ impl Signal {
     ];
 
     /// The four signals that live in `observation-authority`.
-    pub const AUTHORITY: &'static [Signal] = &[
-        Signal::Logs,
-        Signal::Spans,
-        Signal::Metrics,
-        Signal::Traces,
-    ];
+    pub const AUTHORITY: &'static [Signal] =
+        &[Signal::Logs, Signal::Spans, Signal::Metrics, Signal::Traces];
 
     /// The rank used as the second component of the ordering tuple.
     #[must_use]
@@ -206,7 +202,7 @@ impl FromIterator<Signal> for SignalSet {
 #[cfg(test)]
 mod tests {
     use super::{Signal, SignalSet};
-    use aex_wire::generated::models::ObservationSignal;
+    use aex_wire::models::ObservationSignal;
 
     #[test]
     fn only_events_live_outside_the_observation_authority() {
@@ -229,7 +225,10 @@ mod tests {
 
     #[test]
     fn telemetry_expands_to_every_signal() {
-        assert_eq!(SignalSet::from_wire(ObservationSignal::Telemetry), SignalSet::all());
+        assert_eq!(
+            SignalSet::from_wire(ObservationSignal::Telemetry),
+            SignalSet::all()
+        );
         assert_eq!(
             SignalSet::from_wire(ObservationSignal::Logs),
             SignalSet::from_signal(Signal::Logs)

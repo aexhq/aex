@@ -8,8 +8,8 @@
 
 use std::fmt::Write as _;
 
-use aex_wire::generated::ids::{SessionId, WorkspaceId};
 use aex_wire::ids::PrefixedId;
+use aex_wire::ids::{SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 
 use crate::signal::Signal;
@@ -134,7 +134,7 @@ pub fn try_pad_seq(value: u128) -> Option<String> {
     if value > SEQ_MAX {
         return None;
     }
-    Some(format!("{value:0width$}", width = SEQ_WIDTH))
+    Some(format!("{value:0SEQ_WIDTH$}"))
 }
 
 /// A UTC hour bucket, rendered `YYYY-MM-DDTHH`.
@@ -167,18 +167,14 @@ impl BucketHour {
         const TEMPLATE: &str = "YYYY-MM-DDTHH";
         let bytes = text.as_bytes();
         if bytes.len() != Self::WIDTH {
-            return Err(KeyError::Malformed {
-                template: TEMPLATE,
-            });
+            return Err(KeyError::Malformed { template: TEMPLATE });
         }
         let punctuation = bytes[4] == b'-' && bytes[7] == b'-' && bytes[10] == b'T';
         let digits = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12]
             .into_iter()
             .all(|index| bytes[index].is_ascii_digit());
         if !punctuation || !digits {
-            return Err(KeyError::Malformed {
-                template: TEMPLATE,
-            });
+            return Err(KeyError::Malformed { template: TEMPLATE });
         }
         let mut buffer = [0u8; 13];
         buffer.copy_from_slice(bytes);
@@ -274,9 +270,7 @@ impl ScopeKey {
     /// identifier does not parse as the kind the discriminator names.
     pub fn parse(text: &str) -> Result<Self, KeyError> {
         const TEMPLATE: &str = "S#{session_id} | W#{workspace_id}";
-        let malformed = KeyError::Malformed {
-            template: TEMPLATE,
-        };
+        let malformed = KeyError::Malformed { template: TEMPLATE };
         let (discriminator, id) = text.split_once('#').ok_or_else(|| malformed.clone())?;
         match discriminator {
             "S" => SessionId::parse(id)
@@ -418,7 +412,7 @@ pub fn frontier_sk(signal: Signal) -> String {
 
 /// `BATCH#{workspace_id}#{batch_id}`.
 #[must_use]
-pub fn batch_pk(workspace: WorkspaceId, batch: aex_wire::generated::ids::TelemetryBatchId) -> String {
+pub fn batch_pk(workspace: WorkspaceId, batch: aex_wire::ids::TelemetryBatchId) -> String {
     format!("BATCH#{workspace}#{batch}")
 }
 
@@ -466,7 +460,7 @@ pub fn gap_pk(scope: &ScopeKey) -> String {
 
 /// `{gap_id}#{revision:020}` — a gap revision sort key.
 #[must_use]
-pub fn gap_sk(gap_id: aex_wire::generated::ids::TelemetryGapId, revision: u64) -> String {
+pub fn gap_sk(gap_id: aex_wire::ids::TelemetryGapId, revision: u64) -> String {
     format!("{gap_id}#{}", pad_seq(u128::from(revision)))
 }
 
@@ -478,7 +472,7 @@ pub fn spool_pk(workspace: WorkspaceId, shard: u8) -> String {
 
 /// `EXPORT#{workspace_id}#{export_id}`.
 #[must_use]
-pub fn export_pk(workspace: WorkspaceId, export: aex_wire::generated::ids::ExportId) -> String {
+pub fn export_pk(workspace: WorkspaceId, export: aex_wire::ids::ExportId) -> String {
     format!("EXPORT#{workspace}#{export}")
 }
 
@@ -573,9 +567,9 @@ pub enum IdempotencyScope {
     /// An OTLP metrics ingest.
     OtlpMetrics,
     /// A download-grant mint for one export.
-    ExportDownload(aex_wire::generated::ids::ExportId),
+    ExportDownload(aex_wire::ids::ExportId),
     /// A revoke of one export.
-    ExportRevoke(aex_wire::generated::ids::ExportId),
+    ExportRevoke(aex_wire::ids::ExportId),
 }
 
 impl IdempotencyScope {
@@ -605,7 +599,7 @@ pub fn idempotency_pk(
 #[cfg(test)]
 mod tests {
     use super::{ControlDomain, IdempotencyScope, ScopeKey, control_pk, idempotency_pk};
-    use aex_wire::generated::ids::{ExportId, WorkspaceId};
+    use aex_wire::ids::{ExportId, WorkspaceId};
     use aex_wire::ids::{PrefixedId, Uuid7};
 
     fn workspace() -> WorkspaceId {
@@ -629,12 +623,8 @@ mod tests {
     #[test]
     fn the_idempotency_vocabulary_is_closed() {
         let export = ExportId::from_uuid7(Uuid7::compose(2, [2; 10]));
-        let rendered = idempotency_pk(
-            workspace(),
-            &IdempotencyScope::ExportDownload(export),
-            "ff",
-        );
-        assert!(rendered.starts_with("IDEM#ws_"));
+        let rendered = idempotency_pk(workspace(), &IdempotencyScope::ExportDownload(export), "ff");
+        assert!(rendered.starts_with("IDEM#wsp_"));
         assert!(rendered.contains(&format!("export.download:{export}")));
         assert_eq!(IdempotencyScope::OtlpLogs.tag(), "otlp.logs");
     }

@@ -27,8 +27,13 @@ targets = "awaiting the observations-usage stream; the cases land with the crate
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
+aex-wire = { path = "../aex-wire" }
 blake3.workspace = true
 serde.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

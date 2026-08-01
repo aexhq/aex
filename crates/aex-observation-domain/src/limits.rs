@@ -135,19 +135,25 @@ mod tests {
     #[test]
     fn the_encoded_otlp_ceiling_is_the_registered_four_mebibytes() {
         assert_eq!(OTLP_ENCODED_MAX, 4_194_304);
-        assert_ne!(OTLP_ENCODED_MAX, 6 * 1024 * 1024, "the 6 MiB constant is not ported");
-    }
-
-    #[test]
-    fn the_settle_window_strictly_dominates_the_admitted_clock_skew() {
-        assert!(
-            OBS_INDEX_SETTLE_MS > OBS_CLOCK_SKEW_MAX_MS,
-            "the snapshot contract requires the settle window to dominate skew"
+        assert_ne!(
+            OTLP_ENCODED_MAX,
+            6 * 1024 * 1024,
+            "the 6 MiB constant is not ported"
         );
     }
 
     #[test]
+    fn the_settle_window_strictly_dominates_the_admitted_clock_skew() {
+        const {
+            assert!(
+                OBS_INDEX_SETTLE_MS > OBS_CLOCK_SKEW_MAX_MS,
+                "the snapshot contract requires the settle window to dominate skew"
+            );
+        }
+    }
+
+    #[test]
     fn the_commit_ceiling_fits_the_transaction_envelope() {
-        assert!(COMMIT_MAX_ACTIONS <= DDB_TRANSACT_MAX_ACTIONS);
+        const { assert!(COMMIT_MAX_ACTIONS <= DDB_TRANSACT_MAX_ACTIONS) };
     }
 }

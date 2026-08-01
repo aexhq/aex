@@ -8,9 +8,9 @@ use aex_observation_domain::frontier::{
 use aex_observation_domain::gap::{GapLedger, GapRevision, GapState, OrdinalRange, TimeWindow};
 use aex_observation_domain::series::{SeriesClaims, SeriesError, SeriesHash};
 use aex_observation_domain::signal::{Signal, SignalSet};
-use aex_wire::generated::models::TelemetryGapReason;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::PrefixedId;
+use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::Timestamp;
 use proptest::prelude::*;
 
@@ -22,7 +22,7 @@ fn instant(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("fixture instant is representable")
 }
 
-fn gap_id(suffix: &str) -> aex_wire::generated::ids::TelemetryGapId {
+fn gap_id(suffix: &str) -> aex_wire::ids::TelemetryGapId {
     PrefixedId::parse(&format!("gap_{suffix}")).expect("fixture gap id parses")
 }
 
@@ -57,9 +57,7 @@ fn every_transition_out_of_a_terminal_state_is_rejected() {
     for transition in ReceiptTransition::ALL {
         assert_eq!(
             committed.apply(*transition),
-            Err(TransitionError::Terminal {
-                state: "committed"
-            }),
+            Err(TransitionError::Terminal { state: "committed" }),
             "committed + {transition:?}"
         );
         assert_eq!(
@@ -75,9 +73,7 @@ fn a_committed_receipt_never_resumes_a_preparation() {
     let committed = ReceiptState::Committed { intent: digest(1) };
     assert_eq!(
         committed.resume(digest(1)),
-        Err(TransitionError::Terminal {
-            state: "committed"
-        })
+        Err(TransitionError::Terminal { state: "committed" })
     );
 }
 
@@ -144,7 +140,7 @@ fn releasing_a_provisional_claim_restores_the_exact_count() {
 #[test]
 fn a_series_hash_is_the_pinned_input_set() {
     let a = SeriesHash::compute(
-        "ws_01j0000000000000000000000a",
+        "ws_0000000001e40r2081040g2081",
         "http.server.duration",
         "histogram",
         "ms",
@@ -153,7 +149,7 @@ fn a_series_hash_is_the_pinned_input_set() {
         &[("route".to_owned(), "/v1/runs".to_owned())],
     );
     let b = SeriesHash::compute(
-        "ws_01j0000000000000000000000a",
+        "ws_0000000001e40r2081040g2081",
         "http.server.duration",
         "histogram",
         "ms",
@@ -163,7 +159,7 @@ fn a_series_hash_is_the_pinned_input_set() {
     );
     assert_eq!(a, b, "the same input set hashes identically");
     let different_workspace = SeriesHash::compute(
-        "ws_01j0000000000000000000000b",
+        "ws_0000000002e81840g2081040g2",
         "http.server.duration",
         "histogram",
         "ms",
@@ -173,7 +169,7 @@ fn a_series_hash_is_the_pinned_input_set() {
     );
     assert_ne!(a, different_workspace, "the workspace is part of identity");
     let monotonic = SeriesHash::compute(
-        "ws_01j0000000000000000000000a",
+        "ws_0000000001e40r2081040g2081",
         "http.server.duration",
         "histogram",
         "ms",
@@ -194,16 +190,20 @@ fn window(from: i64, to: i64) -> TimeWindow {
 fn gap_revisions_are_append_only_and_monotone() {
     let mut ledger = GapLedger::default();
     let opened = GapRevision::open(
-        gap_id("01j0000000000000000000000a"),
+        gap_id("0000000001e40r2081040g2081"),
         SignalSet::from_signal(Signal::Logs),
         TelemetryGapReason::ProducerDropped,
         Some(window(10, 20)),
         instant(10),
     );
-    ledger.append(opened.clone()).expect("first revision appends");
+    ledger
+        .append(opened.clone())
+        .expect("first revision appends");
     let repaired = opened.repaired("staged_pages", instant(30));
     assert_eq!(repaired.revision, 1);
-    ledger.append(repaired.clone()).expect("a later revision appends");
+    ledger
+        .append(repaired.clone())
+        .expect("a later revision appends");
     assert_eq!(
         ledger.append(opened.clone()),
         Err(aex_observation_domain::gap::GapError::RevisionNotMonotone {
@@ -211,7 +211,10 @@ fn gap_revisions_are_append_only_and_monotone() {
             attempted: 0,
         })
     );
-    assert_eq!(ledger.latest(&opened.gap_id).map(|r| r.state), Some(GapState::Repaired));
+    assert_eq!(
+        ledger.latest(&opened.gap_id).map(|r| r.state),
+        Some(GapState::Repaired)
+    );
     assert_eq!(ledger.revisions(&opened.gap_id).len(), 2);
 }
 
@@ -219,21 +222,21 @@ fn gap_revisions_are_append_only_and_monotone() {
 fn completeness_considers_only_intersecting_open_gaps() {
     let mut ledger = GapLedger::default();
     let inside = GapRevision::open(
-        gap_id("01j0000000000000000000000a"),
+        gap_id("0000000001e40r2081040g2081"),
         SignalSet::from_signal(Signal::Logs),
         TelemetryGapReason::SpoolLost,
         Some(window(100, 200)),
         instant(100),
     );
     let outside = GapRevision::open(
-        gap_id("01j0000000000000000000000b"),
+        gap_id("0000000002e81840g2081040g2"),
         SignalSet::from_signal(Signal::Logs),
         TelemetryGapReason::SpoolLost,
         Some(window(900, 1_000)),
         instant(900),
     );
     let other_signal = GapRevision::open(
-        gap_id("01j0000000000000000000000c"),
+        gap_id("0000000003ec1r60r30c1g60r3"),
         SignalSet::from_signal(Signal::Metrics),
         TelemetryGapReason::SpoolLost,
         Some(window(100, 200)),
@@ -261,7 +264,7 @@ fn completeness_considers_only_intersecting_open_gaps() {
 fn an_unbounded_gap_never_produces_a_missing_interval() {
     let mut ledger = GapLedger::default();
     let unbounded = GapRevision::open(
-        gap_id("01j0000000000000000000000d"),
+        gap_id("0000000004eg2881040g208104"),
         SignalSet::from_signal(Signal::Spans),
         TelemetryGapReason::AuthorityUnavailable,
         None,
@@ -273,7 +276,10 @@ fn an_unbounded_gap_never_produces_a_missing_interval() {
     let query = window(0, 1_000);
     assert!(ledger.missing_intervals(signals, query).is_empty());
     assert_eq!(ledger.unbounded_open(signals, query).count(), 1);
-    assert!(!ledger.is_complete(signals, query), "an unbounded gap is still incomplete");
+    assert!(
+        !ledger.is_complete(signals, query),
+        "an unbounded gap is still incomplete"
+    );
 }
 
 #[test]
@@ -294,7 +300,7 @@ fn replay_expired_is_never_produced_by_any_domain_constructor() {
     );
     // And the constructor refuses it outright rather than trusting a caller.
     let refused = GapRevision::try_open(
-        gap_id("01j0000000000000000000000e"),
+        gap_id("0000000005em2ra1850m2ga185"),
         SignalSet::from_signal(Signal::Logs),
         TelemetryGapReason::ReplayExpired,
         None,
@@ -333,7 +339,11 @@ fn a_frontier_advances_only_over_a_contiguous_range() {
             found: 11
         })
     );
-    assert_eq!(frontier.next_accepted_seq(), 10, "a refused advance changes nothing");
+    assert_eq!(
+        frontier.next_accepted_seq(),
+        10,
+        "a refused advance changes nothing"
+    );
 }
 
 #[test]
@@ -359,7 +369,9 @@ fn deletion_fences_before_it_deletes_and_epochs_are_monotone() {
     assert_eq!(deletion.state(), DeletionState::None);
     assert_eq!(deletion.epoch(), 0);
 
-    deletion.begin(instant(1)).expect("a fresh scope can be fenced");
+    deletion
+        .begin(instant(1))
+        .expect("a fresh scope can be fenced");
     assert_eq!(deletion.state(), DeletionState::Fencing);
     assert_eq!(deletion.epoch(), 1, "fencing advances the epoch");
 
@@ -373,12 +385,18 @@ fn deletion_fences_before_it_deletes_and_epochs_are_monotone() {
     );
 
     deletion.to_deleting().expect("fencing moves to deleting");
-    deletion.to_verifying().expect("deleting moves to verifying");
-    deletion.complete(instant(9)).expect("verification completes");
+    deletion
+        .to_verifying()
+        .expect("deleting moves to verifying");
+    deletion
+        .complete(instant(9))
+        .expect("verification completes");
     assert_eq!(deletion.state(), DeletionState::Complete);
     assert_eq!(deletion.epoch(), 1);
 
-    deletion.begin(instant(10)).expect("a second deletion re-fences");
+    deletion
+        .begin(instant(10))
+        .expect("a second deletion re-fences");
     assert_eq!(deletion.epoch(), 2);
 }
 
@@ -414,11 +432,11 @@ proptest! {
                 .copied()
                 .filter(|byte| !expected.contains(byte))
                 .collect();
-            let would_be = expected.len() as u64 + novel.len() as u64;
+            let would_be = (expected.len() + novel.len()) as u64;
             match claims.claim_all(&hashes) {
                 Ok(outcome) => {
                     prop_assert!(would_be <= ceiling);
-                    prop_assert_eq!(outcome.newly_claimed as usize, novel.len());
+                    prop_assert_eq!(usize::try_from(outcome.newly_claimed).expect("fits"), novel.len());
                     if keep {
                         expected.extend(novel);
                     } else {
@@ -439,7 +457,7 @@ proptest! {
     fn the_gap_ledger_keeps_every_revision(steps in 1_usize..12) {
         let mut ledger = GapLedger::default();
         let mut revision = GapRevision::open(
-            gap_id("01j0000000000000000000000a"),
+            gap_id("0000000001e40r2081040g2081"),
             SignalSet::from_signal(Signal::Logs),
             TelemetryGapReason::SpoolLost,
             Some(window(0, 10)),
@@ -447,7 +465,7 @@ proptest! {
         );
         ledger.append(revision.clone()).expect("first appends");
         for step in 1..steps {
-            revision = revision.revised(instant(step as i64));
+            revision = revision.revised(instant(i64::try_from(step).expect("fits")));
             ledger.append(revision.clone()).expect("appends");
         }
         prop_assert_eq!(ledger.revisions(&revision.gap_id).len(), steps);

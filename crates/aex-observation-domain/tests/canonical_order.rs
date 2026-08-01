@@ -12,7 +12,18 @@ fn instant(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("fixture instant is representable")
 }
 
-fn observation_id(suffix: &str) -> aex_wire::generated::ids::ObservationId {
+/// Five distinct, valid `UUIDv7` Crockford suffixes, ascending. The generated
+/// cases index into this table rather than formatting a suffix, because an
+/// invented suffix is not a `UUIDv7` and would fail identifier validation.
+const SUFFIXES: [&str; 5] = [
+    "0000000001e40r2081040g2081",
+    "0000000002e81840g2081040g2",
+    "0000000003ec1r60r30c1g60r3",
+    "0000000004eg2881040g208104",
+    "0000000005em2ra1850m2ga185",
+];
+
+fn observation_id(suffix: &str) -> aex_wire::ids::ObservationId {
     PrefixedId::parse(&format!("obs_{suffix}")).expect("fixture observation id parses")
 }
 
@@ -57,25 +68,34 @@ fn the_intent_digest_covers_the_whole_batch_and_its_binding() {
         CanonicalValue::Str("second".into()),
     ];
     let binding = aex_observation_domain::canonical::BatchBinding {
-        principal_id: "wsk_01j0000000000000000000000a",
+        principal_id: "wsk_0000000001e40r2081040g2081",
         method: "POST",
         canonical_route: "/v1/telemetry/logs",
-        workspace_id: "ws_01j0000000000000000000000a",
-        scope: "S#ses_01j0000000000000000000000a",
+        workspace_id: "ws_0000000001e40r2081040g2081",
+        scope: "S#ses_0000000001e40r2081040g2081",
     };
     let base = batch_intent_digest(&binding, &observations).expect("digests");
 
     // Reordering the observations changes the digest: order is part of the batch.
     let swapped = vec![observations[1].clone(), observations[0].clone()];
-    assert_ne!(base, batch_intent_digest(&binding, &swapped).expect("digests"));
+    assert_ne!(
+        base,
+        batch_intent_digest(&binding, &swapped).expect("digests")
+    );
 
     // Every binding field is load-bearing.
     let mut other = binding;
-    other.scope = "W#ws_01j0000000000000000000000a";
-    assert_ne!(base, batch_intent_digest(&other, &observations).expect("digests"));
+    other.scope = "W#ws_0000000001e40r2081040g2081";
+    assert_ne!(
+        base,
+        batch_intent_digest(&other, &observations).expect("digests")
+    );
 
     // The same input digests identically, every time.
-    assert_eq!(base, batch_intent_digest(&binding, &observations).expect("digests"));
+    assert_eq!(
+        base,
+        batch_intent_digest(&binding, &observations).expect("digests")
+    );
 }
 
 #[test]
@@ -96,11 +116,11 @@ fn tuple(primary: i64, signal: Signal, suffix: &str, revision: u64) -> OrderTupl
 
 #[test]
 fn the_order_tuple_breaks_ties_by_rank_then_id_then_revision() {
-    let base = tuple(1_000, Signal::Logs, "01j0000000000000000000000a", 0);
-    let later_time = tuple(1_001, Signal::Logs, "01j0000000000000000000000a", 0);
-    let later_rank = tuple(1_000, Signal::Spans, "01j0000000000000000000000a", 0);
-    let later_id = tuple(1_000, Signal::Logs, "01j0000000000000000000000b", 0);
-    let later_revision = tuple(1_000, Signal::Logs, "01j0000000000000000000000a", 1);
+    let base = tuple(1_000, Signal::Logs, "0000000001e40r2081040g2081", 0);
+    let later_time = tuple(1_001, Signal::Logs, "0000000001e40r2081040g2081", 0);
+    let later_rank = tuple(1_000, Signal::Spans, "0000000001e40r2081040g2081", 0);
+    let later_id = tuple(1_000, Signal::Logs, "0000000002e81840g2081040g2", 0);
+    let later_revision = tuple(1_000, Signal::Logs, "0000000001e40r2081040g2081", 1);
 
     assert!(base < later_time);
     assert!(base < later_rank);
@@ -114,10 +134,10 @@ fn the_order_tuple_breaks_ties_by_rank_then_id_then_revision() {
 #[test]
 fn descending_traversal_is_the_exact_reverse_of_ascending() {
     let mut tuples = vec![
-        tuple(3, Signal::Metrics, "01j0000000000000000000000c", 0),
-        tuple(1, Signal::Logs, "01j0000000000000000000000a", 0),
-        tuple(1, Signal::Logs, "01j0000000000000000000000a", 2),
-        tuple(2, Signal::Traces, "01j0000000000000000000000b", 0),
+        tuple(3, Signal::Metrics, "0000000003ec1r60r30c1g60r3", 0),
+        tuple(1, Signal::Logs, "0000000001e40r2081040g2081", 0),
+        tuple(1, Signal::Logs, "0000000001e40r2081040g2081", 2),
+        tuple(2, Signal::Traces, "0000000002e81840g2081040g2", 0),
     ];
     let mut ascending = tuples.clone();
     ascending.sort_by(|a, b| Direction::Ascending.compare(a, b));
@@ -147,8 +167,8 @@ proptest! {
         let built: Vec<OrderTuple> = raw
             .iter()
             .map(|(millis, signal, id, revision)| {
-                let suffix = format!("01j000000000000000000000{}{}", id / 10, id % 10);
-                tuple(*millis, Signal::ALL[*signal], &suffix, *revision)
+                let suffix = SUFFIXES[usize::from(*id)];
+                tuple(*millis, Signal::ALL[*signal], suffix, *revision)
             })
             .collect();
         for left in &built {
@@ -179,8 +199,8 @@ proptest! {
         let built: Vec<OrderTuple> = raw
             .iter()
             .map(|(millis, signal, id, revision)| {
-                let suffix = format!("01j000000000000000000000{}{}", id / 10, id % 10);
-                tuple(*millis, Signal::ALL[*signal], &suffix, *revision)
+                let suffix = SUFFIXES[usize::from(*id)];
+                tuple(*millis, Signal::ALL[*signal], suffix, *revision)
             })
             .collect();
         let mut once = built.clone();
