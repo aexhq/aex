@@ -808,3 +808,41 @@ use; `aex-usage-query-aws` publishes expression builders and no store type.
 | `ResolvedSessionAssertion` carries a claim set and nothing that authenticates it, so no regional edge can verify a browser-session assertion. It should answer with `SignedAssertionEnvelope`. | contracts + central identity |
 | `regional-observation-api::edge` and `regional-otlp::edge` each hold a private `Ed25519Anchors`, an `AssertionResponse` and an `HttpAssertionSource` that posts to `/internal/authz/assertions` — a third spelling of this exchange, over a transport `central-authz` does not expose, and one that sends the credential verbatim. Both should adopt `aex_regional_http::authz`. | regional services, next pass |
 | `central-control-worker` must confirm the `regional-authz-projection` item shapes, and must publish whatever `models::Workspace` needs before the three regional `workspace` routes can be served. | central identity/control |
+
+## Assertion
+
+Branch `rw/assertion`, off `main`. This closes the three items the "Peer work
+this pass raises" table above assigned to central identity and to "regional
+services, next pass". The full record is
+`references/rewrite/central-identity.md` §10; what changed here:
+
+- **The wire form is the 323-byte binary envelope.** The JSON
+  `AuthorizationAssertion`, both signing inputs, `AssertionSignature` and
+  `SignedAssertionEnvelope` are deleted from `aex-internal-contracts`. The
+  contract crate now owns the *exchange* — `AssertionAudience`,
+  `CredentialDigest`, the two requests, `IssuedAssertion` and
+  `AssertionResponse` — and `aex-identity-domain` owns the artifact.
+- **`aex-regional-http` no longer verifies anything itself.** Its local `verify`,
+  `SignedAssertion`, `Ed25519Anchors` and the `KeyVerifier` port are gone;
+  `RegionalEdge` loses its `V` type parameter because the `VerificationKeySet` is
+  a concrete input rather than a port. `SD-01` survives unchanged: the request
+  names the key by `(keyId, presentedDigest)`.
+- **`ProjectedEpochs` gains subjects.** It is now
+  `{ key, workspace, account }` bound to their ids through `RegionalFloors`, and
+  `ProjectedState` carries the organization the account epoch belongs to. A
+  subject kind this region does not project answers a floor no assertion can
+  satisfy, so a person's envelope is refused rather than admitted.
+- **`EdgeBinding` gains `plane`**, and `config::plane_name` resolves to the typed
+  `Plane` rather than a validated `String`.
+- **`regional-observation-api::edge` and `regional-otlp::edge` are deleted.** Both
+  now compose `aex_regional_http::authz` and admit through `RegionalEdge`. Their
+  `AEX_CENTRAL_AUTHZ_URL` and `AEX_ASSERTION_TRUST_ANCHORS` become
+  `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`, matching the two
+  finite APIs, and both gain `AEX_AUTHZ_PROJECTION_TABLE` because they now
+  actually read the projection — previously they passed
+  `ProjectedEpochs::default()`, so a revoked key kept working for the full
+  assertion lifetime and a paused account was never gated.
+
+The trust-anchor document a deployable reads at cold start changes shape: its
+`keyId` is the envelope's raw-UUID `kid` rather than a free string, and each
+entry carries `notAfterMs`.
