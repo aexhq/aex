@@ -30,7 +30,10 @@ pub struct PointerPage {
     pub next: Option<PagePosition>,
 }
 
-// TODO(cross-stream): replaced by aex_workspace_domain::ports::RegistryStore
+// TODO(cross-stream): `aex-workspace-domain` has no `ports` module and publishes no
+// traits. Its registry vocabulary is data only — `aex_workspace_domain::registry`'s
+// `RegistryPointer`, `ProposedValue`, `SetOutcome`, `RegistryCommit` and
+// `DeleteCommit` — so the trait below has no peer to be replaced by.
 /// The `regional-registry` authority.
 #[async_trait]
 pub trait RegistryStore: Send + Sync + 'static {

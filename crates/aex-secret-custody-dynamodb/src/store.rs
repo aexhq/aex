@@ -38,7 +38,9 @@ pub struct Page<T> {
     pub next: Option<PagePosition>,
 }
 
-// TODO(cross-stream): replaced by aex_secret_domain::ports::SecretCustodyStore
+// TODO(cross-stream): `aex-secret-domain` has no `ports` module and publishes no
+// traits; see the same note in `aex-secret-aws`. This port has no peer to be replaced
+// by.
 /// The `regional-secret-custody` authority.
 #[async_trait]
 pub trait SecretCustodyStore: Send + Sync + 'static {

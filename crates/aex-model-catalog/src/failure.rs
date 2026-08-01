@@ -73,9 +73,9 @@ impl ProviderFailureKind {
 
     /// The single translation site onto plan 07's four port-facing classes.
     ///
-    /// `TODO(cross-stream): aex-brain-application may widen
-    /// ProviderFailureClass to these fifteen kinds; until then this function is
-    /// the only place the mapping exists.`
+    /// `TODO(cross-stream)`: `aex-brain-application` landed with the four classes
+    /// rather than these fifteen kinds, so this function is still the only place
+    /// the mapping exists.
     #[must_use]
     pub const fn class(self) -> ProviderFailureClass {
         match self {
@@ -106,8 +106,11 @@ impl ProviderFailureKind {
 
 /// Plan 07's port-facing failure class, implemented verbatim.
 ///
-/// `TODO(cross-stream): replaced by
-/// aex_brain_application::ports::ProviderFailureClass at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::ProviderFailureClass` exists
+/// with exactly these four arms, but it derives neither `serde` nor `Ord`/`Hash`, and
+/// importing it would point this crate — which the whole Brain depends on — at the
+/// application layer above it. The direction, not the shape, is what blocks the
+/// delete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderFailureClass {

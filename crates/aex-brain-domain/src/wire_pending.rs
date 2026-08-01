@@ -1,8 +1,25 @@
-//! Minimal stand-ins for types owned by peer streams that have not landed yet.
+//! Minimal stand-ins for types owned by peer streams.
 //!
-//! Every item here is the smallest shape the Brain fold actually needs. At merge each is
-//! deleted and replaced by the peer's definition; nothing in this module is a second
-//! authority, and nothing outside it may define one of these concepts again.
+//! Every item here is the smallest shape the Brain fold actually needs. Nothing in this
+//! module is a second authority, and nothing outside it may define one of these concepts
+//! again.
+//!
+//! # State of the peers
+//!
+//! The peer streams have landed, and none of them landed the shape this module guessed at.
+//! Every marker below therefore records one of two things, and no marker names a path that
+//! does not resolve:
+//!
+//! - the peer published a *different* type under the concept's name, in which case the
+//!   marker names the real path and says what diverged. Adopting it is a change to the
+//!   fold, the journal encoding or both — not a rename; or
+//! - the peer published no equivalent at all, in which case the marker names the owning
+//!   crate in its dashed spelling and describes what is owed in prose. A dashed crate name
+//!   is deliberately not a Rust path: it cannot be mistaken for something importable.
+//!
+//! `aex-brain-domain` also cannot depend on `aex-brain-tool-catalog`, which already depends
+//! on this crate, so the one marker naming that direction is a cycle rather than a pending
+//! delete.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,9 +30,11 @@ use crate::ids::{
 
 /// A journal envelope.
 ///
-/// `TODO(cross-stream): replaced by aex_session_domain::journal::JournalEnvelope at merge.`
-/// `aex-session-domain` owns the envelope, the ordering algebra and the authority fold;
-/// this crate owns payload interpretation and effect receipts and consumes those types.
+/// `TODO(cross-stream)`: `aex-session-domain` publishes no journal *envelope*. It publishes
+/// `aex_session_domain::journal::JournalEntry`, which carries the agent, the kind, a
+/// content-derived `EntryIdentity`, a `JournalBody` and an `AuthorityFact` alongside the
+/// sequence and instant this envelope keeps. Adopting it means the Brain fold reads the
+/// peer's body/fact split rather than a bare content hash, so it is a fold change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEnvelope {
     /// Contiguous position in the owning agent's journal.
@@ -28,9 +47,11 @@ pub struct JournalEnvelope {
 
 /// The six admitted `BYOK` providers.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::ProviderId at merge.` A closed set
-/// is the point: `A11-PROVIDERS` allows no gateway, no `OpenRouter` and no arbitrary base
-/// URL, so an open string would represent a provider that cannot exist.
+/// `TODO(cross-stream)`: `aex-model-catalog` does not define a provider id; it consumes
+/// `aex_wire::provider::ProviderId`, which is the workspace's single closed set. This copy
+/// exists only because `aex-brain-domain` does not yet depend on `aex-wire`. A closed set is
+/// the point either way: `A11-PROVIDERS` allows no gateway, no `OpenRouter` and no arbitrary
+/// base URL, so an open string would represent a provider that cannot exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
@@ -50,7 +71,11 @@ pub enum ProviderId {
 
 /// A large immutable body held by the regional content authority.
 ///
-/// `TODO(cross-stream): replaced by aex_content_domain::ContentRef at merge.`
+/// `TODO(cross-stream)`: `aex-content-domain` publishes no `ContentRef`. Its nearest type is
+/// `aex_content_domain::descriptor::ContentDescriptor`, which is workspace-scoped and carries
+/// a `Placement` and a `CiphertextIdentity` rather than an opaque key plus an encryption
+/// label. Adopting it makes every reference workspace-bound, which is a journal-encoding
+/// change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentRef {
     /// `blake3` over the plaintext bytes.
@@ -67,7 +92,11 @@ pub struct ContentRef {
 
 /// A block of model-visible content.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::canonical::CanonicalBlock at merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::canonical::CanonicalBlock` exists and is a
+/// different set. It has `Reasoning(ReasoningBlock)` in place of `Thinking`, a `Refusal`
+/// arm, `BoundedString`/`CanonicalJson` payloads in place of `String`/`serde_json::Value`,
+/// and **no** `Image` arm. Adopting it changes what the fold can represent, so it is not a
+/// substitution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CanonicalBlock {
@@ -146,7 +175,11 @@ pub enum ContentBlockRef {
 
 /// Provider-reported token usage, normalized across dialects.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::canonical::NormalizedUsage at merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::canonical::NormalizedUsage` exists with
+/// different fields — `cache_read_input_tokens`/`cache_write_input_tokens` rather than
+/// `cache_read_tokens`/`cache_creation_tokens`, plus `tool_use_prompt_tokens`,
+/// `provider_total_tokens` and a `UsageCompleteness`. Its `reasoning_tokens` is a subset of
+/// `output_tokens`; here it is a sibling. Adopting it changes what `prompt_tokens` sums.
 /// Under `BYOK` these are zero-dollar observability facts (`A11`), which is why nothing
 /// here is money.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -191,7 +224,9 @@ impl NormalizedUsage {
 
 /// Why the provider stopped generating.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::canonical::StopReason at merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::canonical::StopReason` exists and spells the
+/// truncating arm `MaxOutputTokens`. Adopting it is a wire rename in every serialized
+/// journal record that carries a stop reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -312,8 +347,10 @@ impl CompleteProof {
 
 /// A provider-neutral complete assistant message.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::canonical::CompleteAssistantMessage
-/// at merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::canonical::CompleteAssistantMessage` exists and
+/// additionally binds the provider, the model and the catalog revision into the message, and
+/// its proof is a `CompleteProof(ContentHash)` minted only by `canonical::seal`. Adopting it
+/// moves proof minting out of this crate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompleteAssistantMessage {
     /// The whole block set.
@@ -326,8 +363,10 @@ pub struct CompleteAssistantMessage {
 
 /// A provider-neutral model request.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::canonical::CanonicalModelRequest at
-/// merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::canonical::CanonicalModelRequest` exists and is
+/// far wider — a `QualifiedModel` selection, `CanonicalMessage` history, `CanonicalToolDef`
+/// declarations, tool choice, sampling in integer milli-units, reasoning and structured-output
+/// requests, cache breakpoints and a correlation handle. Adopting it is a planner change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanonicalModelRequest {
     /// The provider the request is bound to.
@@ -383,7 +422,10 @@ pub struct PreviewFrame {
 
 /// What the provider returned about the request itself.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::canonical::ProviderReceipt at merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::canonical::ProviderReceipt` exists and carries
+/// the dialect, dialect revision, credential binding, HTTP status, attempt count and timing
+/// besides the provider, model and request id kept here, and it identifies the catalog by
+/// `CatalogRevision` rather than by a `u64`. Adopting it is a receipt-encoding change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderReceipt {
     /// The provider that actually served the request, which may differ from the requested
@@ -400,7 +442,10 @@ pub struct ProviderReceipt {
 
 /// What the catalog says about resuming a dispatched effect.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::DurableOperationSupport at merge.`
+/// `TODO(cross-stream)`: `aex_model_catalog::document::DurableOperationSupport` exists with
+/// three arms — `None`, `ResultLookup { ttl_ms }` and `ResumableStream { .. }` — where this
+/// has two. The `Proven` arm here does not exist there; the peer states *which* durable
+/// operation exists rather than that one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DurableOperationSupport {
@@ -412,7 +457,10 @@ pub enum DurableOperationSupport {
 
 /// What the catalog says about one model.
 ///
-/// `TODO(cross-stream): replaced by aex_model_catalog::ModelCapability at merge.`
+/// `TODO(cross-stream)`: `aex-model-catalog` publishes no `ModelCapability`. The catalog
+/// describes a model with `document::ModelEntry`, whose limits live in `document::ModelLimits`
+/// and whose capability bits live in `document::CapabilitySet`, and whose admissibility is an
+/// `document::EntryState` plus a live `ConformanceReceipt` rather than a `bool`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapability {
     /// The provider the model belongs to.
@@ -434,7 +482,10 @@ pub struct ModelCapability {
 
 /// What the catalog says about one tool.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_tool_catalog::ToolManifestEntry at merge.`
+/// `TODO(cross-stream)`: `aex-brain-tool-catalog` publishes a `ToolManifestEntry`, but it
+/// already depends on this crate, so importing it here would be a dependency cycle. The
+/// concept has to move down into `aex-brain-domain` or up into a third crate; it cannot be
+/// deleted in place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolManifestEntry {
     /// The tool name.

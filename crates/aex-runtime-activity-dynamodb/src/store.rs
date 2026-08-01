@@ -42,7 +42,12 @@ pub struct DueGeneration {
     pub keepalive_lease_until: Option<Timestamp>,
 }
 
-// TODO(cross-stream): replaced by aex_runtime_control::ports::RuntimeActivityStore
+// TODO(cross-stream): the peer trait is `aex_runtime_control::store::RuntimeActivityStore`,
+// not `ports::RuntimeActivityStore`, and it is a different trait: boxed
+// `store::StoreFuture` rather than `async_trait`, `RuntimeStoreError` rather than this
+// crate's `StoreError`, and plan-shaped methods (`commit_generation`,
+// `load_generation_view`, `scan_due`) rather than row-shaped ones. Adopting it is a
+// port rewrite.
 /// The `runtime-activity` authority.
 #[async_trait]
 pub trait RuntimeActivityStore: Send + Sync + 'static {

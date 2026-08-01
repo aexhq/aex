@@ -84,7 +84,9 @@ pub struct RedeemedGrant {
     pub descriptor: ContentDescriptor,
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::ports::ContentMetadataStore
+// TODO(cross-stream): `aex-content-domain` has no `ports` module and publishes no
+// traits at all — it is a pure decision crate. This port has no peer to be replaced
+// by; whoever owns it must first decide where the content ports live.
 /// The `regional-content` authority.
 #[async_trait]
 pub trait ContentMetadataStore: Send + Sync + 'static {

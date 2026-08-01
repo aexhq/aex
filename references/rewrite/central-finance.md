@@ -120,13 +120,11 @@ Every new Rust type intended as a peer surface is listed by exact path:
 - `aex_finance_app::use_cases::{RatingRequest, FifoRatingMessage, FactFailure}`
 - `aex_finance_aurora::row::{RowPage, RowDecodeError}`
 - `aex_finance_aurora::store::{FinanceDbConfig, ConfigError}`
-- `aex_finance_aurora::tx::{PostedReceipt, CommitProbe, CommitResolution, UnknownCommitError}`
+- `aex_finance_aurora::tx::{PostedReceipt, UnknownCommit, CommitDisposition, CommitProbe,
+  CommitResolution, UnknownCommitError}`
 
 Temporary cross-stream types, all carrying the required replacement comment:
 
-- `aex_finance_aurora::wire_pending::CommitOutcomeUnknown` ->
-  `aex_rds_data::transaction::CommitOutcomeUnknown`
-- `aex_finance_aurora::wire_pending::RdsField` -> `aex_rds_data::row::FieldValue`
 - `services/stripe-command-edge/src/wire_pending.ts::PaymentCommandEnvelope` ->
   `aex-payment-contracts::PaymentCommandEnvelope`
 - `services/stripe-command-edge/src/wire_pending.ts::PaymentCommand` ->
@@ -138,9 +136,16 @@ Temporary cross-stream types, all carrying the required replacement comment:
 
 ## Changes needed from peers
 
-1. Central identity must publish `aex_rds_data::transaction::CommitOutcomeUnknown` and an integer/
-   string/null row enum at `aex_rds_data::row::FieldValue`; it must expose no `doubleValue` value
-   accessor. Replace the two Aurora temporary types when that lands.
+1. **Settled.** Central identity published `aex_rds_data` with a different and stronger shape than
+   this plan asked for, and the Aurora adapter was adapted to it rather than the other way round.
+   A failed commit is `aex_rds_data::CommitFailure`, an enum whose `RolledBack` arm states nothing
+   was applied and whose `Unknown` arm is the lost response; there is no `CommitOutcomeUnknown`
+   struct. Rows are read through `aex_rds_data::Record`'s indexed accessors, which have no
+   floating-point decode path at all, rather than through a `FieldValue` enum; there is no
+   `aex_rds_data::row` module. `aex_finance_aurora::wire_pending` is deleted:
+   `CommitDisposition::classify` is now the one place a lost commit becomes the explicit
+   `UnknownCommit` that `resolve_unknown_commit` requires, and money columns decode from
+   `Record::i64` because `amount_microusd` and `balance_microusd` are `bigint`.
 2. Contracts must generate TypeScript payment command/result/event types. The event contract must
    reconcile its current five variants with the binding's eight exact event strings by adding
    `payment_intent.canceled`, `charge.dispute.closed`, and `refund.updated` plus their closed facts.

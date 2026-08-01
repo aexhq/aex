@@ -1,9 +1,19 @@
-//! Peer-owned vocabulary, defined here until the owning crate lands.
+//! Peer-owned vocabulary, defined here until the owning crate publishes it.
 //!
 //! Everything in this module belongs to `aex-session-app`, `aex-session-domain`,
 //! `aex-operation-domain`, `aex-workspace-domain` or `aex-brain-domain`. It is
-//! declared here so this adapter compiles and is tested ahead of its peers, and
-//! every item carries the exact path it is replaced by.
+//! declared here so this adapter compiles and is tested ahead of its peers.
+//!
+//! # State of the peers
+//!
+//! All five peers have landed, and **not one** of the concepts below can be
+//! deleted in favour of a peer import. Some exist there under a different shape,
+//! one exists in a **different crate** from the one its marker named, and the rest
+//! were never published at all. Every marker now names either a path that resolves
+//! — saying what diverged — or the owning crate in its dashed spelling, which is
+//! deliberately not a Rust path and so cannot be mistaken for something importable.
+//! This adapter is not blocked on a delete; it is blocked on a reconciliation per
+//! concept.
 //!
 //! The non-negotiable property, whoever ends up owning these types, is that a
 //! plan names a [`Participant`](crate::plan::Participant) per action. Without
@@ -17,7 +27,11 @@ use aex_wire::ids::{
 };
 use aex_wire::types::Timestamp;
 
-// TODO(cross-stream): replaced by aex_session_domain::session::SessionLifecycle
+// TODO(cross-stream): `aex-session-domain` publishes no separate lifecycle enum. It
+// folds the deletion path into `aex_session_domain::session::SessionStatus` as the
+// `Trashed` and `Purging` arms, and keeps the ceremony in `aex_session_domain::deletion`
+// (`SessionTombstone`, `TrashCommit`, `RestoreCommit`, `PurgeCommit`). Adopting that
+// collapses this enum and `SessionStatus` below into one.
 /// Where a session sits on the deletion path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionLifecycle {
@@ -56,7 +70,9 @@ impl SessionLifecycle {
     }
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::SessionStatus
+// TODO(cross-stream): `aex_session_domain::session::SessionStatus` exists with five arms
+// — `Idle`, `Running`, `AwaitingApproval`, `Trashed`, `Purging` — and no `Stopping`. The
+// stored spellings here are therefore not its spellings.
 /// Whether a session is currently executing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionStatus {
@@ -91,7 +107,9 @@ impl SessionStatus {
     }
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::SessionHead
+// TODO(cross-stream): `aex-session-domain` publishes no head projection. It publishes the
+// whole `aex_session_domain::session::Session` plus a `session::MutationGuard`; this
+// adapter's head is a storage shape the domain does not name.
 /// The decoded session head.
 ///
 /// Every field the admission condition fences on is a top-level attribute, not
@@ -139,7 +157,10 @@ pub struct SessionHead {
     pub deletion_operation: Option<OperationId>,
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::run::Run
+// TODO(cross-stream): `aex_session_domain::run::Run` exists and is typed throughout — a
+// `RunStatus` rather than a `&'static str`, a `NonZeroU64` ceiling, a `ReservationId`
+// rather than a `String`, plus a `CancellationEpoch` at admission and a `RunOutcome`. It
+// carries no `result_digest`. Adopting it is a decode change, not a rename.
 /// One admitted turn of execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
@@ -167,7 +188,10 @@ pub struct Run {
     pub result_digest: Option<String>,
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::Message
+// TODO(cross-stream): the peer type is `aex_session_domain::message::Message`, not
+// `session::Message`, and it is a different record: an owning `agent`, a typed
+// `MessageRole`, a `MessageState`, an ordered `Vec<MessagePart>` and a `sealed_at`, with
+// no single body and no `content_bytes`.
 /// One message in a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
@@ -187,7 +211,10 @@ pub struct Message {
     pub created_at: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::Body
+// TODO(cross-stream): `aex-content-domain` publishes no body enum. The inline-or-stored
+// question is `aex_content_domain::placement::Placement`, and the whole record is
+// `aex_content_domain::descriptor::ContentDescriptor`, which is workspace-scoped and
+// carries a ciphertext identity this adapter does not model.
 /// A body that is either small enough to live inline or lives in content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -197,7 +224,8 @@ pub enum Body {
     Digest(String),
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::SessionEvent
+// TODO(cross-stream): `aex-session-domain` publishes no session-event type at all. The
+// feed shape below is this adapter's own until it does.
 /// One native event, which is also one outbox row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEvent {
@@ -225,7 +253,10 @@ pub struct SessionEvent {
     pub outbox_state: &'static str,
 }
 
-// TODO(cross-stream): replaced by aex_brain_domain::agent::AgentControl
+// TODO(cross-stream): the marker named the wrong crate. `aex-brain-domain` has no `agent`
+// module; the peer type is `aex_session_domain::agent::AgentControl`, which carries an
+// `AgentKind`, a typed `AgentStatus`, an `AgentRevision`, the journal tail's
+// `EntryIdentity` and an `AgentClaim`.
 /// One agent's control item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentControl {
@@ -259,7 +290,9 @@ pub struct AgentControl {
     pub updated_at: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::journal::JournalEntry
+// TODO(cross-stream): `aex_session_domain::journal::JournalEntry` exists and is keyed by
+// agent, with a typed kind, a content-derived `EntryIdentity`, a `JournalBody` and an
+// `AuthorityFact`. It carries neither a string entry id nor a byte count.
 /// One immutable journal entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalEntry {
@@ -277,7 +310,9 @@ pub struct JournalEntry {
     pub occurred_at: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_operation_domain::operation::StoredOperation
+// TODO(cross-stream): `aex-operation-domain` publishes no `StoredOperation`. Its record is
+// `aex_operation_domain::operation::Operation`, with transitions returning
+// `operation::OperationCommit`; the stored projection below is this adapter's shape.
 /// One durable operation record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredOperation {
@@ -303,7 +338,9 @@ pub struct StoredOperation {
     pub updated_at: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::AdmissionPlan
+// TODO(cross-stream): `aex-session-app` publishes no admission plan in its ports. Its
+// write-side vocabulary is `aex_session_app::plan::SessionTransaction` over
+// `plan::TransactionIntent`, `plan::Write` and `plan::Condition`.
 /// Everything the one public admission transaction commits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionPlan {
@@ -331,7 +368,8 @@ pub struct AdmissionPlan {
     pub now: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_workspace_domain::PlacementGuard
+// TODO(cross-stream): `aex-workspace-domain` publishes no placement guard. Its modules are
+// `grant`, `persist`, `registry` and `upload`, and none of them names workspace placement.
 /// The projected authorization facts an admission fences on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacementGuard {
@@ -345,7 +383,9 @@ pub struct PlacementGuard {
     pub revocation_epoch: u64,
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::StagedBody
+// TODO(cross-stream): `aex-content-domain` publishes no staged body. A body it has
+// accepted is an `aex_content_domain::descriptor::ContentDescriptor`; there is no
+// pre-commit staging record.
 /// A staged content body being committed by an admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedBody {
@@ -357,7 +397,9 @@ pub struct StagedBody {
     pub pin_id: String,
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::WakeIntent
+// TODO(cross-stream): `aex-session-app` publishes no wake intent. Its ports module holds
+// readers and an `AuthorityCommitter`; every write is expressed as an
+// `aex_session_app::plan::SessionTransaction`.
 /// The runnable continuation an admission or decision creates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WakeIntent {
@@ -373,7 +415,9 @@ pub struct WakeIntent {
     pub priority: u8,
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::ReplayIntent
+// TODO(cross-stream): `aex-session-app` publishes no replay intent. Idempotent replay is
+// `aex_session_domain::idempotency::ReplayDecision` over an `IdempotencyReceipt`, which is
+// a domain decision rather than an adapter plan.
 /// The replay identity a mutating command commits under.
 #[derive(Debug, Clone)]
 pub struct ReplayIntent {
@@ -407,7 +451,8 @@ impl PartialEq for ReplayIntent {
 
 impl Eq for ReplayIntent {}
 
-// TODO(cross-stream): replaced by aex_session_app::ports::TerminalPlan
+// TODO(cross-stream): `aex-session-app` publishes no terminal plan; it has a
+// `use_cases::CommitTerminal` use case that emits an `aex_session_app::plan::SessionTransaction`.
 /// Everything the run terminal barrier commits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalPlan {
@@ -447,7 +492,9 @@ pub struct TerminalPlan {
     pub now: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_operation_domain::lease::WakeCommit
+// TODO(cross-stream): `aex_operation_domain::lease` publishes `WorkCommit`, not
+// `WakeCommit`, over a `WorkItem` and a `Lease`. The wake vocabulary below is this
+// adapter's own.
 /// The claim a worker holds while it commits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WakeCommit {
@@ -461,7 +508,8 @@ pub struct WakeCommit {
     pub expires_at_epoch_seconds: i64,
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::LifecyclePlan
+// TODO(cross-stream): `aex-session-app` publishes no lifecycle plan; see the note on
+// `AdmissionPlan` above for the vocabulary it does publish.
 /// A trash, restore, purge admission or purge completion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifecyclePlan {
@@ -485,7 +533,10 @@ pub struct LifecyclePlan {
     pub now: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::LifecycleTransition
+// TODO(cross-stream): `aex-session-domain` publishes no lifecycle-transition enum. Each
+// transition is its own commit type in `aex_session_domain::deletion` — `TrashCommit`,
+// `RestoreCommit`, `PurgeCommit` — so the transition is proved by construction rather
+// than named by a tag.
 /// The four lifecycle transitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LifecycleTransition {
@@ -499,7 +550,8 @@ pub enum LifecycleTransition {
     PurgeComplete,
 }
 
-// TODO(cross-stream): replaced by aex_brain_domain::decision::AgentDecisionPlan
+// TODO(cross-stream): `aex-brain-domain` has no `decision` module. Its planning vocabulary
+// is `aex_brain_domain::planner::OwedStep` under an `aex_brain_domain::planner::PlanPolicy`.
 /// One agent decision, planned by Brain and compiled here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentDecisionPlan {
@@ -527,7 +579,9 @@ pub struct AgentDecisionPlan {
     pub now: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::HeadGuard
+// TODO(cross-stream): the peer type is `aex_session_domain::session::MutationGuard`, taken
+// and released by `session::acquire_mutation_guard` and `session::release_mutation_guard`,
+// and it is held by an `OperationId` rather than by a revision.
 /// The head facts a decision fences on without touching the head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadGuard {
@@ -537,7 +591,9 @@ pub struct HeadGuard {
     pub deletion_epoch: u64,
 }
 
-// TODO(cross-stream): replaced by aex_brain_domain::effect::EffectIntent
+// TODO(cross-stream): `aex-brain-domain` publishes no effect intent. A prepared effect is
+// an `aex_brain_domain::effect::DurableEffect` carrying its `EffectKind`, `EffectClass`,
+// request hash and `EffectState`.
 /// A prepared or settled effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectIntent {
@@ -553,7 +609,10 @@ pub struct EffectIntent {
     pub stage: EffectStage,
 }
 
-// TODO(cross-stream): replaced by aex_brain_domain::effect::EffectStage
+// TODO(cross-stream): `aex-brain-domain` publishes no `EffectStage`. Where an effect
+// stands is `aex_brain_domain::effect::EffectState`; how far a transport attempt got is
+// the separate `aex_brain_domain::effect::DispatchStage`. The two are deliberately not one
+// enum.
 /// Whether an effect action prepares or settles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EffectStage {
@@ -566,7 +625,8 @@ pub enum EffectStage {
     },
 }
 
-// TODO(cross-stream): replaced by aex_brain_domain::fanout::FanoutPagePlan
+// TODO(cross-stream): `aex-brain-domain` has no `fanout` module. Child bookkeeping lives in
+// `aex_brain_domain::child`, which publishes no paging plan.
 /// One bounded page of a hierarchical fanout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FanoutPagePlan {
@@ -586,7 +646,8 @@ pub struct FanoutPagePlan {
     pub now: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_brain_domain::fanout::ChildAgent
+// TODO(cross-stream): the nearest peer type is `aex_brain_domain::child::ChildRecord`,
+// which carries a `ChildState` and a `ChildOutcome` rather than a stored status string.
 /// One child agent created by a fanout page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildAgent {
@@ -600,7 +661,8 @@ pub struct ChildAgent {
     pub wake: WakeIntent,
 }
 
-// TODO(cross-stream): replaced by aex_workspace_domain::WorkspacePlacement
+// TODO(cross-stream): `aex-workspace-domain` publishes no workspace placement. Placement of
+// *content* is `aex_content_domain::placement::Placement`, which is a different question.
 /// The projected placement of one workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspacePlacement {
@@ -626,7 +688,8 @@ pub struct WorkspacePlacement {
     pub updated_at: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_workspace_domain::KeyRevocation
+// TODO(cross-stream): `aex-workspace-domain` publishes no key revocation. Secret revocation
+// is `aex_secret_domain::revocation::RevocationEpoch`, which this adapter does not link.
 /// One revoked workspace API key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRevocation {
@@ -638,7 +701,7 @@ pub struct KeyRevocation {
     pub revoked_epoch: u64,
 }
 
-// TODO(cross-stream): replaced by aex_workspace_domain::FeedFrontier
+// TODO(cross-stream): `aex-workspace-domain` publishes no feed frontier.
 /// How far the projection has been proved to be current.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedFrontier {
@@ -652,7 +715,11 @@ pub struct FeedFrontier {
     pub covered_through: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_session_domain::session::ApprovalDecision
+// TODO(cross-stream): the marker named the decision, not the record. The record is
+// `aex_session_domain::approval::Approval`, whose bound call is a single
+// `approval::ApprovalBinding` rather than five loose digest strings, and whose
+// `approval::ApprovalDecision` is a two-arm `Approve`/`Deny` enum. Adopting it moves
+// binding validation out of this adapter.
 /// One approval, as the store holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Approval {

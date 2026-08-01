@@ -1,4 +1,7 @@
-// TODO(cross-stream): replaced by aex-payment-contracts::ProviderEventEnvelope at merge
+// TODO(cross-stream): aex-payment-contracts defines this envelope in Rust
+// (event::ProviderEventEnvelope, over event::ProviderEventKind and
+// event::ProviderEventFacts), but nothing generates TypeScript from it, so there is
+// nothing this file can import.
 export interface ProviderEventEnvelope {
   readonly providerEventId: string;
   readonly eventType: string;

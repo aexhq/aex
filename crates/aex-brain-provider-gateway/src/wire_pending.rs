@@ -13,9 +13,19 @@
 //! `plans/04-regional-domains.md` owns `SourceGeneration`, `RevocationEpoch`,
 //! `CiphertextRef` and `EncryptionContext`; the same applies.
 //!
-//! `TODO(cross-stream): every item in this module is replaced by
-//! aex_brain_application::ports::<Path> or aex_secret_domain::<Path> at merge.
-//! Nothing here re-specifies a rule; the shapes are copies.`
+//! # State of the peers
+//!
+//! Both peer streams have landed, and the restatement below is **no longer verbatim**.
+//! `aex-brain-application` bound its ports to `aex_brain_domain::wire_pending`'s
+//! canonical vocabulary while this crate bound its copies to
+//! `aex_model_catalog::canonical`, so the two sides of `ProviderPort` no longer name
+//! the same request, message, usage or receipt types. That is a divergence to reconcile
+//! at the Brain fold, not a module to delete: this crate cannot import
+//! `aex_brain_application::ports::ProviderPort` and keep its `aex-model-catalog` types.
+//!
+//! Every marker below states the real path when the peer type exists, and names the
+//! owning crate in its dashed spelling when it does not. A dashed crate name is
+//! deliberately not a Rust path: it cannot be mistaken for something importable.
 
 use core::future::Future;
 use core::pin::Pin;
@@ -32,19 +42,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RedactedDetail;
 
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::BoxFuture at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::BoxFuture` is the same alias. It
+/// cannot be imported on its own without taking a dependency on the whole ports module,
+/// whose `ProviderPort` names `aex_brain_domain::wire_pending` types this crate does not
+/// use.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 // ---------------------------------------------------------------------------
 // effect identity and dispatch evidence
 // ---------------------------------------------------------------------------
 
-/// `TODO(cross-stream): replaced by aex_brain_domain::effect::EffectId at merge.`
+/// `TODO(cross-stream)`: the peer type is `aex_brain_domain::ids::EffectId`, not
+/// `effect::EffectId`. It is the same 16-byte newtype, but it is derived by
+/// `EffectId::derive(agent, seq, kind_tag)` rather than carried opaquely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct EffectId(pub [u8; 16]);
 
-/// `TODO(cross-stream): replaced by aex_brain_domain::effect::EffectIdentity at merge.`
+/// `TODO(cross-stream)`: `aex-brain-domain` publishes no `EffectIdentity`. The whole
+/// durable effect is `aex_brain_domain::effect::DurableEffect`, which carries the id,
+/// request hash and evidence together with the effect kind, class, state and deadline,
+/// and it is what `aex_brain_application::ports::ProviderPort::resolve_unknown` takes.
+/// The attempt count lives on `DispatchEvidence` there, not beside the id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectIdentity {
     /// The deterministic effect id.
@@ -58,7 +77,10 @@ pub struct EffectIdentity {
 /// How far a dispatch got. The adapter's only durable output on the failure
 /// path.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_domain::effect::DispatchStage at merge.`
+/// `TODO(cross-stream)`: `aex_brain_domain::effect::DispatchStage` exists with exactly
+/// these four arms and the same derives. It is blocked only by `DispatchEvidence` below,
+/// which embeds it and has diverged; importing the enum alone would split the authority
+/// rather than remove one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DispatchStage {
@@ -79,7 +101,9 @@ pub enum DispatchStage {
 /// connect errors: a pooled HTTP/2 connection may already have carried the
 /// request head, and no provider in this set offers a way to ask (D-13).
 ///
-/// `TODO(cross-stream): replaced by aex_brain_domain::effect::DispatchProof at merge.`
+/// `TODO(cross-stream)`: `aex_brain_domain::effect::DispatchProof` exists with exactly
+/// these three arms and the same derives, and is blocked by `DispatchEvidence` for the
+/// same reason as `DispatchStage`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DispatchProof {
@@ -93,7 +117,11 @@ pub enum DispatchProof {
 
 /// What the effect driver writes durably about a dispatch.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_domain::effect::DispatchEvidence at merge.`
+/// `TODO(cross-stream)`: `aex_brain_domain::effect::DispatchEvidence` exists and records
+/// a different set. It carries `attempt`, a `DetachedOperationId` and redacted `detail`,
+/// and spells the receipt `receipt`; it records neither `frames` nor `response_bytes`.
+/// Adopting it means the stream counters move somewhere else, so it is a durable-evidence
+/// change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DispatchEvidence {
     /// How far it got.
@@ -120,7 +148,11 @@ pub struct DispatchEvidence {
 /// [`ProviderPort::dispatch`], so dispatching without a durable record does not
 /// compile.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::DispatchTicket at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::DispatchTicket` exists and is
+/// stronger — its fields are private, it is not `Clone` because one pre-send write
+/// authorizes exactly one attempt, and it can only be minted from a `FenceGuard`. It
+/// carries the effect, attempt, fence, agent key and instant rather than an identity plus
+/// a workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchTicket {
     /// Which effect the ticket authorises.
@@ -131,7 +163,9 @@ pub struct DispatchTicket {
 
 /// A cooperative cancellation flag.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::CancelToken at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::CancelToken` exists as an
+/// `Arc<AtomicBool>` with no `Notify`, so it offers no `cancelled()` await point.
+/// Adopting it turns every awaiting adapter into a polling one.
 #[derive(Debug, Default)]
 pub struct CancelToken {
     flag: std::sync::atomic::AtomicBool,
@@ -173,7 +207,9 @@ impl CancelToken {
 
 /// Where non-authoritative deltas go.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::PreviewSink at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::PreviewSink` exists but its
+/// `offer` returns `bool` — whether the frame was accepted — and takes that crate's
+/// `PreviewFrame`, not `aex_model_catalog::canonical::PreviewFrame`.
 pub trait PreviewSink: Send + Sync {
     /// Offers one preview frame. Never blocks and never fails the dispatch: a
     /// dropped preview is a lost pixel, not a lost turn.
@@ -194,7 +230,9 @@ impl PreviewSink for NullPreviewSink {
 
 /// What a successful dispatch produced.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::ProviderOutcome at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::ProviderOutcome` has the same
+/// three fields but names `aex_brain_domain::wire_pending`'s message, usage and receipt
+/// types rather than `aex_model_catalog::canonical`'s. The two are not the same types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderOutcome {
     /// The sealed assistant turn, carrying its own completeness proof.
@@ -207,7 +245,10 @@ pub struct ProviderOutcome {
 
 /// What a failed dispatch produced. Never carries a credential.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::ProviderDispatchError at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::ProviderDispatchError` has the
+/// same fields but its own `ProviderFailureClass` and `RedactedDetail`, and it names
+/// `aex_brain_domain::ids::ProviderRequestId` rather than
+/// `aex_model_catalog::primitives::ProviderRequestId`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("provider dispatch failed at {stage:?} ({proof:?}, {class:?}): {detail}")]
 pub struct ProviderDispatchError {
@@ -227,7 +268,8 @@ pub struct ProviderDispatchError {
 
 /// What a durable-operation lookup found.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::UnknownResolution at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::UnknownResolution` has the same
+/// two arms over that crate's `ProviderOutcome`, which is not this one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnknownResolution {
     /// The provider still had the result.
@@ -238,7 +280,11 @@ pub enum UnknownResolution {
 
 /// The provider dispatch port.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::ports::ProviderPort at merge.`
+/// `TODO(cross-stream)`: `aex_brain_application::ports::ProviderPort` exists with these
+/// two methods, but `resolve_unknown` takes `aex_brain_domain::effect::DurableEffect`
+/// rather than an `EffectIdentity`, and `dispatch` takes that crate's `StreamBudget`,
+/// `CanonicalModelRequest` and `PreviewSink`. Implementing it is the reconciliation this
+/// whole module is waiting on.
 pub trait ProviderPort: Send + Sync + 'static {
     /// Runs exactly one generation, or fails with exactly one typed error.
     fn dispatch<'a>(
@@ -264,7 +310,9 @@ pub trait ProviderPort: Send + Sync + 'static {
 
 /// Which buffer a reservation covers.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::pressure::ReservationClass at merge.`
+/// `TODO(cross-stream)`: `aex-brain-application` has a `pressure` module, but it is an
+/// empty placeholder — it declares no reservation class and no memory reservation.
+/// Nothing is importable yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReservationClass {
@@ -284,8 +332,9 @@ pub enum ReservationClass {
 
 /// A byte-sized memory permit.
 ///
-/// `TODO(cross-stream): replaced by aex_brain_application::pressure::MemoryReservation
-/// at merge. The mux mints these; this crate only carries and honours them.`
+/// `TODO(cross-stream)`: owed by `aex-brain-application`, whose `pressure` module is
+/// still an empty placeholder. The mux mints these; this crate only carries and honours
+/// them.
 #[derive(Debug)]
 #[must_use]
 pub struct MemoryReservation {
@@ -320,7 +369,9 @@ impl ReservationSet {
 
 /// Which generation of a workspace secret source a value came from.
 ///
-/// `TODO(cross-stream): replaced by aex_secret_domain::generation::SourceGeneration at merge.`
+/// `TODO(cross-stream)`: the peer type is `aex_secret_domain::secret::SourceGeneration`,
+/// not `generation::SourceGeneration`. It is the same `u64` newtype but carries no
+/// `serde` derives, so adopting it moves the wire rendering to this crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourceGeneration(pub u64);
@@ -328,21 +379,28 @@ pub struct SourceGeneration(pub u64);
 /// The workspace's revocation counter. Incrementing it invalidates every pin
 /// taken at a lower value.
 ///
-/// `TODO(cross-stream): replaced by aex_secret_domain::revocation::RevocationEpoch at merge.`
+/// `TODO(cross-stream)`: `aex_secret_domain::revocation::RevocationEpoch` exists as the
+/// same `u64` newtype and, like `SourceGeneration`, carries no `serde` derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RevocationEpoch(pub u64);
 
 /// A pointer to stored ciphertext. Never the ciphertext itself.
 ///
-/// `TODO(cross-stream): replaced by aex_secret_domain::custody::CiphertextRef at merge.`
+/// `TODO(cross-stream)`: the peer type is `aex_secret_domain::secret::CiphertextRef`, and
+/// it is not a pointer at all — it is the wrapped key, nonce, ciphertext and key
+/// generation carried inline. This bounded handle and that struct are different designs,
+/// not two spellings of one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CiphertextRef(pub BoundedString<256>);
 
 /// The `AWS` `KMS` encryption context a decrypt must present.
 ///
-/// `TODO(cross-stream): replaced by aex_secret_domain::custody::EncryptionContext at merge.`
+/// `TODO(cross-stream)`: the peer type is `aex_secret_domain::context::EncryptionContext`,
+/// and it binds plane, region, organization, workspace, secret name, source generation and
+/// custody revision as named fields rather than a workspace plus opaque canonical JSON.
+/// Adopting it fixes the bound member set, which is the point of `OD-18`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncryptionContext {
     /// The binding workspace. `OD-18` makes this a `KMS` key-policy condition,

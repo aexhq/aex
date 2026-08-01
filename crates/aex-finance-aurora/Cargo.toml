@@ -40,4 +40,5 @@ aex-finance-domain = { path = "../aex-finance-domain" }
 aex-rds-data = { path = "../aex-rds-data" }
 
 [dev-dependencies]
+aws-sdk-rdsdata.workspace = true
 proptest.workspace = true

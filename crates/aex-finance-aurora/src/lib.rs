@@ -16,7 +16,6 @@
 pub mod row;
 pub mod store;
 pub mod tx;
-pub mod wire_pending;
 
 #[cfg(test)]
 mod tests;

@@ -108,7 +108,9 @@ pub enum FencedDeleteOutcome {
     Changed,
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::ports::ContentObjectStore
+// TODO(cross-stream): `aex-content-domain` has no `ports` module and publishes no
+// traits at all. As with `ContentMetadataStore` in `aex-content-dynamodb`, this port
+// has no peer to be replaced by yet.
 /// The object side of content storage.
 #[async_trait]
 pub trait ContentObjectStore: Send + Sync + 'static {

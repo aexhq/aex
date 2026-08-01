@@ -37,7 +37,10 @@ pub struct Page<T> {
     pub next: Option<aex_wire::cursor::Cursor>,
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::SessionAuthority
+// TODO(cross-stream): `aex-session-app` publishes no `SessionAuthority`. Its commit-side
+// port is `aex_session_app::ports::AuthorityCommitter`, which takes an
+// `aex_session_app::plan::SessionTransaction` and returns `ports::CommitOutcome`; its
+// read side is `ports::SessionReader`.
 /// The session authority.
 #[async_trait]
 pub trait SessionAuthority: Send + Sync + 'static {
@@ -103,7 +106,9 @@ pub trait SessionAuthority: Send + Sync + 'static {
     ) -> Result<Option<Run>, StoreError>;
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::AgentJournalStore
+// TODO(cross-stream): `aex-session-app` publishes no journal store port. Journal reads are
+// `aex_session_app::ports::SessionReader`, and journal writes are ordinary writes inside an
+// `aex_session_app::plan::SessionTransaction`.
 /// The agent journal, consumed by Brain through `aex-brain-store-aws`.
 #[async_trait]
 pub trait AgentJournalStore: Send + Sync + 'static {

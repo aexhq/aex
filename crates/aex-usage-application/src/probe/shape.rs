@@ -22,9 +22,14 @@ use super::{ProbeContext, ProbeError};
 
 /// One Hands generation's provider lifecycle receipt.
 ///
-/// `TODO(cross-stream)`: replaced by `aex_hands_protocol::lifecycle::RuntimeReceipt`
-/// at merge. The fields below are exactly the ones the compute, memory and
-/// transfer facts are derived from; nothing here interprets guest state.
+/// `TODO(cross-stream)`: `aex_hands_protocol::lifecycle::RuntimeReceipt` exists and
+/// differs: it identifies the generation with a `GenerationId` and carries no receipt
+/// id, its shape is an `aex_wire::types::ComputeSize` rather than a `HandsShape`, its
+/// byte counts are `DecimalU128` rather than `u64`, and it adds `snapshot_bytes`.
+/// Adopting it means this module derives its facts from the peer's units, so it is a
+/// measurement change rather than an import. The fields below are exactly the ones the
+/// compute, memory and transfer facts are derived from; nothing here interprets guest
+/// state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeReceipt {
     /// The provider receipt identifier.

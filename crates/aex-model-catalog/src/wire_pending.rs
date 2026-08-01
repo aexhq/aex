@@ -7,9 +7,10 @@
 //! `ResourceName`, `ErrorCode`, `Timestamp`, `CanonicalJson`, `to_jcs_bytes` —
 //! is imported from `aex_wire` directly and is not restated here.
 //!
-//! `TODO(cross-stream): replaced by aex_wire::CatalogRevision at merge. The
-//! contracts stream renders it as mc1_<hex of blake3-256> and adds no other
-//! catalog field to the public wire.`
+//! `TODO(cross-stream)`: `aex-wire` publishes no catalog revision — the generated
+//! wire carries no catalog field at all. The contracts stream still owes the
+//! `mc1_<hex of blake3-256>` rendering below, and until it lands this module is the
+//! only definition.
 
 use core::fmt;
 
