@@ -15,24 +15,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-application",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-domain",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-hands",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+    "detail": "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
@@ -57,17 +43,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-store-aws",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-test-support",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+    "detail": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
   },
   {
     "reason_class": "awaiting_owner",
@@ -148,24 +127,17 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-hands-agent",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-hands-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
     "subject": "crates/aex-hands-tools",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
@@ -260,13 +232,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-regional-test-support",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-registry-dynamodb",
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
@@ -284,14 +249,14 @@
     "subject": "crates/aex-runtime-control",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
     "subject": "crates/aex-runtime-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
@@ -316,24 +281,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-session-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-usage-rating",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-work-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -361,7 +312,7 @@
     "subject": "runtimes/brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the binary's own implementation"
+    "detail": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
   },
   {
     "reason_class": "awaiting_owner",
@@ -375,7 +326,7 @@
     "subject": "runtimes/hands-image",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the binary's own implementation"
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
@@ -540,20 +491,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-hands-agent",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-hands-image",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-model-catalog",
     "owner": "providers",
     "blocking_rule": "aex-empty-unit",
@@ -632,13 +569,6 @@
   {
     "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
@@ -802,7 +732,7 @@
     "subject": "workers/runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+    "detail": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",

@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 122,
+    "awaiting_owner": 106,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -102,14 +102,16 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "concurrency": "unit",
+          "ports": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-domain": {
       "name": "aex-brain-domain",
@@ -130,14 +132,22 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "budget": "unit",
+          "decode": "unit",
+          "envelope": "unit",
+          "histories": "unit",
+          "mutation": "unit",
+          "planner": "unit",
+          "properties": "unit",
+          "recovery": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-hands": {
       "name": "aex-brain-hands",
@@ -168,7 +178,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "targets": "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
@@ -309,13 +319,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "expressions": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "integration": "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-test-support": {
       "name": "aex-brain-test-support",
@@ -339,7 +351,7 @@
         "targets": {},
         "not_applicable": {
           "live_suite": "test-only crate; must be absent from every production link graph",
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "targets": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
         }
       },
       "unmapped_targets": [],
@@ -737,14 +749,17 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "hostile_frames": "unit",
+          "no_cloud_authority": "unit",
+          "no_guest_billing": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-hands-control-aws": {
       "name": "aex-hands-control-aws",
@@ -775,7 +790,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
@@ -841,7 +856,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
@@ -1401,14 +1416,15 @@
           "none"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "test-only crate; must be absent from every production link graph",
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+          "live_suite": "test-only crate; must be absent from every production link graph"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-registry-dynamodb": {
       "name": "aex-registry-dynamodb",
@@ -1501,7 +1517,7 @@
         "targets": {},
         "not_applicable": {
           "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
@@ -1536,7 +1552,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
@@ -1767,13 +1783,18 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "properties": "unit",
+          "security": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+          "integration": "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-telemetry-schema": {
       "name": "aex-telemetry-schema",
@@ -2103,13 +2124,18 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "properties": "unit",
+          "security": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+          "integration": "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-workspace-domain": {
       "name": "aex-workspace-domain",
@@ -2275,7 +2301,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the brain-core stream; the cases land with the binary's own implementation"
+          "targets": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
         }
       },
       "unmapped_targets": [],
@@ -2346,7 +2372,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the hands stream; the cases land with the binary's own implementation"
+          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
@@ -3201,13 +3227,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "guest": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-hands-image": {
       "name": "aex-live-hands-image",
@@ -3235,13 +3261,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "boundary": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-model-catalog": {
       "name": "aex-live-model-catalog",
@@ -3671,13 +3697,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "lifecycle": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-session-operation-worker": {
       "name": "aex-live-session-operation-worker",
@@ -4586,7 +4612,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+          "targets": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
