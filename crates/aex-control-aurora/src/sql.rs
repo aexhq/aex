@@ -255,6 +255,9 @@ SELECT o.id, o.name, o.slug, o.status, o.revision, \
        (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, o.created_by_user_id \
   FROM control.organization o JOIN control.membership m ON m.organization_id = o.id \
  WHERE m.user_id = :user_id AND m.status = 'active' \
+   AND (:after_created_ms::bigint IS NULL \
+    OR (o.created_at, o.id) > \
+       (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
  ORDER BY o.created_at, o.id LIMIT :limit";
 
 /// Lists active and removed memberships for one organization.
@@ -263,6 +266,9 @@ SELECT m.id, m.organization_id, m.user_id, m.role, m.status, m.revision, \
        (EXTRACT(EPOCH FROM m.created_at)*1000)::bigint AS created_at_ms, \
        (EXTRACT(EPOCH FROM m.updated_at)*1000)::bigint AS updated_at_ms \
   FROM control.membership m WHERE m.organization_id = :organization_id \
+   AND (:after_created_ms::bigint IS NULL \
+    OR (m.created_at, m.id) > \
+       (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
  ORDER BY m.created_at, m.id LIMIT :limit";
 
 /// Inserts an invitation with no secret column.
@@ -358,6 +364,9 @@ SELECT w.id, w.organization_id, w.name, w.slug, w.region, w.status, \
   FROM control.workspace w JOIN control.membership m ON m.organization_id = w.organization_id \
  WHERE m.user_id = :user_id AND m.status = 'active' AND w.status <> 'provisioning' \
    AND (:organization_id::uuid IS NULL OR w.organization_id = :organization_id) \
+   AND (:after_created_ms::bigint IS NULL \
+    OR (w.created_at, w.id) > \
+       (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
  ORDER BY w.created_at, w.id LIMIT :limit";
 
 /// Marks both workspace halves durable under the accepted fence.
@@ -423,7 +432,11 @@ SELECT k.id, k.workspace_id, k.organization_id, k.name, k.scopes, k.region, k.pe
        (EXTRACT(EPOCH FROM k.created_at)*1000)::bigint AS created_at_ms, \
        (EXTRACT(EPOCH FROM k.revoked_at)*1000)::bigint AS revoked_at_ms, \
        k.revision, k.created_by_user_id FROM control.api_key k \
- WHERE k.workspace_id = :workspace_id ORDER BY k.created_at, k.id LIMIT :limit";
+ WHERE k.workspace_id = :workspace_id \
+   AND (:after_created_ms::bigint IS NULL \
+    OR (k.created_at, k.id) > \
+       (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
+ ORDER BY k.created_at, k.id LIMIT :limit";
 
 /// Revokes one API key and honors `If-Match` when supplied.
 pub const REVOKE_API_KEY: &str = "\
@@ -455,6 +468,9 @@ SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principa
        (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
   FROM control.durable_operation o \
  WHERE o.organization_id = :organization_id AND o.visibility = 'public' \
+   AND (:after_created_ms::bigint IS NULL \
+    OR (o.created_at, o.id) > \
+       (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
  ORDER BY o.created_at, o.id LIMIT :limit";
 
 /// Claims a bounded batch of due operations with skip-locked exclusivity.
