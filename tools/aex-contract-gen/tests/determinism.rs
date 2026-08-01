@@ -41,6 +41,22 @@ fn checked_in_output_matches_regeneration() {
 }
 
 #[test]
+fn no_orphaned_generated_file_survives_on_disk() {
+    // A schema that stops being authored leaves its published document behind.
+    // Comparing only the files the generator still produces cannot see that, so
+    // a deleted schema would keep serving from `api/generated/schemas/` forever.
+    let root = repo_root();
+    let stale = generate_to_memory(&root)
+        .expect("generation")
+        .stale_files(&root);
+    assert!(
+        stale.is_empty(),
+        "orphaned generated output:\n{}\nrun `cargo run -p aex-contract-gen -- build`",
+        stale.join("\n")
+    );
+}
+
+#[test]
 fn the_digest_is_stable_across_repeated_loads() {
     let root = repo_root();
     let first = emit::contract_digest(&load::load(&root).expect("load"));

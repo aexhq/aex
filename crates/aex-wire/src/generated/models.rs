@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:3eb54399c04aa475a13215ca9cce27ce25555fc5a7d9aa2e0dc158c23f8e806f`.
+//! `sha256:e9cfbe462a8f92a7d30c554801232e04cf1330a50148b5aa6e3d13e14d71e37c`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1363,23 +1363,24 @@ impl ObservationConsistency {
     }
 }
 
-/// What the answer is actually complete over. Never omitted.
+/// What the answer is actually complete over. Never omitted. All four watermarks are accepted-time
+/// positions in epoch milliseconds (O-04).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ObservationCoverage {
-    /// Admission watermark.
-    pub accepted: ObservationWatermark,
+    /// Admission watermark, in epoch milliseconds.
+    pub accepted: DecimalU128,
     /// Whether indexing has reached admission.
     pub caught_up: bool,
     /// Whether the window has no known holes.
     pub complete: bool,
-    /// Earliest replayable observation time.
-    pub earliest_replay: Timestamp,
-    /// Indexing watermark.
-    pub indexed: ObservationWatermark,
+    /// Earliest replayable position, in epoch milliseconds.
+    pub earliest_replay: DecimalU128,
+    /// Indexing watermark, in epoch milliseconds.
+    pub indexed: DecimalU128,
     /// Known holes.
     pub missing_intervals: Vec<MissingInterval>,
-    /// The pinned snapshot position.
+    /// The pinned snapshot position, in epoch milliseconds.
     pub snapshot: DecimalU128,
     /// Gaps with no known bound.
     pub unbounded_gaps: Vec<TelemetryGapId>,
@@ -1721,16 +1722,6 @@ pub struct ObservationStreamRequest {
     pub origin: ObservationOrigin,
     /// Which signal.
     pub signal: ObservationSignal,
-}
-
-/// How far one stage of the pipeline has advanced.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationWatermark {
-    /// The observation time at that position.
-    pub at: Timestamp,
-    /// The position.
-    pub sequence: DecimalU128,
 }
 
 /// Why a stream ended after its 200.

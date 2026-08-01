@@ -162,13 +162,6 @@ schemas:
       sequence: { type: decimal, doc: "Position in the ordered series." }
       body: { type: canonical_json, doc: "The signal-specific payload." }
 
-  ObservationWatermark:
-    doc: How far one stage of the pipeline has advanced.
-    type: object
-    fields:
-      sequence: { type: decimal, doc: "The position." }
-      at: { type: timestamp, doc: "The observation time at that position." }
-
   MissingInterval:
     doc: A known hole in the ordered series.
     type: object
@@ -177,13 +170,15 @@ schemas:
       gapId: { type: id, of: telemetry_gap, doc: "The recorded gap." }
 
   ObservationCoverage:
-    doc: What the answer is actually complete over. Never omitted.
+    doc: >-
+      What the answer is actually complete over. Never omitted. All four
+      watermarks are accepted-time positions in epoch milliseconds (O-04).
     type: object
     fields:
-      snapshot: { type: decimal, doc: "The pinned snapshot position." }
-      accepted: { type: ref, to: ObservationWatermark, doc: "Admission watermark." }
-      indexed: { type: ref, to: ObservationWatermark, doc: "Indexing watermark." }
-      earliestReplay: { type: timestamp, doc: "Earliest replayable observation time." }
+      snapshot: { type: decimal, doc: "The pinned snapshot position, in epoch milliseconds." }
+      accepted: { type: decimal, doc: "Admission watermark, in epoch milliseconds." }
+      indexed: { type: decimal, doc: "Indexing watermark, in epoch milliseconds." }
+      earliestReplay: { type: decimal, doc: "Earliest replayable position, in epoch milliseconds." }
       caughtUp: { type: boolean, doc: "Whether indexing has reached admission." }
       complete: { type: boolean, doc: "Whether the window has no known holes." }
       missingIntervals: { type: array, max: 100, items: { type: ref, to: MissingInterval }, doc: "Known holes." }

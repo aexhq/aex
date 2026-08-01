@@ -7997,8 +7997,9 @@
       "additionalProperties": false,
       "properties": {
         "accepted": {
-          "$ref": "aex:schema:ObservationWatermark",
-          "description": "Admission watermark."
+          "description": "Admission watermark, in epoch milliseconds.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
         },
         "caughtUp": {
           "description": "Whether indexing has reached admission.",
@@ -8009,14 +8010,14 @@
           "type": "boolean"
         },
         "earliestReplay": {
-          "description": "Earliest replayable observation time.",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-          "type": "string",
-          "x-aex-time": "rfc3339-ms"
+          "description": "Earliest replayable position, in epoch milliseconds.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
         },
         "indexed": {
-          "$ref": "aex:schema:ObservationWatermark",
-          "description": "Indexing watermark."
+          "description": "Indexing watermark, in epoch milliseconds.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
         },
         "missingIntervals": {
           "description": "Known holes.",
@@ -8027,7 +8028,7 @@
           "type": "array"
         },
         "snapshot": {
-          "description": "The pinned snapshot position.",
+          "description": "The pinned snapshot position, in epoch milliseconds.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -8490,27 +8491,6 @@
       "required": [
         "origin",
         "signal"
-      ],
-      "type": "object"
-    },
-    "ObservationWatermark": {
-      "additionalProperties": false,
-      "properties": {
-        "at": {
-          "description": "The observation time at that position.",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-          "type": "string",
-          "x-aex-time": "rfc3339-ms"
-        },
-        "sequence": {
-          "description": "The position.",
-          "pattern": "^(0|[1-9]\\d*)$",
-          "type": "string"
-        }
-      },
-      "required": [
-        "at",
-        "sequence"
       ],
       "type": "object"
     },
