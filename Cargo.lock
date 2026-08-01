@@ -508,6 +508,7 @@ name = "aex-internal-contracts"
 version = "0.1.0"
 dependencies = [
  "aex-wire",
+ "base64 0.23.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -867,15 +868,21 @@ dependencies = [
 name = "aex-regional-http"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
  "aex-internal-contracts",
+ "aex-registry-dynamodb",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
  "aex-session-dynamodb",
  "aex-wire",
+ "aex-workspace-domain",
  "async-trait",
+ "aws-sdk-lambda",
+ "aws-sdk-ssm",
  "axum",
  "base64 0.23.0",
  "bytes",
+ "ed25519-dalek",
  "hmac 0.13.0",
  "http 1.5.0",
  "http-body-util",
@@ -1732,6 +1739,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-lambda"
+version = "1.138.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b002aa94953a1aab8534280436ea3cf7805b821d51ebb49a89da41764650ce0b"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-rdsdata"
 version = "1.108.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1825,6 +1859,32 @@ name = "aws-sdk-sqs"
 version = "1.105.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e4c1c211163344d1fea7df9a986a3838a80681bd69a986848e47fdfd03f4dbb"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-ssm"
+version = "1.118.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d5bd0c0ae0fc69f63b9beb68a28beba71617070d504444944e97bbfb0851d8a"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -5751,6 +5811,7 @@ dependencies = [
 name = "regional-secret-api"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-secret-aws",
@@ -5764,6 +5825,8 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-kms",
+ "aws-sdk-lambda",
+ "aws-sdk-ssm",
  "axum",
  "http-body-util",
  "lambda_http",
@@ -5793,7 +5856,9 @@ dependencies = [
 name = "regional-session-api"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
  "aex-content-dynamodb",
+ "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-registry-dynamodb",
@@ -5804,10 +5869,13 @@ dependencies = [
  "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
+ "aex-workspace-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
  "aws-sdk-s3",
+ "aws-sdk-ssm",
  "axum",
  "hex",
  "http-body-util",

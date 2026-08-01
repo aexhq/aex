@@ -38,18 +38,24 @@ path = "src/main.rs"
 [dependencies]
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
+aws-sdk-lambda.workspace = true
 aws-sdk-s3.workspace = true
+aws-sdk-ssm.workspace = true
 lambda_http.workspace = true
 tokio.workspace = true
+aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
 aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
 aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
 aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
-aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
+    "authz-projection",
+] }
 async-trait.workspace = true
 aex-wire = { path = "../../crates/aex-wire" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 hex.workspace = true
@@ -60,6 +66,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 axum.workspace = true
 http-body-util.workspace = true
 time.workspace = true

@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
 };
@@ -18,6 +19,7 @@ use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
 use aex_regional_http::projection::entity_tag;
 use aex_regional_http::router::RouteOwner;
+use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
 };
@@ -35,15 +37,19 @@ use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{
     ApiKeyId, PrefixedId, ProviderCredentialId, ResourceName, SessionId, Uuid7, WorkspaceId,
 };
+use aex_wire::ids::{ContentHash, UploadId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::server::RouteGroup;
+use aex_wire::types::ETag;
 use aex_wire::types::{Region, RequestId, Timestamp};
+use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer};
+use aex_workspace_domain::upload::{Upload as StoredUpload, UploadState};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
-use regional_session_api::handlers::{Routes, Shared};
+use regional_session_api::handlers::{Dispatcher, Routes, Shared};
 use tower::ServiceExt as _;
 
 // --- fixtures -------------------------------------------------------------------
@@ -286,31 +292,131 @@ impl EdgeAdmission for Admit {
     }
 }
 
-/// The dispatcher is per request in production, so the mount holds the shared
-/// value and builds one `Routes` for the context it was admitted with. This
-/// double keeps the same shape.
-struct Dispatcher(Arc<Shared>);
+// --- the registry authority double ------------------------------------------------
+
+/// A registry holding one pointer per kind, plus a recorded continuation.
+///
+/// It answers `list_pointers` from an in-memory map keyed by the kind it was
+/// asked for, so a handler that named the wrong kind reads an empty page and the
+/// case fails on the item count rather than passing by accident.
+#[derive(Debug, Default)]
+struct FakeRegistry {
+    pointers: BTreeMap<&'static str, Vec<RegistryPointer>>,
+    next: Option<PagePosition>,
+    asked: std::sync::Mutex<Vec<RegistryKind>>,
+    fails: bool,
+}
+
+fn kind_key(kind: RegistryKind) -> &'static str {
+    match kind {
+        RegistryKind::File => "file",
+        RegistryKind::Skill => "skill",
+        RegistryKind::Tool => "tool",
+        RegistryKind::Instruction => "instruction",
+        RegistryKind::McpServer => "mcp_server",
+    }
+}
+
+fn pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
+    RegistryPointer {
+        workspace: workspace(),
+        kind,
+        name: ResourceName::parse(name).expect("a resource name"),
+        revision: Revision(4),
+        etag: ETag::parse("\"registry-4\"").expect("a strong validator"),
+        value: RegisteredValueRef::Content {
+            digest: ContentHash::of(b"body"),
+        },
+        sha256: ContentHash::of(b"body"),
+        size_bytes: 128,
+        created_at: moment("2026-08-01T12:34:56.789Z"),
+        updated_at: moment("2026-08-01T12:34:56.789Z"),
+    }
+}
 
 #[async_trait::async_trait]
-impl aex_regional_http::mount::UnaryDispatch for Dispatcher {
-    fn owner(&self) -> RouteOwner {
-        RouteOwner::SessionApi
-    }
-
-    fn served(&self) -> Vec<RouteId> {
-        Routes::served()
-    }
-
-    async fn dispatch(
+impl RegistryStore for FakeRegistry {
+    async fn load_pointer(
         &self,
-        cx: &RequestContext,
-        accept: aex_wire::server::AcceptKind,
-        raw: aex_wire::dispatch::RawRequest<'_>,
-        limits: aex_wire::dispatch::RequestLimits,
-    ) -> Result<aex_wire::dispatch::RawResponse, WireError> {
-        Routes::new(Arc::clone(&self.0), cx.clone())
-            .dispatch(cx, accept, raw, limits)
-            .await
+        _workspace: WorkspaceId,
+        _kind: RegistryKind,
+        _name: &str,
+    ) -> Result<Option<RegistryPointer>, StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn list_pointers(
+        &self,
+        workspace: WorkspaceId,
+        kind: RegistryKind,
+        _budget: PageBudget,
+        _from: Option<&PagePosition>,
+    ) -> Result<PointerPage, StoreError> {
+        assert_eq!(
+            workspace,
+            crate::workspace(),
+            "the listing is workspace-scoped"
+        );
+        self.asked
+            .lock()
+            .expect("an uncontended fixture")
+            .push(kind);
+        if self.fails {
+            return Err(StoreError::Contended);
+        }
+        Ok(PointerPage {
+            pointers: self
+                .pointers
+                .get(kind_key(kind))
+                .cloned()
+                .unwrap_or_default(),
+            next: self.next.clone(),
+        })
+    }
+
+    async fn put_pointer(
+        &self,
+        _pointer: &RegistryPointer,
+        _from_revision: Option<Revision>,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn load_upload(
+        &self,
+        _workspace: WorkspaceId,
+        _upload: UploadId,
+    ) -> Result<Option<StoredUpload>, StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn create_upload(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn transition_upload(
+        &self,
+        _upload: UploadId,
+        _from: UploadState,
+        _to: UploadState,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn begin_completion(
+        &self,
+        _upload: UploadId,
+        _completion_intent_hash: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn finish_completion(
+        &self,
+        _upload: UploadId,
+        _completion_intent_hash: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
     }
 }
 
@@ -323,17 +429,51 @@ fn cursor_keys() -> CursorKeyRing {
 }
 
 fn router(custody: FakeCustody) -> (axum::Router, Vec<RouteId>) {
+    composed(custody, FakeRegistry::default())
+}
+
+fn composed(custody: FakeCustody, registry: FakeRegistry) -> (axum::Router, Vec<RouteId>) {
     let shared = Arc::new(Shared {
         custody: Arc::new(custody),
+        registry: Arc::new(registry),
         cursor_keys: Arc::new(cursor_keys()),
     });
     let mounted = mount_unary(
-        Arc::new(Dispatcher(shared)),
+        Arc::new(Dispatcher::new(shared)),
         Arc::new(Admit),
         aex_wire::dispatch::RequestLimits::DEFAULT,
     )
     .expect("the served set mounts");
     (mounted.router, mounted.routes)
+}
+
+/// A registry holding exactly one pointer in every collection.
+fn populated_registry() -> FakeRegistry {
+    FakeRegistry {
+        pointers: BTreeMap::from([
+            (
+                kind_key(RegistryKind::File),
+                vec![pointer(RegistryKind::File, "notes.md")],
+            ),
+            (
+                kind_key(RegistryKind::Skill),
+                vec![pointer(RegistryKind::Skill, "review")],
+            ),
+            (
+                kind_key(RegistryKind::Tool),
+                vec![pointer(RegistryKind::Tool, "search")],
+            ),
+            (
+                kind_key(RegistryKind::Instruction),
+                vec![pointer(RegistryKind::Instruction, "house-style")],
+            ),
+            (
+                kind_key(RegistryKind::McpServer),
+                vec![pointer(RegistryKind::McpServer, "docs")],
+            ),
+        ]),
+        ..FakeRegistry::default()
+    }
 }
 
 async fn get(router: &axum::Router, uri: &str) -> (StatusCode, Option<String>, serde_json::Value) {
@@ -678,4 +818,173 @@ fn the_fixture_module_stays_honest() {
     // `CustodyRevision` is imported for the store trait's signature surface;
     // this keeps the import load-bearing rather than silently unused.
     assert_eq!(unused_custody_revision(), CustodyRevision::FIRST);
+}
+
+// --- the registry listings ---------------------------------------------------------
+
+/// Every registry listing, its path, and the collection it must read.
+const REGISTRY_LISTINGS: &[(RouteId, &str, RegistryKind)] = &[
+    (
+        RouteId::RegistryFilesList,
+        "/api/workspace/files",
+        RegistryKind::File,
+    ),
+    (
+        RouteId::RegistrySkillsList,
+        "/api/workspace/skills",
+        RegistryKind::Skill,
+    ),
+    (
+        RouteId::RegistryToolsList,
+        "/api/workspace/tools",
+        RegistryKind::Tool,
+    ),
+    (
+        RouteId::RegistryInstructionsList,
+        "/api/workspace/instructions",
+        RegistryKind::Instruction,
+    ),
+    (
+        RouteId::RegistryMcpServersList,
+        "/api/workspace/mcp-servers",
+        RegistryKind::McpServer,
+    ),
+];
+
+#[tokio::test]
+async fn every_registry_listing_reads_its_own_collection_and_publishes_its_rows() {
+    for (id, path, _) in REGISTRY_LISTINGS {
+        let (router, _) = composed(FakeCustody::default(), populated_registry());
+        let (status, _, body) = get(&router, path).await;
+        assert_eq!(status, StatusCode::OK, "{id}");
+        let items = body
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("{id} publishes an items array"));
+        assert_eq!(items.len(), 1, "{id} reads exactly its own collection");
+        let row = &items[0];
+        assert_eq!(
+            row.get("revision").and_then(serde_json::Value::as_u64),
+            Some(4),
+            "{id}"
+        );
+        assert_eq!(
+            row.get("state").and_then(serde_json::Value::as_str),
+            Some("current"),
+            "{id}"
+        );
+        assert_eq!(
+            row.get("sizeBytes").and_then(serde_json::Value::as_str),
+            Some("128"),
+            "{id} publishes an exact size, never a float"
+        );
+        assert!(
+            row.get("value").is_none(),
+            "{id} is a collection row and must omit the value it cannot read"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_registry_listing_asks_the_authority_for_its_own_kind_and_no_other() {
+    for (id, path, kind) in REGISTRY_LISTINGS {
+        let registry = Arc::new(populated_registry());
+        let shared = Arc::new(Shared {
+            custody: Arc::new(FakeCustody::default()),
+            registry: Arc::clone(&registry) as Arc<dyn RegistryStore>,
+            cursor_keys: Arc::new(cursor_keys()),
+        });
+        let router = mount_unary(
+            Arc::new(Dispatcher::new(shared)),
+            Arc::new(Admit),
+            aex_wire::dispatch::RequestLimits::DEFAULT,
+        )
+        .expect("the served set mounts")
+        .router;
+        let (status, _, _) = get(&router, path).await;
+        assert_eq!(status, StatusCode::OK, "{id}");
+        assert_eq!(
+            registry
+                .asked
+                .lock()
+                .expect("an uncontended fixture")
+                .as_slice(),
+            &[*kind],
+            "{id} must read one collection, and it must be its own"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_registry_continuation_is_bound_to_its_own_collection() {
+    // Every listing shares a table and a key template, so the only thing that
+    // stops a `skills` cursor resuming a `tools` read is the authenticated
+    // snapshot binding. Replaying one against another must fail its MAC.
+    let with_more = FakeRegistry {
+        next: Some(PagePosition {
+            pk: "WS#1".to_owned(),
+            sk: "REG#skill#review".to_owned(),
+            index_pk: None,
+            index_sk: None,
+        }),
+        ..populated_registry()
+    };
+    let (router, _) = composed(FakeCustody::default(), with_more);
+    let (status, _, body) = get(&router, "/api/workspace/skills").await;
+    assert_eq!(status, StatusCode::OK);
+    let cursor = body
+        .get("nextCursor")
+        .and_then(serde_json::Value::as_str)
+        .expect("a page with more names a continuation")
+        .to_owned();
+
+    let (status, _, _) = get(&router, &format!("/api/workspace/skills?cursor={cursor}")).await;
+    assert_eq!(status, StatusCode::OK, "its own collection resumes");
+
+    let (status, _, body) = get(&router, &format!("/api/workspace/tools?cursor={cursor}")).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a cursor minted over one collection must never resume another"
+    );
+    assert_eq!(body["error"]["code"].as_str(), Some("invalid_cursor"));
+}
+
+#[tokio::test]
+async fn an_empty_registry_is_an_empty_page_and_never_a_missing_collection() {
+    for (id, path, _) in REGISTRY_LISTINGS {
+        let (router, _) = composed(FakeCustody::default(), FakeRegistry::default());
+        let (status, _, body) = get(&router, path).await;
+        assert_eq!(status, StatusCode::OK, "{id}");
+        assert_eq!(
+            body.get("items").and_then(serde_json::Value::as_array),
+            Some(&Vec::new()),
+            "{id}"
+        );
+        assert!(body.get("nextCursor").is_none(), "{id}");
+    }
+}
+
+#[tokio::test]
+async fn an_unreadable_registry_fails_the_listing_rather_than_publishing_a_short_page() {
+    let registry = FakeRegistry {
+        pointers: BTreeMap::new(),
+        fails: true,
+        ..FakeRegistry::default()
+    };
+    let (router, _) = composed(FakeCustody::default(), registry);
+    let (status, _, body) = get(&router, "/api/workspace/files").await;
+    // Contention maps onto `conflict`, which this route does not declare, so the
+    // dispatch boundary replaces it with `internal_error` rather than letting an
+    // undeclared code reach the wire (C-58). What matters here is that a failed
+    // authority read is never a successful empty page.
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"]["code"].as_str(), Some("internal_error"));
+    assert!(
+        route(RouteId::RegistryFilesList)
+            .errors
+            .iter()
+            .all(|code| !code.retryable()),
+        "the listing declares no transient code, which is why the refusal is internal"
+    );
 }

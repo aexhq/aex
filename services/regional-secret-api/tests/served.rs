@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
 };
-use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, UnaryDispatch, mount_unary};
+use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
 use aex_regional_http::projection::entity_tag;
 use aex_regional_http::router::RouteOwner;
 use aex_secret_custody_dynamodb::codec::SecretMetadata as StoredSecret;
@@ -36,7 +36,7 @@ use aex_wire::types::{ETag, Region, RequestId, Timestamp};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
-use regional_secret_api::handlers::{Routes, Shared};
+use regional_secret_api::handlers::{Dispatcher, Routes, Shared};
 use tower::ServiceExt as _;
 
 const TABLE: &str = "dev-eu-west-1-regional-secret-custody";
@@ -262,38 +262,13 @@ impl EdgeAdmission for Admit {
     }
 }
 
-struct Dispatcher(Arc<Shared>);
-
-#[async_trait::async_trait]
-impl UnaryDispatch for Dispatcher {
-    fn owner(&self) -> RouteOwner {
-        RouteOwner::SecretApi
-    }
-
-    fn served(&self) -> Vec<RouteId> {
-        Routes::served()
-    }
-
-    async fn dispatch(
-        &self,
-        cx: &RequestContext,
-        accept: aex_wire::server::AcceptKind,
-        raw: aex_wire::dispatch::RawRequest<'_>,
-        limits: aex_wire::dispatch::RequestLimits,
-    ) -> Result<aex_wire::dispatch::RawResponse, WireError> {
-        Routes::new(Arc::clone(&self.0), cx.clone())
-            .dispatch(cx, accept, raw, limits)
-            .await
-    }
-}
-
 fn router(custody: Arc<FakeCustody>, if_match: Option<ETag>) -> axum::Router {
     let shared = Arc::new(Shared {
         custody: custody as Arc<dyn SecretCustodyStore>,
         custody_table: TABLE.to_owned(),
     });
     mount_unary(
-        Arc::new(Dispatcher(shared)),
+        Arc::new(Dispatcher::new(shared)),
         Arc::new(Admit { if_match }),
         aex_wire::dispatch::RequestLimits::DEFAULT,
     )

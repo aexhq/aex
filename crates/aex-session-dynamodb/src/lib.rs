@@ -52,7 +52,13 @@ pub mod keys;
 pub mod store;
 #[cfg(feature = "session-authority")]
 pub mod transactions;
-#[cfg(feature = "session-authority")]
+// The placeholder row types are shared by the session codecs and by the
+// projection reader, so the module follows either feature rather than one of
+// them. Gating it on `session-authority` alone made `default-features = false,
+// features = ["authz-projection"]` — the exact composition D-21 exists to
+// permit — fail to compile, which nothing noticed because the default set turns
+// both on.
+#[cfg(any(feature = "session-authority", feature = "authz-projection"))]
 pub mod wire_pending;
 
 #[cfg(feature = "authz-projection")]

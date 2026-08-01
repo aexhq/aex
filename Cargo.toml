@@ -216,6 +216,14 @@ aws-sdk-dynamodb = { version = "1.119.0", features = ["behavior-version-latest"]
 aws-sdk-s3 = { version = "1.140.0", features = ["behavior-version-latest"] }
 aws-sdk-sqs = { version = "1.105.0", features = ["behavior-version-latest"] }
 aws-sdk-kms = { version = "1.114.0", features = ["behavior-version-latest"] }
+# The regional edge resolves a 30-second assertion by invoking `central-authz`
+# directly. That deployable is IAM-invoked rather than routed, so there is no
+# HTTPS endpoint to reach it on and no second authentication hop to get wrong.
+aws-sdk-lambda = { version = "1.138.0", features = ["behavior-version-latest"] }
+# Parameter Store holds the two pieces of key material a regional edge needs at
+# start-up: the assertion trust anchors and the cursor signing ring. Both are
+# read once per cold start and never per request.
+aws-sdk-ssm = { version = "1.118.0", features = ["behavior-version-latest"] }
 aws-sdk-rdsdata = { version = "1.108.0", features = ["behavior-version-latest"] }
 aws-sdk-ecs = { version = "1.136.0", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = { version = "1.111.0", features = ["behavior-version-latest"] }

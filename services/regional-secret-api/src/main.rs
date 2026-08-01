@@ -4,16 +4,33 @@
 //! admission routes. It mounts nothing else, and its configuration refuses a
 //! session, content, work, registry or queue binding outright.
 //!
-//! The binary is a composition root only: it validates configuration, builds the
-//! real adapters, assembles the router from the generated route table, and hands
-//! it to `lambda_http`. Behaviour lives in the library crates it composes.
+//! The binary is a composition root only: it validates configuration, resolves
+//! its trust anchors, builds the real adapters, assembles the router from the
+//! generated route table, and hands it to `lambda_http`. Behaviour lives in the
+//! library crates it composes.
 
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use aex_internal_contracts::assertion::AssertionAudience;
+use aex_regional_http::assertion::AuthFailure;
+use aex_regional_http::authz::{
+    Ed25519Anchors, LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
+};
 use aex_regional_http::config::ConfigError;
+use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_regional_http::health::Readiness;
+use aex_regional_http::mount::{MountError, mount_unary};
+use aex_wire::dispatch::RequestLimits;
 use regional_secret_api::config::Config;
+use regional_secret_api::handlers::{Dispatcher, Shared};
+
+/// The one audience this deployable accepts.
+///
+/// This is the only process in the platform that ever holds secret plaintext, so
+/// an assertion minted for any other regional role must never admit a request
+/// here.
+const AUDIENCE: AssertionAudience = AssertionAudience::RegionalSecret;
 
 /// Why `regional-secret-api` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -21,6 +38,15 @@ enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// Start-up key material was rejected.
+    #[error(transparent)]
+    Trust(#[from] TrustError),
+    /// The edge could not be composed over its resolved inputs.
+    #[error("the request edge could not be composed: {0}")]
+    Edge(AuthFailure),
+    /// The served route set could not be mounted.
+    #[error(transparent)]
+    Mount(#[from] MountError),
     /// The `HTTP` runtime stopped.
     #[error("the lambda runtime stopped: {0}")]
     Runtime(String),
@@ -71,11 +97,12 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let kms = aws_sdk_kms::Client::new(&aws);
+    let parameters = ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
 
     // The two adapters this deployable is allowed to hold, and nothing else: the
     // custody authority and the envelope crypto over the *secret* KMS key.
     let custody = Arc::new(aex_secret_custody_dynamodb::CustodyStore::new(
-        dynamodb,
+        dynamodb.clone(),
         config.secret_custody_table.clone(),
     ));
     let crypto = Arc::new(aex_secret_aws::crypto::EnvelopeCrypto::new(
@@ -85,7 +112,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         )),
         config.crypto_partition(),
     ));
-    let edge = regional_secret_api::SecretEdge::new(custody, crypto);
+    let edge = regional_secret_api::SecretEdge::new(Arc::clone(&custody), crypto);
 
     // Readiness is fail-closed and is resolved from the composition, not from a
     // constant: it reports `ready` only when every declared dependency of the
@@ -96,15 +123,72 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             .map_err(|error| RunError::Runtime(error.to_string()))?,
     };
 
-    // As on `regional-session-api`: the handler surface for
-    // `regional_secret_api::Routes::served()` is complete and is mounted by
-    // `mount_unary` in the `served` target, but the listener cannot mount it
-    // until an `EdgeAdmission` can be built. That needs an `AssertionSource` and
-    // a `KeyVerifier`, and neither has a published peer contract yet. RS-18
-    // forbids mounting a route the edge could never admit, so the routes stay
-    // absent and the process serves its health surface only.
-    let _served = regional_secret_api::Routes::served();
-    lambda_http::run(aex_regional_http::health::router(readiness))
-        .await
-        .map_err(|error| RunError::Runtime(error.to_string()))
+    let anchors = parameters
+        .trust_anchors(&config.authz_verify_keys_param)
+        .await?;
+    // This deployable serves no listing, so it resolves no cursor signing ring
+    // and its configuration declares none. A key it cannot use is a key it
+    // cannot leak.
+    let admission = build_edge(config, &aws, &dynamodb, anchors)?;
+    let dispatcher = Dispatcher::new(Arc::new(Shared {
+        custody,
+        custody_table: config.secret_custody_table.clone(),
+    }));
+    let mounted = mount_unary(Arc::new(dispatcher), Arc::new(admission), limits(config))?;
+
+    lambda_http::run(
+        mounted
+            .router
+            .merge(aex_regional_http::health::router(readiness)),
+    )
+    .await
+    .map_err(|error| RunError::Runtime(error.to_string()))
+}
+
+/// The shared regional edge over its four resolved inputs.
+type Edge = RegionalEdge<
+    LambdaAssertionSource,
+    Ed25519Anchors,
+    RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
+    SystemClock,
+>;
+
+fn build_edge(
+    config: &Config,
+    aws: &aws_config::SdkConfig,
+    dynamodb: &aws_sdk_dynamodb::Client,
+    anchors: Ed25519Anchors,
+) -> Result<Edge, RunError> {
+    RegionalEdge::new(
+        LambdaAssertionSource::new(
+            aws_sdk_lambda::Client::new(aws),
+            config.authz_function.value.clone(),
+            AUDIENCE,
+            config.region,
+        ),
+        anchors,
+        RegionalProjection::new(
+            aex_session_dynamodb::projection::ProjectionReader::new(
+                dynamodb.clone(),
+                config.authz_projection_table.clone(),
+            ),
+            config.region,
+        ),
+        SystemClock,
+        EdgeBinding {
+            audience: AUDIENCE,
+            region: config.region,
+            cache_budget_bytes: config.assertion_cache_bytes,
+            limits: config.limits(),
+        },
+    )
+    .map_err(RunError::Edge)
+}
+
+/// The decode bounds the generated dispatchers enforce.
+fn limits(config: &Config) -> RequestLimits {
+    RequestLimits {
+        max_json_body_bytes: config.max_json_body_bytes,
+        max_otlp_body_bytes: RequestLimits::DEFAULT_OTLP_BODY_BYTES,
+    }
 }
