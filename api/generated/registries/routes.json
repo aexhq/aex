@@ -2501,6 +2501,43 @@
       "errors": [
         "unauthenticated",
         "insufficient_scope",
+        "not_found",
+        "operation_idempotency_conflict",
+        "invalid_request",
+        "limit_exceeded",
+        "session_not_idle",
+        "session_deleting",
+        "session_deleted",
+        "account_paused",
+        "precondition_failed",
+        "wrong_workspace_region"
+      ],
+      "etag": "optional_if_match",
+      "fragment": "sessions",
+      "idempotency": "operation_id",
+      "method": "POST",
+      "operationId": "session_clone",
+      "path": "/api/sessions/{sessionId}/clones",
+      "pathParams": [
+        "sessionId"
+      ],
+      "pauseExempt": false,
+      "plane": "regional",
+      "queryParams": [],
+      "requestSchema": "SessionCloneRequest",
+      "requiredScope": "sessions:write",
+      "responseSchema": "Operation",
+      "safeRetry": false,
+      "successStatus": 202,
+      "summary": "Admit the durable clone operation.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": null,
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "insufficient_scope",
         "idempotency_conflict",
         "invalid_request",
         "limit_exceeded",
@@ -2565,39 +2602,6 @@
       "safeRetry": false,
       "successStatus": 202,
       "summary": "Admit the durable credential-rebind operation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "operation_idempotency_conflict",
-        "invalid_request",
-        "session_deleted",
-        "deletion_in_progress",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "sessions",
-      "idempotency": "operation_id",
-      "method": "POST",
-      "operationId": "session_delete",
-      "path": "/api/sessions/{sessionId}/deletions",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "SessionDeleteRequest",
-      "requiredScope": "sessions:delete",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "successStatus": 202,
-      "summary": "Admit the durable session-deletion operation.",
       "transport": "unary"
     },
     {
@@ -2811,42 +2815,6 @@
       "safeRetry": true,
       "successStatus": 200,
       "summary": "Stat one persisted session file.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "operation_idempotency_conflict",
-        "invalid_request",
-        "limit_exceeded",
-        "session_deleting",
-        "session_deleted",
-        "account_paused",
-        "precondition_failed",
-        "wrong_workspace_region"
-      ],
-      "etag": "optional_if_match",
-      "fragment": "sessions",
-      "idempotency": "operation_id",
-      "method": "POST",
-      "operationId": "session_fork",
-      "path": "/api/sessions/{sessionId}/forks",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "SessionForkRequest",
-      "requiredScope": "sessions:write",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "successStatus": 202,
-      "summary": "Admit the durable fork operation.",
       "transport": "unary"
     },
     {
@@ -3678,6 +3646,74 @@
     },
     {
       "altPrincipal": null,
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "insufficient_scope",
+        "not_found",
+        "operation_idempotency_conflict",
+        "invalid_request",
+        "session_deleted",
+        "deletion_in_progress",
+        "wrong_workspace_region"
+      ],
+      "etag": "none",
+      "fragment": "sessions",
+      "idempotency": "operation_id",
+      "method": "POST",
+      "operationId": "session_purge",
+      "path": "/api/sessions/{sessionId}/purges",
+      "pathParams": [
+        "sessionId"
+      ],
+      "pauseExempt": true,
+      "plane": "regional",
+      "queryParams": [],
+      "requestSchema": "SessionPurgeRequest",
+      "requiredScope": "sessions:delete",
+      "responseSchema": "Operation",
+      "safeRetry": false,
+      "successStatus": 202,
+      "summary": "Admit the durable purge operation. Purge is irreversible.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": null,
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "insufficient_scope",
+        "not_found",
+        "operation_idempotency_conflict",
+        "invalid_request",
+        "session_deleted",
+        "deletion_in_progress",
+        "account_paused",
+        "precondition_failed",
+        "wrong_workspace_region"
+      ],
+      "etag": "none",
+      "fragment": "sessions",
+      "idempotency": "operation_id",
+      "method": "POST",
+      "operationId": "session_restore",
+      "path": "/api/sessions/{sessionId}/restores",
+      "pathParams": [
+        "sessionId"
+      ],
+      "pauseExempt": false,
+      "plane": "regional",
+      "queryParams": [],
+      "requestSchema": "EmptyRequest",
+      "requiredScope": "sessions:delete",
+      "responseSchema": "Operation",
+      "safeRetry": false,
+      "successStatus": 202,
+      "summary": "Admit the durable restore operation, which is legal only inside the recovery window.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": null,
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -3979,6 +4015,40 @@
       "safeRetry": true,
       "successStatus": 200,
       "summary": "Query recorded session telemetry gaps.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": null,
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "insufficient_scope",
+        "not_found",
+        "operation_idempotency_conflict",
+        "invalid_request",
+        "session_deleting",
+        "session_deleted",
+        "deletion_in_progress",
+        "wrong_workspace_region"
+      ],
+      "etag": "none",
+      "fragment": "sessions",
+      "idempotency": "operation_id",
+      "method": "POST",
+      "operationId": "session_trash",
+      "path": "/api/sessions/{sessionId}/trashes",
+      "pathParams": [
+        "sessionId"
+      ],
+      "pauseExempt": true,
+      "plane": "regional",
+      "queryParams": [],
+      "requestSchema": "EmptyRequest",
+      "requiredScope": "sessions:delete",
+      "responseSchema": "Operation",
+      "safeRetry": false,
+      "successStatus": 202,
+      "summary": "Admit the durable trash operation, which starts the recovery window.",
       "transport": "unary"
     },
     {

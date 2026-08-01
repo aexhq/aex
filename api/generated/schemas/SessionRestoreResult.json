@@ -1,0 +1,38 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionRestoreResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The result of a restore operation.",
+  "properties": {
+    "restoredAt": {
+      "description": "When the restore committed.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "sessionId": {
+      "description": "The session.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    },
+    "sessionRevision": {
+      "description": "The revision after the restore.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "aex:schema:SessionStatus",
+      "description": "What the session is doing now."
+    }
+  },
+  "required": [
+    "restoredAt",
+    "sessionId",
+    "sessionRevision",
+    "status"
+  ],
+  "title": "SessionRestoreResult",
+  "type": "object"
+}

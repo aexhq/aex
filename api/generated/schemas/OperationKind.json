@@ -5,9 +5,11 @@
   "enum": [
     "session_stop",
     "session_persist",
-    "session_fork",
+    "session_clone",
     "workspace_discard",
-    "session_delete",
+    "session_trash",
+    "session_restore",
+    "session_purge",
     "credential_rebind",
     "telemetry_export",
     "workspace_delete"

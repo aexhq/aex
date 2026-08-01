@@ -427,6 +427,21 @@
         ],
         "type": "object"
       },
+      "CloneCredentials": {
+        "enum": [
+          "copy",
+          "none"
+        ],
+        "type": "string"
+      },
+      "CloneFiles": {
+        "enum": [
+          "current",
+          "initial",
+          "none"
+        ],
+        "type": "string"
+      },
       "ComputeShape": {
         "additionalProperties": false,
         "properties": {
@@ -984,21 +999,6 @@
         "enum": [
           "retained",
           "never"
-        ],
-        "type": "string"
-      },
-      "ForkCredentials": {
-        "enum": [
-          "copy",
-          "none"
-        ],
-        "type": "string"
-      },
-      "ForkFiles": {
-        "enum": [
-          "current",
-          "initial",
-          "none"
         ],
         "type": "string"
       },
@@ -2256,9 +2256,11 @@
         "enum": [
           "session_stop",
           "session_persist",
-          "session_fork",
+          "session_clone",
           "workspace_discard",
-          "session_delete",
+          "session_trash",
+          "session_restore",
+          "session_purge",
           "credential_rebind",
           "telemetry_export",
           "workspace_delete"
@@ -2324,16 +2326,24 @@
             "x-aex-discriminator-value": "session_persist"
           },
           {
-            "$ref": "aex:schema:SessionForkResult",
-            "x-aex-discriminator-value": "session_fork"
+            "$ref": "aex:schema:SessionCloneResult",
+            "x-aex-discriminator-value": "session_clone"
           },
           {
             "$ref": "aex:schema:WorkspaceDiscardResult",
             "x-aex-discriminator-value": "workspace_discard"
           },
           {
+            "$ref": "aex:schema:SessionTrashResult",
+            "x-aex-discriminator-value": "session_trash"
+          },
+          {
+            "$ref": "aex:schema:SessionRestoreResult",
+            "x-aex-discriminator-value": "session_restore"
+          },
+          {
             "$ref": "aex:schema:SessionTombstone",
-            "x-aex-discriminator-value": "session_delete"
+            "x-aex-discriminator-value": "session_purge"
           },
           {
             "$ref": "aex:schema:CredentialRebindResult",
@@ -2518,6 +2528,13 @@
         "enum": [
           "ready",
           "revoked"
+        ],
+        "type": "string"
+      },
+      "PurgeCascade": {
+        "enum": [
+          "detach_descendants",
+          "purge_closure"
         ],
         "type": "string"
       },
@@ -3539,6 +3556,37 @@
         ],
         "type": "object"
       },
+      "SessionCloneRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "credentials": {
+            "$ref": "aex:schema:CloneCredentials",
+            "description": "Whether to inherit custody."
+          },
+          "files": {
+            "$ref": "aex:schema:CloneFiles",
+            "description": "Which tree to start from."
+          }
+        },
+        "required": [
+          "credentials",
+          "files"
+        ],
+        "type": "object"
+      },
+      "SessionCloneResult": {
+        "additionalProperties": false,
+        "properties": {
+          "session": {
+            "$ref": "aex:schema:Session",
+            "description": "The new, independent session."
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
       "SessionComputeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3658,67 +3706,23 @@
         ],
         "type": "object"
       },
-      "SessionDeleteRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "cascade": {
-            "description": "Whether forked descendants are deleted too.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "cascade"
-        ],
-        "type": "object"
-      },
-      "SessionForkRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "credentials": {
-            "$ref": "aex:schema:ForkCredentials",
-            "description": "Whether to inherit custody."
-          },
-          "files": {
-            "$ref": "aex:schema:ForkFiles",
-            "description": "Which tree to start from."
-          }
-        },
-        "required": [
-          "credentials",
-          "files"
-        ],
-        "type": "object"
-      },
-      "SessionForkResult": {
-        "additionalProperties": false,
-        "properties": {
-          "session": {
-            "$ref": "aex:schema:Session",
-            "description": "The new session."
-          }
-        },
-        "required": [
-          "session"
-        ],
-        "type": "object"
-      },
       "SessionLineage": {
         "additionalProperties": false,
         "properties": {
-          "forkOperationId": {
-            "description": "The operation that forked it.",
+          "cloneOperationId": {
+            "description": "The operation that cloned it.",
             "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "operation"
           },
-          "forkedAtPersistRevision": {
-            "description": "The parent revision forked from.",
+          "clonedAtPersistRevision": {
+            "description": "The source revision cloned from.",
             "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
-          "parentSessionId": {
-            "description": "The session this was forked from.",
+          "originSessionId": {
+            "description": "The session this was cloned from.",
             "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "session"
@@ -3914,6 +3918,19 @@
         ],
         "type": "object"
       },
+      "SessionPurgeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cascade": {
+            "$ref": "aex:schema:PurgeCascade",
+            "description": "How clone descendants are treated."
+          }
+        },
+        "required": [
+          "cascade"
+        ],
+        "type": "object"
+      },
       "SessionRegisteredSelection": {
         "additionalProperties": false,
         "properties": {
@@ -3964,6 +3981,40 @@
           }
         },
         "required": [],
+        "type": "object"
+      },
+      "SessionRestoreResult": {
+        "additionalProperties": false,
+        "properties": {
+          "restoredAt": {
+            "description": "When the restore committed.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after the restore.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "aex:schema:SessionStatus",
+            "description": "What the session is doing now."
+          }
+        },
+        "required": [
+          "restoredAt",
+          "sessionId",
+          "sessionRevision",
+          "status"
+        ],
         "type": "object"
       },
       "SessionStatus": {
@@ -4040,6 +4091,42 @@
           "id",
           "operationId",
           "workspaceId"
+        ],
+        "type": "object"
+      },
+      "SessionTrashResult": {
+        "additionalProperties": false,
+        "properties": {
+          "recoveryDeadline": {
+            "description": "After this instant restore is refused.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after the trash.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trashedAt": {
+            "description": "When the trash committed.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          }
+        },
+        "required": [
+          "recoveryDeadline",
+          "sessionId",
+          "sessionRevision",
+          "trashedAt"
         ],
         "type": "object"
       },
@@ -7567,6 +7654,162 @@
         "x-aex-transport": "unary"
       }
     },
+    "/api/sessions/{sessionId}/clones": {
+      "post": {
+        "operationId": "session_clone",
+        "parameters": [
+          {
+            "description": "The session the request is scoped to.",
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+              "type": "string",
+              "x-aex-id": "session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "aex:schema:SessionCloneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:Operation"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Admit the durable clone operation.",
+        "tags": [
+          "sessions"
+        ],
+        "x-aex-alt-principal": null,
+        "x-aex-body-class": "aex_json",
+        "x-aex-errors": [
+          "unauthenticated",
+          "insufficient_scope",
+          "not_found",
+          "operation_idempotency_conflict",
+          "invalid_request",
+          "limit_exceeded",
+          "session_not_idle",
+          "session_deleting",
+          "session_deleted",
+          "account_paused",
+          "precondition_failed",
+          "wrong_workspace_region"
+        ],
+        "x-aex-etag": "optional_if_match",
+        "x-aex-idempotency": "operation_id",
+        "x-aex-pause-exempt": false,
+        "x-aex-safe-retry": false,
+        "x-aex-scope": "sessions:write",
+        "x-aex-transport": "unary"
+      }
+    },
     "/api/sessions/{sessionId}/credential-rebinds": {
       "post": {
         "operationId": "session_credential_rebind",
@@ -7697,128 +7940,6 @@
         "x-aex-pause-exempt": false,
         "x-aex-safe-retry": false,
         "x-aex-scope": "secrets:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/sessions/{sessionId}/deletions": {
-      "post": {
-        "operationId": "session_delete",
-        "parameters": [
-          {
-            "description": "The session the request is scoped to.",
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:SessionDeleteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Operation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Admit the durable session-deletion operation.",
-        "tags": [
-          "sessions"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "not_found",
-          "operation_idempotency_conflict",
-          "invalid_request",
-          "session_deleted",
-          "deletion_in_progress",
-          "wrong_workspace_region"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "operation_id",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "sessions:delete",
         "x-aex-transport": "unary"
       }
     },
@@ -9086,161 +9207,6 @@
         "x-aex-pause-exempt": false,
         "x-aex-safe-retry": true,
         "x-aex-scope": "files:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/sessions/{sessionId}/forks": {
-      "post": {
-        "operationId": "session_fork",
-        "parameters": [
-          {
-            "description": "The session the request is scoped to.",
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:SessionForkRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Operation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Admit the durable fork operation.",
-        "tags": [
-          "sessions"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "not_found",
-          "operation_idempotency_conflict",
-          "invalid_request",
-          "limit_exceeded",
-          "session_deleting",
-          "session_deleted",
-          "account_paused",
-          "precondition_failed",
-          "wrong_workspace_region"
-        ],
-        "x-aex-etag": "optional_if_match",
-        "x-aex-idempotency": "operation_id",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "sessions:write",
         "x-aex-transport": "unary"
       }
     },
@@ -10690,6 +10656,272 @@
         "x-aex-pause-exempt": false,
         "x-aex-safe-retry": false,
         "x-aex-scope": "files:write",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/sessions/{sessionId}/purges": {
+      "post": {
+        "operationId": "session_purge",
+        "parameters": [
+          {
+            "description": "The session the request is scoped to.",
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+              "type": "string",
+              "x-aex-id": "session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "aex:schema:SessionPurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:Operation"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Admit the durable purge operation. Purge is irreversible.",
+        "tags": [
+          "sessions"
+        ],
+        "x-aex-alt-principal": null,
+        "x-aex-body-class": "aex_json",
+        "x-aex-errors": [
+          "unauthenticated",
+          "insufficient_scope",
+          "not_found",
+          "operation_idempotency_conflict",
+          "invalid_request",
+          "session_deleted",
+          "deletion_in_progress",
+          "wrong_workspace_region"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "operation_id",
+        "x-aex-pause-exempt": true,
+        "x-aex-safe-retry": false,
+        "x-aex-scope": "sessions:delete",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/sessions/{sessionId}/restores": {
+      "post": {
+        "operationId": "session_restore",
+        "parameters": [
+          {
+            "description": "The session the request is scoped to.",
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+              "type": "string",
+              "x-aex-id": "session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "aex:schema:EmptyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:Operation"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Admit the durable restore operation, which is legal only inside the recovery window.",
+        "tags": [
+          "sessions"
+        ],
+        "x-aex-alt-principal": null,
+        "x-aex-body-class": "aex_json",
+        "x-aex-errors": [
+          "unauthenticated",
+          "insufficient_scope",
+          "not_found",
+          "operation_idempotency_conflict",
+          "invalid_request",
+          "session_deleted",
+          "deletion_in_progress",
+          "account_paused",
+          "precondition_failed",
+          "wrong_workspace_region"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "operation_id",
+        "x-aex-pause-exempt": false,
+        "x-aex-safe-retry": false,
+        "x-aex-scope": "sessions:delete",
         "x-aex-transport": "unary"
       }
     },
@@ -13281,6 +13513,129 @@
         "x-aex-pause-exempt": false,
         "x-aex-safe-retry": true,
         "x-aex-scope": "telemetry:read",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/sessions/{sessionId}/trashes": {
+      "post": {
+        "operationId": "session_trash",
+        "parameters": [
+          {
+            "description": "The session the request is scoped to.",
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+              "type": "string",
+              "x-aex-id": "session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "aex:schema:EmptyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:Operation"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Admit the durable trash operation, which starts the recovery window.",
+        "tags": [
+          "sessions"
+        ],
+        "x-aex-alt-principal": null,
+        "x-aex-body-class": "aex_json",
+        "x-aex-errors": [
+          "unauthenticated",
+          "insufficient_scope",
+          "not_found",
+          "operation_idempotency_conflict",
+          "invalid_request",
+          "session_deleting",
+          "session_deleted",
+          "deletion_in_progress",
+          "wrong_workspace_region"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "operation_id",
+        "x-aex-pause-exempt": true,
+        "x-aex-safe-retry": false,
+        "x-aex-scope": "sessions:delete",
         "x-aex-transport": "unary"
       }
     },

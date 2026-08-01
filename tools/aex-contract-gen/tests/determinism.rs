@@ -99,15 +99,15 @@ fn the_operation_arity_matches_the_pinned_totals() {
         .find(|plane| plane.id == "regional")
         .expect("regional plane");
     assert_eq!(central.operations.len(), 27);
-    assert_eq!(regional.operations.len(), 117);
-    assert_eq!(ir.operations().len(), 144);
+    assert_eq!(regional.operations.len(), 119);
+    assert_eq!(ir.operations().len(), 146);
 
     let ids: BTreeSet<&str> = ir
         .operations()
         .iter()
         .map(|operation| operation.id.as_str())
         .collect();
-    assert_eq!(ids.len(), 144, "operationIds are not globally unique");
+    assert_eq!(ids.len(), 146, "operationIds are not globally unique");
     for id in &ids {
         assert!(
             id.chars().all(|character| character.is_ascii_lowercase()
