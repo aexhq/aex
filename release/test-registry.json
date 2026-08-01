@@ -488,14 +488,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-content-dynamodb": {
       "name": "aex-content-dynamodb",
@@ -1209,14 +1210,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-otlp-admission": {
       "name": "aex-otlp-admission",
@@ -1621,7 +1623,8 @@
           "unit"
         ],
         "concerns": [
-          "property"
+          "property",
+          "security"
         ],
         "seams": [],
         "security_tier": "secret",
@@ -1629,14 +1632,16 @@
           "none"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit",
+          "security": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-secret-keystore-dynamodb": {
       "name": "aex-secret-keystore-dynamodb",
@@ -1692,14 +1697,16 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "faults": "unit",
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-session-domain": {
       "name": "aex-session-domain",
@@ -1720,14 +1727,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-session-dynamodb": {
       "name": "aex-session-dynamodb",
@@ -2122,14 +2130,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "packages/cli": {
       "name": "@aexhq/cli",

@@ -198,12 +198,11 @@ dependencies = [
 name = "aex-content-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-wire",
  "blake3",
- "serde",
- "sha2 0.11.0",
+ "proptest",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]
@@ -663,10 +662,12 @@ dependencies = [
 name = "aex-operation-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-content-domain",
+ "aex-wire",
+ "blake3",
+ "proptest",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]
@@ -874,10 +875,10 @@ dependencies = [
 name = "aex-secret-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-wire",
+ "blake3",
+ "proptest",
  "thiserror",
- "time",
- "uuid",
  "zeroize",
 ]
 
@@ -902,24 +903,34 @@ dependencies = [
 name = "aex-session-app"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
+ "aex-internal-contracts",
  "aex-operation-domain",
+ "aex-secret-domain",
  "aex-session-domain",
+ "aex-wire",
+ "aex-workspace-domain",
  "async-trait",
- "futures",
- "serde",
+ "proptest",
  "thiserror",
  "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
 name = "aex-session-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-content-domain",
+ "aex-internal-contracts",
+ "aex-operation-domain",
+ "aex-secret-domain",
+ "aex-wire",
+ "proptest",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]
@@ -1135,10 +1146,12 @@ dependencies = [
 name = "aex-workspace-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-content-domain",
+ "aex-wire",
+ "blake3",
+ "proptest",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]

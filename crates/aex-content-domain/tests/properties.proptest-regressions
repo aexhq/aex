@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a4985316406a7446f61708cf26666191b68523996dc937caae16289e5e30672f # shrinks to entries = [TreeEntry { path: NormalizedPath(ß), node: File { body: ContentHash([175, 85, 112, 245, 161, 129, 11, 122, 247, 140, 175, 75, 199, 10, 102, 15, 13, 245, 30, 66, 186, 249, 29, 77, 229, 178, 50, 141, 224, 232, 61, 252]), size_bytes: 0, mode: FileMode(0644), mtime: Timestamp { millis: 1700000000000 }, media_type: None } }], extra = TreeEntry { path: NormalizedPath(ß/a), node: File { body: ContentHash([175, 85, 112, 245, 161, 129, 11, 122, 247, 140, 175, 75, 199, 10, 102, 15, 13, 245, 30, 66, 186, 249, 29, 77, 229, 178, 50, 141, 224, 232, 61, 252]), size_bytes: 0, mode: FileMode(0644), mtime: Timestamp { millis: 1700000000000 }, media_type: None } }
