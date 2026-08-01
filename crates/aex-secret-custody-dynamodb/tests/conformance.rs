@@ -408,3 +408,23 @@ async fn a_page_resumes_from_the_continuation_it_was_given() {
     );
     assert_eq!(body["Limit"].as_u64(), Some(25));
 }
+
+/// `aex_secret_domain::set` produces `revoked_at: None`, so a set that left a
+/// stale instant behind would publish a revocation date for a record that is
+/// admissible again.
+#[tokio::test]
+async fn a_set_clears_the_revocation_instant_it_supersedes() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let plan = expressions::set(TABLE, &generation(), &metadata(), None).expect("compiles");
+    let _ignored = store.commit(&plan).await;
+
+    let body = captured_body(receiver);
+    let update = body["TransactItems"][1]["Update"]["UpdateExpression"]
+        .as_str()
+        .expect("an update expression");
+    assert!(
+        update.contains("REMOVE revokedAt"),
+        "the expression must match the domain transition it commits: {update}"
+    );
+}

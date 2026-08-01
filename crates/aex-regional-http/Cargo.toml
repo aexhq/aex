@@ -26,6 +26,7 @@ scenarios = []
 [package.metadata.aex.targets]
 primitives = "unit"
 mount = "unit"
+projection = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
@@ -52,10 +53,17 @@ uuid.workspace = true
 zeroize.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
+# The projection module's inputs: the decoded authority rows. The alternative to
+# depending on the adapters is a third view type per model, which is exactly the
+# drift a single projection exists to prevent (RS-28).
+aex-secret-domain = { path = "../aex-secret-domain" }
+aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
+aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false }
 
 [dev-dependencies]
 http-body-util.workspace = true
 proptest.workspace = true
+serde.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "macros"] }
 
 [[test]]
@@ -65,3 +73,7 @@ path = "tests/primitives.rs"
 [[test]]
 name = "mount"
 path = "tests/mount.rs"
+
+[[test]]
+name = "projection"
+path = "tests/projection.rs"

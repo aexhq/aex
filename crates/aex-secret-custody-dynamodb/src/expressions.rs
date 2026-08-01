@@ -109,7 +109,8 @@ pub fn set(
              revocationEpoch = if_not_exists(revocationEpoch, :zero), \
              revokedThroughRevision = if_not_exists(revokedThroughRevision, :zero), \
              #name = :name, workspaceId = :workspace, \
-             createdAt = if_not_exists(createdAt, :now), updatedAt = :now",
+             createdAt = if_not_exists(createdAt, :now), updatedAt = :now \
+             REMOVE revokedAt",
         )
         .expression_attribute_names("#state", "state")
         .expression_attribute_names("#name", "name")

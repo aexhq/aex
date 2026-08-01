@@ -863,6 +863,9 @@ name = "aex-regional-http"
 version = "0.1.0"
 dependencies = [
  "aex-internal-contracts",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-domain",
+ "aex-session-dynamodb",
  "aex-wire",
  "async-trait",
  "axum",

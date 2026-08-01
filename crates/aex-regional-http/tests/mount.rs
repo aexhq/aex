@@ -19,7 +19,7 @@ use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId, Uuid7, WorkspaceId};
 use aex_wire::routes::{Plane, RouteId, route};
 use aex_wire::scopes::ScopeSet;
-use aex_wire::server::{RequestContext as WireContext, RouteGroup};
+use aex_wire::server::{AcceptKind, RouteGroup};
 use aex_wire::types::{Region, RequestId};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -37,7 +37,8 @@ impl UnaryDispatch for EchoDispatch {
 
     async fn dispatch(
         &self,
-        _cx: &WireContext,
+        _cx: &RequestContext,
+        _accept: AcceptKind,
         raw: RawRequest<'_>,
         _limits: RequestLimits,
     ) -> WireResult<RawResponse> {
@@ -370,7 +371,8 @@ fn a_wrongly_owned_route_is_a_mount_error() {
         }
         async fn dispatch(
             &self,
-            _cx: &WireContext,
+            _cx: &RequestContext,
+            _accept: AcceptKind,
             _raw: RawRequest<'_>,
             _limits: RequestLimits,
         ) -> WireResult<RawResponse> {
