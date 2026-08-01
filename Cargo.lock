@@ -902,10 +902,16 @@ dependencies = [
 name = "aex-session-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-content-domain",
+ "aex-internal-contracts",
+ "aex-operation-domain",
+ "aex-secret-domain",
+ "aex-wire",
+ "proptest",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]
