@@ -15,7 +15,7 @@ CREATE TYPE finance.transaction_kind AS ENUM (
 
 CREATE TABLE finance.account (
   account_id uuid PRIMARY KEY,
-  org_id uuid NULL REFERENCES control.organization (org_id) ON DELETE RESTRICT,
+  org_id uuid NULL REFERENCES control.organization (id) ON DELETE RESTRICT,
   kind finance.account_kind NOT NULL,
   normal_side finance.account_side NOT NULL,
   currency finance.currency NOT NULL DEFAULT 'USD',
@@ -154,7 +154,7 @@ CREATE TABLE finance.pricing_context (
 
 CREATE TABLE finance.reservation (
   reservation_id uuid PRIMARY KEY,
-  org_id uuid NOT NULL REFERENCES control.organization (org_id),
+  org_id uuid NOT NULL REFERENCES control.organization (id),
   workspace_id uuid NOT NULL,
   region text NOT NULL,
   scope_kind text NOT NULL CHECK (scope_kind IN ('session', 'run', 'operation')),
@@ -221,7 +221,7 @@ CREATE INDEX receipt_outbox_pending_idx
 
 CREATE TABLE finance.provider_effect (
   effect_id uuid PRIMARY KEY,
-  org_id uuid NOT NULL REFERENCES control.organization (org_id),
+  org_id uuid NOT NULL REFERENCES control.organization (id),
   kind text NOT NULL CHECK (kind IN (
     'customer_create', 'checkout_session_create', 'payment_intent_off_session',
     'refund_create', 'tax_calculation_create', 'tax_transaction_create'
@@ -272,7 +272,7 @@ CREATE INDEX provider_event_object_time_idx
   ON finance.provider_event_inbox (object_id, created_at_provider DESC);
 
 CREATE TABLE finance.billing_account (
-  org_id uuid PRIMARY KEY REFERENCES control.organization (org_id),
+  org_id uuid PRIMARY KEY REFERENCES control.organization (id),
   provider_customer_id text NULL UNIQUE,
   default_payment_method_id text NULL,
   auto_topup_enabled boolean NOT NULL DEFAULT false,
@@ -289,7 +289,7 @@ CREATE TABLE finance.billing_account (
 
 CREATE TABLE finance.statement (
   statement_id uuid PRIMARY KEY,
-  org_id uuid NOT NULL REFERENCES control.organization (org_id),
+  org_id uuid NOT NULL REFERENCES control.organization (id),
   period text NOT NULL CHECK (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
   state text NOT NULL CHECK (state IN ('building', 'issued')),
   opening_microusd bigint NOT NULL,

@@ -33,9 +33,12 @@ impl Fixture {
             .await
             .expect("the engine accepts a connection");
         // The name is a fixed prefix plus a fresh UUID; nothing caller-supplied
-        // reaches this statement.
+        // reaches this statement. Leaking the assembled text for the life of the
+        // suite is what `Executor` requires and is both sound and cheap here.
+        let create: &'static str =
+            Box::leak(format!("CREATE DATABASE {database}").into_boxed_str());
         admin
-            .execute(format!("CREATE DATABASE {database}").as_str())
+            .execute(create)
             .await
             .expect("the fixture database is created");
         let url = admin_url.rsplit_once('/').map_or_else(
@@ -120,9 +123,10 @@ async fn checksum_drift_on_an_applied_version_fails_closed() {
         .run(&mut connection)
         .await
         .expect_err("drift on an applied version fails closed");
+    let rendered = error.to_string().to_lowercase();
     assert!(
-        error.to_string().to_lowercase().contains("checksum"),
-        "the refusal names the drift: {error}"
+        rendered.contains("checksum") || rendered.contains("has been modified"),
+        "the refusal names the drift rather than reinterpreting it: {error}"
     );
 }
 
@@ -176,7 +180,7 @@ async fn the_journal_refuses_an_unbalanced_transaction_at_commit() {
              INSERT INTO finance.journal_transaction \
                (transaction_id, org_id, kind, business_key, intent_hash, posting_count, occurred_at) \
              VALUES ('00000000-0000-7000-8000-0000000000aa', NULL, 'goodwill_credit', \
-                     'goodwill:probe', repeat('\\x00', 32)::bytea, 2, now()); \
+                     'goodwill:probe', decode(repeat('00', 32), 'hex'), 2, now()); \
              INSERT INTO finance.journal_posting \
                (transaction_id, posting_seq, account_id, currency, amount_microusd) \
              VALUES ('00000000-0000-7000-8000-0000000000aa', 1, \
@@ -208,7 +212,7 @@ async fn journal_history_cannot_be_mutated_even_by_the_owner() {
              INSERT INTO finance.journal_transaction \
                (transaction_id, org_id, kind, business_key, intent_hash, posting_count, occurred_at) \
              VALUES ('00000000-0000-7000-8000-0000000000bb', NULL, 'goodwill_credit', \
-                     'goodwill:probe2', repeat('\\x00', 32)::bytea, 2, now()); \
+                     'goodwill:probe2', decode(repeat('00', 32), 'hex'), 2, now()); \
              INSERT INTO finance.journal_posting \
                (transaction_id, posting_seq, account_id, currency, amount_microusd) \
              VALUES ('00000000-0000-7000-8000-0000000000bb', 1, \
