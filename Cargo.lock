@@ -1197,18 +1197,22 @@ dependencies = [
 name = "aex-usage-compute-aws"
 version = "0.1.0"
 dependencies = [
+ "aex-usage-application",
  "aex-usage-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "futures",
  "serde",
  "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -1290,18 +1294,22 @@ dependencies = [
 name = "aex-usage-transfer-aws"
 version = "0.1.0"
 dependencies = [
+ "aex-usage-application",
  "aex-usage-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "futures",
  "serde",
  "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
+ "xxhash-rust",
 ]
 
 [[package]]

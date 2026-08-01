@@ -37,7 +37,7 @@ use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::CATEGORY;
 use crate::attribute::{Row, RowError};
-use crate::expressions::{FACT_BODY, StorageAuthority};
+use crate::expressions::{FACT_BODY, TransferAuthority};
 
 /// Why a stored row could not be turned into a domain value.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -108,7 +108,7 @@ pub fn decode_fact(map: &HashMap<String, AttributeValue>) -> Result<UsageFact, D
         .kind
         .meter()
         .map_or("observability", aex_usage_domain::meter::Meter::id);
-    StorageAuthority::new()
+    TransferAuthority::new()
         .verify_read(meter_id)
         .map_err(|error| DecodeError::Unknown {
             what: "meter",
@@ -499,7 +499,7 @@ mod tests {
         DecodeError, decode_claim, decode_fact, decode_frontier, decode_outbox, decode_receipt,
     };
     use crate::attribute::{self, from_stream_json};
-    use crate::expressions::{FACT_BODY, ReceiptRow, StorageAuthority};
+    use crate::expressions::{FACT_BODY, ReceiptRow, TransferAuthority};
     use aex_usage_domain::fact::{
         Attribution, FactDraft, FactKind, ResourceGeneration, ResourceKind, SCHEMA_VERSION,
         UsageFact,
@@ -639,7 +639,7 @@ mod tests {
     }
 
     fn fact_row(fact: &UsageFact) -> HashMap<String, AttributeValue> {
-        attribute::item(&StorageAuthority::new().fact_item(fact).expect("builds"))
+        attribute::item(&TransferAuthority::new().fact_item(fact).expect("builds"))
     }
 
     /// Renders a stored row the way the stream delivers it.
@@ -762,7 +762,7 @@ mod tests {
     #[test]
     fn a_row_of_another_shape_is_never_decoded_as_a_fact() {
         let frontier = attribute::item(
-            &StorageAuthority::new()
+            &TransferAuthority::new()
                 .frontier_item(&Frontier::empty(region(), workspace(), crate::CATEGORY))
                 .expect("builds"),
         );
@@ -775,7 +775,7 @@ mod tests {
             .admit(AcceptedSequence::new(1).expect("one"))
             .expect("admits");
         let row = attribute::item(
-            &StorageAuthority::new()
+            &TransferAuthority::new()
                 .frontier_item(&advancing)
                 .expect("builds"),
         );
@@ -786,7 +786,7 @@ mod tests {
             PoisonReason::Undecodable,
         );
         let row = attribute::item(
-            &StorageAuthority::new()
+            &TransferAuthority::new()
                 .frontier_item(&parked)
                 .expect("builds"),
         );
@@ -797,7 +797,7 @@ mod tests {
     fn an_outbox_row_and_its_claim_round_trip() {
         let original = fact(9);
         let outbox = attribute::item(
-            &StorageAuthority::new()
+            &TransferAuthority::new()
                 .outbox_item(&original, 5)
                 .expect("builds"),
         );
@@ -808,7 +808,7 @@ mod tests {
         assert_eq!(decoded.attempts, 0);
 
         let claim = attribute::item(
-            &StorageAuthority::new()
+            &TransferAuthority::new()
                 .claim_item(&original)
                 .expect("builds"),
         );
@@ -826,7 +826,7 @@ mod tests {
         let original = fact(4);
         for rated in [1_234_i128, 0, -9_999] {
             let row = attribute::item(
-                &StorageAuthority::new()
+                &TransferAuthority::new()
                     .receipt_item(
                         &ReceiptRow {
                             receipt_id: "rcpt-1",
