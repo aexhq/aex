@@ -9,6 +9,7 @@
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::{IdempotencyKey, IdempotencyKind};
+use aex_wire::ids::WorkspaceId;
 use aex_wire::routes::route;
 use aex_wire::types::{ETag, Region, Timestamp};
 use http::HeaderMap;
@@ -29,9 +30,25 @@ use crate::mount::{AdmissionRequest, EdgeAdmission};
 /// A revoked key, a paused account or an advanced revocation epoch is visible
 /// regionally before the 30-second assertion expires, which is the only reason
 /// a 30-second lifetime is safe.
+///
+/// # Why it takes two reads rather than one
+///
+/// The projection is keyed the way its writer keys it: revocation by API key,
+/// placement by workspace. A credential names its own key and nothing else — the
+/// workspace it belongs to is a fact only the assertion carries — so the two
+/// facts become available at two different points and are read at those two
+/// points. The alternative is a credential-to-workspace index nothing writes.
+///
+/// Both reads happen on **every** request. Neither is cached, which is what
+/// keeps the 30-second assertion cache safe: a cached assertion still loses to a
+/// revocation or a pause published a moment ago.
 #[async_trait::async_trait]
 pub trait ProjectionReader: Send + Sync + 'static {
-    /// Reads the monotonic epochs and account state projected for a credential.
+    /// Reads the revocation floors bound to the presented credential alone.
+    ///
+    /// This runs before any assertion exists, so it can only speak for the
+    /// credential: an absent revocation row is the zero floor, not a missing
+    /// answer.
     ///
     /// # Errors
     ///
@@ -40,16 +57,27 @@ pub trait ProjectionReader: Send + Sync + 'static {
     async fn project(
         &self,
         credential: &PresentedCredential,
-    ) -> Result<ProjectedState, ProjectionError>;
+    ) -> Result<ProjectedEpochs, ProjectionError>;
+
+    /// Reads the placement of the workspace a verified assertion names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectionError::Unknown`] when this region holds no placement
+    /// for the workspace, and [`ProjectionError::Unavailable`] when it could not
+    /// answer. Neither is ever downgraded to an optimistic `active`.
+    async fn placement(&self, workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError>;
 }
 
-/// What the regional projection says right now.
+/// What the regional projection says about one workspace right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectedState {
     /// The monotonic epochs an assertion must not predate.
     pub epochs: ProjectedEpochs,
     /// Whether paid work is admitted.
     pub account_state: AccountState,
+    /// The region the workspace is placed in.
+    pub region: Region,
 }
 
 /// Why the regional projection could not answer.
@@ -157,28 +185,26 @@ where
         // 1–2: a credential must be present and well formed.
         let credential = presented(request.headers)?;
 
-        // 3: the regional projection is consulted before the assertion, so a
-        // revoked credential loses even while its assertion is still inside its
-        // 30-second lifetime.
-        let projected =
-            self.projection
-                .project(&credential)
-                .await
-                .map_err(|failure| match failure {
-                    ProjectionError::Unknown => WireError::new(ErrorCode::Unauthenticated),
-                    ProjectionError::Unavailable => {
-                        WireError::new(ErrorCode::AccountStateUnavailable)
-                    }
-                })?;
+        // 3: the credential's own revocation floor is consulted before the
+        // assertion, so a revoked credential loses even while its assertion is
+        // still inside its 30-second lifetime.
+        let credential_floor = self
+            .projection
+            .project(&credential)
+            .await
+            .map_err(projection_error)?;
 
         // 4: verify the credential-bound assertion for this audience and region.
         let verified = self
             .assertions
-            .resolve(&credential, projected.epochs, now)
+            .resolve(&credential, credential_floor, now)
             .await
             .map_err(auth_error)?;
 
-        // 5: immutable placement.
+        // 5: immutable placement. The assertion names a workspace; the regional
+        // projection is what decides whether that workspace lives here, what its
+        // current floors are, and whether it is paused. None of those three come
+        // from the assertion, because all three can change inside its lifetime.
         if verified.assertion.region != self.region {
             return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
         }
@@ -186,6 +212,20 @@ where
             .assertion
             .workspace
             .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
+        let projected = self
+            .projection
+            .placement(workspace)
+            .await
+            .map_err(projection_error)?;
+        if projected.region != self.region {
+            return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
+        }
+        if verified.assertion.key_epoch.0 < projected.epochs.key
+            || verified.assertion.account_epoch.0 < projected.epochs.account
+            || verified.assertion.revocation_epoch.0 < projected.epochs.revocation
+        {
+            return Err(WireError::new(ErrorCode::Unauthenticated));
+        }
 
         // 6: the scope the table declares for this route.
         if let Some(required) = descriptor.required_scope
@@ -222,7 +262,7 @@ where
 
 fn authorization(
     verified: &VerifiedAuthorization,
-    workspace: aex_wire::ids::WorkspaceId,
+    workspace: WorkspaceId,
     projected: ProjectedState,
 ) -> RegionalAuthorization {
     RegionalAuthorization {
@@ -259,6 +299,16 @@ fn presented(headers: &HeaderMap) -> Result<PresentedCredential, WireError> {
         .map_err(|_| WireError::new(ErrorCode::Unauthenticated))
 }
 
+/// A projection that has no record of a credential or workspace refuses the
+/// request as unauthenticated; one that could not answer refuses it as
+/// unavailable. Neither becomes an optimistic admission.
+fn projection_error(failure: ProjectionError) -> WireError {
+    match failure {
+        ProjectionError::Unknown => WireError::new(ErrorCode::Unauthenticated),
+        ProjectionError::Unavailable => WireError::new(ErrorCode::AccountStateUnavailable),
+    }
+}
+
 fn auth_error(failure: AuthFailure) -> WireError {
     match failure {
         AuthFailure::SourceUnavailable => WireError::new(ErrorCode::AuthenticationUnavailable),
@@ -291,7 +341,7 @@ type ReplayIdentity = (
 fn replay_identity(
     kind: IdempotencyKind,
     request: &AdmissionRequest<'_>,
-    workspace: aex_wire::ids::WorkspaceId,
+    workspace: WorkspaceId,
 ) -> Result<ReplayIdentity, WireError> {
     let supplied_key = request
         .headers

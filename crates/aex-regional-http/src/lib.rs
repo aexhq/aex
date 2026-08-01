@@ -14,6 +14,7 @@
 //! - the wire types themselves (`aex-wire`)
 
 pub mod assertion;
+pub mod authz;
 pub mod capability;
 pub mod config;
 pub mod context;
@@ -30,6 +31,9 @@ pub mod projection;
 pub mod router;
 pub mod stream;
 
+pub use authz::{
+    Ed25519Anchors, LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
+};
 pub use capability::{CompositionManifest, admit};
 pub use config::{ConfigError, Environment, Lookup};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};

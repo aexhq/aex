@@ -27,6 +27,7 @@ scenarios = []
 primitives = "unit"
 mount = "unit"
 projection = "unit"
+authz = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
@@ -34,8 +35,18 @@ live_suite = "composition crate; the mounted-route set is a unit fact and the de
 [dependencies]
 axum.workspace = true
 async-trait.workspace = true
+# `central-authz` is IAM-invoked rather than routed, so the assertion exchange is
+# a direct Lambda invoke and the caller's execution role is the authentication.
+aws-sdk-lambda.workspace = true
+# Parameter Store holds the assertion trust anchors and the cursor signing ring.
+# Both are read once at cold start, before the listener binds.
+aws-sdk-ssm.workspace = true
 base64.workspace = true
 bytes.workspace = true
+# The trust anchors verify with the same library the issuer signs with, so
+# `verify_strict` can reject small-order keys and non-canonical signatures
+# without rejecting anything `central-authz` produces.
+ed25519-dalek.workspace = true
 hmac.workspace = true
 http.workspace = true
 lambda_http.workspace = true
@@ -58,7 +69,9 @@ aex-internal-contracts = { path = "../aex-internal-contracts" }
 # drift a single projection exists to prevent (RS-28).
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
-aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false }
+aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false, features = [
+    "authz-projection",
+] }
 
 [dev-dependencies]
 http-body-util.workspace = true
@@ -77,3 +90,7 @@ path = "tests/mount.rs"
 [[test]]
 name = "projection"
 path = "tests/projection.rs"
+
+[[test]]
+name = "authz"
+path = "tests/authz.rs"

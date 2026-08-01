@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aex_internal_contracts::assertion::{
-    AssertionAudience, AuthorizationAssertion, MAX_LIFETIME_MS,
+    AssertionAudience, AuthorizationAssertion, CredentialDigest, MAX_LIFETIME_MS,
+    credential_bound_signing_input,
 };
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
-use serde::Serialize;
 use sha2::Digest as _;
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
@@ -98,21 +98,32 @@ impl SignedAssertion {
         })
     }
 
-    fn verification_input(&self) -> Result<Vec<u8>, AuthFailure> {
-        #[derive(Serialize)]
-        struct Bound<'a> {
-            assertion: &'a AuthorizationAssertion,
-            credential_binding: [u8; 32],
-        }
-        let mut input = b"aex:credential-bound-authorization-assertion:v1\x1f".to_vec();
-        input.extend_from_slice(
-            &aex_wire::canonical::to_jcs_bytes(&Bound {
-                assertion: &self.assertion,
-                credential_binding: self.credential_binding,
-            })
-            .map_err(|_| AuthFailure::MalformedAssertion)?,
-        );
-        Ok(input)
+    /// Which trust anchor is claimed to have signed this assertion.
+    #[must_use]
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    /// The detached signature, for a verifier that was handed the transport
+    /// rather than asked to check it.
+    ///
+    /// A signature is public data: it proves nothing without the message and the
+    /// key, and it is already visible on the internal wire.
+    #[must_use]
+    pub fn signature(&self) -> &[u8] {
+        &self.signature
+    }
+
+    /// The exact bytes a signature over this assertion must cover.
+    ///
+    /// One definition, published by the contract crate, so the issuing service
+    /// and every verifying edge cannot disagree about what was signed.
+    #[must_use]
+    pub fn signing_input(&self) -> Vec<u8> {
+        credential_bound_signing_input(
+            &self.assertion,
+            &CredentialDigest::new(self.credential_binding),
+        )
     }
 }
 
@@ -222,7 +233,7 @@ pub fn verify<V: KeyVerifier>(
     projected: ProjectedEpochs,
     now: Timestamp,
 ) -> Result<VerifiedAuthorization, AuthFailure> {
-    let input = signed.verification_input()?;
+    let input = signed.signing_input();
     if !verifier.verify(&signed.key_id, &input, &signed.signature) {
         return Err(AuthFailure::Signature);
     }

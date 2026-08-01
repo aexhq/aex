@@ -11,10 +11,12 @@
 //! revocation projection.
 
 use aex_wire::idempotency::{PrincipalKind, PrincipalScope};
-use aex_wire::ids::{OrganizationId, SessionId, UserId, WorkspaceId};
+use aex_wire::ids::{ApiKeyId, OrganizationId, SessionId, UserId, WorkspaceId};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{Region, Timestamp};
-use serde::{Deserialize, Serialize};
+use base64::Engine as _;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{Epoch, SchemaVersion};
 
@@ -46,6 +48,9 @@ pub enum AssertionError {
     /// `expires_at` was not after `issued_at`.
     #[error("an assertion must expire after it is issued")]
     NotForwardInTime,
+    /// The detached signature was empty or past the bound.
+    #[error("a signature is 1..={MAX_SIGNATURE_BYTES} bytes")]
+    SignatureBound,
 }
 
 /// The 30-second credential-bound central assertion.
@@ -117,6 +122,44 @@ pub fn signing_input(assertion: &AuthorizationAssertion) -> Vec<u8> {
     bytes
 }
 
+/// The domain-separated signing input for a **credential-bound** assertion.
+///
+/// [`signing_input`] covers the claim set alone, which is enough only where the
+/// transport itself establishes which credential was presented. The regional
+/// edge has no such transport: it receives an assertion in a response body, so
+/// the binding has to be inside the signed bytes or an assertion minted for one
+/// key could be replayed with another.
+///
+/// This is the one definition of those bytes. `central-authz` signs it and the
+/// regional edge verifies it; two spellings of "the covered bytes" is exactly
+/// the failure this function exists to prevent.
+///
+/// # Panics
+///
+/// Never: both members are composed of types that always canonicalize.
+#[must_use]
+pub fn credential_bound_signing_input(
+    assertion: &AuthorizationAssertion,
+    credential_binding: &CredentialDigest,
+) -> Vec<u8> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Bound<'a> {
+        assertion: &'a AuthorizationAssertion,
+        credential_binding: &'a CredentialDigest,
+    }
+    let mut bytes = Vec::with_capacity(640);
+    bytes.extend_from_slice(b"aex:credential-bound-authorization-assertion:v1\x1f");
+    bytes.extend_from_slice(
+        &aex_wire::to_jcs_bytes(&Bound {
+            assertion,
+            credential_binding,
+        })
+        .expect("a bound assertion always canonicalizes"),
+    );
+    bytes
+}
+
 /// A request for a browser-session assertion over one workspace.
 ///
 /// The clients stream found that `central-authz` could resolve an account token
@@ -140,6 +183,15 @@ pub struct ResolveSessionForWorkspace {
 }
 
 /// What `resolve_session_for_workspace` answers with.
+///
+/// # Known gap
+///
+/// This envelope carries the claim set and nothing that authenticates it, so a
+/// regional edge cannot verify it: verification needs the signing key id, the
+/// credential binding the signature covers, and the detached signature itself.
+/// [`SignedAssertionEnvelope`] is the shape that does carry them, and the
+/// browser-session operation should answer with it once the identity stream
+/// confirms the change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedSessionAssertion {
@@ -147,4 +199,175 @@ pub struct ResolvedSessionAssertion {
     pub schema_version: SchemaVersion,
     /// The assertion, with principal kind `user_session`.
     pub assertion: AuthorizationAssertion,
+}
+
+/// The longest a detached assertion signature may be.
+///
+/// Ed25519 produces 64 bytes. The bound is generous enough to survive an
+/// algorithm change and small enough that a hostile payload cannot make the
+/// verifier allocate.
+pub const MAX_SIGNATURE_BYTES: usize = 512;
+
+/// The longest a signing-key identity may be.
+pub const MAX_KEY_ID_BYTES: usize = 128;
+
+/// A 32-byte digest as it travels on the internal wire.
+///
+/// Canonical unpadded base64url in both directions: a padded or standard-alphabet
+/// spelling of the same bytes is refused, so one digest has exactly one encoding
+/// and a comparison of encoded forms is a comparison of bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CredentialDigest([u8; 32]);
+
+impl CredentialDigest {
+    /// Wraps a computed digest.
+    #[must_use]
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw digest.
+    #[must_use]
+    pub const fn get(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for CredentialDigest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CredentialDigest(<redacted:32 bytes>)")
+    }
+}
+
+impl Serialize for CredentialDigest {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for CredentialDigest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&text)
+            .map_err(|_| D::Error::custom("expected canonical unpadded base64url"))?;
+        <[u8; 32]>::try_from(bytes.as_slice())
+            .map(Self)
+            .map_err(|_| D::Error::custom("expected exactly 32 digest bytes"))
+    }
+}
+
+/// A detached assertion signature as it travels on the internal wire.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct AssertionSignature(Vec<u8>);
+
+impl AssertionSignature {
+    /// Wraps a bounded non-empty signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssertionError::SignatureBound`] for an empty signature or one
+    /// past [`MAX_SIGNATURE_BYTES`].
+    pub fn new(bytes: Vec<u8>) -> Result<Self, AssertionError> {
+        if bytes.is_empty() || bytes.len() > MAX_SIGNATURE_BYTES {
+            return Err(AssertionError::SignatureBound);
+        }
+        Ok(Self(bytes))
+    }
+
+    /// The raw signature.
+    #[must_use]
+    pub fn get(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AssertionSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "AssertionSignature(<redacted:{} bytes>)",
+            self.0.len()
+        )
+    }
+}
+
+impl Serialize for AssertionSignature {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for AssertionSignature {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&text)
+            .map_err(|_| D::Error::custom("expected canonical unpadded base64url"))?;
+        Self::new(bytes)
+            .map_err(|_| D::Error::custom("expected 1..={MAX_SIGNATURE_BYTES} signature bytes"))
+    }
+}
+
+/// A request for an assertion over a presented **workspace API key**.
+///
+/// This is the sibling of [`ResolveSessionForWorkspace`], and it is the operation
+/// every regional edge runs on the hot path: a workspace key is the only
+/// credential a customer presents to a regional host.
+///
+/// # Why the key is named by id and digest rather than sent verbatim
+///
+/// The stored verifier is `HMAC-SHA256(pepper, SHA-256(token))`, keyed over a
+/// digest rather than over the token, precisely so the customer's plaintext key
+/// never has to leave the region it was presented in. Sending `{key,
+/// presentedDigest}` proves the same thing to `central-authz` — it recomputes the
+/// MAC over the digest and compares in constant time — while keeping the secret
+/// regional. A request carrying the token itself would authenticate identically
+/// and would additionally place every customer key in the central plane's logs,
+/// traces and memory.
+///
+/// The digest is `SHA-256` over the complete token's UTF-8 bytes, which is the
+/// same value the regional edge already derives as its credential binding. That
+/// is not a coincidence and is what lets the response's `credentialBinding` be
+/// compared against the credential actually presented.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ResolveWorkspaceKey {
+    /// Which envelope version this is.
+    pub schema_version: SchemaVersion,
+    /// The key metadata identity embedded in the presented token.
+    pub key: ApiKeyId,
+    /// `SHA-256` over the complete presented token.
+    pub presented_digest: CredentialDigest,
+    /// The region the calling edge is pinned to.
+    ///
+    /// Present so a key minted for another region is refused centrally as well
+    /// as regionally. Neither check is a single point of failure.
+    pub region: Region,
+    /// Which regional service will accept the assertion.
+    pub audience: AssertionAudience,
+}
+
+/// A signed assertion, as the internal wire carries it.
+///
+/// The claim set alone is not verifiable, so this envelope carries the three
+/// things a verifier needs beside it: which trust anchor signed, which credential
+/// the signature is bound to, and the signature itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SignedAssertionEnvelope {
+    /// Which envelope version this is.
+    pub schema_version: SchemaVersion,
+    /// The claim set.
+    pub assertion: AuthorizationAssertion,
+    /// Which trust anchor signed it.
+    pub key_id: String,
+    /// The credential binding the signature covers.
+    ///
+    /// A verifier compares this against the credential it actually received, so
+    /// an assertion minted for one key can never admit a request made with
+    /// another.
+    pub credential_binding: CredentialDigest,
+    /// The detached signature over [`signing_input`] extended by the binding.
+    pub signature: AssertionSignature,
 }
