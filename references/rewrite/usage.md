@@ -374,3 +374,198 @@ cargo check --workspace --all-targets             exit 0
 cargo run -p aex-workspace-check                  133 member(s) and 139 package(s)
                                                   satisfy every structural and registry rule
 ```
+
+---
+
+# Second pass — the workers, the application layer and the tables
+
+Branch `rw/usage-2` off `main`. Nothing is pushed. This pass completed the
+deferred half of §5: the four table definitions, the application use cases, the
+three worker composition roots, the query read path with its third
+write-incapability proof, and the shadow close.
+
+## S1. What is implemented
+
+### S1.1 The four `migrations/regional/tables/` definitions (closes D-3, X-5)
+
+`usage-storage-authority`, `usage-compute-authority`, `usage-transfer-authority`
+and `usage-query-projection`, picked up by plan 05's bundle generator (twelve
+tables, digest regenerated). Each authority carries `gsi_fact_id` and
+`gsi_outbox_due`; both `INCLUDE` projections name `itemType` explicitly, because
+an `INCLUDE` projection carries no discriminator and a row decoded without one is
+a row decoded as the wrong shape — the lesson the regional-stores stream learned
+through `Row::bind_projected`. No TTL on any authority. TTL on
+`usage-query-projection` detail rows only.
+
+Each adapter now checks its own definition against its key grammar: the declared
+`itemType` vocabulary equals exactly the item types the category can mint, no
+sibling worker appears in the IAM list, nothing expires, and both indexes project
+the discriminator.
+
+### S1.2 `aex-usage-application` (closes D-4, D-5, D-7)
+
+| Module | Owns |
+| --- | --- |
+| `projection` | The pure fold. One admitted fact becomes a neutral `ProjectionTransaction` — key, `ADD` clause, `SET` clause, condition per row — that each adapter renders into one `TransactWriteItems`. Carries `DimensionTuple` and its stable sixteen-hex group hash over the one workspace canonicalizer. |
+| `outbox` | `OutboxMessage`: `MessageGroupId = organizationId`, `MessageDeduplicationId = {region}:{category}:{factId}`, `business_key = usage:{...}`, body `RatingRequest { fact, intentHash }`. A conformance module over plan 03 §4.2, not a design one. |
+| `ports` | `AuthorityStore`, `ProjectionStore`, `RatingQueue`, `Clock`, `RecordFactPort`. `PortError` separates retryable from terminal at the type level. |
+| `use_cases` | `RecordFact`, `ProjectCategory`, `PublishOutbox`, `ApplyReceipt`, `SweepOutbox`, `QuarantineFact`, `RebuildProjection`. |
+| `worker` | The category-generic three-mode handler the binaries compose. |
+| `shadow` | The `METER-03` close report and its gates. |
+| `probe::drain` | `FactDrain`, `CancelToken` and the `Pacer` port. |
+| `probe::body` | `CountingBody<B>`. |
+
+Load-bearing shapes, each asserted rather than documented:
+
+- **The coverage write is the exactly-once fence for the whole transaction.** It
+  is conditioned on the previous `projectedSequence` and is always last, so a
+  redelivered record applies all of the transaction or none of it.
+- **`published <= projected` by construction.** `PublishOutbox` runs after
+  `ProjectCategory`, and neither advances a frontier it did not move.
+- **A central outage is `Published::Deferred`, not a failure.** Failing the batch
+  would stall the projection too, and a refused usage fact is unrecoverable money
+  evidence (`U-18`).
+- **A void subtracts its target quantity in the target dimensions and
+  deactivates the target detail row.** The authority row is never rewritten, and
+  a correction folded without its target is `FoldError::TargetRequired` rather
+  than a blind subtraction.
+- **A zero-dollar observability fact folds into no priced rollup at all.** It has
+  no `PublicCategory`, so there is no aggregate partition it could land in; it
+  advances the frontier and nothing else.
+- **`FactDrain::flush` fails while the queue or the overflow ledger is
+  non-empty.** A refused batch is parked before the error is raised, so a failed
+  record call cannot also discard the drafts.
+- **`CountingBody` closes on a clean end only.** The counter is moved out on that
+  first end, so a body polled past its end has nothing left to close; an errored
+  or dropped body closes nothing, because an interrupted crossing has no
+  authoritative byte count.
+
+### S1.3 The three workers (closes D-1)
+
+Three composition roots over one generic handler. Each names exactly one table
+and links exactly one adapter, proved by a manifest link check and a source scan
+in the binary itself, and again by each adapter's own `tests/isolation.rs`.
+
+- **Charging gate.** `AEX_USAGE_BILLING_MODE` is checked against the rating queue
+  name: shadow pointed at the live queue, or active pointed at the shadow queue,
+  both refuse to start. `A11-METER` requires a gate a deployment cannot half
+  satisfy, and two independently trusted halves are precisely a half-satisfiable
+  gate.
+- **Event classification is strict.** An envelope naming no known trigger, or
+  mixing `aws:dynamodb` with `aws:sqs`, is a hard error. Guessing a mode would
+  run the wrong handler over money evidence.
+- **No money-relevant limit has a default.** All five plus the batch budget must
+  be supplied and positive.
+
+### S1.4 Query read path (advances `U-20`)
+
+`ProjectionReads` adds the bounded keyset page (hard 500-row budget, always fully
+qualified by generation, workspace, category and month), the coverage read and
+the generation pointer, plus `AggregateRow` and `CoverageRow` decode shapes.
+
+Three of the four write-incapability proofs now exist locally: source
+conformance, link graph, and the IAM shape read out of the generation definition.
+Only the live `AccessDeniedException` assertion still needs a plane.
+
+### S1.5 Shadow close (partially closes D-9)
+
+`ShadowReport` is the machine-readable receipt: per-meter totals, the exact
+byte-minutes the `M-STOR-CLOSE` terminal ceil added, the
+physical/attributed/charged/platform CPU quadruple, outbox lag, every frontier
+position, and a rated total that must be zero. Silent meters are named rather
+than omitted, because an absent row cannot distinguish "we measured nothing" from
+"this meter was never wired up".
+
+## S2. Test evidence
+
+396 tests across the nine owned packages, no skips, no `#[ignore]`, no env-var
+self-skip. What the harness proves locally today:
+
+| Gate | Where |
+| --- | --- |
+| Deterministic replay equality across two batch partitionings, byte-identical rows and frontiers | `worker::tests::replaying_a_corpus_into_a_fresh_projection_reproduces_it_exactly` |
+| Duplicate — every record one to five times, nothing changes | `shadow::tests::duplicate_delivery_leaves_every_total_unchanged` |
+| Disorder across workspaces converges on the same totals | `shadow::tests::disorder_across_workspaces_converges_on_the_same_totals` |
+| Crash between the projection transaction and the frontier advance, rewound to each position it could have left | `shadow::tests::a_crash_between_the_projection_and_the_frontier_reconverges` |
+| Clock skew moves neither a sequence nor an identity | `shadow::tests::a_producer_clock_skew_never_moves_a_sequence_or_an_identity` |
+| Delete — put, resize, trash, restore, hard delete; the cursor seals and a sealed cursor refuses everything | `shadow::tests::a_deleted_residence_seals_and_leaves_no_open_interval` |
+| `M-STOR-CLOSE` bound asserted and reported as an exact number | `shadow::tests::the_declared_storage_ceil_is_asserted_as_a_bound_and_reported_as_a_number` |
+| Physical CPU upper bound including the ten-times-over-attribution case | `shadow::tests::charged_cpu_never_exceeds_physics_and_the_remainder_balances` |
+| No async-wait CPU, against a scripted `ThreadCpuClock` | `shadow::tests::probe_gates::awaiting_work_attributes_no_cpu_and_produces_no_fact` |
+| No poll attributed past `MAX_ATTRIBUTED_POLL_US` | `shadow::tests::probe_gates::no_poll_is_ever_attributed_more_than_the_cap` |
+| No leaked interval after a terminal cleanup | `shadow::tests::probe_gates::nothing_is_left_queued_after_a_terminal_cleanup` |
+| Poison isolation — one workspace parks, another keeps folding | `worker::tests::one_workspace_parking_does_not_stall_another` |
+| Central-outage backlog then sweep recovery with no duplicate settlement | `worker::tests::a_central_outage_keeps_projecting_and_accumulates_backlog` |
+| Contiguous settle, parked receipt gap draining, pricing-version quarantine | `worker::tests::a_receipt_advances_the_settled_frontier_only_contiguously` and neighbours |
+| Rebuild into generation `n+1` without touching `n`; a re-run resumes rather than double counts | `use_cases::tests::a_rebuild_writes_the_next_generation_without_touching_the_live_one` |
+| Late close — a reservation and a counter held across a long interval emit exactly one closed fact | `probe_properties` (first pass) plus `probe::body::tests` |
+
+## S3. What still needs real receipts or a plane
+
+Unchanged from plan 12 §8.2 and §12, and none of it is silently passed:
+
+- Per-service `AWS` reconciliation within 5% over two representative closes.
+- cgroup v2 accuracy against a real Fargate CUR line.
+- Whether the `MicroVM` provider exposes a per-generation transmit receipt at all
+  (`K-4`). Until it does, `RuntimeReceipt.transmit_bytes = None` produces no
+  transfer fact and Hands Internet egress stays uncharged (`OD-26`).
+- `LinearAt1769Mb` accuracy against real Lambda spend.
+- S3, CloudFront and Vercel delivery-receipt formats.
+- Real `DynamoDB` stream ordering under resharding, partial-batch semantics,
+  throttling and transaction-conflict distributions.
+- The `DynamoDB` resource-based `NotPrincipal` deny (`K-10`) and the live
+  `AccessDeniedException` assertion.
+- Finance sign-off on `M-STOR-CLOSE`. The bound is asserted and the exact
+  byte-minute total is in every close, so the sign-off is a number rather than a
+  principle.
+
+## S4. What is still owed
+
+| # | Gap | Why it is not closed |
+| --- | --- | --- |
+| E-1 | **`AuthorityStore`, `ProjectionStore` and `RatingQueue` implementations over the real `DynamoDB` and `SQS` clients**, including strict `NEW_IMAGE` decode into `UsageFact`. The three worker `run` bodies return the typed `RunError::StoreUnimplemented` until they land. Everything above that seam — the fold, the three event modes, both frontier advances, the partial-batch rule and the poison path — is implemented and tested against in-memory ports. | The largest remaining piece; the expression and codec halves already exist per adapter. |
+| E-2 | **The `DynamoDB` Local integration suites** for the four adapter crates. Still recorded as `not_applicable.integration` with the exact missing cases named. | Depends on E-1: there is no client call to exercise yet. |
+| E-3 | **The three live companions.** Still skeletons. | Depends on E-1 and a plane. |
+| E-4 | **The 10^5-fact corpus generator and the `insta`-pinned totals.** Replay equality is proved over a 40-fact corpus in two partitionings; the production-shaped corpus and its pinned snapshot are not written. | Cheap once E-1 lands and the same driver can run against `DynamoDB` Local. |
+| E-5 | **Query/invoice fold parity against the `aex-usage-rating` quantity path.** | Needs the finance quantity fold to exist on `main`. |
+| E-6 | **`MemoryBudget::reserve(.., deadline)`**, the async waiting form. Only `try_reserve` exists. | Carried forward from D-6. |
+| E-7 | **The `trybuild` compile-fail case** proving no constructor accepts a guest-reported number. | Carried forward from D-8; the property holds by construction. |
+| E-8 | **The index attributes are written but not re-checked on read.** `factId` lives on the claim item and `outDuePk`/`outDueSk` on the outbox row in all three adapters; the read-side re-check lands with E-1. | Small; part of the read path. |
+
+## S5. Peer changes still needed
+
+X-1 through X-8 in §4 all stand. Two additions:
+
+| # | Peer | What |
+| --- | --- | --- |
+| X-9 | test architecture / regional stores | Two peer assertions in `aex-regional-test-support` were extended rather than worked around: the checked-in table-name list now includes the four usage tables, and the `DeleteItem` allow list now names each usage worker against its own authority. Each worker deletes exactly one row shape — its `OUTBOX#` marker, after a confirmed send — and nothing else in an authority is deletable by it. |
+| X-10 | delivery | `aex-usage-application` is classified pure, so `dependency-direction` forbids it from linking `tokio`. The drain `Pacer` is therefore a port with no shipped implementation, and whichever composition root owns the runtime supplies one. If a pure crate is ever meant to ship a runtime-backed seam, that rule needs revisiting rather than evading. |
+
+## S6. Decisions taken beyond §7 and plan 12 §11
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| UH-11 | The projection key grammar moves from `aex-usage-query-aws` into `aex-usage-domain::projection` | The writer folds facts into these keys and the reader reads them back, and `aex-usage-query-aws` must stay unable to link anything that writes. The grammar therefore cannot live on either side, and two copies is exactly how the two would stop agreeing about where a row lives. |
+| UH-12 | Memory and compute share one coverage row, keyed by the canonical public face of their authority | A frontier is one contiguous sequence per `(workspace, category)`. Two coverage rows would each see a subset of that sequence, and the projected-sequence fence would stop meaning anything. `coverage_face` normalises inside the grammar, so the writer and the reader cannot disagree. |
+| UH-13 | Detail rows partition by day; aggregates partition by month | A month partition of per-fact rows is the one place this table could grow a hot key, and a reader always knows which day it is asking about. |
+| UH-14 | Each of the four usage tables gets its own customer managed key rather than one shared usage CMK | Satisfies `U-31` separate-blast-radius and the workspace-wide distinct-alias property at once, and narrows the radius further at no cost. |
+| UH-15 | The charging gate is checked as the pair (billing mode, rating queue name) rather than as a mode alone | A mode read from one variable and a queue read from another are two independently trusted halves, which is precisely a gate a deployment can half satisfy. |
+| UH-16 | The projection fold produces a neutral transaction rather than SDK types | Keeps the fold pure and testable with no engine, and keeps the three adapters the only AWS-shaped code — which is what lets the replay, duplicate, disorder and correction properties be exact. |
+| UH-17 | A retryable failure never quarantines; only a terminal one does, and `UseCaseError::poison()` is the single place that decides | Getting this wrong in either direction is expensive: parking a throttled table stalls a paying workspace, and retrying a permanent decode failure is the infinite poison loop the previous implementation had. |
+| UH-18 | A sequence gap inside one workspace is retried, not parked | Within a partition the stream is ordered, so a gap means an earlier record has not arrived yet. Parking would stall a workspace over a transient condition. |
+| UH-19 | `RebuildProjection` does not flip the generation pointer | A rebuild that cut over as a side effect of finishing could cut over to a partial fold. The flip is a separate verified step. |
+| UH-20 | An outbox row is deleted only after both a confirmed send and a confirmed frontier advance | The reverse order lets a crash lose the marker with the fact undelivered, which the sweep could never notice. |
+
+## S7. Gate output
+
+```text
+cargo fmt --all                                   clean
+cargo clippy -p <eight owned packages> --all-targets -- -D warnings
+                                                  clean
+cargo nextest run -p <nine owned packages>        396 tests run: 396 passed,
+                                                  0 skipped
+cargo check --workspace --all-targets             exit 0
+cargo run -p aex-workspace-check                  133 member(s) and 139 package(s)
+                                                  satisfy every structural and
+                                                  registry rule
+```
