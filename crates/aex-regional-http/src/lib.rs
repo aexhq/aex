@@ -15,6 +15,7 @@
 
 pub mod assertion;
 pub mod capability;
+pub mod config;
 pub mod context;
 pub mod cursor;
 pub mod edge;
@@ -29,6 +30,7 @@ pub mod router;
 pub mod stream;
 
 pub use capability::{CompositionManifest, admit};
+pub use config::{ConfigError, Environment, Lookup};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
 pub use cursor::{CursorBinding, decode, encode};
 pub use edge::{

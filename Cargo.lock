@@ -5486,10 +5486,19 @@ name = "regional-secret-api"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-regional-http",
+ "aex-secret-aws",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-keystore-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-kms",
+ "lambda_http",
  "sha2 0.11.0",
  "thiserror",
+ "tokio",
  "zeroize",
 ]
 

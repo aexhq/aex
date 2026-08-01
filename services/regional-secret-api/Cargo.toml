@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 secrets = "unit"
+composition = "unit"
 performance_contract = "e2e"
 
 [[bin]]
@@ -34,6 +35,15 @@ name = "regional-secret-api"
 path = "src/main.rs"
 
 [dependencies]
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-kms.workspace = true
+lambda_http.workspace = true
+tokio.workspace = true
+aex-secret-aws = { path = "../../crates/aex-secret-aws" }
+aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
+aex-secret-keystore-dynamodb = { path = "../../crates/aex-secret-keystore-dynamodb" }
+aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
@@ -44,6 +54,10 @@ zeroize.workspace = true
 [[test]]
 name = "secrets"
 path = "tests/secrets.rs"
+
+[[test]]
+name = "composition"
+path = "tests/composition.rs"
 
 [[test]]
 name = "performance_contract"
