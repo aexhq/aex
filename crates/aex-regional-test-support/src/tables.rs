@@ -551,6 +551,10 @@ mod tests {
                 "regional-work",
                 "runtime-activity",
                 "session-authority",
+                "usage-compute-authority",
+                "usage-query-projection",
+                "usage-storage-authority",
+                "usage-transfer-authority",
             ]
         );
     }
