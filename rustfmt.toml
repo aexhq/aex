@@ -1,0 +1,8 @@
+# Stable rustfmt options only. Nightly-only keys (imports_granularity,
+# group_imports, wrap_comments, ...) are deliberately absent so `cargo fmt`
+# behaves identically on the pinned stable toolchain and in CI.
+edition = "2024"
+max_width = 100
+tab_spaces = 4
+newline_style = "Unix"
+use_field_init_shorthand = true

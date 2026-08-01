@@ -33,3 +33,7 @@ release-diagnostics/
 
 # Local SDK playground (inlined keys — never commit)
 scripts/aex-sample.ts
+
+# Rust build output
+target/
+**/*.rs.bk

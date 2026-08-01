@@ -10,3 +10,10 @@ packages/contracts/openapi/*.d.ts text eol=lf
 # — which `lint` runs. That permanent phantom churn is worse than cosmetic: it
 # invites a blanket `git checkout -- apps/docs` that silently reverts real edits.
 apps/docs/content/docs/** text eol=lf
+
+# Rust source and manifests are generated and compared byte-for-byte in places
+# (`crates/aex-telemetry-schema/src/generated.rs`), and `core.autocrlf=true` on
+# Windows would rewrite them to CRLF while the generator writes LF.
+*.rs text eol=lf
+*.toml text eol=lf
+Cargo.lock text eol=lf
