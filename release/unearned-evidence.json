@@ -22,31 +22,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-managed-web",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-mcp",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-test-support",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
     "detail": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-tool-catalog",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -58,27 +37,6 @@
   {
     "reason_class": "awaiting_owner",
     "subject": "crates/aex-central-test-support",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-control-app",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-control-aurora",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-control-domain",
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
@@ -120,27 +78,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-identity-app",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-identity-aurora",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-identity-domain",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-observation-application",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -166,13 +103,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-rds-data",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -690,13 +620,6 @@
     "subject": "cargo nextest list --message-format json",
     "owner": "test-architecture",
     "blocking_rule": "aex-empty-unit",
-    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
-  },
-  {
-    "reason_class": "pending_authority",
-    "subject": "migrations/central/*.sql",
-    "owner": "central-finance",
-    "blocking_rule": "aex-migration-uncovered",
     "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
   },
   {

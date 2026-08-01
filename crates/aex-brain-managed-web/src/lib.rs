@@ -14,6 +14,10 @@
 //! - customer egress from the Hands guest (`aex-hands-tools`)
 //! - credential handling
 
+pub mod egress;
 pub mod fetch;
-pub mod guard;
 pub mod search;
+pub mod serializer;
+
+#[cfg(test)]
+mod tests;

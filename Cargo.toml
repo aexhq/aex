@@ -199,7 +199,7 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 http = "1.5.0"
 http-body = "1.1.0"
 http-body-util = "0.1.4"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "stream", "http2", "charset"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "query", "stream", "http2", "charset"] }
 rustls = { version = "0.23.43", default-features = false, features = ["aws-lc-rs", "logging", "tls12", "std"] }
 webpki-roots = "1.0.9"
 aws-lc-rs = "1.17.3"
@@ -233,6 +233,8 @@ serde_json = "1.0.151"
 serde_with = "3.21.0"
 serde_norway = "0.9.42"
 jsonschema = { version = "0.49.2", default-features = false, features = ["resolve-file"] }
+html5ever = "0.39.0"
+encoding_rs = "0.8.35"
 prost = "0.14.4"
 prost-types = "0.14.4"
 toml = "1.1.4"
@@ -261,6 +263,7 @@ blake3 = "1.8.5"
 # partition set. Never used where a cryptographic digest is required.
 xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
 hmac = "0.13.0"
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
 base64 = "0.23.0"
 hex = "0.4.3"
 # num-bigint stays on 0.4 so it is the same crate version num-rational 0.4 uses;
@@ -282,7 +285,7 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 rustix = { version = "1.1.4", default-features = false, features = ["std", "time", "process", "thread"] }
 
 # --- protocol adapters -------------------------------------------------------
-rmcp = { version = "3.1.0", default-features = false, features = ["client", "server", "macros", "transport-async-rw"] }
+rmcp = { version = "=3.1.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 
 # --- deterministic archive packaging (aex-release-tool only) -----------------
 # The release tool writes ZIP and tar.gz archives itself rather than delegating
@@ -290,6 +293,7 @@ rmcp = { version = "3.1.0", default-features = false, features = ["client", "ser
 # metadata that `cargo lambda --output-format zip` does not guarantee. Only the
 # DEFLATE stream is borrowed; every header field is written explicitly.
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+brotli = "8.0.4"
 
 # --- general utilities -------------------------------------------------------
 regex = "1.13.1"

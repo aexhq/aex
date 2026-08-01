@@ -23,16 +23,35 @@ security_tier = "public_edge"
 risk = ["untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+integration = "integration"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
 
 [dependencies]
+aex-wire = { path = "../aex-wire" }
 async-trait.workspace = true
-bytes.workspace = true
+brotli.workspace = true
+encoding_rs.workspace = true
+flate2.workspace = true
+futures.workspace = true
+html5ever.workspace = true
 reqwest.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-time.workspace = true
 tokio.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

@@ -15,3 +15,6 @@
 
 pub mod client;
 pub mod recovery;
+
+#[cfg(test)]
+mod tests;
