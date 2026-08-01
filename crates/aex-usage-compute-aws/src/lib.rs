@@ -33,6 +33,7 @@ pub mod outbox;
 pub mod projection;
 pub mod queue;
 pub mod store;
+pub mod stream;
 
 use aex_usage_domain::meter::Category;
 
@@ -77,3 +78,4 @@ pub use expressions::{
 pub use projection::QueryProjection;
 pub use queue::SettlementQueue;
 pub use store::ComputeStore;
+pub use stream::{ReceiptEnvelope, ReceiptError, StreamError};
