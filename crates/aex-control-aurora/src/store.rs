@@ -51,6 +51,21 @@ enum Replay {
     Conflict,
 }
 
+enum WorkspaceReplay<'a> {
+    Fresh(Transaction<'a>),
+    Outcome(Box<TxOutcome<(Workspace, Operation)>>),
+}
+
+struct OperationInsert<'a> {
+    id: Uuid,
+    kind: OperationKind,
+    organization_id: Uuid,
+    workspace_id: Uuid,
+    key: &'a IdempotencyRecordKey,
+    scopes: ScopeSet,
+    now: OffsetDateTime,
+}
+
 impl AuroraControlStore {
     /// Builds the control authority.
     #[must_use]
@@ -291,6 +306,16 @@ impl AuroraControlStore {
             .map(|row| row.map(|row| row.0))
     }
 
+    async fn workspace_operation_in(
+        transaction: &mut Transaction<'_>,
+        workspace_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<Option<(Workspace, Operation)>, aex_rds_data::DataApiError> {
+        let workspace = Self::workspace_in(transaction, workspace_id).await?;
+        let operation = Self::operation_in(transaction, operation_id).await?;
+        Ok(workspace.zip(operation))
+    }
+
     async fn api_key_in(
         transaction: &mut Transaction<'_>,
         id: Uuid,
@@ -320,36 +345,33 @@ impl AuroraControlStore {
 
     async fn insert_operation(
         transaction: &mut Transaction<'_>,
-        id: Uuid,
-        kind: OperationKind,
-        organization_id: Uuid,
-        workspace_id: Uuid,
-        key: &IdempotencyRecordKey,
-        scopes: ScopeSet,
-        now: OffsetDateTime,
+        insert: OperationInsert<'_>,
     ) -> Result<(), aex_rds_data::DataApiError> {
         transaction
             .execute(
                 Statement::new(sql::INSERT_OPERATION)
-                    .bind("id", SqlValue::Uuid(id))
-                    .bind("kind", SqlValue::Text(kind.as_str().to_owned()))
+                    .bind("id", SqlValue::Uuid(insert.id))
+                    .bind("kind", SqlValue::Text(insert.kind.as_str().to_owned()))
                     .bind(
                         "visibility",
-                        SqlValue::Text(kind.visibility().as_str().to_owned()),
+                        SqlValue::Text(insert.kind.visibility().as_str().to_owned()),
                     )
-                    .bind("organization_id", SqlValue::Uuid(organization_id))
-                    .bind("workspace_id", SqlValue::Uuid(workspace_id))
+                    .bind("organization_id", SqlValue::Uuid(insert.organization_id))
+                    .bind("workspace_id", SqlValue::Uuid(insert.workspace_id))
                     .bind(
                         "principal_kind",
-                        SqlValue::Text(key.principal_kind.as_str().to_owned()),
+                        SqlValue::Text(insert.key.principal_kind.as_str().to_owned()),
                     )
-                    .bind("principal_id", SqlValue::Uuid(key.principal_id))
-                    .bind("scopes", SqlValue::TextArray(scopes.to_strings()))
+                    .bind("principal_id", SqlValue::Uuid(insert.key.principal_id))
+                    .bind("scopes", SqlValue::TextArray(insert.scopes.to_strings()))
                     .bind(
                         "intent_hash",
-                        SqlValue::Bytes(key.intent_hash.as_bytes().to_vec()),
+                        SqlValue::Bytes(insert.key.intent_hash.as_bytes().to_vec()),
                     )
-                    .bind("now_ms", SqlValue::TimestampMillis(Self::millis(now))),
+                    .bind(
+                        "now_ms",
+                        SqlValue::TimestampMillis(Self::millis(insert.now)),
+                    ),
             )
             .await
             .map(|_| ())
@@ -388,6 +410,295 @@ impl AuroraControlStore {
             .map_err(map_store_error)?
             .ok_or_else(|| StoreError::Decode("a replay workspace no longer exists".to_owned()))?;
         Ok((workspace, operation))
+    }
+
+    async fn workspace_replay(
+        mut transaction: Transaction<'_>,
+        replay: Replay,
+    ) -> Result<WorkspaceReplay<'_>, StoreError> {
+        match replay {
+            Replay::Conflict => {
+                let _ = transaction.rollback().await;
+                Ok(WorkspaceReplay::Outcome(Box::new(
+                    TxOutcome::IntentConflict,
+                )))
+            }
+            Replay::InFlight(operation_id) | Replay::Completed(_, operation_id) => {
+                let pair = Self::replay_workspace_operation(&mut transaction, operation_id).await;
+                let pair = match pair {
+                    Ok(pair) => pair,
+                    Err(error) => {
+                        let _ = transaction.rollback().await;
+                        return Err(error);
+                    }
+                };
+                let _ = transaction.rollback().await;
+                Ok(WorkspaceReplay::Outcome(Box::new(TxOutcome::Replayed(
+                    pair,
+                ))))
+            }
+            Replay::Fresh => Ok(WorkspaceReplay::Fresh(transaction)),
+        }
+    }
+
+    fn created_organization(command: &CreateOrganizationTx) -> Organization {
+        Organization {
+            id: command.preassigned_id,
+            name: command.name.clone(),
+            slug: command.slug.clone(),
+            status: OrganizationStatus::Active,
+            revision: Revision::INITIAL,
+            created_at: command.now,
+            updated_at: command.now,
+            created_by_user_id: command.created_by_user_id,
+        }
+    }
+
+    async fn insert_organization_graph(
+        transaction: &mut Transaction<'_>,
+        command: &CreateOrganizationTx,
+    ) -> Result<(), aex_rds_data::DataApiError> {
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_ORGANIZATION)
+                    .bind("id", SqlValue::Uuid(command.preassigned_id))
+                    .bind("name", SqlValue::Text(command.name.clone()))
+                    .bind("slug", SqlValue::Text(command.slug.as_str().to_owned()))
+                    .bind(
+                        "created_by_user_id",
+                        SqlValue::Uuid(command.created_by_user_id),
+                    )
+                    .bind(
+                        "now_ms",
+                        SqlValue::TimestampMillis(Self::millis(command.now)),
+                    ),
+            )
+            .await?;
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_MEMBERSHIP)
+                    .bind("id", SqlValue::Uuid(command.preassigned_membership_id))
+                    .bind("organization_id", SqlValue::Uuid(command.preassigned_id))
+                    .bind("user_id", SqlValue::Uuid(command.created_by_user_id))
+                    .bind("role", SqlValue::Text(OrgRole::Owner.as_str().to_owned()))
+                    .bind(
+                        "now_ms",
+                        SqlValue::TimestampMillis(Self::millis(command.now)),
+                    ),
+            )
+            .await?;
+        transaction
+            .execute(
+                Statement::new(sql::ENSURE_FINANCE_ACCOUNT)
+                    .bind("organization_id", SqlValue::Uuid(command.preassigned_id)),
+            )
+            .await?;
+        Ok(())
+    }
+
+    fn created_invitation(command: &CreateInvitationTx) -> Invitation {
+        Invitation {
+            id: command.preassigned_id,
+            organization_id: command.organization_id,
+            email: command.email.clone(),
+            role: command.role,
+            status: InvitationStatus::Pending,
+            invited_by_user_id: command.invited_by_user_id,
+            accepted_user_id: None,
+            created_at: command.now,
+            expires_at: command.expires_at,
+            resolved_at: None,
+        }
+    }
+
+    async fn membership_for_invitation(
+        transaction: &mut Transaction<'_>,
+        invitation: &Invitation,
+        membership_id: Uuid,
+        user_id: Uuid,
+        now: OffsetDateTime,
+    ) -> Result<Membership, aex_rds_data::DataApiError> {
+        if let Some(existing) =
+            Self::membership_in(transaction, invitation.organization_id, user_id).await?
+        {
+            let raised = existing.raise_role_to(invitation.role, now);
+            if raised != existing {
+                transaction
+                    .execute(
+                        Statement::new(sql::RAISE_MEMBERSHIP_ROLE)
+                            .bind("membership_id", SqlValue::Uuid(existing.id))
+                            .bind("role", SqlValue::Text(invitation.role.as_str().to_owned()))
+                            .bind("now_ms", SqlValue::TimestampMillis(Self::millis(now))),
+                    )
+                    .await?;
+            }
+            return Ok(raised);
+        }
+
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_MEMBERSHIP)
+                    .bind("id", SqlValue::Uuid(membership_id))
+                    .bind(
+                        "organization_id",
+                        SqlValue::Uuid(invitation.organization_id),
+                    )
+                    .bind("user_id", SqlValue::Uuid(user_id))
+                    .bind("role", SqlValue::Text(invitation.role.as_str().to_owned()))
+                    .bind("now_ms", SqlValue::TimestampMillis(Self::millis(now))),
+            )
+            .await?;
+        Ok(Membership {
+            id: membership_id,
+            organization_id: invitation.organization_id,
+            user_id,
+            role: invitation.role,
+            status: MembershipStatus::Active,
+            revision: Revision::INITIAL,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    fn provisioning_workspace(command: &BeginWorkspaceProvisionTx) -> Workspace {
+        Workspace {
+            id: command.preassigned_workspace_id,
+            organization_id: command.organization_id,
+            name: command.name.clone(),
+            slug: command.slug.clone(),
+            region: command.region,
+            status: WorkspaceStatus::Provisioning,
+            provision_operation_id: command.preassigned_operation_id,
+            provision_fence: Fence::FIRST,
+            deletion_operation_id: None,
+            deletion_fence: None,
+            revision: Revision::INITIAL,
+            created_at: command.now,
+            updated_at: command.now,
+            activated_at: None,
+            deleted_at: None,
+            created_by_user_id: command.created_by_user_id,
+        }
+    }
+
+    fn queued_workspace_operation(
+        command: &BeginWorkspaceProvisionTx,
+        scopes: ScopeSet,
+    ) -> Operation {
+        Operation {
+            id: command.preassigned_operation_id,
+            kind: OperationKind::WorkspaceProvision,
+            visibility: OperationVisibility::Internal,
+            organization_id: command.organization_id,
+            workspace_id: Some(command.preassigned_workspace_id),
+            principal_id: command.idempotency.principal_id,
+            scopes,
+            status: OperationStatus::Queued,
+            intent_hash: command.idempotency.intent_hash,
+            fence: Fence::FIRST,
+            attempt: 0,
+            lease: None,
+            created_at: command.now,
+            started_at: None,
+            updated_at: command.now,
+            terminal_at: None,
+            due_at: Some(command.now),
+        }
+    }
+
+    async fn revoke_workspace_keys_in(
+        transaction: &mut Transaction<'_>,
+        workspace_id: Uuid,
+        now: OffsetDateTime,
+    ) -> Result<(), aex_rds_data::DataApiError> {
+        let revoked = transaction
+            .query::<UuidRow>(
+                Statement::new(sql::REVOKE_WORKSPACE_KEYS)
+                    .bind("workspace_id", SqlValue::Uuid(workspace_id))
+                    .bind("now_ms", SqlValue::TimestampMillis(Self::millis(now))),
+            )
+            .await?;
+        for key in revoked {
+            transaction
+                .execute(Statement::new(sql::BUMP_KEY_EPOCH).bind("key_id", SqlValue::Uuid(key.0)))
+                .await?;
+        }
+        transaction
+            .execute(
+                Statement::new(sql::BUMP_WORKSPACE_EPOCH)
+                    .bind("workspace_id", SqlValue::Uuid(workspace_id)),
+            )
+            .await?;
+        Ok(())
+    }
+
+    fn validate_key_workspace(
+        workspace: &Workspace,
+        command: &CreateApiKeyTx,
+    ) -> Result<(), StoreError> {
+        if workspace.organization_id != command.organization_id {
+            return Err(StoreError::Conflict {
+                constraint: "key_workspace_organization_fk".to_owned(),
+            });
+        }
+        if workspace.status != WorkspaceStatus::Active {
+            return Err(StoreError::Conflict {
+                constraint: "workspace_active".to_owned(),
+            });
+        }
+        if workspace.region != command.region {
+            return Err(StoreError::Conflict {
+                constraint: "key_workspace_region".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn insert_api_key(
+        transaction: &mut Transaction<'_>,
+        command: &CreateApiKeyTx,
+    ) -> Result<(), aex_rds_data::DataApiError> {
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_API_KEY)
+                    .bind("id", SqlValue::Uuid(command.preassigned_id))
+                    .bind("workspace_id", SqlValue::Uuid(command.workspace_id))
+                    .bind("organization_id", SqlValue::Uuid(command.organization_id))
+                    .bind("name", SqlValue::Text(command.name.clone()))
+                    .bind("scopes", SqlValue::TextArray(command.scopes.to_strings()))
+                    .bind("region", SqlValue::Text(command.region.as_str().to_owned()))
+                    .bind("verifier", SqlValue::Bytes(command.verifier.to_vec()))
+                    .bind(
+                        "pepper_version",
+                        SqlValue::I64(i64::from(command.pepper_version)),
+                    )
+                    .bind(
+                        "created_by_user_id",
+                        SqlValue::Uuid(command.created_by_user_id),
+                    )
+                    .bind(
+                        "now_ms",
+                        SqlValue::TimestampMillis(Self::millis(command.now)),
+                    ),
+            )
+            .await
+            .map(|_| ())
+    }
+
+    fn created_api_key(command: &CreateApiKeyTx) -> ApiKey {
+        ApiKey {
+            id: command.preassigned_id,
+            workspace_id: command.workspace_id,
+            organization_id: command.organization_id,
+            name: command.name.clone(),
+            scopes: command.scopes,
+            region: command.region,
+            pepper_version: command.pepper_version,
+            created_at: command.now,
+            revoked_at: None,
+            revision: Revision::INITIAL,
+            created_by_user_id: command.created_by_user_id,
+        }
     }
 }
 
@@ -433,41 +744,7 @@ impl ControlStore for AuroraControlStore {
         );
         tx_try!(
             transaction,
-            transaction.execute(
-                Statement::new(sql::INSERT_ORGANIZATION)
-                    .bind("id", SqlValue::Uuid(command.preassigned_id))
-                    .bind("name", SqlValue::Text(command.name.clone()))
-                    .bind("slug", SqlValue::Text(command.slug.as_str().to_owned()))
-                    .bind(
-                        "created_by_user_id",
-                        SqlValue::Uuid(command.created_by_user_id),
-                    )
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now)),
-                    ),
-            )
-        );
-        tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::INSERT_MEMBERSHIP)
-                    .bind("id", SqlValue::Uuid(command.preassigned_membership_id))
-                    .bind("organization_id", SqlValue::Uuid(command.preassigned_id))
-                    .bind("user_id", SqlValue::Uuid(command.created_by_user_id))
-                    .bind("role", SqlValue::Text(OrgRole::Owner.as_str().to_owned()))
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now)),
-                    ),
-            )
-        );
-        tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::ENSURE_FINANCE_ACCOUNT)
-                    .bind("organization_id", SqlValue::Uuid(command.preassigned_id)),
-            )
+            Self::insert_organization_graph(&mut transaction, command)
         );
         tx_try!(
             transaction,
@@ -490,16 +767,7 @@ impl ControlStore for AuroraControlStore {
                 constraint: "idempotency_in_flight".to_owned(),
             });
         }
-        let organization = Organization {
-            id: command.preassigned_id,
-            name: command.name.clone(),
-            slug: command.slug.clone(),
-            status: OrganizationStatus::Active,
-            revision: Revision::INITIAL,
-            created_at: command.now,
-            updated_at: command.now,
-            created_by_user_id: command.created_by_user_id,
-        };
+        let organization = Self::created_organization(command);
         Self::commit(
             transaction,
             aex_control_app::use_cases::ceremony::CREATE_ORGANIZATION,
@@ -652,18 +920,7 @@ impl ControlStore for AuroraControlStore {
                 constraint: "idempotency_in_flight".to_owned(),
             });
         }
-        let invitation = Invitation {
-            id: command.preassigned_id,
-            organization_id: command.organization_id,
-            email: command.email.clone(),
-            role: command.role,
-            status: InvitationStatus::Pending,
-            invited_by_user_id: command.invited_by_user_id,
-            accepted_user_id: None,
-            created_at: command.now,
-            expires_at: command.expires_at,
-            resolved_at: None,
-        };
+        let invitation = Self::created_invitation(command);
         Self::commit(
             transaction,
             aex_control_app::use_cases::ceremony::CREATE_INVITATION,
@@ -714,64 +971,14 @@ impl ControlStore for AuroraControlStore {
         {
             let membership = tx_try!(
                 transaction,
-                Self::membership_in(
+                Self::membership_for_invitation(
                     &mut transaction,
-                    invitation.organization_id,
+                    &invitation,
+                    membership_id,
                     command.user_id,
+                    command.now,
                 )
             );
-            let membership = match membership {
-                Some(existing) => {
-                    let raised = existing.raise_role_to(invitation.role, command.now);
-                    if raised != existing {
-                        tx_try!(
-                            transaction,
-                            transaction.execute(
-                                Statement::new(sql::RAISE_MEMBERSHIP_ROLE)
-                                    .bind("membership_id", SqlValue::Uuid(existing.id))
-                                    .bind(
-                                        "role",
-                                        SqlValue::Text(invitation.role.as_str().to_owned()),
-                                    )
-                                    .bind(
-                                        "now_ms",
-                                        SqlValue::TimestampMillis(Self::millis(command.now)),
-                                    ),
-                            )
-                        );
-                    }
-                    raised
-                }
-                None => {
-                    tx_try!(
-                        transaction,
-                        transaction.execute(
-                            Statement::new(sql::INSERT_MEMBERSHIP)
-                                .bind("id", SqlValue::Uuid(membership_id))
-                                .bind(
-                                    "organization_id",
-                                    SqlValue::Uuid(invitation.organization_id),
-                                )
-                                .bind("user_id", SqlValue::Uuid(command.user_id))
-                                .bind("role", SqlValue::Text(invitation.role.as_str().to_owned()),)
-                                .bind(
-                                    "now_ms",
-                                    SqlValue::TimestampMillis(Self::millis(command.now)),
-                                ),
-                        )
-                    );
-                    Membership {
-                        id: membership_id,
-                        organization_id: invitation.organization_id,
-                        user_id: command.user_id,
-                        role: invitation.role,
-                        status: MembershipStatus::Active,
-                        revision: Revision::INITIAL,
-                        created_at: command.now,
-                        updated_at: command.now,
-                    }
-                }
-            };
             let accepted = tx_try!(
                 transaction,
                 transaction.execute(
@@ -810,28 +1017,14 @@ impl ControlStore for AuroraControlStore {
             .begin(Isolation::Serializable)
             .await
             .map_err(map_store_error)?;
-        match tx_try!(
+        let replay = tx_try!(
             transaction,
             Self::replay(&mut transaction, &command.idempotency)
-        ) {
-            Replay::Conflict => {
-                let _ = transaction.rollback().await;
-                return Ok(TxOutcome::IntentConflict);
-            }
-            Replay::InFlight(operation_id) | Replay::Completed(_, operation_id) => {
-                let pair =
-                    match Self::replay_workspace_operation(&mut transaction, operation_id).await {
-                        Ok(pair) => pair,
-                        Err(error) => {
-                            let _ = transaction.rollback().await;
-                            return Err(error);
-                        }
-                    };
-                let _ = transaction.rollback().await;
-                return Ok(TxOutcome::Replayed(pair));
-            }
-            Replay::Fresh => {}
-        }
+        );
+        let mut transaction = match Self::workspace_replay(transaction, replay).await? {
+            WorkspaceReplay::Fresh(transaction) => transaction,
+            WorkspaceReplay::Outcome(outcome) => return Ok(*outcome),
+        };
         tx_try!(
             transaction,
             Self::insert_idempotency(&mut transaction, &command.idempotency, command.now)
@@ -864,13 +1057,15 @@ impl ControlStore for AuroraControlStore {
             transaction,
             Self::insert_operation(
                 &mut transaction,
-                command.preassigned_operation_id,
-                OperationKind::WorkspaceProvision,
-                command.organization_id,
-                command.preassigned_workspace_id,
-                &command.idempotency,
-                scopes,
-                command.now,
+                OperationInsert {
+                    id: command.preassigned_operation_id,
+                    kind: OperationKind::WorkspaceProvision,
+                    organization_id: command.organization_id,
+                    workspace_id: command.preassigned_workspace_id,
+                    key: &command.idempotency,
+                    scopes,
+                    now: command.now,
+                },
             )
         );
         let attached = tx_try!(
@@ -895,43 +1090,8 @@ impl ControlStore for AuroraControlStore {
             transaction,
             Self::insert_audit(&mut transaction, &command.audit)
         );
-        let workspace = Workspace {
-            id: command.preassigned_workspace_id,
-            organization_id: command.organization_id,
-            name: command.name.clone(),
-            slug: command.slug.clone(),
-            region: command.region,
-            status: WorkspaceStatus::Provisioning,
-            provision_operation_id: command.preassigned_operation_id,
-            provision_fence: Fence::FIRST,
-            deletion_operation_id: None,
-            deletion_fence: None,
-            revision: Revision::INITIAL,
-            created_at: command.now,
-            updated_at: command.now,
-            activated_at: None,
-            deleted_at: None,
-            created_by_user_id: command.created_by_user_id,
-        };
-        let operation = Operation {
-            id: command.preassigned_operation_id,
-            kind: OperationKind::WorkspaceProvision,
-            visibility: OperationVisibility::Internal,
-            organization_id: command.organization_id,
-            workspace_id: Some(command.preassigned_workspace_id),
-            principal_id: command.idempotency.principal_id,
-            scopes,
-            status: OperationStatus::Queued,
-            intent_hash: command.idempotency.intent_hash,
-            fence: Fence::FIRST,
-            attempt: 0,
-            lease: None,
-            created_at: command.now,
-            started_at: None,
-            updated_at: command.now,
-            terminal_at: None,
-            due_at: Some(command.now),
-        };
+        let workspace = Self::provisioning_workspace(command);
+        let operation = Self::queued_workspace_operation(command, scopes);
         Self::commit(
             transaction,
             aex_control_app::use_cases::ceremony::BEGIN_WORKSPACE_PROVISION,
@@ -1081,28 +1241,14 @@ impl ControlStore for AuroraControlStore {
             .begin(Isolation::Serializable)
             .await
             .map_err(map_store_error)?;
-        match tx_try!(
+        let replay = tx_try!(
             transaction,
             Self::replay(&mut transaction, &command.idempotency)
-        ) {
-            Replay::Conflict => {
-                let _ = transaction.rollback().await;
-                return Ok(TxOutcome::IntentConflict);
-            }
-            Replay::InFlight(operation_id) | Replay::Completed(_, operation_id) => {
-                let pair =
-                    match Self::replay_workspace_operation(&mut transaction, operation_id).await {
-                        Ok(pair) => pair,
-                        Err(error) => {
-                            let _ = transaction.rollback().await;
-                            return Err(error);
-                        }
-                    };
-                let _ = transaction.rollback().await;
-                return Ok(TxOutcome::Replayed(pair));
-            }
-            Replay::Fresh => {}
-        }
+        );
+        let mut transaction = match Self::workspace_replay(transaction, replay).await? {
+            WorkspaceReplay::Fresh(transaction) => transaction,
+            WorkspaceReplay::Outcome(outcome) => return Ok(*outcome),
+        };
         tx_try!(
             transaction,
             Self::insert_idempotency(&mut transaction, &command.idempotency, command.now)
@@ -1126,44 +1272,24 @@ impl ControlStore for AuroraControlStore {
                 constraint: "workspace_active".to_owned(),
             });
         }
-        let revoked = tx_try!(
-            transaction,
-            transaction.query::<UuidRow>(
-                Statement::new(sql::REVOKE_WORKSPACE_KEYS)
-                    .bind("workspace_id", SqlValue::Uuid(command.workspace_id))
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now)),
-                    ),
-            )
-        );
-        for key in revoked {
-            tx_try!(
-                transaction,
-                transaction.execute(
-                    Statement::new(sql::BUMP_KEY_EPOCH).bind("key_id", SqlValue::Uuid(key.0)),
-                )
-            );
-        }
         tx_try!(
             transaction,
-            transaction.execute(
-                Statement::new(sql::BUMP_WORKSPACE_EPOCH)
-                    .bind("workspace_id", SqlValue::Uuid(command.workspace_id)),
-            )
+            Self::revoke_workspace_keys_in(&mut transaction, command.workspace_id, command.now)
         );
         let scopes = Self::required_scope("workspaces:delete");
         tx_try!(
             transaction,
             Self::insert_operation(
                 &mut transaction,
-                command.operation_id,
-                OperationKind::WorkspaceDelete,
-                command.organization_id,
-                command.workspace_id,
-                &command.idempotency,
-                scopes,
-                command.now,
+                OperationInsert {
+                    id: command.operation_id,
+                    kind: OperationKind::WorkspaceDelete,
+                    organization_id: command.organization_id,
+                    workspace_id: command.workspace_id,
+                    key: &command.idempotency,
+                    scopes,
+                    now: command.now,
+                },
             )
         );
         let attached = tx_try!(
@@ -1188,18 +1314,15 @@ impl ControlStore for AuroraControlStore {
             transaction,
             Self::insert_audit(&mut transaction, &command.audit)
         );
-        let pair = (
-            tx_try!(
-                transaction,
-                Self::workspace_in(&mut transaction, command.workspace_id)
+        let pair = tx_try!(
+            transaction,
+            Self::workspace_operation_in(
+                &mut transaction,
+                command.workspace_id,
+                command.operation_id,
             )
-            .ok_or(StoreError::NotFound)?,
-            tx_try!(
-                transaction,
-                Self::operation_in(&mut transaction, command.operation_id)
-            )
-            .ok_or(StoreError::NotFound)?,
-        );
+        )
+        .ok_or(StoreError::NotFound)?;
         Self::commit(
             transaction,
             aex_control_app::use_cases::ceremony::BEGIN_WORKSPACE_DELETION,
@@ -1339,53 +1462,15 @@ impl ControlStore for AuroraControlStore {
             Self::workspace_in(&mut transaction, command.workspace_id)
         )
         .ok_or(StoreError::NotFound)?;
-        if workspace.organization_id != command.organization_id {
+        if let Err(error) = Self::validate_key_workspace(&workspace, command) {
             let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "key_workspace_organization_fk".to_owned(),
-            });
-        }
-        if workspace.status != WorkspaceStatus::Active {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "workspace_active".to_owned(),
-            });
-        }
-        if workspace.region != command.region {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "key_workspace_region".to_owned(),
-            });
+            return Err(error);
         }
         tx_try!(
             transaction,
             Self::insert_idempotency(&mut transaction, &command.idempotency, command.now)
         );
-        tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::INSERT_API_KEY)
-                    .bind("id", SqlValue::Uuid(command.preassigned_id))
-                    .bind("workspace_id", SqlValue::Uuid(command.workspace_id))
-                    .bind("organization_id", SqlValue::Uuid(command.organization_id))
-                    .bind("name", SqlValue::Text(command.name.clone()))
-                    .bind("scopes", SqlValue::TextArray(command.scopes.to_strings()))
-                    .bind("region", SqlValue::Text(command.region.as_str().to_owned()))
-                    .bind("verifier", SqlValue::Bytes(command.verifier.to_vec()))
-                    .bind(
-                        "pepper_version",
-                        SqlValue::I64(i64::from(command.pepper_version)),
-                    )
-                    .bind(
-                        "created_by_user_id",
-                        SqlValue::Uuid(command.created_by_user_id),
-                    )
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now)),
-                    ),
-            )
-        );
+        tx_try!(transaction, Self::insert_api_key(&mut transaction, command));
         tx_try!(
             transaction,
             Self::insert_audit(&mut transaction, &command.audit)
@@ -1407,19 +1492,7 @@ impl ControlStore for AuroraControlStore {
                 constraint: "idempotency_in_flight".to_owned(),
             });
         }
-        let key = ApiKey {
-            id: command.preassigned_id,
-            workspace_id: command.workspace_id,
-            organization_id: command.organization_id,
-            name: command.name.clone(),
-            scopes: command.scopes,
-            region: command.region,
-            pepper_version: command.pepper_version,
-            created_at: command.now,
-            revoked_at: None,
-            revision: Revision::INITIAL,
-            created_by_user_id: command.created_by_user_id,
-        };
+        let key = Self::created_api_key(command);
         Self::commit(
             transaction,
             aex_control_app::use_cases::ceremony::CREATE_API_KEY,

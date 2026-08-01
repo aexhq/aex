@@ -229,9 +229,11 @@ async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_boot
         (false, sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL),
         (true, sql::RESOLVE_SESSION_CENTRAL),
     ] {
-        let scopes = (!session)
-            .then(|| vec![Some("account:read".to_owned())])
-            .unwrap_or_default();
+        let scopes = if session {
+            Vec::new()
+        } else {
+            vec![Some("account:read".to_owned())]
+        };
         let transport = Counting::with(vec![central_actor_record(scopes)]);
         let reader = AuroraAuthorizationReader::new(client(&transport));
         let resolved = if session {

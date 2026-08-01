@@ -71,10 +71,8 @@ impl AuroraIdentityStore {
         i64::try_from(instant.unix_timestamp_nanos().div_euclid(1_000_000)).unwrap_or(i64::MAX)
     }
 
-    fn optional_text(value: &Option<String>) -> SqlValue {
-        value
-            .as_ref()
-            .map_or(SqlValue::Null, |value| SqlValue::Text(value.clone()))
+    fn optional_text(value: Option<&String>) -> SqlValue {
+        value.map_or(SqlValue::Null, |value| SqlValue::Text(value.clone()))
     }
 
     fn scope_values(scopes: ScopeSet) -> Vec<String> {
@@ -149,9 +147,124 @@ impl AuroraIdentityStore {
             links,
         })
     }
+
+    async fn external_user_in(
+        transaction: &mut Transaction<'_>,
+        command: &ResolveExternalIdentity,
+    ) -> Result<(User, bool), aex_rds_data::DataApiError> {
+        if let Some(user) = Self::user_by_email_in(transaction, command.email.as_str()).await? {
+            return Ok((user, false));
+        }
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_USER)
+                    .bind("id", SqlValue::Uuid(command.preassigned_user_id))
+                    .bind("email", SqlValue::Text(command.email.as_str().to_owned()))
+                    .bind("email_verified", SqlValue::Bool(command.email_verified))
+                    .bind("name", Self::optional_text(command.name.as_ref()))
+                    .bind("image_url", Self::optional_text(command.image_url.as_ref()))
+                    .bind(
+                        "now_ms",
+                        SqlValue::TimestampMillis(Self::millis(command.now)),
+                    ),
+            )
+            .await?;
+        Ok((
+            User {
+                id: command.preassigned_user_id,
+                email: command.email.clone(),
+                email_verified_at: command.email_verified.then_some(command.now),
+                name: command.name.clone(),
+                image_url: command.image_url.clone(),
+                status: UserStatus::Active,
+                revision: aex_control_domain::Revision::INITIAL,
+                created_at: command.now,
+                updated_at: command.now,
+            },
+            true,
+        ))
+    }
+
+    async fn email_challenge_user_in(
+        transaction: &mut Transaction<'_>,
+        challenge: &EmailChallenge,
+        preassigned_user_id: Uuid,
+        now: OffsetDateTime,
+        replayed: bool,
+    ) -> Result<Option<(User, bool)>, aex_rds_data::DataApiError> {
+        if let Some(user) = Self::user_by_email_in(transaction, challenge.email.as_str()).await? {
+            return Ok(Some((user, false)));
+        }
+        if replayed {
+            return Ok(None);
+        }
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_USER)
+                    .bind("id", SqlValue::Uuid(preassigned_user_id))
+                    .bind("email", SqlValue::Text(challenge.email.as_str().to_owned()))
+                    .bind("email_verified", SqlValue::Bool(true))
+                    .bind("name", SqlValue::Null)
+                    .bind("image_url", SqlValue::Null)
+                    .bind("now_ms", SqlValue::TimestampMillis(Self::millis(now))),
+            )
+            .await?;
+        Ok(Some((
+            User {
+                id: preassigned_user_id,
+                email: challenge.email.clone(),
+                email_verified_at: Some(now),
+                name: None,
+                image_url: None,
+                status: UserStatus::Active,
+                revision: aex_control_domain::Revision::INITIAL,
+                created_at: now,
+                updated_at: now,
+            },
+            true,
+        )))
+    }
+
+    async fn insert_device_account_token(
+        transaction: &mut Transaction<'_>,
+        command: &ConsumeDeviceAuthorizationCommand,
+        user_id: Uuid,
+        scopes: ScopeSet,
+    ) -> Result<(), aex_rds_data::DataApiError> {
+        transaction
+            .execute(
+                Statement::new(sql::INSERT_ACCOUNT_TOKEN)
+                    .bind("id", SqlValue::Uuid(command.preassigned_token_id))
+                    .bind("user_id", SqlValue::Uuid(user_id))
+                    .bind(
+                        "verifier",
+                        SqlValue::Bytes(command.token_verifier.as_bytes().to_vec()),
+                    )
+                    .bind(
+                        "pepper_version",
+                        SqlValue::I64(i64::from(command.token_pepper_version.get())),
+                    )
+                    .bind("name", SqlValue::Text(command.token_name.clone()))
+                    .bind("scopes", SqlValue::TextArray(Self::scope_values(scopes)))
+                    .bind(
+                        "issued_at_ms",
+                        SqlValue::TimestampMillis(Self::millis(command.now)),
+                    )
+                    .bind(
+                        "expires_at_ms",
+                        SqlValue::TimestampMillis(Self::millis(command.token_expires_at)),
+                    ),
+            )
+            .await
+            .map(|_| ())
+    }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "transport contract tests stay next to the store helpers they exercise"
+)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
@@ -330,42 +443,10 @@ impl IdentityStore for AuroraIdentityStore {
             return Ok(TxOutcome::Replayed(resolved));
         }
 
-        let email = command.email.as_str();
-        let (user, created) =
-            match tx_try!(transaction, Self::user_by_email_in(&mut transaction, email)) {
-                Some(user) => (user, false),
-                None => {
-                    tx_try!(
-                        transaction,
-                        transaction.execute(
-                            Statement::new(sql::INSERT_USER)
-                                .bind("id", SqlValue::Uuid(command.preassigned_user_id))
-                                .bind("email", SqlValue::Text(email.to_owned()))
-                                .bind("email_verified", SqlValue::Bool(command.email_verified))
-                                .bind("name", Self::optional_text(&command.name))
-                                .bind("image_url", Self::optional_text(&command.image_url))
-                                .bind(
-                                    "now_ms",
-                                    SqlValue::TimestampMillis(Self::millis(command.now))
-                                ),
-                        )
-                    );
-                    (
-                        User {
-                            id: command.preassigned_user_id,
-                            email: command.email.clone(),
-                            email_verified_at: command.email_verified.then_some(command.now),
-                            name: command.name.clone(),
-                            image_url: command.image_url.clone(),
-                            status: UserStatus::Active,
-                            revision: aex_control_domain::Revision::INITIAL,
-                            created_at: command.now,
-                            updated_at: command.now,
-                        },
-                        true,
-                    )
-                }
-            };
+        let (user, created) = tx_try!(
+            transaction,
+            Self::external_user_in(&mut transaction, command)
+        );
         tx_try!(
             transaction,
             transaction.execute(
@@ -530,51 +611,21 @@ impl IdentityStore for AuroraIdentityStore {
                 });
             }
         }
-        let (user, created) = match tx_try!(
+        let user = tx_try!(
             transaction,
-            Self::user_by_email_in(&mut transaction, challenge.value.email.as_str())
-        ) {
-            Some(user) => (user, false),
-            None if !replayed => {
-                tx_try!(
-                    transaction,
-                    transaction.execute(
-                        Statement::new(sql::INSERT_USER)
-                            .bind("id", SqlValue::Uuid(command.preassigned_user_id))
-                            .bind(
-                                "email",
-                                SqlValue::Text(challenge.value.email.as_str().to_owned()),
-                            )
-                            .bind("email_verified", SqlValue::Bool(true))
-                            .bind("name", SqlValue::Null)
-                            .bind("image_url", SqlValue::Null)
-                            .bind(
-                                "now_ms",
-                                SqlValue::TimestampMillis(Self::millis(command.now))
-                            ),
-                    )
-                );
-                (
-                    User {
-                        id: command.preassigned_user_id,
-                        email: challenge.value.email.clone(),
-                        email_verified_at: Some(command.now),
-                        name: None,
-                        image_url: None,
-                        status: UserStatus::Active,
-                        revision: aex_control_domain::Revision::INITIAL,
-                        created_at: command.now,
-                        updated_at: command.now,
-                    },
-                    true,
-                )
-            }
-            None => {
-                let _ = transaction.rollback().await;
-                return Err(StoreError::Fatal(
-                    "a consumed email challenge has no resolved user".to_owned(),
-                ));
-            }
+            Self::email_challenge_user_in(
+                &mut transaction,
+                &challenge.value,
+                command.preassigned_user_id,
+                command.now,
+                replayed,
+            )
+        );
+        let Some((user, created)) = user else {
+            let _ = transaction.rollback().await;
+            return Err(StoreError::Fatal(
+                "a consumed email challenge has no resolved user".to_owned(),
+            ));
         };
         let resolved = tx_try!(
             transaction,
@@ -1052,31 +1103,11 @@ impl IdentityStore for AuroraIdentityStore {
         }
         tx_try!(
             transaction,
-            transaction.execute(
-                Statement::new(sql::INSERT_ACCOUNT_TOKEN)
-                    .bind("id", SqlValue::Uuid(command.preassigned_token_id))
-                    .bind("user_id", SqlValue::Uuid(user_id))
-                    .bind(
-                        "verifier",
-                        SqlValue::Bytes(command.token_verifier.as_bytes().to_vec()),
-                    )
-                    .bind(
-                        "pepper_version",
-                        SqlValue::I64(i64::from(command.token_pepper_version.get())),
-                    )
-                    .bind("name", SqlValue::Text(command.token_name.clone()))
-                    .bind(
-                        "scopes",
-                        SqlValue::TextArray(Self::scope_values(row.value.requested_scopes)),
-                    )
-                    .bind(
-                        "issued_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now))
-                    )
-                    .bind(
-                        "expires_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.token_expires_at)),
-                    ),
+            Self::insert_device_account_token(
+                &mut transaction,
+                command,
+                user_id,
+                row.value.requested_scopes,
             )
         );
         let grant = row
