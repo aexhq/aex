@@ -33,6 +33,10 @@ live_suite = "application crate; its ports are exercised through its deployable'
 # Swaps the kernel's synchronization shim for Loom's model-checking primitives. Off in
 # every normal build; the concurrency lane turns it on.
 loom = ["dep:loom"]
+# Publishes the in-memory ports of `activation::memory` so the composition root asserts its
+# wiring against the same fixtures the engine is asserted against. Off in every shipped
+# build; only a `[dev-dependencies]` entry turns it on.
+testing = []
 
 [dependencies]
 loom = { workspace = true, optional = true }
