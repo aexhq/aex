@@ -7644,8 +7644,13 @@ dependencies = [
  "aex-usage-application",
  "aex-usage-compute-aws",
  "aex-usage-domain",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
+ "lambda_runtime",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -7666,8 +7671,13 @@ dependencies = [
  "aex-usage-application",
  "aex-usage-domain",
  "aex-usage-storage-aws",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
+ "lambda_runtime",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -7679,8 +7689,13 @@ dependencies = [
  "aex-usage-application",
  "aex-usage-domain",
  "aex-usage-transfer-aws",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
+ "lambda_runtime",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

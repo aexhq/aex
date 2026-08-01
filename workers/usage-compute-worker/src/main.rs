@@ -16,7 +16,17 @@
 //! a review promise — see `src/main.rs` tests and the adapter's own
 //! `tests/isolation.rs`.
 
-use aex_usage_application::worker::{BillingMode, WorkerLimits};
+use std::process::ExitCode;
+use std::sync::Arc;
+
+use aex_usage_application::worker::{BillingMode, UsageWorker, WorkerLimits};
+use aex_usage_compute_aws::clock::SystemClock;
+use aex_usage_compute_aws::projection::QueryProjection;
+use aex_usage_compute_aws::queue::SettlementQueue;
+use aex_usage_compute_aws::store::ComputeStore;
+use aex_usage_compute_aws::stream::{receipt_records, stream_records};
+use aex_usage_domain::wire_pending::RegionId;
+use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Validated start-up configuration for `usage-compute-worker`.
 ///
@@ -28,7 +38,11 @@ pub struct Config {
     /// Deployment plane this process belongs to (`dev` or `prd`).
     pub plane: String,
     /// `AWS` region this process is bound to.
-    pub region: String,
+    ///
+    /// Parsed rather than carried as text: an absent frontier row is the empty
+    /// frontier of *this* region, so a region that is not an identifier would
+    /// mint a sequence nothing can read back.
+    pub region: RegionId,
     /// The `usage-compute-authority` `DynamoDB` table.
     pub authority_table: String,
     /// The shared `usage-query-projection` table.
@@ -88,14 +102,9 @@ pub enum RunError {
     /// An incoming event could not be classified.
     #[error(transparent)]
     Dispatch(#[from] DispatchError),
-    /// The `DynamoDB` and `SQS` port implementations have not landed yet.
-    ///
-    /// A typed gap rather than a stub that appears to work: the use cases, the
-    /// fold and the three event modes are complete and tested against in-memory
-    /// ports, and what is missing is `aex-usage-compute-aws`'s `AuthorityStore`
-    /// implementation over the real client.
-    #[error("`aex-usage-compute-aws` does not yet implement `AuthorityStore` over `DynamoDB`")]
-    StoreUnimplemented,
+    /// The Lambda runtime stopped.
+    #[error("the lambda runtime stopped: {0}")]
+    Runtime(String),
 }
 
 /// Which trigger delivered an invocation.
@@ -237,7 +246,12 @@ impl Config {
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
-        let region = required(&lookup, REGION_VAR)?;
+        let region = RegionId::parse(&required(&lookup, REGION_VAR)?).map_err(|error| {
+            ConfigError::Invalid {
+                name: REGION_VAR,
+                reason: error.to_string(),
+            }
+        })?;
         let authority_table = required(&lookup, AUTHORITY_TABLE_VAR)?;
         let projection_table = required(&lookup, PROJECTION_TABLE_VAR)?;
         let rating_queue = required(&lookup, RATING_QUEUE_VAR)?;
@@ -343,13 +357,17 @@ where
 
 /// Runs `usage-compute-worker` until it stops.
 ///
+/// The three event modes share one role because they need identical credentials
+/// and sit inside the identical category boundary, so the adapters are built
+/// once and every trigger is served from the same composition.
+///
 /// # Errors
 ///
-/// Returns [`RunError::StoreUnimplemented`] until `aex-usage-compute-aws`
-/// implements `AuthorityStore` over the real `DynamoDB` client. Everything above
-/// that seam — the fold, the three event modes, the frontier advances, the
-/// partial-batch rule and the poison path — is implemented and tested.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Returns [`RunError::Runtime`] when the Lambda runtime stops.
+pub async fn run(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -360,33 +378,175 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::StoreUnimplemented)
+
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let clock = SystemClock::new();
+    // Exactly one authority table is named here, and it is this binary's own.
+    let authority = ComputeStore::new(
+        dynamodb.clone(),
+        config.authority_table.clone(),
+        config.region.clone(),
+        Arc::new(clock),
+    );
+    let projection = QueryProjection::new(dynamodb, config.projection_table.clone());
+    let queue = SettlementQueue::new(aws_sdk_sqs::Client::new(&aws), config.rating_queue.clone());
+    let handler = Handler {
+        worker: Arc::new(UsageWorker::new(
+            authority,
+            projection,
+            queue,
+            clock,
+            config.limits,
+            config.billing_mode,
+        )),
+        budget: config.budget,
+    };
+
+    lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
+        let handler = handler.clone();
+        async move { handler.handle(event.payload).await }
+    }))
+    .await
+    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
 }
 
-fn main() -> std::process::ExitCode {
+/// The composition every trigger is served from.
+#[derive(Clone)]
+pub struct Handler {
+    worker: Arc<UsageWorker<ComputeStore, QueryProjection, SettlementQueue, SystemClock>>,
+    budget: u32,
+}
+
+impl std::fmt::Debug for Handler {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Handler")
+            .field("mode", &self.worker.mode().id())
+            .field("budget", &self.budget)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Handler {
+    /// Serves one invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LambdaError`] when the event cannot be classified, when a
+    /// batch cannot be read at all, or when a failure cannot be attributed to
+    /// one record. Every one of those redelivers the whole batch, which is the
+    /// only honest answer when the worker cannot say which record is at fault.
+    pub async fn handle(
+        &self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, LambdaError> {
+        match EventMode::classify(&payload)? {
+            EventMode::Stream => self.stream(&payload).await,
+            EventMode::Sweep => self.sweep().await,
+            EventMode::Receipt => self.receipts(&payload).await,
+        }
+    }
+
+    /// Folds one stream batch.
+    async fn stream(&self, payload: &serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+        let records = stream_records(payload)?;
+        if records.len() > self.budget as usize {
+            // The mapping's batch size and the configured budget are two
+            // statements of one limit. A batch past the budget means they
+            // disagree, and quietly folding it would hide the disagreement.
+            return Err(LambdaError::from(format!(
+                "stream batch of {} records exceeds the configured budget of {}; the \
+                 event-source mapping and `{BUDGET_VAR}` disagree",
+                records.len(),
+                self.budget
+            )));
+        }
+        let report = self.worker.handle_stream(&records).await?;
+        Ok(serde_json::json!({
+            "mode": EventMode::Stream.id(),
+            "folded": report.folded,
+            "reconciled": report.reconciled,
+            "alreadyProjected": report.already_projected,
+            "published": report.published,
+            "deferred": report.deferred,
+            "quarantined": report.quarantined,
+            // The lowest failure only: everything at or after it is redelivered,
+            // so a gap in a contiguous sequence is never checkpointed past.
+            "batchItemFailures": failures(&report.failures),
+        }))
+    }
+
+    /// Republishes overdue outbox rows.
+    async fn sweep(&self) -> Result<serde_json::Value, LambdaError> {
+        let report = self.worker.handle_sweep().await?;
+        Ok(serde_json::json!({
+            "mode": EventMode::Sweep.id(),
+            "inspected": report.inspected,
+            "republished": report.republished,
+            "deferred": report.deferred,
+            "alarming": report.alarming,
+            "oldestAgeMs": report.oldest_age_ms,
+            "backlogAlarms": self.worker.backlog_alarms(&report),
+        }))
+    }
+
+    /// Applies one settlement receipt batch.
+    async fn receipts(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, LambdaError> {
+        let records = receipt_records(payload)?;
+        let report = self.worker.handle_receipts(&records).await?;
+        Ok(serde_json::json!({
+            "mode": EventMode::Receipt.id(),
+            "advanced": report.advanced,
+            "parked": report.parked,
+            "alreadySettled": report.already_settled,
+            "quarantined": report.quarantined,
+            // Receipts have no ordering guarantee, so one failing message fails
+            // only itself; central truth never waits on this acknowledgement.
+            "batchItemFailures": failures(&report.failures),
+        }))
+    }
+}
+
+/// The partial-batch response Lambda reads.
+fn failures(identifiers: &[String]) -> Vec<serde_json::Value> {
+    identifiers
+        .iter()
+        .map(|identifier| serde_json::json!({ "itemIdentifier": identifier }))
+        .collect()
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
+            // A deployable that cannot serve says why and stops. It never serves
+            // a placeholder, because a placeholder over money evidence is a
+            // silent under-bill nobody would notice.
             eprintln!("usage-compute-worker: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
+            return ExitCode::FAILURE;
         }
     };
     let settings = aex_platform_telemetry::Settings::default();
     let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
+    let outcome = run(&config, &telemetry).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {
         eprintln!("usage-compute-worker: telemetry flush left {pending} record(s) undelivered");
     }
     match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("usage-compute-worker: stopped: {error}");
-            std::process::ExitCode::FAILURE
+            ExitCode::FAILURE
         }
     }
 }
@@ -442,7 +602,7 @@ mod tests {
     fn accepts_a_complete_environment() {
         let config = read(&complete()).expect("complete environment is accepted");
         assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
+        assert_eq!(config.region.as_str(), "eu-west-1");
         assert_eq!(config.billing_mode, BillingMode::Shadow);
         assert_eq!(config.limits.outbox_republish_after_ms, 60_000);
         assert_eq!(config.limits.sweep_page, 200);
@@ -553,6 +713,37 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_region_that_is_not_an_identifier_is_refused_rather_than_carried_as_text() {
+        // An absent frontier row is the empty frontier of *this* region, and a
+        // region carrying the key separator would forge a partition, so the
+        // identifier grammar is applied at start-up rather than at first write.
+        let mut vars = complete();
+        vars.insert(REGION_VAR, "eu#west#1".to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: REGION_VAR,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn the_partial_batch_response_uses_the_identifiers_lambda_reads() {
+        // Lambda checkpoints past anything this list omits. A different key name
+        // would be read as an empty list, and the batch would be checkpointed
+        // past a record that never folded.
+        assert_eq!(super::failures(&[]), Vec::<serde_json::Value>::new());
+        assert_eq!(
+            super::failures(&["seq-1".to_owned(), "seq-2".to_owned()]),
+            vec![
+                serde_json::json!({ "itemIdentifier": "seq-1" }),
+                serde_json::json!({ "itemIdentifier": "seq-2" }),
+            ]
+        );
     }
 
     #[test]
