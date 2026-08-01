@@ -35,6 +35,13 @@ path = "src/main.rs"
 aex-brain-application = { path = "../../crates/aex-brain-application" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
+# The composed `ToolPort`. It is linked with no executor registered, because nothing
+# implements `ToolExecutor` yet; the router then refuses by its own typed error
+# rather than by one invented in this composition.
+aex-brain-tool-catalog = { path = "../../crates/aex-brain-tool-catalog" }
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-sqs.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,
@@ -47,3 +54,8 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time", "net", "io-util"] }
+
+[dev-dependencies]
+# The engine's own in-memory ports, so the composition is asserted against exactly the
+# behaviour the activation is asserted against rather than a second set of fixtures.
+aex-brain-application = { path = "../../crates/aex-brain-application", features = ["testing"] }
