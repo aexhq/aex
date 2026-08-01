@@ -176,13 +176,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-observation-domain",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-observation-export",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -197,21 +190,7 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-observation-store-aws",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-observation-test-support",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-otlp-admission",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"

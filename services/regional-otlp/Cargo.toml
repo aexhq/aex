@@ -32,6 +32,7 @@ name = "regional-otlp"
 path = "src/main.rs"
 
 [dependencies]
+aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 thiserror.workspace = true
