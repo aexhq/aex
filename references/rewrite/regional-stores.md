@@ -95,6 +95,26 @@ per-shard reconciliation cursors. 45 tests, all passing.
 It depends on `aex-session-dynamodb` with `default-features = false`, so the
 session row codec and the projection reader are not in its link graph.
 
+### `crates/aex-secret-custody-dynamodb`
+
+The secret metadata, hidden source-generation, lineage, session-custody,
+managed-call authorization, redaction-manifest and provider-credential row
+families; the set, O(1) revoke, idle-only custody admission and only-before-
+decrypt authorization transactions; and strongly consistent metadata/ciphertext
+reads from deliberately separate partitions.
+
+The metadata `Update` always writes `itemType="workspace_secret"`, including
+when it creates the row. A set plan is rejected unless the target revision is
+exactly one after the revision it claims to have observed, its metadata is
+`ready`, and its sealed generation identity equals the metadata pointer. The
+authority advances the stored revision itself with
+`if_not_exists(revision, :zero) + :one`; it never trusts a caller-supplied
+revision scalar.
+
+37 default-lane tests and 6 DynamoDB Local integration tests pass. The engine
+lane starts only through `aex_test_harness::DynamoDbLocalContainer`, so the
+image comes exclusively from the harness's `images::reference` registry.
+
 ## 2. Deferred, with the reason
 
 | Crate | State |
@@ -102,7 +122,6 @@ session row codec and the projection reader are not in its link graph.
 | `aex-content-dynamodb` | **not started.** §2.3 key templates, the SHA-256/BLAKE3 digest split, pins on roots, grant rows without a body copy, the GC epoch and the fenced sweep. |
 | `aex-content-aws` | **not started.** §5 conditional create, multipart three-phase completion, presigned grants, `RedactedUrl`, fenced delete, `content_missing`. |
 | `aex-registry-dynamodb` | **not started.** §2.4 pointer/ETag/upload state machine. |
-| `aex-secret-custody-dynamodb` | **not started.** §2.5 plus the `REDACT#{session_id}` manifest and the `pcr_` directory. |
 | `aex-secret-keystore-dynamodb` | **not started.** §2.6 typed `KeyStoreConfig` and read-only introspection. |
 | `aex-secret-aws` | **not started.** See the `G-ESDK` outcome in §5 below: the arm is decided, the code is not written. |
 | `aex-runtime-activity-dynamodb` | **not started.** §2.7. |
@@ -162,7 +181,6 @@ reorder a transaction by accident.
 
 | Requirement | Owner |
 | --- | --- |
-| **`aex-test-harness` owes a container-start helper.** `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but nothing that starts a container. As written, **no stream can write an engine-backed integration target at all.** Both landed crates carry `not_applicable.integration` naming this, and the DynamoDB Local cases from plan 05 §8.2 land the moment the helper exists. | test-architecture |
 | The plan types in `aex_session_dynamodb::wire_pending` are peer-owned and every item names the path that replaces it: `AdmissionPlan`, `TerminalPlan`, `LifecyclePlan`, `AgentDecisionPlan`, `FanoutPagePlan`, `SessionHead`, `Run`, `Message`, `SessionEvent`, `AgentControl`, `JournalEntry`, `StoredOperation`, `WorkspacePlacement`, `KeyRevocation`, `FeedFrontier`. A different name costs a mechanical rename; the **participant-naming requirement is not negotiable**, because §7's decoding is exact only if a plan remembers what it put at each index. | regional domains, brain |
 | `regional-authz-projection`'s item shapes are still assumed: `workspace_placement`, `key_revocation`, `feed_frontier` with the attribute names in `projection.rs`. `central-control-worker` is the only writer and must confirm or correct them. | central identity/control |
 | The `usage.storage.delta`, `usage.compute.closure` and `usage.transfer.authorized` payload schemas in `aex_work_dynamodb::codec::payload_schema` are provisional field sets. The transactional delivery mechanism is settled; the names are not. | usage metering |
@@ -234,7 +252,44 @@ Item 3 deserves naming separately: the codec checks `expiresAt` explicitly and a
 unit case proves the reader refuses an expired receipt, but "no fence anywhere
 reads TTL" is a whole-system property that only a live soak can establish.
 
-Even the local DynamoDB Local layer is currently unreachable — see the harness
-gap in §4 — so the strongest evidence this stream has today is protocol-level:
-the exact bytes of the request, and the exact participant a cancellation decodes
-to.
+The secret-custody review in §8 now reaches DynamoDB Local through the shared
+harness. That closes local transaction and rollback evidence for the reviewed
+set/replay path; it does not reduce any of the real-AWS gaps above.
+
+## 8. Secret-custody review continuation
+
+Branch `rw/regional-stores-review` was created from `4cf88eca`, merged with
+`main` at `54c2d572` in `112992ba`, and repaired in `8947d4aa`. The active
+`rw/regional-stores-2` worktree was read only for its status and was never
+modified, merged, committed, or used as a source of uncommitted code.
+
+The review separates two contracts that the earlier engine case had combined
+under the misleading name
+`a_second_set_at_the_revision_nobody_read_is_refused`:
+
+- Plan 05 §3 makes `ClientRequestToken` provider transport deduplication for ten
+  minutes. An identical request with the identical token therefore returns the
+  first successful result. Plan 05 §7 reserves
+  `IdempotentParameterMismatchException` for the same token with a different
+  payload; that remains `StoreError::IdempotencyConflict`.
+- A distinct set that claims it observed revision 7 targets revision 8 and is
+  evaluated normally. Against a revision-1 record it fails as
+  `StoreError::PreconditionFailed { participant: secret.metadata }`; the
+  metadata remains byte-for-byte unchanged and the transaction leaves no
+  generation-2 row. Identical replay success therefore does not weaken the
+  stale-write fence or transaction atomicity.
+
+Test-first evidence: the strengthened request-shape and invalid-plan cases
+failed against the inherited implementation (15 passed, 2 failed) because it
+emitted `SET revision = :revision` and accepted revision jumps. After the
+authority-side increment and structural plan validation:
+
+```
+cargo clippy -p aex-secret-custody-dynamodb --all-targets --all-features -- -D warnings
+                                                                clean
+cargo nextest run -p aex-secret-custody-dynamodb                 37 passed, 0 skipped
+cargo nextest run -p aex-secret-custody-dynamodb \
+  --features integration-engines --test integration              6 passed, 0 skipped
+cargo check --workspace --all-targets                            clean
+cargo run -p aex-workspace-check                                 133 members / 139 packages clean
+```
