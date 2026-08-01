@@ -364,6 +364,7 @@ dependencies = [
  "aex-finance-domain",
  "aex-rds-data",
  "async-trait",
+ "aws-sdk-rdsdata",
  "futures",
  "proptest",
  "serde",
