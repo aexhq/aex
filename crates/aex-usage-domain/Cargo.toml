@@ -22,12 +22,29 @@ security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
 
+[package.metadata.aex.targets]
+properties = "unit"
+golden = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the observations-usage stream; the cases land with the crate's own implementation"
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
+blake3.workspace = true
+hex.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
-uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
+
+[[test]]
+name = "golden"
+path = "tests/golden.rs"
