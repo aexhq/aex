@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+# Every test target is declared explicitly, so `tests/support/` is a module and
+# never a target of its own.
+autotests = false
 
 [lints]
 workspace = true
@@ -23,18 +26,57 @@ security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+[package.metadata.aex.targets]
+conformance = "unit"
+properties = "unit"
+faults = "unit"
+security = "unit"
+integration = "integration"
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["dep:tokio", "aex-test-harness/containers"]
 
 [dependencies]
 async-trait.workspace = true
-aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-smithy-types.workspace = true
-futures.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
-time.workspace = true
-uuid.workspace = true
+aex-content-domain = { path = "../aex-content-domain" }
+aex-wire = { path = "../aex-wire" }
 aex-workspace-domain = { path = "../aex-workspace-domain" }
+# The shared regional store machinery only. `default-features = false` keeps the
+# session-authority row codec and the projection reader out of the link graph.
+aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false }
+
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+aws-config.workspace = true
+aws-smithy-http-client.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

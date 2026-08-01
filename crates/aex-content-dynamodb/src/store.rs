@@ -1,2 +1,480 @@
-//! `store` surface of `aex-content-dynamodb`. The owning implementation stream fills this
-//! module; the crate-level documentation states what may and may not live here.
+//! The `regional-content` port implementation.
+//!
+//! Two reads carry the weight. `reachability` is the strongly consistent query
+//! a sweeper runs immediately before it decides to delete: if **any** pin or any
+//! unexpired grant survives, the candidate is dropped. And `redeem_grant`
+//! validates `expiresAt` against the request clock rather than trusting the TTL
+//! attribute beside it, because AWS deletes a TTL'd row within 48 hours rather
+//! than at the instant, and a fence that trusted the timer would authorise a
+//! read after the grant had expired.
+
+use aex_session_dynamodb::attr::{Item, Row, s};
+use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
+use aex_session_dynamodb::paging::PageBudget;
+use aex_session_dynamodb::plan::key;
+use aex_wire::ids::{ContentHash, WorkspaceId};
+use aex_wire::types::Timestamp;
+use async_trait::async_trait;
+use aws_sdk_dynamodb::Client;
+
+use crate::codec::{
+    self, ContentDescriptor, DownloadGrant, GcEpoch, TreePage, decode_descriptor, decode_gc_epoch,
+    decode_grant, decode_inline_body, decode_tree_page,
+};
+use crate::expressions;
+use crate::keys;
+use crate::wire_pending::{Blake3Digest, GcSweepPlan, SealedBytes, body_hex};
+
+/// One row of the slim garbage-collection scan projection.
+///
+/// The projection is deliberately narrow: a mark scan enumerates identities and
+/// sizes, and there is nowhere in this type for a ciphertext to go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GcScanEntry {
+    /// The scanned digest, in whichever family the row belongs to.
+    pub digest: String,
+    /// The placement, when the row is a descriptor.
+    pub placement: Option<String>,
+    /// The size, when the row declares one.
+    pub size_bytes: Option<u64>,
+    /// The object key, when the body lives in the object store.
+    pub object_key: Option<String>,
+    /// The `ETag` a fenced delete would condition on.
+    pub object_etag: Option<String>,
+    /// The epoch the row was last marked in.
+    pub gc_epoch: Option<u64>,
+    /// The hold a candidate is under.
+    pub not_before: Option<Timestamp>,
+}
+
+/// One page of the garbage-collection scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GcScanPage {
+    /// The rows this page names.
+    pub entries: Vec<GcScanEntry>,
+    /// Whether the bucket holds more.
+    pub more: bool,
+}
+
+/// What a strongly consistent reachability read found in one content partition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reachability {
+    /// How many pins survive.
+    pub pins: usize,
+    /// How many grants survive that have not provably expired.
+    pub unexpired_grants: usize,
+}
+
+impl Reachability {
+    /// Whether the body may be considered for deletion at all.
+    #[must_use]
+    pub const fn is_collectable(&self) -> bool {
+        self.pins == 0 && self.unexpired_grants == 0
+    }
+}
+
+/// A redeemed grant, with the body it authorises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedeemedGrant {
+    /// What the grant authorises.
+    pub grant: DownloadGrant,
+    /// The sealed body, when the placement is inline.
+    pub inline: Option<SealedBytes>,
+    /// The descriptor, so the caller can presign an object read.
+    pub descriptor: ContentDescriptor,
+}
+
+// TODO(cross-stream): replaced by aex_content_domain::ports::ContentMetadataStore
+/// The `regional-content` authority.
+#[async_trait]
+pub trait ContentMetadataStore: Send + Sync + 'static {
+    /// Reads one body descriptor.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport or decode failure.
+    async fn load_descriptor(
+        &self,
+        workspace: WorkspaceId,
+        digest: &ContentHash,
+    ) -> Result<Option<ContentDescriptor>, StoreError>;
+
+    /// Reads one inline ciphertext body.
+    ///
+    /// # Errors
+    ///
+    /// As [`ContentMetadataStore::load_descriptor`].
+    async fn read_inline_body(
+        &self,
+        workspace: WorkspaceId,
+        digest: &ContentHash,
+    ) -> Result<Option<SealedBytes>, StoreError>;
+
+    /// Reads one Merkle tree page.
+    ///
+    /// # Errors
+    ///
+    /// As [`ContentMetadataStore::load_descriptor`].
+    async fn read_tree_page(
+        &self,
+        workspace: WorkspaceId,
+        page: Blake3Digest,
+    ) -> Result<Option<TreePage>, StoreError>;
+
+    /// Writes tree pages, each immutably.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] for an over-large page, otherwise as above. An
+    /// already-present page is an idempotent success, because a page is
+    /// content-addressed and therefore identical by construction.
+    async fn put_tree_pages(&self, pages: &[TreePage]) -> Result<(), StoreError>;
+
+    /// Reads the workspace's garbage-collection epoch.
+    ///
+    /// # Errors
+    ///
+    /// As [`ContentMetadataStore::load_descriptor`].
+    async fn load_gc_epoch(&self, workspace: WorkspaceId) -> Result<Option<GcEpoch>, StoreError>;
+
+    /// Scans one garbage-collection bucket.
+    ///
+    /// # Errors
+    ///
+    /// As [`ContentMetadataStore::load_descriptor`].
+    async fn scan_gc_bucket(
+        &self,
+        workspace: WorkspaceId,
+        bucket: u16,
+        budget: PageBudget,
+    ) -> Result<GcScanPage, StoreError>;
+
+    /// Reads every pin and grant that survives in one content partition.
+    ///
+    /// # Errors
+    ///
+    /// As [`ContentMetadataStore::load_descriptor`].
+    async fn reachability(
+        &self,
+        workspace: WorkspaceId,
+        digest: &ContentHash,
+        now: Timestamp,
+    ) -> Result<Reachability, StoreError>;
+
+    /// Commits one fenced sweep.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] naming the participant that lost,
+    /// which always means the body survives.
+    async fn sweep_candidate(&self, plan: &GcSweepPlan) -> Result<(), StoreError>;
+
+    /// Mints a download grant and its pin in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] as above.
+    async fn mint_grant(&self, grant: &DownloadGrant, now: Timestamp) -> Result<(), StoreError>;
+
+    /// Redeems a grant against the request clock.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] naming `content.grant` when the grant
+    /// is absent or expired — the two are reported identically so a prober
+    /// cannot tell a forged token from a stale one.
+    async fn redeem_grant(
+        &self,
+        token_sha256_hex: &str,
+        now: Timestamp,
+    ) -> Result<RedeemedGrant, StoreError>;
+}
+
+/// The adapter.
+#[derive(Debug, Clone)]
+pub struct ContentStore {
+    client: Client,
+    table: String,
+}
+
+impl ContentStore {
+    /// Binds a store to a client and a physical table name.
+    #[must_use]
+    pub fn new(client: Client, table: impl Into<String>) -> Self {
+        Self {
+            client,
+            table: table.into(),
+        }
+    }
+
+    /// The physical table name.
+    #[must_use]
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+
+    async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .set_key(Some(key(pk, sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+        Ok(output.item)
+    }
+}
+
+#[async_trait]
+impl ContentMetadataStore for ContentStore {
+    async fn load_descriptor(
+        &self,
+        workspace: WorkspaceId,
+        digest: &ContentHash,
+    ) -> Result<Option<ContentDescriptor>, StoreError> {
+        let target = keys::descriptor(workspace, digest);
+        match self.get(&target.pk, &target.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(decode_descriptor(&item, workspace)?)),
+        }
+    }
+
+    async fn read_inline_body(
+        &self,
+        workspace: WorkspaceId,
+        digest: &ContentHash,
+    ) -> Result<Option<SealedBytes>, StoreError> {
+        let target = keys::inline_body(workspace, digest);
+        match self.get(&target.pk, &target.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(decode_inline_body(&item, workspace)?)),
+        }
+    }
+
+    async fn read_tree_page(
+        &self,
+        workspace: WorkspaceId,
+        page: Blake3Digest,
+    ) -> Result<Option<TreePage>, StoreError> {
+        let target = keys::tree_page(workspace, page);
+        match self.get(&target.pk, &target.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(decode_tree_page(&item, workspace)?)),
+        }
+    }
+
+    async fn put_tree_pages(&self, pages: &[TreePage]) -> Result<(), StoreError> {
+        for page in pages {
+            let builder = expressions::put_tree_page(&self.table, page)?;
+            let built = builder.build().map_err(|error| StoreError::Invalid {
+                detail: error.to_string(),
+            })?;
+            let outcome = self
+                .client
+                .put_item()
+                .table_name(&self.table)
+                .set_item(Some(built.item().clone()))
+                .set_condition_expression(built.condition_expression().map(str::to_owned))
+                .send()
+                .await;
+            match outcome {
+                Ok(_) => {}
+                Err(error) => {
+                    // A page is content addressed, so an existing row holds the
+                    // identical bytes and the write is an idempotent success.
+                    if matches!(
+                        error.as_service_error(),
+                        Some(
+                            aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(
+                                _
+                            )
+                        )
+                    ) {
+                        continue;
+                    }
+                    return Err(classify(&error, Idempotence::Write(Resolution::TargetItem)));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn load_gc_epoch(&self, workspace: WorkspaceId) -> Result<Option<GcEpoch>, StoreError> {
+        let target = keys::gc_epoch(workspace);
+        match self.get(&target.pk, &target.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(decode_gc_epoch(&item, workspace)?)),
+        }
+    }
+
+    async fn scan_gc_bucket(
+        &self,
+        workspace: WorkspaceId,
+        bucket: u16,
+        budget: PageBudget,
+    ) -> Result<GcScanPage, StoreError> {
+        let output = self
+            .client
+            .query()
+            .table_name(&self.table)
+            .index_name(keys::GC_INDEX)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", keys::GC_PK)
+            .expression_attribute_values(":pk", s(keys::gc_scan_partition(workspace, bucket)))
+            .limit(budget.limit())
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+
+        let mut entries = Vec::new();
+        for item in output.items.unwrap_or_default() {
+            // The projection carries `digestSha256` for a body or a candidate
+            // and `pageDigest` for a tree page; exactly one of them is present.
+            let digest = item
+                .get("digestSha256")
+                .or_else(|| item.get("pageDigest"))
+                .and_then(|value| value.as_s().ok())
+                .cloned()
+                .ok_or(StoreError::Invalid {
+                    detail: "a garbage-collection scan row names no digest".to_owned(),
+                })?;
+            let read = |name: &str| item.get(name).and_then(|value| value.as_s().ok()).cloned();
+            let number = |name: &str| {
+                item.get(name)
+                    .and_then(|value| value.as_n().ok())
+                    .and_then(|text| text.parse::<u64>().ok())
+            };
+            entries.push(GcScanEntry {
+                digest,
+                placement: read("placement"),
+                size_bytes: number("sizeBytes"),
+                object_key: read("objectKey"),
+                object_etag: read("objectEtag"),
+                gc_epoch: number("gcEpoch"),
+                not_before: read("notBefore").and_then(|text| Timestamp::parse(&text).ok()),
+            });
+        }
+        Ok(GcScanPage {
+            more: output.last_evaluated_key.is_some(),
+            entries,
+        })
+    }
+
+    async fn reachability(
+        &self,
+        workspace: WorkspaceId,
+        digest: &ContentHash,
+        now: Timestamp,
+    ) -> Result<Reachability, StoreError> {
+        let partition = keys::content_partition(workspace, digest);
+        let output = self
+            .client
+            .query()
+            .table_name(&self.table)
+            .key_condition_expression("#pk = :pk AND #sk BETWEEN :low AND :high")
+            .expression_attribute_names("#pk", aex_session_dynamodb::attr::PK)
+            .expression_attribute_names("#sk", aex_session_dynamodb::attr::SK)
+            .expression_attribute_values(":pk", s(partition))
+            // `GRANT#` sorts before `PIN#`, so one range covers both families
+            // and the sweeper cannot miss one by reading only the other.
+            .expression_attribute_values(":low", s(keys::grant_pin_prefix()))
+            .expression_attribute_values(":high", s(format!("{}\u{fffd}", keys::pin_prefix())))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+
+        let mut pins = 0;
+        let mut unexpired_grants = 0;
+        for item in output.items.unwrap_or_default() {
+            let row = Row::bind(&item, codec::CONTENT_PIN)?;
+            let kind = row.enumerated("pinKind", codec::STORED_PIN_KINDS)?;
+            if kind == codec::GRANT_PIN_KIND {
+                // Expiry is read from the row, never inferred from the TTL
+                // attribute having fired.
+                let expires_at = row.timestamp("expiresAt")?;
+                if expires_at > now {
+                    unexpired_grants += 1;
+                }
+            } else {
+                pins += 1;
+            }
+        }
+        Ok(Reachability {
+            pins,
+            unexpired_grants,
+        })
+    }
+
+    async fn sweep_candidate(&self, plan: &GcSweepPlan) -> Result<(), StoreError> {
+        let transaction = expressions::sweep(&self.table, plan)?;
+        let request = transaction.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => Err(match error.as_service_error() {
+                Some(service) => aex_session_dynamodb::error::decode_cancellation(
+                    service,
+                    transaction.participants(),
+                ),
+                None => classify(&error, Idempotence::Write(Resolution::TargetItem)),
+            }),
+        }
+    }
+
+    async fn mint_grant(&self, grant: &DownloadGrant, now: Timestamp) -> Result<(), StoreError> {
+        let transaction = expressions::mint_grant(&self.table, grant, now)?;
+        let request = transaction.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => Err(match error.as_service_error() {
+                Some(service) => aex_session_dynamodb::error::decode_cancellation(
+                    service,
+                    transaction.participants(),
+                ),
+                None => classify(&error, Idempotence::Write(Resolution::TargetItem)),
+            }),
+        }
+    }
+
+    async fn redeem_grant(
+        &self,
+        token_sha256_hex: &str,
+        now: Timestamp,
+    ) -> Result<RedeemedGrant, StoreError> {
+        let target = keys::grant(token_sha256_hex)?;
+        let refused = || StoreError::PreconditionFailed {
+            participant: aex_session_dynamodb::plan::Participant::CONTENT_GRANT,
+            observed: None,
+        };
+        let item = self
+            .get(&target.pk, &target.sk)
+            .await?
+            .ok_or_else(refused)?;
+        let grant = decode_grant(&item)?;
+        if grant.expires_at <= now {
+            return Err(refused());
+        }
+        let descriptor = self
+            .load_descriptor(grant.workspace, &grant.digest)
+            .await?
+            .ok_or(StoreError::Invalid {
+                detail: format!(
+                    "grant for `{}` names a body with no descriptor",
+                    body_hex(&grant.digest)
+                ),
+            })?;
+        let inline = if descriptor.placement == aex_session_dynamodb::measure::Placement::Inline {
+            self.read_inline_body(grant.workspace, &grant.digest)
+                .await?
+        } else {
+            None
+        };
+        Ok(RedeemedGrant {
+            grant,
+            inline,
+            descriptor,
+        })
+    }
+}

@@ -64,17 +64,24 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-content-aws",
-    "owner": "regional-stores",
+    "subject": "crates/aex-control-app",
+    "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-content-dynamodb",
-    "owner": "regional-stores",
+    "subject": "crates/aex-control-aurora",
+    "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-control-domain",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -113,6 +120,27 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "crates/aex-identity-app",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-identity-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-identity-domain",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "crates/aex-observation-application",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -141,21 +169,14 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "crates/aex-rds-data",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "crates/aex-regional-http",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-registry-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-runtime-activity-dynamodb",
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
@@ -173,27 +194,6 @@
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
     "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-secret-aws",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-secret-custody-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-secret-keystore-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -690,6 +690,13 @@
     "subject": "cargo nextest list --message-format json",
     "owner": "test-architecture",
     "blocking_rule": "aex-empty-unit",
+    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
+  },
+  {
+    "reason_class": "pending_authority",
+    "subject": "migrations/central/*.sql",
+    "owner": "central-finance",
+    "blocking_rule": "aex-migration-uncovered",
     "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
   },
   {
