@@ -1,7 +1,7 @@
 //! Loader and canonical bundler for `migrations/regional`.
 //!
 //! `migrations/regional/tables/*.json` is the source of truth for every regional
-//! DynamoDB table. This module reads those files, validates each one against
+//! `DynamoDB` table. This module reads those files, validates each one against
 //! `migrations/regional/schema.json`, and rebuilds the canonical bundle
 //! `migrations/regional/generated/regional-tables.json` that Terraform consumes
 //! through `jsondecode`.
@@ -92,12 +92,12 @@ pub enum TableError {
     },
 }
 
-/// A DynamoDB attribute declaration.
+/// A `DynamoDB` attribute declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttributeDefinition {
     /// Attribute name.
     pub name: String,
-    /// DynamoDB scalar attribute type.
+    /// `DynamoDB` scalar attribute type.
     #[serde(rename = "type")]
     pub attribute_type: String,
 }
@@ -194,7 +194,7 @@ pub struct TimeToLive {
 pub struct IamGrant {
     /// The deployable role name.
     pub role: String,
-    /// The permitted DynamoDB actions.
+    /// The permitted `DynamoDB` actions.
     pub actions: Vec<String>,
     /// Which resource ARNs the actions apply to.
     pub resources: Vec<String>,
@@ -257,6 +257,11 @@ pub struct TableBundle {
 }
 
 /// The repository root, derived from this crate's manifest directory.
+///
+/// # Panics
+///
+/// Panics when the manifest directory has fewer than two ancestors, which
+/// cannot happen for a member under `crates/<name>`.
 #[must_use]
 pub fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

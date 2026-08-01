@@ -4,7 +4,7 @@
 //!
 //! - every fixture is deterministic: the clock is injected, identifiers come
 //!   from a seeded factory, and nothing reads the wall clock or a random source
-//! - every created resource is recorded in a [`teardown::CleanupLedger`], which
+//! - every created resource is recorded in a [`teardown::FixtureLedger`], which
 //!   panics at drop if anything was left behind
 //! - every synthetic name lives under one per-run prefix, so two concurrent runs
 //!   cannot collide and residue is always attributable
@@ -32,4 +32,4 @@ pub use clock::TestClock;
 pub use ids::IdFactory;
 pub use prefix::{PrefixError, RunPrefix};
 pub use tables::{TableBundle, TableDefinition, TableError};
-pub use teardown::{CleanupEntry, CleanupLedger, RegionalResource};
+pub use teardown::{FixtureEntry, FixtureLedger, RegionalResource};

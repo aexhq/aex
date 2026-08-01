@@ -172,13 +172,59 @@ pub struct DataBlock {
     /// Digest of the cleanup ledger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_ledger_digest: Option<String>,
-    /// `none` or `explained`.
+    /// `none`, `explained` or `unreclaimed`.
+    ///
+    /// `unreclaimed` is produced only by [`DataBlock::from_sweep`] and is a
+    /// hard failure that no explanation softens. The other two are declarations
+    /// a lane makes about itself; this one is a fact a janitor established.
     pub residue: String,
     /// Whether the run's secret canary was observed anywhere it should not be.
     pub secret_canary_observed: bool,
     /// Why residue is acceptable, when it is explained.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub residue_explanation: Option<String>,
+}
+
+impl DataBlock {
+    /// Build the hygiene block from a real janitor sweep.
+    ///
+    /// This is the production constructor the receipt's `residue` field never
+    /// had. Before it, `residue` was self-reported: the only thing that ever
+    /// built a `DataBlock` was a unit-test fixture, so `evidence verify` gated
+    /// on a value no lane produced and a leaking run reported `none` and
+    /// passed.
+    ///
+    /// `residue` is now derived from what the sweep could not reclaim, and
+    /// `residue_explanation` carries the sweep's own detail rather than a
+    /// sentence a lane wrote about itself.
+    #[must_use]
+    pub fn from_sweep(
+        report: &crate::janitor::SweepReport,
+        cleanup_ledger_digest: Option<String>,
+        budget_micro_usd: Option<u64>,
+        spent_micro_usd: Option<u64>,
+        secret_canary_observed: bool,
+    ) -> Self {
+        let verdict = report.residue();
+        let (residue, residue_explanation) = match &verdict {
+            crate::janitor::Residue::None => ("none".to_owned(), None),
+            crate::janitor::Residue::Unreclaimed { count, detail } => (
+                "unreclaimed".to_owned(),
+                Some(format!(
+                    "the janitor could not reclaim {count} resource(s) past their deadline: \
+                     {detail}"
+                )),
+            ),
+        };
+        Self {
+            budget_micro_usd,
+            spent_micro_usd,
+            cleanup_ledger_digest,
+            residue,
+            secret_canary_observed,
+            residue_explanation,
+        }
+    }
 }
 
 /// `aex.evidence-receipt.v1`.
@@ -261,7 +307,8 @@ impl Receipt {
     /// Returns [`Exit::EvidenceUnsound`] when any counter that must be zero is
     /// not, when the collected inventory does not match the declared one, when
     /// nothing was declared at all, when a rerun discarded its first failure,
-    /// or when residue is unexplained.
+    /// when residue is unexplained, or when a janitor sweep reported residue it
+    /// could not reclaim.
     // One function on purpose: every counter, inventory and hygiene rule for
     // one receipt, in the order a reader would check them. Splitting it would
     // scatter the no-skip contract across five call sites.
@@ -337,7 +384,23 @@ impl Receipt {
                 ),
             ));
         }
-        if self.data.residue != "none" && self.data.residue_explanation.is_none() {
+        // `unreclaimed` is a janitor finding, not a lane's declaration about
+        // itself, and no explanation makes it acceptable. OD-36 makes
+        // reclamation a release gate; a lane that left something in production
+        // past its deadline has not met it.
+        if self.data.residue == "unreclaimed" {
+            violations.push(Violation::new(
+                "data-residue-unreclaimed",
+                format!(
+                    "receipt `{}` carries residue the janitor could not reclaim: {}",
+                    self.receipt_id,
+                    self.data
+                        .residue_explanation
+                        .as_deref()
+                        .unwrap_or("(no detail recorded)")
+                ),
+            ));
+        } else if self.data.residue != "none" && self.data.residue_explanation.is_none() {
             violations.push(Violation::new(
                 "data-residue",
                 format!(
@@ -720,6 +783,92 @@ mod tests {
         receipt.data.residue_explanation =
             Some("retained snapshot with a verified 24 h TTL".to_owned());
         receipt.verify().unwrap();
+    }
+
+    /// The receipt's residue field used to be self-reported, with no
+    /// production constructor anywhere in the workspace, so a leaking run wrote
+    /// `none` and passed. It is now derived from the janitor's own sweep.
+    #[test]
+    fn the_residue_field_is_derived_from_a_real_sweep_rather_than_declared() {
+        use crate::janitor::{DiscoveredResource, Inventory as PlaneInventory, SweepMode, sweep};
+
+        let policy = aex_workspace_check::policy::Policy::embedded();
+        let mut tags = std::collections::BTreeMap::new();
+        tags.insert(
+            policy.janitor.synthetic_tag.clone(),
+            policy.janitor.synthetic_value.clone(),
+        );
+        tags.insert(
+            policy.janitor.run_id_tag.clone(),
+            format!("tr_{}", "0".repeat(32)),
+        );
+        tags.insert(policy.janitor.owner_tag.clone(), "delivery".to_owned());
+        tags.insert(policy.janitor.lane_tag.clone(), "e2e".to_owned());
+        tags.insert(
+            policy.janitor.expires_at_tag.clone(),
+            "2026-01-01T00:00:00Z".to_owned(),
+        );
+
+        let clean = sweep(
+            &PlaneInventory {
+                schema: "aex.janitor-inventory.v1".to_owned(),
+                plane: crate::admit::Plane::Prd,
+                resources: Vec::new(),
+            },
+            &crate::janitor::DryRun,
+            SweepMode::Reclaim,
+            time::OffsetDateTime::now_utc(),
+        );
+        let block = DataBlock::from_sweep(&clean, Some("sha256:abc".to_owned()), None, None, false);
+        assert_eq!(block.residue, "none");
+        assert_eq!(block.cleanup_ledger_digest.as_deref(), Some("sha256:abc"));
+        let mut swept = receipt("e2e");
+        swept.data = block;
+        swept.verify().expect("a swept-clean lane passes");
+
+        // A kind no sweep can find, from an expired run: real residue.
+        let dirty = sweep(
+            &PlaneInventory {
+                schema: "aex.janitor-inventory.v1".to_owned(),
+                plane: crate::admit::Plane::Prd,
+                resources: vec![DiscoveredResource {
+                    kind: "sqs_message".to_owned(),
+                    identity: "msg-1".to_owned(),
+                    tags,
+                }],
+            },
+            &crate::janitor::DryRun,
+            SweepMode::Reclaim,
+            time::OffsetDateTime::now_utc(),
+        );
+        let block = DataBlock::from_sweep(&dirty, None, None, None, false);
+        assert_eq!(block.residue, "unreclaimed");
+        assert!(block.residue_explanation.is_some());
+        let mut leaked = receipt("e2e");
+        leaked.data = block;
+        let err = leaked
+            .verify()
+            .expect_err("unreclaimed residue fails the lane");
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"data-residue-unreclaimed"));
+    }
+
+    /// The `explained` escape hatch is for a declared survivor with a verified
+    /// TTL. It must not reach the janitor's own verdict: a lane cannot write a
+    /// sentence that makes production residue acceptable.
+    #[test]
+    fn no_explanation_makes_unreclaimed_residue_acceptable() {
+        let mut leaked = receipt("e2e");
+        leaked.data.residue = "unreclaimed".to_owned();
+        leaked.data.residue_explanation =
+            Some("we will clean it up by hand later, honestly".to_owned());
+        let err = leaked.verify().unwrap_err();
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"data-residue-unreclaimed"));
+        assert!(
+            !err.rules().contains(&"data-residue"),
+            "the unreclaimed rule replaces the explanation rule rather than joining it"
+        );
     }
 
     #[test]

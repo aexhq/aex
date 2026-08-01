@@ -161,6 +161,21 @@ pub struct Units {
     pub units: Vec<Unit>,
 }
 
+/// Permission for one scenario to provision in `prd` (OD-35).
+///
+/// Absence is the default and means "runs in `dev` only". Presence is a claim
+/// the registry checks mechanically: the rule must exist, and every resource
+/// kind the scenario creates must be one the janitor can reclaim from tags.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrdProvisioning {
+    /// Which `[prd_provisioning.rule]` admits this scenario.
+    pub rule: String,
+    /// Every `[janitor.resource]` kind the scenario creates in `prd`.
+    #[serde(default)]
+    pub provisions: Vec<String>,
+}
+
 /// One scenario and what it observes.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +186,9 @@ pub struct Scenario {
     pub owner: String,
     /// Nodes this scenario exercises without importing them.
     pub observes: Vec<String>,
+    /// Whether this scenario may provision in `prd`, and under which rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prd: Option<PrdProvisioning>,
 }
 
 /// `release/scenario-ownership.toml`.

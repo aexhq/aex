@@ -199,12 +199,19 @@ pub struct Ttl(#[serde(with = "duration_seconds")] pub Duration);
 impl Ttl {
     /// The grace period the janitor adds before calling a surviving resource
     /// residue.
-    pub const RESIDUE_GRACE: Duration = Duration::minutes(30);
+    ///
+    /// Read from `[janitor].residue_grace_minutes` rather than declared here,
+    /// because the janitor sweeps by the same number and a second copy is a
+    /// second answer to "is this run still allowed to be alive".
+    #[must_use]
+    pub fn residue_grace() -> Duration {
+        Duration::minutes(crate::ledger::janitor_policy().residue_grace_minutes)
+    }
 
     /// The instant after which a surviving resource is residue.
     #[must_use]
     pub fn residue_deadline(self, started_at: OffsetDateTime) -> OffsetDateTime {
-        started_at + self.0 + Self::RESIDUE_GRACE
+        started_at + self.0 + Self::residue_grace()
     }
 }
 
@@ -228,17 +235,29 @@ mod duration_seconds {
 pub struct TestRunId(String);
 
 impl TestRunId {
-    /// The fixed prefix every id carries.
-    pub const PREFIX: &'static str = "tr_";
+    /// The fixed prefix every id carries, from `[janitor]` in
+    /// `release/policy/test-profiles.toml`.
+    ///
+    /// The shape lives in policy rather than here because the janitor validates
+    /// it from the same document. A minter and a validator that disagreed about
+    /// the shape would produce a sweep that reclaims nothing.
+    #[must_use]
+    pub fn prefix() -> &'static str {
+        &crate::ledger::janitor_policy().run_id_prefix
+    }
+
     /// The number of hex characters after the prefix.
-    pub const HEX_LEN: usize = 32;
+    #[must_use]
+    pub fn hex_len() -> usize {
+        crate::ledger::janitor_policy().run_id_hex_len
+    }
 
     /// Mints a new time-ordered id.
     #[must_use]
     pub fn mint() -> Self {
         Self(format!(
             "{}{}",
-            Self::PREFIX,
+            Self::prefix(),
             hex::encode(Uuid::now_v7().as_bytes())
         ))
     }
@@ -252,8 +271,8 @@ impl TestRunId {
     /// Whether a string has the exact shape of a run id.
     #[must_use]
     pub fn is_well_formed(text: &str) -> bool {
-        text.strip_prefix(Self::PREFIX).is_some_and(|hex_part| {
-            hex_part.len() == Self::HEX_LEN
+        text.strip_prefix(Self::prefix()).is_some_and(|hex_part| {
+            hex_part.len() == Self::hex_len()
                 && hex_part
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -377,14 +396,25 @@ impl TestRun {
     }
 
     /// The tag set every taggable resource carries.
+    ///
+    /// The keys and the marker value come from `[janitor]` in
+    /// `release/policy/test-profiles.toml`, which is the same document the
+    /// janitor sweeps by, so the stamper and the sweeper cannot drift. The four
+    /// tags that existed before the janitor are unchanged; the marker is added
+    /// beside them, and it is what the janitor's refusal turns on.
     #[must_use]
     pub fn tags(&self) -> BTreeMap<&'static str, String> {
+        let policy = crate::ledger::janitor_policy();
         let mut tags = BTreeMap::new();
-        tags.insert("aex:test-run-id", self.id.to_string());
-        tags.insert("aex:test-owner", self.owner.clone());
-        tags.insert("aex:test-lane", self.lane.to_string());
         tags.insert(
-            "aex:test-expires-at",
+            policy.synthetic_tag.as_str(),
+            policy.synthetic_value.clone(),
+        );
+        tags.insert(policy.run_id_tag.as_str(), self.id.to_string());
+        tags.insert(policy.owner_tag.as_str(), self.owner.clone());
+        tags.insert(policy.lane_tag.as_str(), self.lane.to_string());
+        tags.insert(
+            policy.expires_at_tag.as_str(),
             self.expires_at
                 .format(&time::format_description::well_known::Rfc3339)
                 .unwrap_or_else(|_| self.expires_at.unix_timestamp().to_string()),
@@ -421,7 +451,12 @@ mod tests {
     fn a_minted_id_has_the_declared_shape() {
         let id = TestRunId::mint();
         assert!(TestRunId::is_well_formed(id.as_str()), "{id}");
-        assert_eq!(id.as_str().len(), TestRunId::PREFIX.len() + 32);
+        assert_eq!(
+            id.as_str().len(),
+            TestRunId::prefix().len() + TestRunId::hex_len()
+        );
+        assert_eq!(TestRunId::prefix(), "tr_");
+        assert_eq!(TestRunId::hex_len(), 32);
     }
 
     #[test]
@@ -451,7 +486,17 @@ mod tests {
         }
         assert_eq!(Lane::Soak.default_ttl().0.whole_hours(), 30);
         assert_eq!(Lane::E2e.default_ttl().0.whole_hours(), 2);
-        assert_eq!(Ttl::RESIDUE_GRACE.whole_minutes(), 30);
+        assert_eq!(Ttl::residue_grace().whole_minutes(), 30);
+    }
+
+    /// The janitor never reclaims a run whose deadline has not passed, so the
+    /// deadline must be strictly later than the TTL a live lane is relying on.
+    #[test]
+    fn a_runs_residue_deadline_is_strictly_after_its_own_expiry() {
+        let run = TestRun::mint(Lane::E2e, "test-architecture", 1_000);
+        let deadline = run.lane().default_ttl().residue_deadline(run.started_at());
+        assert!(deadline > run.expires_at());
+        assert_eq!(deadline - run.expires_at(), Ttl::residue_grace());
     }
 
     #[test]
@@ -470,7 +515,31 @@ mod tests {
             run.tags().get("aex:test-owner").map(String::as_str),
             Some("test-architecture")
         );
-        assert_eq!(run.tags().len(), 4);
+        assert_eq!(run.tags().len(), 5);
+    }
+
+    /// The marker is the janitor's floor: without it, nothing is ever
+    /// reclaimed. A run that stopped stamping it would silently make its own
+    /// residue unsweepable, so the stamping is asserted here as well as in the
+    /// janitor's own refusal tests.
+    #[test]
+    fn every_run_stamps_the_synthetic_marker_the_janitor_refuses_without() {
+        let policy = crate::ledger::janitor_policy();
+        let run = TestRun::mint(Lane::Smoke, "delivery", 1);
+        let tags = run.tags();
+        assert_eq!(
+            tags.get(policy.synthetic_tag.as_str()).map(String::as_str),
+            Some(policy.synthetic_value.as_str())
+        );
+        assert_eq!(
+            tags.get(policy.run_id_tag.as_str()).map(String::as_str),
+            Some(run.id().as_str())
+        );
+        assert_eq!(
+            tags.get(policy.lane_tag.as_str()).map(String::as_str),
+            Some("smoke")
+        );
+        assert!(tags.contains_key(policy.expires_at_tag.as_str()));
     }
 
     #[test]

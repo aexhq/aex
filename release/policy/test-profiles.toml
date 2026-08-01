@@ -54,6 +54,224 @@ user = 60
 load = 240
 soak = 1800
 
+# --- the janitor's tag, TTL and reclamation scheme --------------------------
+#
+# OD-35 makes release tests provision in `prd` deliberately, so OD-36 makes
+# reclamation a release gate: nothing may provision in `prd` that the janitor
+# cannot reclaim from its tags alone, with no test process, no local ledger file
+# and no prior knowledge of the run.
+#
+# This section is that scheme, as data, so `aex-test-harness` (which stamps the
+# tags) and `aex-release-tool` (which sweeps by them) cannot drift. Both embed
+# this file.
+
+[janitor]
+# The marker. A resource that does not carry this key with exactly this value is
+# never touched, whatever else it carries. Everything below narrows further; the
+# marker is the floor, and it is the property the hostile tests assert.
+synthetic_tag = "aex:test-synthetic"
+synthetic_value = "aex-test-harness/v1"
+# The four tags `TestRun::tags` already stamped before this scheme existed. They
+# are kept unchanged: the marker is added beside them, not in place of them.
+run_id_tag = "aex:test-run-id"
+owner_tag = "aex:test-owner"
+lane_tag = "aex:test-lane"
+expires_at_tag = "aex:test-expires-at"
+# The shape of a run id. Here rather than in either crate because the harness
+# mints it and the janitor validates it, and a janitor that disagreed with the
+# minter about the shape would refuse to reclaim anything the harness created.
+run_id_prefix = "tr_"
+run_id_hex_len = 32
+# Added to a run's expiry before a surviving resource is called residue, so a
+# lane that is still running is never swept out from under itself.
+residue_grace_minutes = 30
+# The three namespaces `TestRun` mints, with `{run_id}` substituted. A resource
+# whose kind declares `naming = "aex_minted"` must carry one of these in its
+# identity as well as the tag set, so a tag alone can never condemn a production
+# resource that happens to be mislabelled.
+minted_name_templates = ["aextest-{run_id}-", "test/{run_id}/", "TEST#{run_id}#"]
+# The lanes that may run against `prd` at all. `load` and `soak` are excluded by
+# OD-35's own reduction: their value is coverage and pressure, not "does
+# production work".
+prd_lanes = ["smoke", "e2e", "user"]
+
+# --- reclaimable resource kinds ---------------------------------------------
+#
+# `rank` is the reclamation order, ascending, and it is a dependency order: a
+# kind is reclaimed only after everything that could still reference it. The
+# money kinds are first on purpose - an auto-recharge policy left enabled is the
+# only residue with a recurring-charge tail.
+#
+# `discovery` is how a janitor with only a plane and a credential finds one:
+#   resource_tag      - the provider's own tag API lists it by tag
+#   name_prefix       - a list call filtered by one of `minted_name_templates`
+#   provider_metadata - a payment provider's metadata search
+#   none              - not findable from tags; NOT reclaimable, so a
+#                       `prd`-eligible scenario may never declare it
+#
+# `naming` says whether AEX minted the identity (`aex_minted`, so the identity
+# must also carry the run prefix) or the provider did (`provider_minted`, so the
+# tag set is the only binding available).
+#
+# `requires_declared_with` names kinds a `prd`-eligible scenario must ALSO
+# declare it provisions if it declares this one. It is not the reclamation
+# order: it is "creating one of these always creates those too, so a scenario
+# that lists only this one has not accounted for the rest". It exists because a
+# money path that declared only the customer is exactly how a saved card and an
+# enabled auto-recharge policy survived every run.
+
+[janitor.resource.auto_recharge_policy]
+rank = 0
+discovery = "provider_metadata"
+naming = "provider_minted"
+reclaim = "set enabled = false first, before anything else, so no balance breach can fire an off-session charge part-way through the sweep"
+
+[janitor.resource.payment_instrument]
+rank = 1
+discovery = "provider_metadata"
+naming = "provider_minted"
+requires_reclaim_first = ["auto_recharge_policy"]
+requires_declared_with = ["auto_recharge_policy"]
+reclaim = "detach the payment method from the customer; a stored card on a surviving customer is a chargeable instrument"
+
+[janitor.resource.api_key]
+rank = 2
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "revoke the key and bump its epoch; a bearer credential outliving its workspace is the worst residue that is not money"
+
+[janitor.resource.dashboard_user]
+rank = 2
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "delete the row and its password hash; a sign-in credential is a standing credential"
+
+[janitor.resource.hands_generation]
+rank = 3
+discovery = "resource_tag"
+naming = "provider_minted"
+reclaim = "terminate the generation before the task that hosts it"
+
+[janitor.resource.ecs_task]
+rank = 4
+discovery = "resource_tag"
+naming = "provider_minted"
+requires_reclaim_first = ["hands_generation"]
+reclaim = "stop the task; it is billed per second while it runs"
+
+[janitor.resource.session]
+rank = 5
+discovery = "name_prefix"
+naming = "aex_minted"
+requires_reclaim_first = ["ecs_task"]
+reclaim = "cancel then purge the session"
+
+[janitor.resource.operation]
+rank = 5
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "delete the durable operation record"
+
+[janitor.resource.export]
+rank = 5
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "cancel the export job and delete its output prefix"
+
+[janitor.resource.s3_multipart]
+rank = 6
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "abort the upload; an incomplete multipart accrues storage indefinitely and is invisible to an object listing"
+
+[janitor.resource.s3_object]
+rank = 7
+discovery = "name_prefix"
+naming = "aex_minted"
+requires_reclaim_first = ["s3_multipart"]
+reclaim = "delete the object; retained bytes are billed as byte-ms"
+
+[janitor.resource.secret_generation]
+rank = 8
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "destroy the generation; it is credential material"
+
+[janitor.resource.kms_key]
+rank = 9
+discovery = "resource_tag"
+naming = "aex_minted"
+requires_reclaim_first = ["secret_generation"]
+reclaim = "schedule key deletion after the secrets it wrapped are gone; a key carries a monthly charge and a hard per-region quota"
+
+[janitor.resource.dynamo_item]
+rank = 10
+discovery = "name_prefix"
+naming = "aex_minted"
+reclaim = "delete every item under the run's partition prefix"
+
+[janitor.resource.workspace]
+rank = 11
+discovery = "name_prefix"
+naming = "aex_minted"
+requires_reclaim_first = ["api_key", "session", "s3_object", "secret_generation"]
+reclaim = "delete the workspace only after every key, session, object and secret scoped to it"
+
+[janitor.resource.organization]
+rank = 12
+discovery = "name_prefix"
+naming = "aex_minted"
+requires_reclaim_first = ["workspace", "api_key"]
+reclaim = "delete the organization last of the control-plane records; it is the root every other record hangs from"
+
+[janitor.resource.payment_customer]
+rank = 13
+discovery = "provider_metadata"
+naming = "provider_minted"
+requires_reclaim_first = ["auto_recharge_policy", "payment_instrument", "organization"]
+requires_declared_with = ["auto_recharge_policy", "payment_instrument"]
+reclaim = "delete the customer only after the policy is disabled, the instrument detached and the organization that referenced it removed"
+
+[janitor.resource.sqs_message]
+rank = 14
+discovery = "none"
+naming = "provider_minted"
+reclaim = "not reclaimable: a queue message carries no tag and has no addressable identity, so it ends only by the queue's own retention"
+
+[janitor.resource.provider_resource]
+rank = 15
+discovery = "none"
+naming = "provider_minted"
+reclaim = "not reclaimable: the catch-all kind names nothing a janitor could find. A scenario that needs one names the specific kind instead"
+
+# --- which scenarios may provision in `prd` (OD-35) --------------------------
+#
+# The selection rule, as the closed set of reasons a scenario may be marked
+# `prd`-eligible in `release/scenario-ownership.toml`. Anything whose value is
+# coverage rather than "does production work" - permutation and matrix breadth,
+# fuzz, load, soak, provider conformance matrices - carries no rule here and so
+# cannot be marked at all.
+
+[prd_provisioning.rule.money_path]
+cardinality = "exactly_one"
+admits = "one end-to-end money path, including the payment provider"
+
+[prd_provisioning.rule.session_lifecycle]
+cardinality = "exactly_one"
+admits = "one session and run lifecycle from admission to terminal"
+
+[prd_provisioning.rule.content_path]
+cardinality = "exactly_one"
+admits = "one content upload and download path"
+
+[prd_provisioning.rule.secret_path]
+cardinality = "exactly_one"
+admits = "one secret and credential custody path"
+
+[prd_provisioning.rule.deployable_write]
+cardinality = "per_deployable"
+admits = "readiness plus one real write for a deployable the four journeys do not already exercise"
+
 # --- role profiles ----------------------------------------------------------
 
 [role.contract]

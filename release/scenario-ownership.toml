@@ -6,6 +6,28 @@
 #
 # A deployable observed by no scenario fails `graph verify`. "Nobody has said
 # what this service is for" is a gap worth blocking on.
+#
+# --- provisioning in `prd` (OD-35 / OD-36) -----------------------------------
+#
+# A scenario with no `[scenario.prd]` block runs in `dev` and provisions nothing
+# in production. That is the default and it covers everything whose value is
+# coverage rather than "does production work": permutation and matrix breadth,
+# fuzz, load, soak, provider conformance matrices, hostile workloads and the
+# migration rehearsal.
+#
+# A `[scenario.prd]` block is a claim, checked mechanically by `graph verify`:
+#
+#   * `rule` must be one of `[prd_provisioning.rule]` in
+#     `release/policy/test-profiles.toml`, and the four `exactly_one` rules
+#     admit exactly one scenario each;
+#   * every kind in `provisions` must be a `[janitor.resource]` row that the
+#     janitor can reclaim from tags. A prd-eligible scenario that creates an
+#     unreclaimable kind fails `scenario-prd-unreclaimable`;
+#   * a kind with `requires_declared_with` drags its companions in. Declaring
+#     `payment_customer` without `payment_instrument` and
+#     `auto_recharge_policy` fails, because that omission is precisely how a
+#     saved card and an enabled auto-recharge policy survived every money-path
+#     run in production.
 
 schema = "aex.scenario-ownership.v1"
 
@@ -16,6 +38,13 @@ id = "SC-IDENTITY-ACCOUNT"
 owner = "central-identity"
 observes = ["artifact:central-identity-api"]
 
+[scenario.prd]
+rule = "deployable_write"
+provisions = [
+  "organization",
+  "api_key",
+]
+
 [[scenario]]
 id = "SC-AUTHZ-ASSERTION"
 owner = "central-identity"
@@ -25,6 +54,14 @@ observes = ["artifact:central-authz"]
 id = "SC-CONTROL-WORKSPACE"
 owner = "central-identity"
 observes = ["artifact:central-control-api", "artifact:central-control-worker"]
+
+[scenario.prd]
+rule = "deployable_write"
+provisions = [
+  "organization",
+  "workspace",
+  "api_key",
+]
 
 [[scenario]]
 id = "SC-SCHEMA-MIGRATE"
@@ -42,6 +79,17 @@ observes = ["artifact:finance-api", "artifact:finance-settlement-worker"]
 id = "SC-FINANCE-PAYMENT"
 owner = "central-finance"
 observes = ["artifact:finance-ingest"]
+
+[scenario.prd]
+rule = "money_path"
+provisions = [
+  "organization",
+  "workspace",
+  "api_key",
+  "payment_customer",
+  "payment_instrument",
+  "auto_recharge_policy",
+]
 
 [[scenario]]
 id = "SC-FINANCE-RECONCILE"
@@ -70,6 +118,19 @@ id = "SC-SESSION-TERMINAL"
 owner = "regional-services"
 observes = ["artifact:regional-session-api", "artifact:session-operation-worker"]
 
+[scenario.prd]
+rule = "session_lifecycle"
+provisions = [
+  "organization",
+  "workspace",
+  "api_key",
+  "session",
+  "operation",
+  "ecs_task",
+  "hands_generation",
+  "dynamo_item",
+]
+
 [[scenario]]
 id = "SC-SESSION-STREAM"
 owner = "regional-services"
@@ -80,10 +141,31 @@ id = "SC-SECRET-CUSTODY"
 owner = "regional-stores"
 observes = ["artifact:regional-secret-api", "artifact:regional-secret-key-admin"]
 
+[scenario.prd]
+rule = "secret_path"
+provisions = [
+  "organization",
+  "workspace",
+  "api_key",
+  "secret_generation",
+  "kms_key",
+]
+
 [[scenario]]
 id = "SC-CONTENT-LIFECYCLE"
 owner = "regional-stores"
 observes = ["artifact:content-lifecycle-worker"]
+
+[scenario.prd]
+rule = "content_path"
+provisions = [
+  "organization",
+  "workspace",
+  "api_key",
+  "s3_multipart",
+  "s3_object",
+  "dynamo_item",
+]
 
 [[scenario]]
 id = "SC-RUNTIME-CONTROL"
@@ -96,6 +178,15 @@ observes = ["artifact:runtime-control-worker"]
 id = "SC-OBSERVATION-ADMIT"
 owner = "observations-usage"
 observes = ["artifact:regional-otlp"]
+
+[scenario.prd]
+rule = "deployable_write"
+provisions = [
+  "organization",
+  "workspace",
+  "api_key",
+  "dynamo_item",
+]
 
 [[scenario]]
 id = "SC-OBSERVATION-QUERY"

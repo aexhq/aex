@@ -27,6 +27,7 @@ targets = "brain-core owns no [[test]] target here: a test-support crate supplie
 live_suite = "test-only crate; must be absent from every production link graph"
 
 [dependencies]
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 proptest.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

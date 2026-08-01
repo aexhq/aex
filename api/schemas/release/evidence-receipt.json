@@ -211,7 +211,7 @@
         "budgetMicroUsd": { "type": "integer", "minimum": 0 },
         "spentMicroUsd": { "type": "integer", "minimum": 0 },
         "cleanupLedgerDigest": { "$ref": "#/$defs/sha256" },
-        "residue": { "enum": ["none", "explained"] },
+        "residue": { "enum": ["none", "explained", "unreclaimed"] },
         "secretCanaryObserved": { "const": false },
         "residueExplanation": { "type": "string", "minLength": 8 }
       }

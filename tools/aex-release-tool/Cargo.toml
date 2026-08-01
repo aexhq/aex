@@ -36,6 +36,7 @@ evidence = "unit"
 private_path = "unit"
 migration = "unit"
 policy = "unit"
+janitor = "unit"
 failing_fixtures = "unit"
 
 [package.metadata.aex.not_applicable]
@@ -92,6 +93,9 @@ name = "migration"
 
 [[test]]
 name = "policy"
+
+[[test]]
+name = "janitor"
 
 [[test]]
 name = "failing_fixtures"

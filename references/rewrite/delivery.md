@@ -217,14 +217,29 @@ then the graph records the gap rather than hiding it.
 5. **`manifest new`/`diff` and `plan bind`.** `with_unit` and `order_for` carry
    the logic; the subcommands need a release object store to read the previous
    manifest from.
-6. **`test-registry`, `flake scan`, `janitor` and `workload verify`.** By
-   orchestrator ruling these live in `aex-workspace-check`, not here.
-   `aex-release-tool` depends on that crate and consumes
-   `release/test-registry.json` and `release/unearned-evidence.json` through
-   its own types (`src/test_registry.rs`). Nothing is re-implemented; the rule
-   ids and messages in `aex-workspace-check` are the authority. `janitor sweep`
-   remains unimplemented in either crate — it needs a deployed plane and a
-   dedicated identity.
+6. **`test-registry`, `flake scan` and `workload verify`.** By orchestrator
+   ruling these live in `aex-workspace-check`, not here. `aex-release-tool`
+   depends on that crate and consumes `release/test-registry.json` and
+   `release/unearned-evidence.json` through its own types
+   (`src/test_registry.rs`). Nothing is re-implemented; the rule ids and
+   messages in `aex-workspace-check` are the authority.
+
+   **`janitor sweep` is implemented, here rather than in
+   `aex-workspace-check`.** OD-36 makes reclamation a release gate, and the
+   gate is the evidence receipt's `residue` field, whose type lives in this
+   crate; putting the sweep beside the receipt it feeds is what let
+   `DataBlock::from_sweep` become the field's first production constructor.
+   The tag vocabulary, the reclamation order and the reclaimable resource
+   table are data in `release/policy/test-profiles.toml`, read through
+   `aex_workspace_check::policy::Policy::embedded()`, so the crate that stamps
+   the tags (`aex-test-harness`) and the tool that sweeps by them cannot
+   drift. What is **not** implemented is the credentialed reclamation adapter:
+   discovery against a live plane needs a deployed plane and a dedicated
+   identity, which OD-07 keeps out of scope. `janitor sweep --mode reclaim`
+   therefore refuses per resource with the required steps named and exits `41`,
+   rather than reporting a green sweep that removed nothing. The engine, the
+   guard, the order and the report are complete; the adapter is one
+   `Reclaimer` implementation away.
 7. **Live publication.** Every publish step in `main.yml` and every apply step
    in `_release-engine.yml` refuses with a stated reason and a classified exit
    code rather than pretending. The lanes are wired end to end; the buckets,

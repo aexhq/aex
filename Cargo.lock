@@ -142,6 +142,7 @@ name = "aex-brain-test-support"
 version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
+ "aex-test-harness",
  "proptest",
  "serde_json",
  "thiserror",
@@ -195,6 +196,7 @@ dependencies = [
 name = "aex-central-test-support"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
  "thiserror",
  "time",
  "uuid",
@@ -780,6 +782,7 @@ dependencies = [
 name = "aex-observation-test-support"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
  "thiserror",
  "time",
  "uuid",
@@ -892,6 +895,7 @@ dependencies = [
 name = "aex-regional-test-support"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
  "blake3",
  "hex",
  "jsonschema",

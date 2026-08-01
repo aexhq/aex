@@ -5,9 +5,11 @@
 //! record/release interleavings, arbitrary text around a canary and arbitrary
 //! logical resource names.
 
+use std::sync::Arc;
+
 use aex_test_harness::{
-    Budget, Charge, CleanupLedger, Entry, Lane, ResourceKind, SecretCanary, Terminal, TestCaseId,
-    TestRun, TestRunId, scan_for_leaks,
+    Budget, Charge, CleanupLedger, Entry, Lane, ReclaimError, Reclaimer, ResourceKind,
+    SecretCanary, Terminal, TestCaseId, TestRun, TestRunId, scan_for_leaks,
 };
 use proptest::prelude::*;
 
@@ -19,6 +21,17 @@ fn resource_kind() -> impl Strategy<Value = ResourceKind> {
         Just(ResourceKind::EcsTask),
         Just(ResourceKind::Session),
     ]
+}
+
+/// A reclaimer that always succeeds, so the property is about the ledger's
+/// bookkeeping rather than about any plane.
+#[derive(Debug)]
+struct AlwaysReclaims;
+
+impl Reclaimer for AlwaysReclaims {
+    fn reclaim(&self, _entry: &Entry) -> Result<(), ReclaimError> {
+        Ok(())
+    }
 }
 
 proptest! {
@@ -89,6 +102,7 @@ proptest! {
     ) {
         let root = tempfile::tempdir().expect("a temporary directory");
         let ledger = CleanupLedger::with_root(TestRunId::mint(), root.path().to_path_buf());
+        prop_assert!(ledger.install_reclaimer(Arc::new(AlwaysReclaims)));
         let mut expected: Vec<String> = Vec::new();
         for (index, kind) in kinds.iter().enumerate() {
             let identity = format!("resource-{index}");
@@ -99,7 +113,7 @@ proptest! {
                 TestCaseId(format!("properties::case-{index}")),
             ));
             if release_mask.get(index).copied().unwrap_or(false) {
-                prop_assert!(ledger.release(*kind, &identity));
+                prop_assert!(ledger.release(*kind, &identity).is_ok());
             } else {
                 expected.push(identity);
             }
@@ -107,7 +121,41 @@ proptest! {
         let mut residue: Vec<String> = ledger.residue().into_iter().map(|entry| entry.identity).collect();
         residue.sort();
         expected.sort();
-        prop_assert_eq!(residue, expected);
+        prop_assert_eq!(&residue, &expected);
+        // The ledger is loud about residue at drop, and this property
+        // deliberately leaves some, so the report is taken here rather than
+        // aborting the shrinking loop.
+        prop_assert_eq!(ledger.take_residue_report().len(), expected.len());
+    }
+
+    /// `reclaim_all` is a total function over any recorded set: everything a
+    /// succeeding reclaimer is offered is reclaimed, in non-decreasing rank
+    /// order, whatever order the resources were created in.
+    #[test]
+    fn reclaim_all_empties_the_ledger_in_non_decreasing_rank_order(
+        kinds in prop::collection::vec(resource_kind(), 1..12),
+    ) {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let ledger = CleanupLedger::with_root(TestRunId::mint(), root.path().to_path_buf());
+        prop_assert!(ledger.install_reclaimer(Arc::new(AlwaysReclaims)));
+        for (index, kind) in kinds.iter().enumerate() {
+            ledger.record(Entry::new(
+                *kind,
+                format!("resource-{index}"),
+                Terminal::Deleted,
+                TestCaseId(format!("properties::case-{index}")),
+            ));
+        }
+        let summary = ledger.reclaim_all();
+        prop_assert!(summary.is_complete());
+        prop_assert_eq!(summary.reclaimed.len(), kinds.len());
+        prop_assert!(ledger.residue().is_empty());
+        let ranks: Vec<u8> = summary
+            .reclaimed
+            .iter()
+            .map(|entry| entry.kind.reclaim_rank())
+            .collect();
+        prop_assert!(ranks.windows(2).all(|pair| pair[0] <= pair[1]), "{:?}", ranks);
     }
 
     /// A canary is found wherever it is embedded, and the finding never carries

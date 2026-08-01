@@ -313,6 +313,10 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         }
     }
 
+    // 3a. OD-36: a scenario may provision in `prd` only if the janitor can
+    //     reclaim everything it creates from tags alone.
+    violations.extend(verify_prd_provisioning(inputs));
+
     // 6. Declared migrations are covered by their bundle.
     violations.extend(verify_migration_coverage(inputs));
 
@@ -326,6 +330,119 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.dedup();
         Err(ToolError::many(Exit::GraphVerification, violations))
     }
+}
+
+/// OD-36, mechanically: a scenario may be marked `prd`-eligible only if every
+/// resource it creates is reclaimable by the janitor from tags.
+///
+/// The selection rule itself (one money path, one session lifecycle, one
+/// content path, one secret path, readiness plus one real write per deployable)
+/// lives in `[prd_provisioning.rule]`, so which scenarios are in is checked
+/// data rather than prose. This function enforces the hard rule around it: a
+/// `prd`-eligible scenario that creates an unreclaimable resource kind fails,
+/// because it produces residue no sweep can ever remove and the whole
+/// provisioning decision rests on the sweep working.
+fn verify_prd_provisioning(inputs: &GraphInputs) -> Vec<Violation> {
+    let policy = aex_workspace_check::policy::Policy::embedded();
+    let mut violations = Vec::new();
+    let mut by_rule: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+
+    for scenario in &inputs.scenarios.scenarios {
+        let Some(prd) = &scenario.prd else {
+            continue;
+        };
+        by_rule
+            .entry(prd.rule.as_str())
+            .or_default()
+            .push(scenario.id.as_str());
+
+        if !policy.prd_rules.contains_key(&prd.rule) {
+            violations.push(Violation::new(
+                "scenario-prd-rule-unknown",
+                format!(
+                    "scenario `{}` claims prd rule `{}`, which is not declared in \
+                     [prd_provisioning.rule]; provisioning in production needs a stated reason \
+                     from the closed set",
+                    scenario.id, prd.rule
+                ),
+            ));
+        }
+
+        if prd.provisions.is_empty() {
+            violations.push(Violation::new(
+                "scenario-prd-provisions-nothing",
+                format!(
+                    "scenario `{}` is marked prd-eligible but declares no resource kinds; a \
+                     scenario that creates nothing needs no permission to create in production",
+                    scenario.id
+                ),
+            ));
+        }
+
+        let declared: BTreeSet<&str> = prd.provisions.iter().map(String::as_str).collect();
+        for kind in &prd.provisions {
+            let Some(row) = policy.janitor.resources.get(kind) else {
+                violations.push(Violation::new(
+                    "scenario-prd-kind-unknown",
+                    format!(
+                        "scenario `{}` declares it provisions `{kind}`, which has no \
+                         [janitor.resource] row",
+                        scenario.id
+                    ),
+                ));
+                continue;
+            };
+            if !row.reclaimable_from_tags() {
+                violations.push(Violation::new(
+                    "scenario-prd-unreclaimable",
+                    format!(
+                        "scenario `{}` is prd-eligible and provisions `{kind}`, which the \
+                         janitor cannot reclaim from tags ({}); a prd-eligible scenario may \
+                         only create what a sweep can remove",
+                        scenario.id, row.reclaim
+                    ),
+                ));
+            }
+            for companion in &row.requires_declared_with {
+                if !declared.contains(companion.as_str()) {
+                    violations.push(Violation::new(
+                        "scenario-prd-companion-undeclared",
+                        format!(
+                            "scenario `{}` provisions `{kind}` without declaring `{companion}`; \
+                             creating one always creates the other, and reclamation of \
+                             `{kind}` is only correct once `{companion}` is reclaimed too",
+                            scenario.id
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Provisioning in `prd` is opt-in as a whole: a registry that marks nothing
+    // is simply not doing it, which is the safer state and is what every
+    // synthetic fixture is. Once anything is marked, the shape is fixed.
+    if by_rule.is_empty() {
+        return violations;
+    }
+    for (rule, declared) in &policy.prd_rules {
+        if declared.cardinality != "exactly_one" {
+            continue;
+        }
+        let claimants = by_rule.get(rule.as_str()).map_or(0, Vec::len);
+        if claimants != 1 {
+            violations.push(Violation::new(
+                "scenario-prd-rule-cardinality",
+                format!(
+                    "prd rule `{rule}` admits {} ({}), but {claimants} scenario(s) claim it; the \
+                     reduced prd set is one of each, not breadth",
+                    declared.admits, declared.cardinality
+                ),
+            ));
+        }
+    }
+
+    violations
 }
 
 /// Registry rows that name a node the workspace does not hold.
