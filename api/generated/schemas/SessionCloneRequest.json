@@ -1,15 +1,15 @@
 {
-  "$id": "https://schemas.aex.dev/v1/SessionForkRequest.json",
+  "$id": "https://schemas.aex.dev/v1/SessionCloneRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Admit the durable fork operation.",
+  "description": "Admit the durable clone operation.",
   "properties": {
     "credentials": {
-      "$ref": "aex:schema:ForkCredentials",
+      "$ref": "aex:schema:CloneCredentials",
       "description": "Whether to inherit custody."
     },
     "files": {
-      "$ref": "aex:schema:ForkFiles",
+      "$ref": "aex:schema:CloneFiles",
       "description": "Which tree to start from."
     }
   },
@@ -17,6 +17,6 @@
     "credentials",
     "files"
   ],
-  "title": "SessionForkRequest",
+  "title": "SessionCloneRequest",
   "type": "object"
 }

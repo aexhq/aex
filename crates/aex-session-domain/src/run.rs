@@ -15,46 +15,10 @@ use aex_wire::types::Timestamp;
 use crate::ids::{CancellationEpoch, EffectId, ReservationId};
 use crate::session::{Session, WorkAdmission};
 
-/// Where a run is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RunStatus {
-    /// Admitted, not started.
-    Queued,
-    /// Executing.
-    Running,
-    /// Finished normally.
-    Succeeded,
-    /// Finished with a domain error.
-    Failed,
-    /// Ran past its deadline.
-    TimedOut,
-    /// Cancelled by an operation.
-    Cancelled,
-    /// Fenced by the platform.
-    Interrupted,
-}
-
-impl RunStatus {
-    /// Every status, in lifecycle order.
-    pub const ALL: [Self; 7] = [
-        Self::Queued,
-        Self::Running,
-        Self::Succeeded,
-        Self::Failed,
-        Self::TimedOut,
-        Self::Cancelled,
-        Self::Interrupted,
-    ];
-
-    /// Whether no transition leaves this status.
-    #[must_use]
-    pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Succeeded | Self::Failed | Self::TimedOut | Self::Cancelled | Self::Interrupted
-        )
-    }
-}
+// Where a run is. The terminal outbox event carries it across a process
+// boundary, so it is owned by the contract crate both readers of that event
+// depend on and re-exported here for every existing call site.
+pub use aex_internal_contracts::outbox::RunStatus;
 
 /// Why the platform fenced a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

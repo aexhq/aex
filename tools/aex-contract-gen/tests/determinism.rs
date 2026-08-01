@@ -41,6 +41,22 @@ fn checked_in_output_matches_regeneration() {
 }
 
 #[test]
+fn no_orphaned_generated_file_survives_on_disk() {
+    // A schema that stops being authored leaves its published document behind.
+    // Comparing only the files the generator still produces cannot see that, so
+    // a deleted schema would keep serving from `api/generated/schemas/` forever.
+    let root = repo_root();
+    let stale = generate_to_memory(&root)
+        .expect("generation")
+        .stale_files(&root);
+    assert!(
+        stale.is_empty(),
+        "orphaned generated output:\n{}\nrun `cargo run -p aex-contract-gen -- build`",
+        stale.join("\n")
+    );
+}
+
+#[test]
 fn the_digest_is_stable_across_repeated_loads() {
     let root = repo_root();
     let first = emit::contract_digest(&load::load(&root).expect("load"));
@@ -83,15 +99,15 @@ fn the_operation_arity_matches_the_pinned_totals() {
         .find(|plane| plane.id == "regional")
         .expect("regional plane");
     assert_eq!(central.operations.len(), 27);
-    assert_eq!(regional.operations.len(), 117);
-    assert_eq!(ir.operations().len(), 144);
+    assert_eq!(regional.operations.len(), 119);
+    assert_eq!(ir.operations().len(), 146);
 
     let ids: BTreeSet<&str> = ir
         .operations()
         .iter()
         .map(|operation| operation.id.as_str())
         .collect();
-    assert_eq!(ids.len(), 144, "operationIds are not globally unique");
+    assert_eq!(ids.len(), 146, "operationIds are not globally unique");
     for id in &ids {
         assert!(
             id.chars().all(|character| character.is_ascii_lowercase()
