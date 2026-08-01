@@ -4,13 +4,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-use aex_internal_contracts::assertion::{
-    AssertionAudience, AuthorizationAssertion, MAX_LIFETIME_MS,
+use aex_control_domain::epoch::{Epoch as ControlEpoch, EpochSubjectKind};
+use aex_identity_domain::assertion::{
+    ASSERTION_MAX_LIFETIME_MS, AssertedAccountState, Assertion, AssertionClaims, Audience,
+    EpochSlot, EpochSlots, KeyId, LocalSigner, Plane as AssertionPlane, PrincipalKind,
+    VerificationKey, VerificationKeySet, issue,
 };
-use aex_internal_contracts::{Epoch, SchemaVersion};
+use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::assertion::{
-    AssertionSource, AuthFailure, KeyVerifier, PresentedCredential, ProjectedEpochs,
-    SignedAssertion, VerifyingAssertionCache, verify,
+    AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, VerifyingAssertionCache,
+    verify,
 };
 use aex_regional_http::capability::{
     CapabilityBinding, CompositionManifest, DeployableId, ResolvedConfig, admit,
@@ -31,7 +34,7 @@ use aex_regional_http::stream::{
     Frame, FrameSink, FrameSplitError, FrameWriter, RotateReason, split_records,
 };
 use aex_wire::error::{ErrorCode, PrecedenceStage};
-use aex_wire::idempotency::{PrincipalKind, PrincipalScope};
+use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{
     OperationId, OrganizationId, PrefixedId, SessionId, UserId, Uuid7, WorkspaceId,
 };
@@ -39,6 +42,7 @@ use aex_wire::routes::{BodyClass, Plane, RouteId, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{HttpMethod, Region, RequestId, Timestamp};
 use async_trait::async_trait;
+use base64::Engine as _;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt as _;
 use proptest::prelude::*;
@@ -93,44 +97,68 @@ fn request_context() -> RequestContext {
     }
 }
 
-fn assertion(expires_at: i64) -> AuthorizationAssertion {
-    AuthorizationAssertion {
-        schema_version: SchemaVersion::V1,
-        principal: PrincipalScope::Account {
-            user: user(1),
-            organization: Some(organization(1)),
-        },
-        principal_kind: PrincipalKind::Account,
-        workspace: Some(workspace(1)),
-        organization: organization(1),
-        region: Region::EuWest1,
-        scopes: ScopeSet::empty(),
-        key_epoch: Epoch(4),
-        account_epoch: Epoch(5),
-        revocation_epoch: Epoch(6),
-        issued_at: stamp(1_000),
-        expires_at: stamp(expires_at),
-        audience: AssertionAudience::RegionalSession,
-    }
+/// A syntactically complete workspace API key, and the credential it becomes.
+fn fixture_credential(seed: u8) -> PresentedCredential {
+    let uuid = aex_wire::Uuid7::compose(1_754_051_696_789, [seed; 10]);
+    let suffix = String::from_utf8(uuid.encode_suffix().to_vec()).expect("Crockford is ASCII");
+    let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([seed; 32]);
+    let token = format!("aex_wk_{}_{suffix}_{secret}", Region::EuWest1.code());
+    PresentedCredential::new(token.into_bytes()).expect("a workspace key is a credential")
 }
 
-#[derive(Clone)]
-struct TestVerifier;
-
-impl KeyVerifier for TestVerifier {
-    fn verify(&self, key_id: &str, _message: &[u8], signature: &[u8]) -> bool {
-        key_id == "known" && signature == b"valid"
-    }
-}
-
-fn signed(credential: &PresentedCredential, expires_at: i64) -> SignedAssertion {
-    SignedAssertion::new(
-        assertion(expires_at),
-        "known",
-        credential.binding(),
-        b"valid".to_vec(),
+fn signer() -> LocalSigner {
+    LocalSigner::new(
+        KeyId::new(uuid::Uuid::from_u128(0x515)),
+        &zeroize::Zeroizing::new([13_u8; 32]),
     )
-    .expect("signed fixture")
+}
+
+fn anchors() -> VerificationKeySet {
+    VerificationKeySet::new(vec![VerificationKey {
+        kid: KeyId::new(uuid::Uuid::from_u128(0x515)),
+        public_key: signer().public_key(),
+        not_after_ms: u64::MAX,
+    }])
+    .expect("one key")
+}
+
+fn audience(service: AssertionAudience) -> Audience {
+    Audience {
+        plane: AssertionPlane::Dev,
+        region: Region::EuWest1,
+        service,
+    }
+}
+
+fn raw_id<I: aex_wire::ids::PrefixedId>(id: I) -> uuid::Uuid {
+    uuid::Uuid::from_bytes(*id.uuid7().as_bytes())
+}
+
+fn signed(credential: &PresentedCredential, lifetime_ms: u64) -> Assertion {
+    let claims = AssertionClaims {
+        issued_at_ms: 1_000,
+        expires_at_ms: 1_000 + lifetime_ms,
+        audience: audience(AssertionAudience::RegionalSession),
+        principal_kind: PrincipalKind::WorkspaceKey,
+        principal_id: credential.key_id_raw(),
+        credential_binding: credential.expected_binding(),
+        organization_id: raw_id(organization(1)),
+        workspace_id: raw_id(workspace(1)),
+        workspace_region: Region::EuWest1,
+        account_state: AssertedAccountState::Active,
+        scopes: aex_control_domain::ScopeSet::EMPTY,
+        epochs: EpochSlots::new(&[EpochSlot {
+            kind: EpochSubjectKind::Key,
+            id: credential.key_id_raw(),
+            epoch: ControlEpoch::new(4),
+        }])
+        .expect("one subject"),
+    };
+    issue(&signer(), &claims).expect("a 30-second envelope")
+}
+
+fn floors(credential: &PresentedCredential, key: u64) -> CredentialFloors {
+    CredentialFloors::new(ControlEpoch::new(key), credential.key_id_raw())
 }
 
 fn binding() -> CursorBinding {
@@ -472,149 +500,197 @@ fn every_generated_regional_route_has_exactly_one_owner() {
 
 #[test]
 fn assertions_expire_to_the_millisecond_and_bind_every_authority_fact() {
-    let credential = PresentedCredential::new(b"aex_wk_fixture".to_vec()).expect("credential");
-    let signed = signed(&credential, 1_000 + MAX_LIFETIME_MS);
-    let projected = ProjectedEpochs {
-        key: 4,
-        account: 5,
-        revocation: 6,
-    };
+    let credential = fixture_credential(5);
+    let assertion = signed(&credential, ASSERTION_MAX_LIFETIME_MS);
+    let session = audience(AssertionAudience::RegionalSession);
+    let floor = floors(&credential, 4);
+
+    // Accepted at expiry minus one millisecond and refused at expiry: the bound
+    // is exact, and there is no grace period anywhere.
     assert!(
         verify(
-            &TestVerifier,
-            &signed,
+            &assertion,
+            &anchors(),
             &credential,
-            AssertionAudience::RegionalSession,
-            Region::EuWest1,
-            projected,
-            stamp(1_000 + MAX_LIFETIME_MS - 1),
+            session,
+            &floor,
+            stamp(1_000 + i64::try_from(ASSERTION_MAX_LIFETIME_MS).expect("small") - 1),
         )
         .is_ok()
     );
     assert_eq!(
         verify(
-            &TestVerifier,
-            &signed,
+            &assertion,
+            &anchors(),
             &credential,
-            AssertionAudience::RegionalSession,
-            Region::EuWest1,
-            projected,
-            stamp(1_000 + MAX_LIFETIME_MS),
+            session,
+            &floor,
+            stamp(1_000 + i64::try_from(ASSERTION_MAX_LIFETIME_MS).expect("small")),
         ),
-        Err(AuthFailure::Expired)
+        Err(AuthFailure::Verification(
+            aex_identity_domain::assertion::VerifyError::Expired
+        ))
     );
-    assert_eq!(
-        verify(
-            &TestVerifier,
-            &signed,
-            &credential,
-            AssertionAudience::RegionalSecret,
-            Region::EuWest1,
-            projected,
-            stamp(2_000),
+
+    // Every other authority fact the envelope binds, each refused on its own.
+    for (inputs, expected) in [
+        (
+            (
+                audience(AssertionAudience::RegionalSecret),
+                floor,
+                credential.clone(),
+            ),
+            aex_identity_domain::assertion::VerifyError::AudienceMismatch,
         ),
-        Err(AuthFailure::Audience)
-    );
-    assert_eq!(
-        verify(
-            &TestVerifier,
-            &signed,
-            &credential,
-            AssertionAudience::RegionalSession,
-            Region::UsEast1,
-            projected,
-            stamp(2_000),
+        (
+            (
+                Audience {
+                    region: Region::UsEast1,
+                    ..session
+                },
+                floor,
+                credential.clone(),
+            ),
+            aex_identity_domain::assertion::VerifyError::AudienceMismatch,
         ),
-        Err(AuthFailure::Region)
-    );
-    assert_eq!(
-        verify(
-            &TestVerifier,
-            &signed,
-            &credential,
-            AssertionAudience::RegionalSession,
-            Region::EuWest1,
-            ProjectedEpochs {
-                key: 5,
-                ..projected
+        (
+            (
+                Audience {
+                    plane: AssertionPlane::Prd,
+                    ..session
+                },
+                floor,
+                credential.clone(),
+            ),
+            aex_identity_domain::assertion::VerifyError::AudienceMismatch,
+        ),
+        (
+            (session, floors(&credential, 5), credential.clone()),
+            aex_identity_domain::assertion::VerifyError::EpochStale {
+                kind: EpochSubjectKind::Key,
+                id: credential.key_id_raw(),
+                claimed: 4,
+                projected: 5,
             },
-            stamp(2_000),
         ),
-        Err(AuthFailure::EpochRollback)
-    );
-    let other = PresentedCredential::new(b"aex_wk_other".to_vec()).expect("credential");
+        (
+            (session, floor, fixture_credential(6)),
+            aex_identity_domain::assertion::VerifyError::CredentialBindingMismatch,
+        ),
+    ] {
+        let (audience, floor, presented) = inputs;
+        assert_eq!(
+            verify(
+                &assertion,
+                &anchors(),
+                &presented,
+                audience,
+                &floor,
+                stamp(2_000)
+            ),
+            Err(AuthFailure::Verification(expected)),
+            "{expected:?}"
+        );
+    }
+
+    // An anchor set that does not hold the signing identity verifies nothing.
+    let empty = VerificationKeySet::new(Vec::new()).expect("an empty set");
     assert_eq!(
         verify(
-            &TestVerifier,
-            &signed,
-            &other,
-            AssertionAudience::RegionalSession,
-            Region::EuWest1,
-            projected,
-            stamp(2_000),
+            &assertion,
+            &empty,
+            &credential,
+            session,
+            &floor,
+            stamp(2_000)
         ),
-        Err(AuthFailure::CredentialBinding)
+        Err(AuthFailure::Verification(
+            aex_identity_domain::assertion::VerifyError::UnknownKid
+        ))
     );
 }
 
 #[derive(Clone)]
 struct CountingSource {
     calls: Arc<AtomicUsize>,
-    assertion: SignedAssertion,
+    assertion: Assertion,
 }
 
 #[async_trait]
 impl AssertionSource for CountingSource {
-    async fn obtain(
-        &self,
-        _credential: &PresentedCredential,
-    ) -> Result<SignedAssertion, AuthFailure> {
+    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
         self.calls.fetch_add(1, AtomicOrdering::SeqCst);
         tokio::task::yield_now().await;
-        Ok(self.assertion.clone())
+        Ok(self.assertion)
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn assertion_refresh_is_single_flight_for_one_credential() {
-    let credential = PresentedCredential::new(b"aex_wk_fixture".to_vec()).expect("credential");
+    let credential = fixture_credential(5);
     let calls = Arc::new(AtomicUsize::new(0));
     let cache = Arc::new(
         VerifyingAssertionCache::new(
             CountingSource {
                 calls: Arc::clone(&calls),
-                assertion: signed(&credential, 31_000),
+                assertion: signed(&credential, ASSERTION_MAX_LIFETIME_MS),
             },
-            TestVerifier,
-            AssertionAudience::RegionalSession,
-            Region::EuWest1,
+            anchors(),
+            audience(AssertionAudience::RegionalSession),
             4_096,
         )
         .expect("cache"),
     );
+    let floor = floors(&credential, 4);
     let tasks = (0..100)
         .map(|_| {
             let cache = Arc::clone(&cache);
             let credential = credential.clone();
-            tokio::spawn(async move {
-                cache
-                    .resolve(
-                        &credential,
-                        ProjectedEpochs {
-                            key: 4,
-                            account: 5,
-                            revocation: 6,
-                        },
-                        stamp(2_000),
-                    )
-                    .await
-            })
+            tokio::spawn(async move { cache.resolve(&credential, &floor, stamp(2_000)).await })
         })
         .collect::<Vec<_>>();
     for task in tasks {
         task.await.expect("task").expect("authorization");
     }
     assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_cached_assertion_is_dropped_the_instant_its_credential_floor_moves() {
+    let credential = fixture_credential(5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cache = VerifyingAssertionCache::new(
+        CountingSource {
+            calls: Arc::clone(&calls),
+            assertion: signed(&credential, ASSERTION_MAX_LIFETIME_MS),
+        },
+        anchors(),
+        audience(AssertionAudience::RegionalSession),
+        4_096,
+    )
+    .expect("cache");
+
+    cache
+        .resolve(&credential, &floors(&credential, 4), stamp(2_000))
+        .await
+        .expect("a current assertion");
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+    // Served from the cache: no second exchange.
+    cache
+        .resolve(&credential, &floors(&credential, 4), stamp(2_100))
+        .await
+        .expect("the cached assertion");
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+
+    // A revocation published a moment ago beats the cached entry, and the
+    // refreshed answer is refused too because it claims the same epoch.
+    assert!(
+        cache
+            .resolve(&credential, &floors(&credential, 5), stamp(2_200))
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
 }
 
 #[test]

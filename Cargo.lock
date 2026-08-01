@@ -870,6 +870,8 @@ name = "aex-regional-http"
 version = "0.1.0"
 dependencies = [
  "aex-content-domain",
+ "aex-control-domain",
+ "aex-identity-domain",
  "aex-internal-contracts",
  "aex-registry-dynamodb",
  "aex-secret-custody-dynamodb",

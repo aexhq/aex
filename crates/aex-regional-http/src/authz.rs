@@ -20,24 +20,25 @@
 //! cached: it is what makes a revoked key or a paused account take effect inside
 //! the 30-second assertion window rather than after it.
 
+use aex_control_domain::epoch::Epoch;
+use aex_identity_domain::assertion::{
+    Assertion, MAX_VERIFICATION_KEYS, VerificationKey, VerificationKeySet,
+};
 use aex_internal_contracts::SchemaVersion;
 use aex_internal_contracts::assertion::{
-    AssertionAudience, CredentialDigest, MAX_KEY_ID_BYTES, ResolveWorkspaceKey,
-    SignedAssertionEnvelope,
+    AssertionAudience, AssertionRefusal, AssertionResponse, CredentialDigest, ResolveWorkspaceKey,
 };
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::projection::AuthorizationProjection;
-use aex_wire::ids::{WorkspaceApiKey, WorkspaceId};
+use aex_wire::ids::WorkspaceId;
 use aex_wire::types::Region;
 use async_trait::async_trait;
 use base64::Engine as _;
 use serde::Deserialize;
+use uuid::Uuid;
 use zeroize::{Zeroize as _, Zeroizing};
 
-use crate::assertion::{
-    AssertionSource, AuthFailure, KeyVerifier, PresentedCredential, ProjectedEpochs,
-    SignedAssertion,
-};
+use crate::assertion::{AssertionSource, AuthFailure, PresentedCredential, ProjectedEpochs};
 use crate::context::AccountState;
 use crate::cursor::{CursorError, CursorKey, CursorKeyRing};
 use crate::edge::{ProjectedState, ProjectionError, ProjectionReader};
@@ -45,9 +46,10 @@ use crate::edge::{ProjectedState, ProjectionError, ProjectionReader};
 /// The most trust anchors a region will hold at once.
 ///
 /// A rotation needs two — the new key and the one still signing in flight — and
-/// the bound is generous enough for a slow rollout. It exists so the
-/// unknown-key path stays a scan over a fixed, tiny list.
-pub const MAX_TRUST_ANCHORS: usize = 8;
+/// the bound is generous enough for a slow rollout. It is the envelope's own
+/// bound rather than a second number, so a document this parser accepts is one
+/// `VerificationKeySet` can hold.
+pub const MAX_TRUST_ANCHORS: usize = MAX_VERIFICATION_KEYS;
 
 /// The largest parameter document this module will decode.
 pub const MAX_PARAMETER_BYTES: usize = 64 * 1_024;
@@ -57,9 +59,6 @@ pub const MAX_ASSERTION_RESPONSE_BYTES: usize = 64 * 1_024;
 
 /// An Ed25519 public key is exactly 32 bytes.
 const PUBLIC_KEY_BYTES: usize = 32;
-
-/// An Ed25519 signature is exactly 64 bytes.
-const SIGNATURE_BYTES: usize = 64;
 
 /// Why start-up key material was refused.
 ///
@@ -123,7 +122,7 @@ pub enum TrustError {
         /// The repeated identity.
         key_id: String,
     },
-    /// A key identity was empty, oversized or carried a control byte.
+    /// A cursor key identity was empty, oversized or carried a control byte.
     #[error("parameter `{name}` declares an unusable key identity")]
     KeyIdentity {
         /// Which parameter.
@@ -151,69 +150,6 @@ pub enum TrustError {
 // Trust anchors
 // ---------------------------------------------------------------------------
 
-/// The Ed25519 public keys this region accepts an assertion under.
-///
-/// OD-21 splits signature algorithms by key custody: the 30-second authorization
-/// assertion is the one artifact AEX holds the private key for directly, so it is
-/// Ed25519 rather than the `ECDSA_SHA_256` a KMS-held key would force.
-pub struct Ed25519Anchors {
-    anchors: Vec<(String, [u8; PUBLIC_KEY_BYTES])>,
-}
-
-impl std::fmt::Debug for Ed25519Anchors {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Ed25519Anchors")
-            .field("count", &self.anchors.len())
-            .finish()
-    }
-}
-
-impl Ed25519Anchors {
-    /// How many anchors are trusted.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.anchors.len()
-    }
-
-    /// Whether no anchor is trusted, which start-up already refuses.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.anchors.is_empty()
-    }
-
-    /// Every trusted identity, in declaration order.
-    #[must_use]
-    pub fn key_ids(&self) -> Vec<&str> {
-        self.anchors.iter().map(|(id, _)| id.as_str()).collect()
-    }
-}
-
-impl KeyVerifier for Ed25519Anchors {
-    fn verify(&self, key_id: &str, message: &[u8], signature: &[u8]) -> bool {
-        // The key id selects exactly one anchor. Trying every anchor in turn
-        // would make a rotated-out key indistinguishable from the current one.
-        let Some((_, material)) = self
-            .anchors
-            .iter()
-            .find(|(candidate, _)| candidate == key_id)
-        else {
-            return false;
-        };
-        let Ok(signature) = <[u8; SIGNATURE_BYTES]>::try_from(signature) else {
-            return false;
-        };
-        let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(material) else {
-            return false;
-        };
-        // `verify_strict` rejects small-order public keys and non-canonical
-        // signature encodings, which the permissive check accepts. The issuer
-        // signs with the same library, so nothing legitimate is lost.
-        key.verify_strict(message, &ed25519_dalek::Signature::from_bytes(&signature))
-            .is_ok()
-    }
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct AnchorDocument {
@@ -228,24 +164,35 @@ struct AnchorDocument {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct AnchorEntry {
-    key_id: String,
+    key_id: Uuid,
     public_key: String,
+    not_after_ms: u64,
 }
 
 /// Decodes the assertion trust-anchor document held at `AEX_AUTHZ_VERIFY_KEYS_PARAM`.
 ///
 /// ```json
 /// { "schemaVersion": 1,
-///   "keys": [ { "keyId": "2026-08-a", "publicKey": "<43 chars unpadded base64url>" } ] }
+///   "keys": [ { "keyId": "0193f0a1-...", "publicKey": "<43 chars unpadded base64url>",
+///               "notAfterMs": 1798761600000 } ] }
 /// ```
+///
+/// The identity is the envelope's `kid`: a raw UUID carried in the header at a
+/// fixed offset, not a free string. `notAfterMs` is when this region stops
+/// accepting the key, which is what lets a rotated-out key be retired without a
+/// redeploy of every regional service.
+///
+/// OD-21 splits signature algorithms by key custody: the 30-second authorization
+/// assertion is the one artifact AEX holds the private key for directly, so it is
+/// Ed25519 rather than the `ECDSA_SHA_256` a KMS-held key would force.
 ///
 /// # Errors
 ///
 /// Returns [`TrustError`] for an oversized, malformed, empty, over-long or
 /// ambiguous document, or one declaring key material that is not exactly 32
 /// bytes. Nothing here degrades: a document this function refuses stops the
-/// process.
-pub fn parse_trust_anchors(name: &str, document: &str) -> Result<Ed25519Anchors, TrustError> {
+/// process, because an edge that cannot verify an assertion must not start.
+pub fn parse_trust_anchors(name: &str, document: &str) -> Result<VerificationKeySet, TrustError> {
     if document.len() > MAX_PARAMETER_BYTES {
         return Err(TrustError::TooLarge {
             name: name.to_owned(),
@@ -269,38 +216,32 @@ pub fn parse_trust_anchors(name: &str, document: &str) -> Result<Ed25519Anchors,
             found: decoded.keys.len(),
         });
     }
-    let mut anchors: Vec<(String, [u8; PUBLIC_KEY_BYTES])> = Vec::with_capacity(decoded.keys.len());
+    let mut keys: Vec<VerificationKey> = Vec::with_capacity(decoded.keys.len());
     for entry in decoded.keys {
-        if !usable_key_id(&entry.key_id) {
-            return Err(TrustError::KeyIdentity {
-                name: name.to_owned(),
-            });
-        }
-        if anchors.iter().any(|(seen, _)| *seen == entry.key_id) {
+        if keys.iter().any(|seen| seen.kid.get() == entry.key_id) {
             return Err(TrustError::DuplicateKeyId {
                 name: name.to_owned(),
-                key_id: entry.key_id,
+                key_id: entry.key_id.to_string(),
             });
         }
-        let material = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&entry.public_key)
             .ok()
             .and_then(|bytes| <[u8; PUBLIC_KEY_BYTES]>::try_from(bytes).ok())
             .ok_or_else(|| TrustError::KeyMaterial {
                 name: name.to_owned(),
-                key_id: entry.key_id.clone(),
+                key_id: entry.key_id.to_string(),
             })?;
-        anchors.push((entry.key_id, material));
+        keys.push(VerificationKey {
+            kid: aex_identity_domain::assertion::KeyId::new(entry.key_id),
+            public_key,
+            not_after_ms: entry.not_after_ms,
+        });
     }
-    Ok(Ed25519Anchors { anchors })
-}
-
-fn usable_key_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= MAX_KEY_ID_BYTES
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    VerificationKeySet::new(keys).map_err(|_| TrustError::TooManyAnchors {
+        name: name.to_owned(),
+        found: MAX_TRUST_ANCHORS + 1,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -446,7 +387,7 @@ impl ParameterStore {
     /// # Errors
     ///
     /// Returns [`TrustError`] for an unreadable or unusable document.
-    pub async fn trust_anchors(&self, name: &str) -> Result<Ed25519Anchors, TrustError> {
+    pub async fn trust_anchors(&self, name: &str) -> Result<VerificationKeySet, TrustError> {
         let document = self.read(name).await?;
         parse_trust_anchors(name, &document)
     }
@@ -469,62 +410,58 @@ impl ParameterStore {
 /// Builds the `central-authz` request for one presented workspace key.
 ///
 /// The credential is named by `(keyId, presentedDigest)` and never sent: see
-/// [`ResolveWorkspaceKey`] for why. The digest is the credential binding this
-/// edge already derived, which is what makes the response's `credentialBinding`
-/// comparable against the credential actually presented.
+/// [`ResolveWorkspaceKey`] for why. The digest is `SHA-256` over the complete
+/// token, which is exactly what the stored verifier is a MAC over, so naming the
+/// key proves as much as sending it would.
 ///
 /// # Errors
 ///
-/// Returns [`AuthFailure::MalformedCredential`] when the presented value is not
-/// a workspace API key, or is one minted for another region. A key for another
-/// region is refused here rather than centrally so the customer's secret never
-/// leaves the region that received it even as a digest.
+/// Returns [`AuthFailure::MalformedCredential`] for a key minted for another
+/// region. That is refused here rather than centrally so the customer's secret
+/// never leaves the region that received it, even as a digest.
 pub fn resolve_request(
     credential: &PresentedCredential,
     audience: AssertionAudience,
     region: Region,
 ) -> Result<ResolveWorkspaceKey, AuthFailure> {
-    let key = credential.expose(|bytes| {
-        let text = std::str::from_utf8(bytes).map_err(|_| AuthFailure::MalformedCredential)?;
-        WorkspaceApiKey::parse(text).map_err(|_| AuthFailure::MalformedCredential)
-    })?;
-    if key.region() != region {
+    if credential.region() != region {
         return Err(AuthFailure::MalformedCredential);
     }
     Ok(ResolveWorkspaceKey {
         schema_version: SchemaVersion::V1,
-        key: key.key_id(),
-        presented_digest: CredentialDigest::new(credential.binding()),
+        key: credential.key_id(),
+        presented_digest: CredentialDigest::new(*credential.digest().as_bytes()),
         region,
         audience,
     })
 }
 
-/// Converts a `central-authz` answer into the transport the edge verifies.
+/// Converts a `central-authz` answer into the envelope the edge verifies.
 ///
-/// The binding is compared against the credential *here* as well as inside
-/// [`crate::assertion::verify`]: an assertion for another credential must never
-/// reach the cache, because the cache is keyed by the credential binding and a
-/// mismatched entry would be a cross-credential poison.
+/// There is nothing to cross-check here. The credential binding is inside the
+/// signed body at a fixed offset, so an envelope minted for another credential
+/// fails `verify` rather than needing a sibling field compared first — and,
+/// because the cache stores only verified authorizations, a mismatched answer
+/// can never reach it.
 ///
 /// # Errors
 ///
-/// Returns [`AuthFailure::CredentialBinding`] when the answer names another
-/// credential, and [`AuthFailure::MalformedAssertion`] for an unusable key id or
-/// signature.
-pub fn signed_assertion(
-    envelope: SignedAssertionEnvelope,
-    credential: &PresentedCredential,
-) -> Result<SignedAssertion, AuthFailure> {
-    if *envelope.credential_binding.get() != credential.binding() {
-        return Err(AuthFailure::CredentialBinding);
+/// Returns [`AuthFailure::Refused`] or [`AuthFailure::AccountStateUnavailable`]
+/// for the authority's two decisions, and
+/// [`AuthFailure::MalformedAssertion`] for an answer that is not a well-formed
+/// 323-byte envelope.
+pub fn issued_assertion(response: AssertionResponse) -> Result<Assertion, AuthFailure> {
+    match response {
+        AssertionResponse::Issued { assertion } => {
+            Assertion::from_issued(&assertion).map_err(|_| AuthFailure::MalformedAssertion)
+        }
+        AssertionResponse::Refused {
+            reason: AssertionRefusal::NotAuthorized,
+        } => Err(AuthFailure::Refused),
+        AssertionResponse::Refused {
+            reason: AssertionRefusal::AccountStateUnavailable,
+        } => Err(AuthFailure::AccountStateUnavailable),
     }
-    SignedAssertion::new(
-        envelope.assertion,
-        envelope.key_id,
-        *envelope.credential_binding.get(),
-        envelope.signature.get().to_vec(),
-    )
 }
 
 /// Decodes one `central-authz` response payload.
@@ -533,7 +470,7 @@ pub fn signed_assertion(
 ///
 /// Returns [`AuthFailure::MalformedAssertion`] for an oversized or undecodable
 /// payload.
-pub fn decode_response(payload: &[u8]) -> Result<SignedAssertionEnvelope, AuthFailure> {
+pub fn decode_response(payload: &[u8]) -> Result<AssertionResponse, AuthFailure> {
     if payload.len() > MAX_ASSERTION_RESPONSE_BYTES {
         return Err(AuthFailure::MalformedAssertion);
     }
@@ -579,10 +516,7 @@ impl LambdaAssertionSource {
 
 #[async_trait]
 impl AssertionSource for LambdaAssertionSource {
-    async fn obtain(
-        &self,
-        credential: &PresentedCredential,
-    ) -> Result<SignedAssertion, AuthFailure> {
+    async fn obtain(&self, credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
         let request = resolve_request(credential, self.audience, self.region)?;
         let body = serde_json::to_vec(&request).map_err(|_| AuthFailure::MalformedCredential)?;
         let output = self
@@ -594,7 +528,7 @@ impl AssertionSource for LambdaAssertionSource {
             .send()
             .await
             .map_err(|_| AuthFailure::SourceUnavailable)?;
-        // A handled function error carries a payload that is *not* an assertion.
+        // A handled function error carries a payload that is *not* an answer.
         // Treating it as unavailable rather than trying to decode it keeps a
         // central failure from being reported to the customer as a bad key.
         if output.function_error.is_some() {
@@ -605,7 +539,7 @@ impl AssertionSource for LambdaAssertionSource {
             .as_ref()
             .map(aws_sdk_lambda::primitives::Blob::as_ref)
             .ok_or(AuthFailure::SourceUnavailable)?;
-        signed_assertion(decode_response(payload)?, credential)
+        issued_assertion(decode_response(payload)?)
     }
 }
 
@@ -637,14 +571,7 @@ impl<P: AuthorizationProjection> ProjectionReader for RegionalProjection<P> {
         &self,
         credential: &PresentedCredential,
     ) -> Result<ProjectedEpochs, ProjectionError> {
-        let key = credential
-            .expose(|bytes| {
-                std::str::from_utf8(bytes)
-                    .ok()
-                    .and_then(|text| WorkspaceApiKey::parse(text).ok())
-            })
-            .ok_or(ProjectionError::Unknown)?;
-        if key.region() != self.region {
+        if credential.region() != self.region {
             return Err(ProjectionError::Unknown);
         }
         // The projection holds a revocation row only for a key that has one, so
@@ -652,10 +579,14 @@ impl<P: AuthorizationProjection> ProjectionReader for RegionalProjection<P> {
         // that exists raises the key floor above every assertion minted before
         // the revocation was published, which is what makes a revoked key lose
         // inside the 30-second assertion window.
-        match self.projection.read_key_revocation(key.key_id()).await {
+        match self
+            .projection
+            .read_key_revocation(credential.key_id())
+            .await
+        {
             Ok(None) => Ok(ProjectedEpochs::default()),
             Ok(Some(revocation)) => Ok(ProjectedEpochs {
-                key: revocation.revoked_epoch,
+                key: Epoch::new(revocation.revoked_epoch),
                 ..ProjectedEpochs::default()
             }),
             Err(_) => Err(ProjectionError::Unavailable),
@@ -671,14 +602,20 @@ impl<P: AuthorizationProjection> ProjectionReader for RegionalProjection<P> {
         let region = Region::from_name(&placement.region).ok_or(ProjectionError::Unavailable)?;
         Ok(ProjectedState {
             epochs: ProjectedEpochs {
-                key: placement.key_epoch,
-                account: placement.account_epoch,
-                revocation: placement.revocation_epoch,
+                key: Epoch::new(placement.key_epoch),
+                workspace: Epoch::new(placement.revocation_epoch),
+                account: Epoch::new(placement.account_epoch),
             },
+            organization_id: raw_id(placement.organization),
             account_state: account_state(&placement.status)?,
             region,
         })
     }
+}
+
+/// The raw payload of a prefixed identifier, as the envelope binds it.
+fn raw_id<I: aex_wire::ids::PrefixedId>(id: I) -> Uuid {
+    Uuid::from_bytes(*id.uuid7().as_bytes())
 }
 
 /// An absent placement is "this region has no record of that workspace"; every

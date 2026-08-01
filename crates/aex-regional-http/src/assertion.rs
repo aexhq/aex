@@ -1,304 +1,396 @@
 //! Hard-expiry, credential-bound central assertion verification and caching.
+//!
+//! The artifact this module verifies is the fixed-layout 323-byte Ed25519
+//! envelope `aex_identity_domain::assertion` defines, and every cryptographic
+//! and semantic check is that crate's. What lives here is the *edge's* half: the
+//! zeroizing credential wrapper, the regional revocation projection the envelope
+//! is checked against, and a bounded cache with one refresh flight per
+//! credential.
+//!
+//! # Why there is no local `verify`
+//!
+//! There was one, over a JSON claim set with the credential binding carried
+//! beside it as a sibling field. A verifier then had two things to get right —
+//! the claims and the field next to them — and the covered bytes had to be
+//! defined twice. The binding is now inside the signed body at a fixed offset,
+//! so "which credential is this for" is not a separate thing that can be
+//! tampered with, and there is exactly one implementation of the check.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aex_internal_contracts::assertion::{
-    AssertionAudience, AuthorizationAssertion, CredentialDigest, MAX_LIFETIME_MS,
-    credential_bound_signing_input,
+use aex_control_domain::epoch::{Epoch, EpochSubjectKind};
+use aex_identity_domain::assertion::{
+    Assertion, AssertionClaims, Audience, EpochProjection, Plane, VerificationInputs,
+    VerificationKeySet, VerifyError, workspace_key_binding,
 };
+use aex_identity_domain::credential::PresentedDigest;
+use aex_wire::ids::{ApiKeyId, WorkspaceApiKey};
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
-use sha2::Digest as _;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
-/// Credential bytes live only in this zeroizing, redacting wrapper.
+/// The one credential a regional host accepts.
+///
+/// A workspace API key is the only credential a customer presents to a regional
+/// endpoint, so the wrapper parses one at construction rather than carrying
+/// arbitrary bytes and re-parsing at each of the three places that need the key
+/// id. Anything else is [`AuthFailure::MalformedCredential`] before a byte of it
+/// is used.
+///
+/// The plaintext lives only inside this zeroizing, redacting wrapper and is
+/// never transmitted: what leaves the region is `(keyId, presentedDigest)`.
 #[derive(Clone)]
 pub struct PresentedCredential {
     bytes: Zeroizing<Vec<u8>>,
-    binding: [u8; 32],
+    key_id: ApiKeyId,
+    region: Region,
+    digest: PresentedDigest,
 }
 
 impl PresentedCredential {
-    /// Validates a bounded non-empty credential and derives its stable binding.
+    /// Validates a presented workspace API key and derives its stable digest.
     ///
     /// # Errors
     ///
-    /// Returns [`AuthFailure::MalformedCredential`] for an empty, oversized or
-    /// control-character-bearing value.
+    /// Returns [`AuthFailure::MalformedCredential`] for an empty, oversized,
+    /// control-character-bearing or non-UTF-8 value, and for anything that is
+    /// not a workspace API key.
     pub fn new(bytes: Vec<u8>) -> Result<Self, AuthFailure> {
         if bytes.is_empty() || bytes.len() > 4_096 || bytes.iter().any(u8::is_ascii_control) {
             return Err(AuthFailure::MalformedCredential);
         }
-        let binding = sha2::Sha256::digest(&bytes).into();
+        let text = std::str::from_utf8(&bytes).map_err(|_| AuthFailure::MalformedCredential)?;
+        let key = WorkspaceApiKey::parse(text).map_err(|_| AuthFailure::MalformedCredential)?;
+        let digest = PresentedDigest::of(text);
         Ok(Self {
+            key_id: key.key_id(),
+            region: key.region(),
+            digest,
             bytes: Zeroizing::new(bytes),
-            binding,
         })
     }
 
-    /// Hash of the credential, safe for cache identity but not for logs.
+    /// The key metadata identity embedded in the token.
     #[must_use]
-    pub const fn binding(&self) -> [u8; 32] {
-        self.binding
+    pub const fn key_id(&self) -> ApiKeyId {
+        self.key_id
     }
 
-    /// Exposes credential bytes only for the duration of the authority call.
+    /// The key identity as the envelope binds it: 16 raw bytes.
+    #[must_use]
+    pub fn key_id_raw(&self) -> Uuid {
+        raw(self.key_id)
+    }
+
+    /// The regional endpoint the key is pinned to.
+    #[must_use]
+    pub const fn region(&self) -> Region {
+        self.region
+    }
+
+    /// `SHA-256` over the complete token: what the central request carries.
     ///
-    /// The callback shape prevents a borrowed view from outliving this
-    /// zeroizing wrapper; implementations must still avoid copying the bytes.
+    /// It is not a verifier. Without the pepper it proves nothing, and holding
+    /// it does not let its holder authenticate.
+    #[must_use]
+    pub const fn digest(&self) -> &PresentedDigest {
+        &self.digest
+    }
+
+    /// The binding the assertion for this credential must carry.
+    ///
+    /// Domain-separated by principal kind and key id, so an envelope minted for
+    /// a browser session with the same token digest can never admit a request
+    /// made with this key.
+    #[must_use]
+    pub fn expected_binding(&self) -> [u8; 32] {
+        workspace_key_binding(raw(self.key_id), &self.digest)
+    }
+
+    /// The cache identity: the digest, which is safe to hold and index by.
+    #[must_use]
+    pub const fn cache_key(&self) -> &[u8; 32] {
+        self.digest.as_bytes()
+    }
+
+    /// Exposes credential bytes only for the duration of a call that needs them.
+    ///
+    /// Nothing in the platform needs them today — the exchange sends a digest —
+    /// but the accessor stays so that a future caller has one audited way in
+    /// rather than a reason to hold the plaintext somewhere else.
     pub fn expose<R>(&self, callback: impl FnOnce(&[u8]) -> R) -> R {
         callback(&self.bytes)
     }
 }
 
 impl std::fmt::Debug for PresentedCredential {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("PresentedCredential(<redacted>)")
-    }
-}
-
-/// Signed assertion transport plus the credential binding that must be covered.
-#[derive(Clone)]
-pub struct SignedAssertion {
-    assertion: AuthorizationAssertion,
-    key_id: String,
-    credential_binding: [u8; 32],
-    signature: Zeroizing<Vec<u8>>,
-}
-
-impl SignedAssertion {
-    /// Constructs a bounded signed transport.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AuthFailure::MalformedAssertion`] for an invalid key id or
-    /// signature bound.
-    pub fn new(
-        assertion: AuthorizationAssertion,
-        key_id: impl Into<String>,
-        credential_binding: [u8; 32],
-        signature: Vec<u8>,
-    ) -> Result<Self, AuthFailure> {
-        let key_id = key_id.into();
-        if key_id.is_empty()
-            || key_id.len() > 128
-            || key_id.bytes().any(|byte| byte.is_ascii_control())
-            || signature.is_empty()
-            || signature.len() > 512
-        {
-            return Err(AuthFailure::MalformedAssertion);
-        }
-        Ok(Self {
-            assertion,
-            key_id,
-            credential_binding,
-            signature: Zeroizing::new(signature),
-        })
-    }
-
-    /// Which trust anchor is claimed to have signed this assertion.
-    #[must_use]
-    pub fn key_id(&self) -> &str {
-        &self.key_id
-    }
-
-    /// The detached signature, for a verifier that was handed the transport
-    /// rather than asked to check it.
-    ///
-    /// A signature is public data: it proves nothing without the message and the
-    /// key, and it is already visible on the internal wire.
-    #[must_use]
-    pub fn signature(&self) -> &[u8] {
-        &self.signature
-    }
-
-    /// The exact bytes a signature over this assertion must cover.
-    ///
-    /// One definition, published by the contract crate, so the issuing service
-    /// and every verifying edge cannot disagree about what was signed.
-    #[must_use]
-    pub fn signing_input(&self) -> Vec<u8> {
-        credential_bound_signing_input(
-            &self.assertion,
-            &CredentialDigest::new(self.credential_binding),
-        )
-    }
-}
-
-impl std::fmt::Debug for SignedAssertion {
+    /// Deliberately partial: the plaintext and its digest are omitted entirely
+    /// rather than rendered as a placeholder field, so no format string anywhere
+    /// can be persuaded to print them.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("SignedAssertion")
-            .field("assertion", &"<redacted>")
+            .debug_struct("PresentedCredential")
             .field("key_id", &self.key_id)
-            .field("credential_binding", &"<redacted>")
-            .field("signature", &"<redacted>")
-            .finish()
+            .field("region", &self.region)
+            .finish_non_exhaustive()
     }
 }
 
-/// Monotonic regional projection used to reject stale assertions.
+/// The raw payload of a prefixed identifier, as the envelope binds it.
+fn raw(id: ApiKeyId) -> Uuid {
+    use aex_wire::ids::PrefixedId as _;
+    Uuid::from_bytes(*id.uuid7().as_bytes())
+}
+
+/// The floor a subject this region cannot speak for is answered with.
+///
+/// Every epoch is at or below this, so any assertion carrying such a subject is
+/// stale and refused. It is a value rather than an `Option` because
+/// [`EpochProjection`] answers an `Epoch`, and the fail-closed answer has to be
+/// expressible in that vocabulary.
+const UNPROJECTABLE: Epoch = Epoch::new(u64::MAX);
+
+/// The regional revocation floors an assertion is checked against.
+///
+/// The envelope carries `(kind, id, epoch)` slots rather than a flat epoch
+/// triple, because the two principal kinds carry different subjects and the
+/// region needs the subject **id** to consult its own projection.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProjectedEpochs {
-    /// API-key epoch.
-    pub key: u64,
-    /// Account-state epoch.
-    pub account: u64,
-    /// General revocation epoch.
-    pub revocation: u64,
+    /// The floor for the presented key.
+    pub key: Epoch,
+    /// The floor for the workspace the assertion names.
+    pub workspace: Epoch,
+    /// The floor for the owning organization's billing account.
+    pub account: Epoch,
+}
+
+/// Stage one: the floor knowable from the credential alone.
+///
+/// A credential names its own key and nothing else. The workspace it belongs to
+/// is a fact only the assertion carries, and the assertion may not be trusted
+/// before it verifies — so the workspace and account floors cannot be applied
+/// here without reading an unverified claim.
+///
+/// The unnamed subjects therefore answer `NEVER`, which **defers** rather than
+/// admits: [`RegionalFloors`] is applied to every request afterwards, cache hit
+/// or not, and it is the one that refuses an unprojectable subject. Nothing
+/// reaches a handler on the strength of this stage alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CredentialFloors {
+    key: Epoch,
+    key_id: Uuid,
+}
+
+impl CredentialFloors {
+    /// Binds the key revocation floor to the key that was presented.
+    #[must_use]
+    pub const fn new(key: Epoch, key_id: Uuid) -> Self {
+        Self { key, key_id }
+    }
+}
+
+impl EpochProjection for CredentialFloors {
+    fn projected(&self, kind: EpochSubjectKind, id: Uuid) -> Epoch {
+        if kind == EpochSubjectKind::Key && id == self.key_id {
+            self.key
+        } else {
+            Epoch::NEVER
+        }
+    }
+}
+
+/// Stage two: every floor, bound to the subject it belongs to.
+///
+/// A subject kind this region does **not** project answers [`UNPROJECTABLE`],
+/// which makes any assertion carrying one stale and therefore refused. That is
+/// the fail-closed direction and it is deliberate: the
+/// `regional-authz-projection` holds nothing about a person or a membership, so
+/// an assertion whose revocation depends on either cannot be checked here and
+/// must not be admitted on the grounds that no reason to refuse it was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegionalFloors {
+    epochs: ProjectedEpochs,
+    key_id: Uuid,
+    workspace_id: Uuid,
+    organization_id: Uuid,
+}
+
+impl RegionalFloors {
+    /// Binds the floors to the three subjects this region projects.
+    #[must_use]
+    pub const fn new(
+        epochs: ProjectedEpochs,
+        key_id: Uuid,
+        workspace_id: Uuid,
+        organization_id: Uuid,
+    ) -> Self {
+        Self {
+            epochs,
+            key_id,
+            workspace_id,
+            organization_id,
+        }
+    }
+
+    /// The floors themselves.
+    #[must_use]
+    pub const fn epochs(&self) -> ProjectedEpochs {
+        self.epochs
+    }
+
+    /// Whether every subject the assertion carries is at or ahead of its floor.
+    ///
+    /// One call rather than a loop at each caller, so a deployable cannot check
+    /// three of the subjects and forget the fourth.
+    #[must_use]
+    pub fn admits(&self, claims: &AssertionClaims) -> bool {
+        claims.epochs.used().all(|slot| {
+            !slot
+                .epoch
+                .is_stale_against(self.projected(slot.kind, slot.id))
+        })
+    }
+}
+
+impl EpochProjection for RegionalFloors {
+    fn projected(&self, kind: EpochSubjectKind, id: Uuid) -> Epoch {
+        match kind {
+            EpochSubjectKind::Key if id == self.key_id => self.epochs.key,
+            EpochSubjectKind::Workspace if id == self.workspace_id => self.epochs.workspace,
+            EpochSubjectKind::Account if id == self.organization_id => self.epochs.account,
+            // A subject this region cannot speak for, or one whose id does not
+            // match the credential that was actually presented.
+            _ => UNPROJECTABLE,
+        }
+    }
 }
 
 /// A structurally and cryptographically verified authorization.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VerifiedAuthorization {
-    /// Verified assertion.
-    pub assertion: AuthorizationAssertion,
-    /// Binding of the credential used for this request.
+    /// The verified claims.
+    pub claims: AssertionClaims,
+    /// The binding of the credential used for this request.
     pub credential_binding: [u8; 32],
-}
-
-/// Verification-key provider. Concrete crypto stays in the composition root.
-pub trait KeyVerifier: Send + Sync + 'static {
-    /// Verifies `signature` under the exact named key and message.
-    fn verify(&self, key_id: &str, message: &[u8], signature: &[u8]) -> bool;
 }
 
 /// Central assertion fetch port.
 #[async_trait]
 pub trait AssertionSource: Send + Sync + 'static {
     /// Fetches one current assertion for this credential.
-    async fn obtain(
-        &self,
-        credential: &PresentedCredential,
-    ) -> Result<SignedAssertion, AuthFailure>;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthFailure`] for an unavailable authority or an answer that is
+    /// not a well-formed envelope. An authority that *refused* is
+    /// [`AuthFailure::Refused`] and never an outage.
+    async fn obtain(&self, credential: &PresentedCredential) -> Result<Assertion, AuthFailure>;
 }
 
 /// Why authentication failed closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AuthFailure {
-    /// Credential grammar or bound was invalid.
+    /// Credential grammar or bound was invalid, or it was not a workspace key.
     #[error("credential is malformed")]
     MalformedCredential,
-    /// Signed transport grammar was invalid.
+    /// The envelope was not a well-formed 323-byte assertion.
     #[error("assertion transport is malformed")]
     MalformedAssertion,
-    /// Key id was unknown or signature invalid.
-    #[error("assertion signature did not verify")]
-    Signature,
-    /// Assertion lifetime exceeded thirty seconds or was not forward.
-    #[error("assertion lifetime is invalid")]
-    Lifetime,
-    /// Assertion was issued in the future.
-    #[error("assertion is not active yet")]
-    NotYetValid,
-    /// Hard expiry was reached; equality is expired.
-    #[error("assertion expired")]
-    Expired,
-    /// Audience did not name this service.
-    #[error("assertion audience mismatch")]
-    Audience,
-    /// Assertion region did not name this host.
-    #[error("assertion region mismatch")]
-    Region,
-    /// Assertion was minted for another credential.
-    #[error("assertion credential binding mismatch")]
-    CredentialBinding,
-    /// A local epoch was newer than the assertion.
-    #[error("assertion epoch is stale")]
-    EpochRollback,
-    /// Workspace-scoped regional assertion omitted a workspace.
-    #[error("assertion has no workspace")]
-    MissingWorkspace,
+    /// The central authority declined to issue.
+    #[error("the authority refused this credential")]
+    Refused,
+    /// The envelope did not verify, at the exact stage it failed.
+    #[error("assertion verification failed: {0}")]
+    Verification(VerifyError),
     /// Source was unavailable.
     #[error("assertion authority is unavailable")]
     SourceUnavailable,
+    /// The account state could not be established centrally.
+    #[error("account state is unavailable")]
+    AccountStateUnavailable,
     /// Configured byte budget cannot hold one entry.
     #[error("assertion cache byte budget is too small")]
     CacheBudget,
 }
 
-/// Verifies signature, hard time bounds, audience, region, binding and epochs.
+impl From<VerifyError> for AuthFailure {
+    fn from(error: VerifyError) -> Self {
+        Self::Verification(error)
+    }
+}
+
+/// Verifies one envelope for this edge.
+///
+/// Every check is `aex_identity_domain::assertion::verify`'s: signature first
+/// under the exact `kid`, then the hard thirty-second lifetime re-checked
+/// against the claim itself, then audience, region, credential binding and every
+/// carried epoch against [`RegionalFloors`].
 ///
 /// # Errors
 ///
-/// Returns the precise [`AuthFailure`] at the first failed verification stage.
-pub fn verify<V: KeyVerifier>(
-    verifier: &V,
-    signed: &SignedAssertion,
+/// Returns the [`VerifyError`] of the first rule that failed, plus a local
+/// refusal for a principal kind this edge does not accept.
+pub fn verify(
+    assertion: &Assertion,
+    keys: &VerificationKeySet,
     credential: &PresentedCredential,
-    audience: AssertionAudience,
-    region: Region,
-    projected: ProjectedEpochs,
+    audience: Audience,
+    floors: &CredentialFloors,
     now: Timestamp,
 ) -> Result<VerifiedAuthorization, AuthFailure> {
-    let input = signed.signing_input();
-    if !verifier.verify(&signed.key_id, &input, &signed.signature) {
-        return Err(AuthFailure::Signature);
-    }
-    signed
-        .assertion
-        .validate()
-        .map_err(|_| AuthFailure::Lifetime)?;
-    let issued = signed.assertion.issued_at.unix_millis();
-    let expires = signed.assertion.expires_at.unix_millis();
-    let now = now.unix_millis();
-    if expires.saturating_sub(issued) > MAX_LIFETIME_MS {
-        return Err(AuthFailure::Lifetime);
-    }
-    if now < issued {
-        return Err(AuthFailure::NotYetValid);
-    }
-    if now >= expires {
-        return Err(AuthFailure::Expired);
-    }
-    if signed.assertion.audience != audience {
-        return Err(AuthFailure::Audience);
-    }
-    if signed.assertion.region != region {
-        return Err(AuthFailure::Region);
-    }
-    if signed.credential_binding != credential.binding {
-        return Err(AuthFailure::CredentialBinding);
-    }
-    if signed.assertion.workspace.is_none() {
-        return Err(AuthFailure::MissingWorkspace);
-    }
-    if signed.assertion.key_epoch.0 < projected.key
-        || signed.assertion.account_epoch.0 < projected.account
-        || signed.assertion.revocation_epoch.0 < projected.revocation
-    {
-        return Err(AuthFailure::EpochRollback);
-    }
+    let binding = credential.expected_binding();
+    let now_ms = u64::try_from(now.unix_millis()).map_err(|_| VerifyError::NotYetValid)?;
+    let claims = aex_identity_domain::assertion::verify(
+        assertion.as_bytes(),
+        keys,
+        &VerificationInputs {
+            now_ms,
+            audience,
+            credential_binding: &binding,
+            projection: floors,
+        },
+    )?;
     Ok(VerifiedAuthorization {
-        assertion: signed.assertion.clone(),
-        credential_binding: signed.credential_binding,
+        claims,
+        credential_binding: binding,
     })
 }
 
-#[derive(Clone)]
-struct Cached {
-    authorization: VerifiedAuthorization,
-    expires_at_ms: i64,
+/// The plane an edge accepts assertions for.
+#[must_use]
+pub const fn plane(name: &str) -> Option<Plane> {
+    match name.as_bytes() {
+        b"dev" => Some(Plane::Dev),
+        b"prd" => Some(Plane::Prd),
+        _ => None,
+    }
 }
 
-/// Byte-bounded credential cache with one refresh flight per credential binding.
-pub struct VerifyingAssertionCache<S, V> {
+#[derive(Clone, Copy)]
+struct Cached {
+    authorization: VerifiedAuthorization,
+    expires_at_ms: u64,
+}
+
+/// Byte-bounded credential cache with one refresh flight per credential.
+///
+/// The cache holds a *verified* assertion for at most its own thirty-second
+/// lifetime, and the regional projection is read on every request regardless —
+/// which is the only thing that makes caching an authorization decision safe.
+pub struct VerifyingAssertionCache<S> {
     source: S,
-    verifier: V,
-    audience: AssertionAudience,
-    region: Region,
+    keys: VerificationKeySet,
+    audience: Audience,
     max_entries: usize,
     entries: Mutex<HashMap<[u8; 32], Cached>>,
     flights: Mutex<HashMap<[u8; 32], Arc<Mutex<()>>>>,
 }
 
-impl<S, V> VerifyingAssertionCache<S, V>
-where
-    S: AssertionSource,
-    V: KeyVerifier,
-{
+impl<S: AssertionSource> VerifyingAssertionCache<S> {
     /// Constructs a cache. Each entry is charged a conservative 1 KiB.
     ///
     /// # Errors
@@ -306,9 +398,8 @@ where
     /// Returns [`AuthFailure::CacheBudget`] when one entry cannot fit.
     pub fn new(
         source: S,
-        verifier: V,
-        audience: AssertionAudience,
-        region: Region,
+        keys: VerificationKeySet,
+        audience: Audience,
         budget_bytes: usize,
     ) -> Result<Self, AuthFailure> {
         let max_entries = budget_bytes / 1_024;
@@ -317,52 +408,58 @@ where
         }
         Ok(Self {
             source,
-            verifier,
+            keys,
             audience,
-            region,
             max_entries,
             entries: Mutex::new(HashMap::new()),
             flights: Mutex::new(HashMap::new()),
         })
     }
 
+    /// The audience every assertion this cache admits must name.
+    #[must_use]
+    pub const fn audience(&self) -> Audience {
+        self.audience
+    }
+
     /// Returns a current cached assertion or performs one credential-keyed refresh.
     ///
     /// # Errors
     ///
-    /// Returns a verification or source failure without extending an expired entry.
+    /// Returns a verification or source failure without extending an expired
+    /// entry and without admitting one whose epochs the region has moved past.
     pub async fn resolve(
         &self,
         credential: &PresentedCredential,
-        projected: ProjectedEpochs,
+        floors: &CredentialFloors,
         now: Timestamp,
     ) -> Result<VerifiedAuthorization, AuthFailure> {
-        if let Some(hit) = self.cached(credential.binding, projected, now).await {
-            return hit;
+        let key = *credential.cache_key();
+        if let Some(hit) = self.cached(key, floors, now).await {
+            return Ok(hit);
         }
         let flight = {
             let mut flights = self.flights.lock().await;
             Arc::clone(
                 flights
-                    .entry(credential.binding)
+                    .entry(key)
                     .or_insert_with(|| Arc::new(Mutex::new(()))),
             )
         };
         let _guard = flight.lock().await;
-        if let Some(hit) = self.cached(credential.binding, projected, now).await {
-            return hit;
+        if let Some(hit) = self.cached(key, floors, now).await {
+            return Ok(hit);
         }
-        let signed = self.source.obtain(credential).await?;
+        let assertion = self.source.obtain(credential).await?;
         let authorization = verify(
-            &self.verifier,
-            &signed,
+            &assertion,
+            &self.keys,
             credential,
             self.audience,
-            self.region,
-            projected,
+            floors,
             now,
         )?;
-        let expires_at_ms = authorization.assertion.expires_at.unix_millis();
+        let expires_at_ms = authorization.claims.expires_at_ms;
         let mut entries = self.entries.lock().await;
         if entries.len() >= self.max_entries {
             let oldest = entries
@@ -374,9 +471,9 @@ where
             }
         }
         entries.insert(
-            credential.binding,
+            key,
             Cached {
-                authorization: authorization.clone(),
+                authorization,
                 expires_at_ms,
             },
         );
@@ -385,24 +482,31 @@ where
 
     async fn cached(
         &self,
-        binding: [u8; 32],
-        projected: ProjectedEpochs,
+        key: [u8; 32],
+        floors: &CredentialFloors,
         now: Timestamp,
-    ) -> Option<Result<VerifiedAuthorization, AuthFailure>> {
+    ) -> Option<VerifiedAuthorization> {
         let mut entries = self.entries.lock().await;
-        let entry = entries.get(&binding)?.clone();
-        if now.unix_millis() >= entry.expires_at_ms {
-            entries.remove(&binding);
+        let entry = *entries.get(&key)?;
+        let now_ms = u64::try_from(now.unix_millis()).ok()?;
+        if now_ms >= entry.expires_at_ms {
+            entries.remove(&key);
             return None;
         }
-        let assertion = &entry.authorization.assertion;
-        if assertion.key_epoch.0 < projected.key
-            || assertion.account_epoch.0 < projected.account
-            || assertion.revocation_epoch.0 < projected.revocation
-        {
-            entries.remove(&binding);
-            return None;
+        // A cached decision still loses to a revocation published a moment ago:
+        // the credential floor is read on every request and re-applied here, and
+        // the full subject-bound check runs outside this cache on every request
+        // too, so an entry that was admissible when it was stored is dropped the
+        // instant the region moves past it.
+        for slot in entry.authorization.claims.epochs.used() {
+            if slot
+                .epoch
+                .is_stale_against(floors.projected(slot.kind, slot.id))
+            {
+                entries.remove(&key);
+                return None;
+            }
         }
-        Some(Ok(entry.authorization))
+        Some(entry.authorization)
     }
 }
