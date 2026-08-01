@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 53,
+    "awaiting_owner": 48,
     "capacity_gates": 19,
     "live_targets": 34,
     "packages": 140,
@@ -2408,7 +2408,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the hands stream; the cases land with the binary's own implementation"
+          "targets": "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
         }
       },
       "unmapped_targets": [],
@@ -2657,7 +2657,7 @@
       "name": "regional-observation-api",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "deployable",
         "artifact": "lambda_zip",
         "deployable": "regional-observation-api",
@@ -2684,19 +2684,21 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "resource_envelope": "e2e",
+          "routes": "unit",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/regional-otlp": {
       "name": "regional-otlp",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "deployable",
         "artifact": "lambda_zip",
         "deployable": "regional-otlp",
@@ -2722,13 +2724,15 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "admission": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/regional-secret-api": {
       "name": "regional-secret-api",
@@ -3623,7 +3627,7 @@
       "name": "aex-live-regional-observation-api",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "live_companion",
         "artifact": "none",
         "deployable": "regional-observation-api",
@@ -3650,7 +3654,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
       "unmapped_targets": [],
@@ -3660,7 +3664,7 @@
       "name": "aex-live-regional-otlp",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "observations-usage",
         "role": "live_companion",
         "artifact": "none",
         "deployable": "regional-otlp",
@@ -3684,7 +3688,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
       "unmapped_targets": [],
@@ -4308,6 +4312,7 @@
           "evidence": "unit",
           "failing_fixtures": "unit",
           "graph": "unit",
+          "janitor": "unit",
           "migration": "unit",
           "monotonicity": "unit",
           "policy": "unit",
@@ -4609,13 +4614,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "launcher": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/observation-export-task": {
       "name": "observation-export-task",
@@ -4646,13 +4653,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "export": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/observation-reconciler": {
       "name": "observation-reconciler",
@@ -4685,13 +4694,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "duty": "unit",
+          "resource_envelope": "e2e",
+          "startup": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/provider-cost-reconciler": {
       "name": "provider-cost-reconciler",
