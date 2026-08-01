@@ -650,10 +650,12 @@ dependencies = [
 name = "aex-operation-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-content-domain",
+ "aex-wire",
+ "blake3",
+ "proptest",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]
