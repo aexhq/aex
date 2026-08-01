@@ -219,6 +219,14 @@ aws-sdk-kms = { version = "1.114.0", features = ["behavior-version-latest"] }
 aws-sdk-rdsdata = { version = "1.108.0", features = ["behavior-version-latest"] }
 aws-sdk-ecs = { version = "1.136.0", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = { version = "1.111.0", features = ["behavior-version-latest"] }
+# The only Rust -> Stripe path is a synchronous `RequestResponse` invoke of
+# `stripe-command-edge` (plan 03 section 5.2). Rust never holds a Stripe secret,
+# so the SDK that carries a payment command is the Lambda one, not an HTTP
+# client, and no finance crate gains an outbound provider dependency.
+aws-sdk-lambda = { version = "1.138.0", features = ["behavior-version-latest"] }
+# The finance sweeps report and fence; they never auto-repair money (F-30). The
+# report leaves the process through the operations topic and nowhere else.
+aws-sdk-sns = { version = "1.107.0", features = ["behavior-version-latest"] }
 aws-sdk-cloudwatch = { version = "1.123.0", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.6.1"
 aws-smithy-runtime-api = "1.14.0"

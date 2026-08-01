@@ -131,6 +131,15 @@ required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "li
 alarm_spec = "finance-api"
 live_suite = "aex-live-finance-api"
 
+# Request-scaled and scale-to-zero. 512 MiB is the Data API client plus one
+# bounded page; 15 s covers a serializable transaction plus one synchronous
+# command-edge invoke. The reservation is capped below the ingest lane so a read
+# burst can never starve Stripe redelivery (F-29).
+[unit.lambda]
+memory_mb = 512
+timeout_s = 15
+reserved_concurrency = 40
+
 [[unit]]
 id = "finance-ingest"
 kind = "rust-lambda"
@@ -143,11 +152,17 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_FINANCE_INGEST_"
 config_schema_version = 1
-health_path = "/internal/healthz"
-ready_path = "/internal/readyz"
 required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-ingest"
 live_suite = "aex-live-finance-ingest"
+
+# Its own reservation, deliberately. A settlement backlog must never make Stripe
+# redelivery the customer's problem (F-29). 10 s is one serializable inbox
+# transaction; the edge returns 2xx only after it commits.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 10
+reserved_concurrency = 20
 
 # --- central plane: workers ---------------------------------------------------
 
@@ -192,6 +207,14 @@ required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vul
 alarm_spec = "finance-settlement-worker"
 live_suite = "aex-live-finance-settlement-worker"
 
+# FIFO backlog-scaled, one message group per organization. 60 s covers one
+# group's serializable transaction plus its bounded serialization retries; the
+# reservation bounds concurrent Aurora writers rather than the queue.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 60
+reserved_concurrency = 30
+
 [[unit]]
 id = "finance-reconcile"
 kind = "rust-lambda"
@@ -207,6 +230,14 @@ config_schema_version = 1
 required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-reconcile"
 live_suite = "aex-live-finance-reconcile"
+
+# Five-minute sweep plus an hourly deep sweep. Reserved concurrency 2 by plan:
+# the sweeps report and fence, and a reconciler that can outscale the authority
+# it repairs is a second incident.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 300
+reserved_concurrency = 2
 
 [[unit]]
 id = "usage-receipt-dispatcher"
@@ -224,6 +255,14 @@ required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability",
 alarm_spec = "usage-receipt-dispatcher"
 live_suite = "aex-live-usage-receipt-dispatcher"
 
+# Outbox-backlog-scaled and scale-to-zero. 60 s covers one keyset page per
+# region and category; the reservation keeps replay away from the settlement
+# lane it depends on.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 60
+reserved_concurrency = 10
+
 [[unit]]
 id = "provider-cost-reconciler"
 kind = "rust-lambda"
@@ -240,6 +279,14 @@ required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability",
 alarm_spec = "provider-cost-reconciler"
 live_suite = "aex-live-provider-cost-reconciler"
 
+# Daily schedule, one task at a time. 900 s and 2 GiB cover one bounded CUR
+# export scan; reserved concurrency 1 makes a duplicate schedule a no-op rather
+# than a second scan.
+[unit.lambda]
+memory_mb = 2048
+timeout_s = 900
+reserved_concurrency = 1
+
 [[unit]]
 id = "central-schema-admin"
 kind = "rust-oci-task"
@@ -254,6 +301,17 @@ config_schema_version = 1
 required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-schema-admin"
 live_suite = "aex-live-central-schema-admin"
+
+# One-shot Fargate On-Demand task in the database VPC. `desired_count = 0`
+# because there is no idle instance: exactly one task runs per admitted
+# migration and the outer advisory lock makes a second exit 11. Port 0 because a
+# one-shot task listens on nothing.
+[unit.fargate]
+cpu = 512
+memory_mb = 1024
+desired_count = 0
+stop_timeout_s = 120
+port = 0
 
 # --- regional plane: request APIs ---------------------------------------------
 

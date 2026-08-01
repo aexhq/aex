@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
@@ -26,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 conformance = "unit"
+capability = "unit"
 smoke = "smoke"
 resource_envelope = "e2e"
 
@@ -34,13 +36,47 @@ name = "finance-api"
 path = "src/main.rs"
 
 [dependencies]
-aex-finance-app = { path = "../../crates/aex-finance-app" }
-aex-finance-aurora = { path = "../../crates/aex-finance-aurora" }
+aex-finance-domain = { path = "../../crates/aex-finance-domain" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+aex-payment-contracts = { path = "../../crates/aex-payment-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-rds-data = { path = "../../crates/aex-rds-data" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-lambda.workspace = true
+aws-sdk-rdsdata.workspace = true
+aws-sdk-s3.workspace = true
 axum.workspace = true
+base64.workspace = true
+blake3.workspace = true
+http.workspace = true
 lambda_http.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
 tower.workspace = true
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "capability"
+path = "tests/capability.rs"
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+
+[[test]]
+name = "resource_envelope"
+path = "tests/resource_envelope.rs"
