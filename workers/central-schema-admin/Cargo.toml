@@ -24,8 +24,6 @@ security_tier = "internal"
 risk = ["sql"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-
 [[bin]]
 name = "central-schema-admin"
 path = "src/main.rs"

@@ -23,8 +23,6 @@ security_tier = "authority"
 risk = ["money"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true

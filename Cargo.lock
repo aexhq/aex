@@ -2847,9 +2847,16 @@ dependencies = [
 name = "finance-api"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-app",
+ "aex-finance-aurora",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "axum",
+ "lambda_http",
+ "serde",
  "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
