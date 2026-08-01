@@ -1,7 +1,7 @@
 //! Exact integer quantities.
 //!
 //! There is no floating-point value anywhere in the usage authority. A quantity
-//! is a `u128` capped below the DynamoDB `N` significant-digit ceiling, so a
+//! is a `u128` capped below the `DynamoDB` `N` significant-digit ceiling, so a
 //! representable quantity can never be silently truncated by the row codec.
 
 use std::fmt;
@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 
 /// The largest representable quantity: `10^38 - 1`.
 ///
-/// DynamoDB's `N` type carries 38 significant digits and `u128::MAX` has 39, so
+/// `DynamoDB`'s `N` type carries 38 significant digits and `u128::MAX` has 39, so
 /// the ceiling is enforced at construction rather than discovered at write time.
 pub const MAX_QUANTITY: u128 = 10u128.pow(38) - 1;
 
 /// Why a quantity was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QuantityError {
     /// The value exceeded [`MAX_QUANTITY`].
     #[error("quantity {value} exceeds the {MAX_QUANTITY} storable ceiling")]
@@ -111,7 +111,7 @@ impl Quantity {
         Self::new(left as u128 * right as u128)
     }
 
-    /// Parses the canonical decimal form written to DynamoDB's `N` type.
+    /// Parses the canonical decimal form written to `DynamoDB`'s `N` type.
     ///
     /// # Errors
     ///
@@ -131,7 +131,9 @@ impl Quantity {
         }
         let parsed = value
             .parse::<u128>()
-            .map_err(|_| QuantityError::OutOfRange { value: MAX_QUANTITY })?;
+            .map_err(|_| QuantityError::OutOfRange {
+                value: MAX_QUANTITY,
+            })?;
         Self::new(parsed)
     }
 }

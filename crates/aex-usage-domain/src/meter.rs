@@ -273,7 +273,11 @@ pub enum ObservabilityMeter {
 
 impl ObservabilityMeter {
     /// Every observability meter, in a stable order.
-    pub const ALL: [Self; 3] = [Self::ModelTokens, Self::ProviderCalls, Self::ToolInvocations];
+    pub const ALL: [Self; 3] = [
+        Self::ModelTokens,
+        Self::ProviderCalls,
+        Self::ToolInvocations,
+    ];
 
     /// The versioned identifier written to an observability row.
     #[must_use]

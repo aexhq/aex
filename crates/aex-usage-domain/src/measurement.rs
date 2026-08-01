@@ -11,11 +11,12 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::intent::Blake3Digest;
 use crate::interval::storage::{StorageClose, StorageOwner, StorageSource};
 use crate::meter::{Meter, UnknownMeter};
 use crate::quantity::{Quantity, QuantityError};
 use crate::shape::{ComputeShape, ShapeUnit};
-use crate::wire_pending::{ActorRef, Blake3Digest, CaseId, Timestamp};
+use crate::wire_pending::{ActorRef, CaseId, Timestamp};
 
 /// Whether a quantity is measured use or a held allocation.
 ///
@@ -257,9 +258,24 @@ impl fmt::Display for ReservationClass {
 ///
 /// The set is closed: a boundary that is not listed cannot be counted, so an
 /// adapter cannot invent a billing surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+/// `Serialize`/`Deserialize` are hand-written rather than derived: the inner
+/// `&'static str` makes serde's borrow analysis add a `'de: 'static` bound to
+/// every enclosing type, which would make [`Evidence`] undeserializable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BoundaryId(&'static str);
+
+impl Serialize for BoundaryId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for BoundaryId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <std::borrow::Cow<'de, str> as Deserialize<'de>>::deserialize(deserializer)?;
+        Self::from_str(&raw).map_err(serde::de::Error::custom)
+    }
+}
 
 impl BoundaryId {
     /// Regional HTTP responses.
@@ -379,6 +395,40 @@ impl LambdaVcpuConvention {
             Self::LinearAt1769Mb { .. } => memory_mb as u64 * 1_000 / 1_769,
         }
     }
+}
+
+/// Derives a reconciled CPU quantity, enforcing the physical upper bound.
+///
+/// Three bounds, all load-bearing: a charge never exceeds what the cgroup
+/// physically consumed, never exceeds what the meter attributed to itself, and
+/// equals the attribution exactly whenever no proportional scaling was applied.
+fn derive_cgroup(
+    physical_us: u64,
+    attributed_us: u64,
+    charged_us: u64,
+    scaled: bool,
+) -> Result<Quantity, MeasurementError> {
+    if charged_us > physical_us {
+        return Err(MeasurementError::ChargedAboveBound {
+            charged_us,
+            bound_us: physical_us,
+            bound: "physical",
+        });
+    }
+    if charged_us > attributed_us {
+        return Err(MeasurementError::ChargedAboveBound {
+            charged_us,
+            bound_us: attributed_us,
+            bound: "attributed",
+        });
+    }
+    if !scaled && charged_us != attributed_us {
+        return Err(MeasurementError::UnscaledMismatch {
+            charged_us,
+            attributed_us,
+        });
+    }
+    Ok(Quantity::new(u128::from(charged_us))?)
 }
 
 /// The physical record a measurement is derived from.
@@ -578,9 +628,9 @@ impl Evidence {
             | Self::StorageResidence { .. }
             | Self::BoundaryCounter { .. }
             | Self::DeliveryReceipt { .. } => FactBasis::Consumed,
-            Self::Reservation { .. }
-            | Self::ProviderShape { .. }
-            | Self::LambdaReport { .. } => FactBasis::Reserved,
+            Self::Reservation { .. } | Self::ProviderShape { .. } | Self::LambdaReport { .. } => {
+                FactBasis::Reserved
+            }
             Self::CorrectionCase { restated, .. } => restated.basis(),
         }
     }
@@ -608,27 +658,7 @@ impl Evidence {
                 if meter != Meter::ComputeMillicpuMs {
                     return Err(mismatch());
                 }
-                if charged_us > physical_us {
-                    return Err(MeasurementError::ChargedAboveBound {
-                        charged_us: *charged_us,
-                        bound_us: *physical_us,
-                        bound: "physical",
-                    });
-                }
-                if charged_us > attributed_us {
-                    return Err(MeasurementError::ChargedAboveBound {
-                        charged_us: *charged_us,
-                        bound_us: *attributed_us,
-                        bound: "attributed",
-                    });
-                }
-                if !scaled && charged_us != attributed_us {
-                    return Err(MeasurementError::UnscaledMismatch {
-                        charged_us: *charged_us,
-                        attributed_us: *attributed_us,
-                    });
-                }
-                Ok(Quantity::new(u128::from(*charged_us))?)
+                derive_cgroup(*physical_us, *attributed_us, *charged_us, *scaled)
             }
             Self::Reservation { bytes, held_ms, .. } => {
                 if meter != Meter::MemoryByteMs {
@@ -676,12 +706,12 @@ impl Evidence {
                 if meter != Meter::DataTransferEgressByte {
                     return Err(mismatch());
                 }
-                let counted = end.checked_sub(*start).ok_or(
-                    MeasurementError::CounterRegressed {
-                        start: *start,
-                        end: *end,
-                    },
-                )?;
+                let counted =
+                    end.checked_sub(*start)
+                        .ok_or(MeasurementError::CounterRegressed {
+                            start: *start,
+                            end: *end,
+                        })?;
                 Ok(Quantity::new(u128::from(counted))?)
             }
             Self::DeliveryReceipt { bytes, .. } => {

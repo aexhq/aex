@@ -985,10 +985,15 @@ dependencies = [
 name = "aex-usage-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-wire",
+ "blake3",
+ "hex",
+ "proptest",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]

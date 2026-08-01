@@ -14,9 +14,9 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 /// Longest accepted identifier, in UTF-8 bytes.
 ///
@@ -53,7 +53,7 @@ pub enum IdError {
 
 /// Characters no identifier may contain.
 ///
-/// `#` is the DynamoDB key separator, `/` is the canonical authority-key
+/// `#` is the `DynamoDB` key separator, `/` is the canonical authority-key
 /// separator, and the two control code points are the classic key-forging
 /// vectors. Refusing them at construction is what makes a canonical string
 /// unambiguous rather than merely conventional.
@@ -211,9 +211,8 @@ pub enum ActorRef {
 pub struct Timestamp(i64);
 
 /// The single canonical timestamp format.
-const TIMESTAMP_FORMAT: &[BorrowedFormatItem<'static>] = format_description!(
-    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
-);
+const TIMESTAMP_FORMAT: &[BorrowedFormatItem<'static>] =
+    format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z");
 
 /// Why a timestamp was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -259,11 +258,15 @@ impl Timestamp {
     /// Returns [`TimestampError::Malformed`] for anything that is not exactly
     /// `YYYY-MM-DDTHH:MM:SS.mmmZ`.
     pub fn parse(value: &str) -> Result<Self, TimestampError> {
-        let parsed = OffsetDateTime::parse(value, &TIMESTAMP_FORMAT).map_err(|_| {
-            TimestampError::Malformed {
+        // The canonical form pins UTC with a literal `Z` rather than a parsed
+        // offset, so the text alone cannot build an `OffsetDateTime`. Parsing as
+        // primitive and asserting UTC is what makes `+01:00` a rejection rather
+        // than a silently accepted second spelling of the same instant.
+        let parsed = PrimitiveDateTime::parse(value, &TIMESTAMP_FORMAT)
+            .map_err(|_| TimestampError::Malformed {
                 value: value.to_owned(),
-            }
-        })?;
+            })?
+            .assume_utc();
         let millis = i64::try_from(parsed.unix_timestamp_nanos() / 1_000_000).map_err(|_| {
             TimestampError::Malformed {
                 value: value.to_owned(),

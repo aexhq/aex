@@ -1,38 +1,38 @@
-//! RFC 8785 canonical JSON and the BLAKE3 intent hash.
+//! The `BLAKE3` intent hash over the one workspace canonicalization rule.
 //!
-//! One canonicalization rule holds workspace-wide: RFC 8785 JCS with object
-//! members ordered by UTF-16 code unit. This module is the usage authority's
-//! single implementation of it; nothing else in these crates may introduce a
-//! second canonicalizer or comparator.
+//! Canonicalization itself is **not** implemented here. RFC 8785 JCS over UTF-8
+//! byte ordering lives in [`aex_wire::canonical`] and that is the only
+//! implementation in the workspace: two canonicalizers mean two answers to "is
+//! this the same measurement", which is exactly the ambiguity the admission
+//! fence exists to remove.
 //!
-//! The intent hash answers exactly one question: two producers offered the same
+//! The intent hash answers one question: two producers offered the same
 //! deterministic fact identity — did they mean the same measurement? A matching
 //! hash is an idempotent replay. A differing hash is an identity conflict and is
 //! never silently resolved in either direction.
 
 use std::fmt;
 
+use aex_wire::canonical::{CanonicalError as WireCanonicalError, to_jcs_bytes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Why a value could not be canonicalized.
+/// Why a value could not be reduced to an intent hash.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CanonicalError {
     /// A number was not an exact integer.
     ///
-    /// No usage value is ever fractional, so admitting one here would let a
-    /// float reach the hash the authority fences on.
+    /// No usage value is ever fractional. The typed model makes a fraction
+    /// unconstructable, so this is a defence-in-depth check over the canonical
+    /// document rather than an expected path.
     #[error("number `{value}` is not an exact integer; the usage authority carries no fractions")]
     NonIntegerNumber {
         /// The offending literal.
         value: String,
     },
-    /// A number was not finite.
-    #[error("number `{value}` is not finite")]
-    NonFinite {
-        /// The offending literal.
-        value: String,
-    },
+    /// The workspace canonicalizer refused the value.
+    #[error(transparent)]
+    Wire(#[from] WireCanonicalError),
     /// The value could not be represented as JSON at all.
     #[error("value could not be represented as JSON: {reason}")]
     NotRepresentable {
@@ -41,100 +41,26 @@ pub enum CanonicalError {
     },
 }
 
-/// Renders `value` as RFC 8785 canonical JSON.
+/// Refuses any non-integer number anywhere in a canonical document.
 ///
-/// Object members are ordered by the UTF-16 code units of their names, string
-/// escaping follows the JCS minimal-escape rule, `-0` normalizes to `0`, and a
-/// non-integer or non-finite number is refused rather than rounded.
-///
-/// # Errors
-///
-/// Returns [`CanonicalError`] when the value contains a fractional or
-/// non-finite number.
-pub fn canonical_json(value: &Value) -> Result<String, CanonicalError> {
-    let mut out = String::new();
-    write_value(value, &mut out)?;
-    Ok(out)
-}
-
-fn write_value(value: &Value, out: &mut String) -> Result<(), CanonicalError> {
+/// [`aex_wire::canonical`] normalizes an integral float to an integer and
+/// rejects a magnitude at or above `1e21`; it deliberately does not reject a
+/// genuine fraction, because other planes legitimately carry one. The usage
+/// authority never does, so the fence is applied here.
+fn reject_fractions(value: &Value) -> Result<(), CanonicalError> {
     match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(true) => out.push_str("true"),
-        Value::Bool(false) => out.push_str("false"),
-        Value::Number(number) => write_number(number, out)?,
-        Value::String(text) => write_string(text, out),
-        Value::Array(items) => {
-            out.push('[');
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                write_value(item, out)?;
+        Value::Number(number) => {
+            if number.is_f64() {
+                return Err(CanonicalError::NonIntegerNumber {
+                    value: number.to_string(),
+                });
             }
-            out.push(']');
+            Ok(())
         }
-        Value::Object(members) => {
-            let mut keys: Vec<&String> = members.keys().collect();
-            keys.sort_by(|left, right| utf16_order(left, right));
-            out.push('{');
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                write_string(key, out);
-                out.push(':');
-                write_value(&members[key], out)?;
-            }
-            out.push('}');
-        }
+        Value::Array(items) => items.iter().try_for_each(reject_fractions),
+        Value::Object(members) => members.values().try_for_each(reject_fractions),
+        Value::Null | Value::Bool(_) | Value::String(_) => Ok(()),
     }
-    Ok(())
-}
-
-fn write_number(number: &serde_json::Number, out: &mut String) -> Result<(), CanonicalError> {
-    if let Some(value) = number.as_u64() {
-        out.push_str(&value.to_string());
-        return Ok(());
-    }
-    if let Some(value) = number.as_i64() {
-        // `-0` is only reachable through the float arm; an i64 zero is `0`.
-        out.push_str(&value.to_string());
-        return Ok(());
-    }
-    let literal = number.to_string();
-    let Some(value) = number.as_f64() else {
-        return Err(CanonicalError::NonFinite { value: literal });
-    };
-    if !value.is_finite() {
-        return Err(CanonicalError::NonFinite { value: literal });
-    }
-    Err(CanonicalError::NonIntegerNumber { value: literal })
-}
-
-/// Orders two object member names by their UTF-16 code units, as RFC 8785 requires.
-fn utf16_order(left: &str, right: &str) -> std::cmp::Ordering {
-    left.encode_utf16().cmp(right.encode_utf16())
-}
-
-fn write_string(value: &str, out: &mut String) {
-    out.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            other if (other as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", other as u32));
-            }
-            other => out.push(other),
-        }
-    }
-    out.push('"');
 }
 
 /// Why a digest could not be parsed.
@@ -145,7 +71,7 @@ pub struct DigestError {
     pub value: String,
 }
 
-/// A BLAKE3-256 digest in its canonical lowercase hex form.
+/// A `BLAKE3`-256 digest in its canonical lowercase hex form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Blake3Digest([u8; 32]);
@@ -202,7 +128,7 @@ impl From<Blake3Digest> for String {
     }
 }
 
-/// A BLAKE3 digest over one canonical JSON document.
+/// A `BLAKE3` digest over one canonical JSON document.
 ///
 /// Distinct from [`Blake3Digest`] on purpose: an intent hash answers "did two
 /// producers mean the same measurement?" and is compared inside the admission
@@ -216,22 +142,29 @@ pub type IntentHashError = DigestError;
 
 impl IntentHash {
     /// Hashes an already-canonical document.
+    ///
+    /// The caller is asserting that `canonical` came out of
+    /// [`aex_wire::canonical`]; nothing else produces a comparable byte string.
     #[must_use]
-    pub fn of_canonical(canonical: &str) -> Self {
-        Self(Blake3Digest::of_bytes(canonical.as_bytes()))
+    pub fn of_canonical(canonical: &[u8]) -> Self {
+        Self(Blake3Digest::of_bytes(canonical))
     }
 
-    /// Canonicalizes and hashes any serializable value.
+    /// Canonicalizes any serializable value through [`aex_wire::canonical`] and
+    /// hashes the result.
     ///
     /// # Errors
     ///
-    /// Returns [`CanonicalError`] when the value cannot be serialized or
-    /// contains a fractional or non-finite number.
+    /// Returns [`CanonicalError::Wire`] when the workspace canonicalizer refuses
+    /// the value, and [`CanonicalError::NonIntegerNumber`] when the document
+    /// contains a fraction.
     pub fn of<T: Serialize>(value: &T) -> Result<Self, CanonicalError> {
-        let json = serde_json::to_value(value).map_err(|error| CanonicalError::NotRepresentable {
-            reason: error.to_string(),
-        })?;
-        Ok(Self::of_canonical(&canonical_json(&json)?))
+        let json =
+            serde_json::to_value(value).map_err(|error| CanonicalError::NotRepresentable {
+                reason: error.to_string(),
+            })?;
+        reject_fractions(&json)?;
+        Ok(Self::of_canonical(&to_jcs_bytes(&json)?))
     }
 
     /// The raw digest bytes.
@@ -273,15 +206,19 @@ impl From<IntentHash> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CanonicalError, IntentHash, canonical_json};
+    use super::{CanonicalError, IntentHash, reject_fractions};
+    use aex_wire::canonical::to_jcs_string;
     use serde_json::json;
 
     #[test]
-    fn object_members_are_ordered_by_utf16_code_unit() {
-        let value = json!({ "b": 1, "a": 2, "A": 3, "\u{00e9}": 4, "\u{1f600}": 5, "\u{ff3a}": 6 });
+    fn canonicalization_is_delegated_to_the_one_workspace_rule() {
+        // Ordering, escaping and number form are `aex_wire`'s answers, not this
+        // crate's. Asserting the delegated output here is what keeps a second
+        // canonicalizer from reappearing unnoticed.
+        let value = json!({ "b": 1, "a": 2, "A": 3, "text": "x\ny" });
         assert_eq!(
-            canonical_json(&value).expect("canonical"),
-            "{\"A\":3,\"a\":2,\"b\":1,\"\u{00e9}\":4,\"\u{ff3a}\":6,\"\u{1f600}\":5}"
+            to_jcs_string(&value).expect("canonical"),
+            "{\"A\":3,\"a\":2,\"b\":1,\"text\":\"x\\ny\"}"
         );
     }
 
@@ -306,26 +243,21 @@ mod tests {
     }
 
     #[test]
-    fn fractional_and_non_finite_numbers_are_refused() {
+    fn fractional_numbers_are_refused_before_hashing() {
         assert!(matches!(
-            canonical_json(&json!({ "value": 1.5 })),
+            IntentHash::of(&json!({ "value": 1.5 })),
             Err(CanonicalError::NonIntegerNumber { .. })
         ));
-        // `-0.0` survives serde_json as a float and must not silently become `0`.
-        assert!(canonical_json(&json!({ "value": -0.0 })).is_err());
-        assert_eq!(
-            canonical_json(&json!({ "value": 0 })).expect("integer zero"),
-            "{\"value\":0}"
-        );
+        // `-0.0` survives `serde_json` as a float and must not silently become `0`.
+        assert!(IntentHash::of(&json!({ "value": -0.0 })).is_err());
+        assert!(reject_fractions(&json!({ "value": 0 })).is_ok());
+        assert!(IntentHash::of(&json!({ "value": 0 })).is_ok());
     }
 
     #[test]
-    fn control_characters_use_the_minimal_escape() {
-        let value = json!({ "text": "a\nb\u{1}c\"d\\e" });
-        assert_eq!(
-            canonical_json(&value).expect("canonical"),
-            "{\"text\":\"a\\nb\\u0001c\\\"d\\\\e\"}"
-        );
+    fn a_fraction_nested_anywhere_is_still_refused() {
+        assert!(IntentHash::of(&json!({ "a": [{ "b": [1, 2.5] }] })).is_err());
+        assert!(IntentHash::of(&json!({ "a": [{ "b": [1, 2] }] })).is_ok());
     }
 
     #[test]

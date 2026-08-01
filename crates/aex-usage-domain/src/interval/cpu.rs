@@ -66,7 +66,7 @@ pub fn reconcile_cpu(physical_us: u64, attributed: &[u64]) -> Result<CpuAllocati
         .checked_sub(charged_total)
         .ok_or(IntervalError::Unreconcilable {
             physical_us,
-            attributed: total,
+            attributed_us: total,
         })?;
     Ok(CpuAllocation {
         charged,

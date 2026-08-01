@@ -123,7 +123,9 @@ pub enum CorrectionError {
         target: String,
     },
     /// The chain would exceed [`CORRECTION_CHAIN_MAX`].
-    #[error("correction chain for `{target}` would reach depth {depth}, over the {CORRECTION_CHAIN_MAX} ceiling")]
+    #[error(
+        "correction chain for `{target}` would reach depth {depth}, over the {CORRECTION_CHAIN_MAX} ceiling"
+    )]
     ChainTooDeep {
         /// The target whose chain is full.
         target: String,

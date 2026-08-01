@@ -226,11 +226,10 @@ impl Frontier {
     ///
     /// Returns [`FrontierError::NotContiguous`] unless `at == accepted + 1`.
     pub fn admit(&self, at: AcceptedSequence) -> Result<Self, FrontierError> {
-        self.step("accepted", self.accepted, at, None)
-            .map(|accepted| Self {
-                accepted,
-                ..self.clone()
-            })
+        Self::step("accepted", self.accepted, at, None).map(|accepted| Self {
+            accepted,
+            ..self.clone()
+        })
     }
 
     /// Records the latest service-time end this sequence has admitted.
@@ -254,11 +253,16 @@ impl Frontier {
     /// advance is not contiguous, or when it would pass `accepted`.
     pub fn project(&self, at: AcceptedSequence) -> Result<Self, FrontierError> {
         self.guard_advancing()?;
-        self.step("projected", self.projected, at, Some(("accepted", self.accepted)))
-            .map(|projected| Self {
-                projected,
-                ..self.clone()
-            })
+        Self::step(
+            "projected",
+            self.projected,
+            at,
+            Some(("accepted", self.accepted)),
+        )
+        .map(|projected| Self {
+            projected,
+            ..self.clone()
+        })
     }
 
     /// Publishes the next fact to the central settlement queue.
@@ -269,7 +273,7 @@ impl Frontier {
     /// advance is not contiguous, or when it would pass `projected`.
     pub fn publish(&self, at: AcceptedSequence) -> Result<Self, FrontierError> {
         self.guard_advancing()?;
-        self.step(
+        Self::step(
             "published",
             self.published,
             at,
@@ -289,7 +293,7 @@ impl Frontier {
     /// advance is not contiguous, or when it would pass `published`.
     pub fn settle(&self, at: AcceptedSequence) -> Result<Self, FrontierError> {
         self.guard_advancing()?;
-        self.step(
+        Self::step(
             "settled",
             self.settled,
             at,
@@ -324,15 +328,14 @@ impl Frontier {
     const fn guard_advancing(&self) -> Result<(), FrontierError> {
         match self.state {
             FrontierState::Advancing => Ok(()),
-            FrontierState::Quarantined { at, reason } => Err(FrontierError::Quarantined {
-                at: at.0,
-                reason,
-            }),
+            FrontierState::Quarantined { at, reason } => {
+                Err(FrontierError::Quarantined { at: at.0, reason })
+            }
         }
     }
 
+    /// Advances one stage by exactly one, refusing a gap and an overtake.
     fn step(
-        &self,
         stage: &'static str,
         current: AcceptedSequence,
         at: AcceptedSequence,
@@ -397,7 +400,10 @@ mod tests {
         let state = frontier().admit(seq(1)).expect("admits");
         assert!(matches!(
             state.admit(seq(3)),
-            Err(FrontierError::NotContiguous { stage: "accepted", .. })
+            Err(FrontierError::NotContiguous {
+                stage: "accepted",
+                ..
+            })
         ));
         assert!(matches!(
             state.project(seq(2)),
@@ -416,12 +422,32 @@ mod tests {
             .admit(seq(2))
             .expect("admits");
         let projected = state.project(seq(1)).expect("projects");
+
+        // Catching up to the stage ahead is exactly what the invariant permits:
+        // `published <= projected`, not `published < projected`.
+        let published = projected
+            .publish(seq(1))
+            .expect("publishes up to projected");
+        assert_eq!(published.published, seq(1));
+
+        // Passing it is the refusal. `projected` is still 1, so publishing 2
+        // would make `published > projected`.
         assert!(matches!(
-            projected.publish(seq(1)),
-            Err(FrontierError::Overtake { .. })
+            published.publish(seq(2)),
+            Err(FrontierError::Overtake {
+                stage: "published",
+                ahead_of: "projected",
+                ..
+            })
         ));
-        let published = projected.project(seq(2)).expect("projects").publish(seq(1));
-        assert!(published.is_ok());
+
+        // The same rule one stage down: settling cannot pass publishing.
+        assert!(matches!(
+            published.settle(seq(2)),
+            Err(FrontierError::NotContiguous { .. })
+        ));
+        let settled = published.settle(seq(1)).expect("settles up to published");
+        assert!(settled.invariant());
     }
 
     #[test]

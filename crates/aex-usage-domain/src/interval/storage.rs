@@ -49,7 +49,7 @@ pub enum StorageOwnerKind {
     PublicObservation,
     /// A temporary observation export.
     TemporaryExport,
-    /// A retained Hands MicroVM snapshot.
+    /// A retained Hands `MicroVM` snapshot.
     MicrovmSnapshot,
 }
 
@@ -113,7 +113,7 @@ pub struct StorageOwner {
 pub enum StorageSource {
     /// S3, using provider content length.
     S3,
-    /// DynamoDB, using canonical logical encoded bytes.
+    /// `DynamoDB`, using canonical logical encoded bytes.
     DynamoDb,
     /// Aurora, using canonical logical encoded bytes.
     Aurora,
@@ -251,6 +251,82 @@ pub struct StorageAccrualOutcome {
     pub cursor: StorageCursor,
 }
 
+/// Opens a residence that has no cursor yet. Only a `Put` may do so.
+fn open_residence(
+    at: Timestamp,
+    transition: StorageTransition,
+) -> Result<StorageAccrualOutcome, IntervalError> {
+    let StorageTransition::Put { bytes } = transition else {
+        return Err(IntervalError::NoResidence {
+            transition: transition.id(),
+        });
+    };
+    Ok(StorageAccrualOutcome {
+        closed: None,
+        segment_ordinal: SegmentOrdinal::FIRST,
+        cursor: StorageCursor {
+            bytes,
+            charged_through: at,
+            next_ordinal: SegmentOrdinal::FIRST,
+            sealed: false,
+        },
+    })
+}
+
+/// The minute-aligned instant `minutes` whole minutes after `charged_through`.
+fn segment_end(charged_through: Timestamp, minutes: u64) -> Result<Timestamp, IntervalError> {
+    let charged_ms = minutes
+        .checked_mul(MINUTE_MS)
+        .ok_or(IntervalError::Quantity(
+            crate::quantity::QuantityError::Overflow {
+                operation: "minute accrual",
+            },
+        ))?;
+    Timestamp::from_unix_millis(
+        charged_through
+            .unix_millis()
+            .saturating_add(i64::try_from(charged_ms).unwrap_or(i64::MAX)),
+    )
+    .map_err(|_| {
+        IntervalError::Quantity(crate::quantity::QuantityError::Overflow {
+            operation: "segment end",
+        })
+    })
+}
+
+/// Builds the closed `storage.byte_min.v1` measurement for one segment.
+fn close_segment(
+    cursor: &StorageCursor,
+    owner: &StorageOwner,
+    source: StorageSource,
+    segment_end: Timestamp,
+    minutes: u64,
+    commit_id: &str,
+    close: StorageClose,
+) -> Result<Measurement, IntervalError> {
+    Ok(Measurement::new(
+        Meter::StorageByteMin,
+        FactBasis::Consumed,
+        ServiceTime::Interval {
+            start: cursor.charged_through,
+            end: segment_end,
+        },
+        SourceReceipt {
+            kind: ReceiptKind::StorageCommit,
+            id: Box::from(commit_id),
+            digest: None,
+        },
+        Evidence::StorageResidence {
+            owner: owner.clone(),
+            source,
+            bytes: cursor.bytes,
+            minutes,
+            commit_id: Box::from(commit_id),
+            close,
+        },
+    )?)
+}
+
 /// Applies one authoritative transition to a residence.
 ///
 /// Deterministic and total: the same cursor, instant and transition always
@@ -270,21 +346,7 @@ pub fn accrue_storage(
     commit_id: &str,
 ) -> Result<StorageAccrualOutcome, IntervalError> {
     let Some(cursor) = cursor else {
-        let StorageTransition::Put { bytes } = transition else {
-            return Err(IntervalError::NoResidence {
-                transition: transition.id(),
-            });
-        };
-        return Ok(StorageAccrualOutcome {
-            closed: None,
-            segment_ordinal: SegmentOrdinal::FIRST,
-            cursor: StorageCursor {
-                bytes,
-                charged_through: at,
-                next_ordinal: SegmentOrdinal::FIRST,
-                sealed: false,
-            },
-        });
+        return open_residence(at, transition);
     };
     if cursor.sealed {
         return Err(IntervalError::Sealed);
@@ -292,62 +354,33 @@ pub fn accrue_storage(
     if matches!(transition, StorageTransition::Put { .. }) {
         return Err(IntervalError::AlreadyOpen);
     }
-    let elapsed_ms = cursor
-        .charged_through
-        .millis_until(at)
-        .ok_or_else(|| IntervalError::Backwards {
-            at: at.to_canonical(),
-            charged_through: cursor.charged_through.to_canonical(),
-        })?;
+    let elapsed_ms =
+        cursor
+            .charged_through
+            .millis_until(at)
+            .ok_or_else(|| IntervalError::Backwards {
+                at: at.to_canonical(),
+                charged_through: cursor.charged_through.to_canonical(),
+            })?;
 
     let close = transition.close();
     let minutes = match close {
         StorageClose::InteriorFloor => elapsed_ms / MINUTE_MS,
         StorageClose::TerminalCeil => elapsed_ms.div_ceil(MINUTE_MS),
     };
-
-    let charged_ms = minutes
-        .checked_mul(MINUTE_MS)
-        .ok_or(IntervalError::Quantity(
-            crate::quantity::QuantityError::Overflow {
-                operation: "minute accrual",
-            },
-        ))?;
-    let segment_end = Timestamp::from_unix_millis(
-        cursor
-            .charged_through
-            .unix_millis()
-            .saturating_add(i64::try_from(charged_ms).unwrap_or(i64::MAX)),
-    )
-    .map_err(|_| {
-        IntervalError::Quantity(crate::quantity::QuantityError::Overflow {
-            operation: "segment end",
-        })
-    })?;
+    let segment_end = segment_end(cursor.charged_through, minutes)?;
 
     let closed = if minutes == 0 {
         None
     } else {
-        Some(Measurement::new(
-            Meter::StorageByteMin,
-            FactBasis::Consumed,
-            ServiceTime::Interval {
-                start: cursor.charged_through,
-                end: segment_end,
-            },
-            SourceReceipt {
-                kind: ReceiptKind::StorageCommit,
-                id: Box::from(commit_id),
-                digest: None,
-            },
-            Evidence::StorageResidence {
-                owner: owner.clone(),
-                source,
-                bytes: cursor.bytes,
-                minutes,
-                commit_id: Box::from(commit_id),
-                close,
-            },
+        Some(close_segment(
+            cursor,
+            owner,
+            source,
+            segment_end,
+            minutes,
+            commit_id,
+            close,
         )?)
     };
 

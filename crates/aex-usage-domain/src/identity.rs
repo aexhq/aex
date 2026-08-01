@@ -5,6 +5,7 @@
 //! replayed transaction converge on exactly one row without any extra state.
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -27,7 +28,7 @@ pub enum AuthorityKind {
     Agent,
     /// One mux activation of one agent.
     Activation,
-    /// One Hands MicroVM generation.
+    /// One Hands `MicroVM` generation.
     HandsGeneration,
     /// One storage owner root (content, observation batch, snapshot).
     ContentOwner,
@@ -253,7 +254,7 @@ fn percent_encode(value: &str) -> String {
             encoded.push(char::from(byte));
         } else {
             encoded.push('%');
-            encoded.push_str(&format!("{byte:02X}"));
+            write!(encoded, "{byte:02X}").expect("writing to a String never fails");
         }
     }
     encoded

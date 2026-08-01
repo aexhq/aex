@@ -56,7 +56,7 @@ impl fmt::Display for SchemaVersion {
 pub enum ResourceKind {
     /// A Brain mux task.
     MuxTask,
-    /// A Hands MicroVM generation.
+    /// A Hands `MicroVM` generation.
     HandsGeneration,
     /// A Lambda function version.
     LambdaFunction,
@@ -561,9 +561,12 @@ mod tests {
     #[test]
     fn service_time_beyond_the_skew_ceiling_is_refused() {
         let future = i64::try_from(SERVICE_TIME_SKEW_MAX_MS).expect("fits") + 1;
-        let error = draft(Category::Transfer, FactKind::Measured(egress(1_024, future)))
-            .admit(AcceptedSequence::new(1).expect("sequence"), at(0))
-            .expect_err("future-dated service time is refused");
+        let error = draft(
+            Category::Transfer,
+            FactKind::Measured(egress(1_024, future)),
+        )
+        .admit(AcceptedSequence::new(1).expect("sequence"), at(0))
+        .expect_err("future-dated service time is refused");
         assert!(matches!(
             error,
             AdmissionError::ServiceTimeSkew { skew_ms }

@@ -301,9 +301,7 @@ mod tests {
         );
         assert!(matches!(
             vector.validate(),
-            Err(ClosureError::Undeclared {
-                category: "memory"
-            })
+            Err(ClosureError::Undeclared { category: "memory" })
         ));
     }
 
