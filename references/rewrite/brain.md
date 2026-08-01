@@ -281,3 +281,109 @@ cargo check --workspace --all-targets                              clean
 cargo run -p aex-workspace-check
     133 member(s) and 139 package(s) satisfy every structural and registry rule
 ```
+
+## Second pass
+
+The first pass landed the pure half and the synchronization kernel. This pass
+landed the composition that drives them: the real store adapter, the subagent
+scheduler, the Tokio composition root and the A11-MUX measurement, plus the load
+campaigns and the live companion's targets.
+
+### 8. What the second pass implemented
+
+#### `aex-brain-store-aws` — the real adapter
+
+`translate` is the one seam between `aex-brain-domain`'s plain `Uuid` newtypes
+and the version-7 prefixed identifiers the regional key templates take. Every
+crossing is fallible: an identifier that is not a valid version-7 payload is a
+typed refusal, because a key built from a nonsense identifier addresses a
+partition nothing else will ever address, so the write succeeds and is
+invisible.
+
+`keys` was rewritten to **delegate**. Six families — agent control, journal
+entry, effect, fanout page, join shard, budget return — are declared and encoded
+by `aex-session-dynamodb`, so every function for one of them calls that crate
+rather than rendering a second spelling. Three families are Brain's alone and
+sit in the two spaces the peer reserves: `BRAIN#` sort keys under
+`SESSION#{sid}` for the session budget and the scheduler's queued index, and
+`BRAINAGENT#{sid}#{aid}` partitions for the mailbox, child index and join group.
+
+`plan::compile` turns one `DecisionCommit` into one `TransactionPlan` through
+the workspace's single compiler, which refuses an unconditional authority write
+and names every participant. Wakes ride through `aex_work_dynamodb::claim`'s own
+expression builders, so Brain never forks that row shape.
+
+`journal`, `effect`, `lease` and `wake` are the four ports over `aws-sdk-*`.
+Request bytes are asserted with `capture_request`; page contiguity and fork
+detection are asserted on decoded rows, because they are the two rules that
+decide whether an agent may act at all and neither needs a service to observe.
+
+#### `aex-brain-application` — the subagent scheduler
+
+`subagent::fanout` plans a spawn as a pure function of the parent's fold, the
+session's capacity and the request. `subagent::claim` acquires local permits
+before the transaction and drops them on a deferral. `subagent::join` treats the
+shard counters as a projection throughout. `subagent::mailbox` delivers in
+mailbox order before the child's first model call, collapsing duplicates on the
+caller's key.
+
+#### `runtimes/brain-mux` — the composition root
+
+`runtime` shapes the three schedulers; `control` is the health responder on its
+own OS thread; `admission` returns `Admitted`, `Deferred` or a typed `Shed`;
+`cache` holds the pressure bands and TTL-zero release; `scale` publishes twelve
+signals and a predictive desired count; `drain` orders the seven shutdown
+stages; `compose` refuses a configuration that does not hold together; `measure`
+composes the usage probe.
+
+`main::run` starts the control thread **before** the main runtime, so the
+process can answer a probe before it can do anything else.
+
+### 9. Decisions taken in the second pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-11 | §3's namespace claim is superseded in its *rendering*. The six families `aex-session-dynamodb` declares keep that crate's keys exactly; only the three families no peer declares take the reserved Brain spaces | the binding rule is one owner per physical item shape, and the peer landed those six with `AGENT#{sid}#{aid}` partitions and an `EFFECT#` prefix. Two renderers for one item is how a writer and a reader address different rows while both look correct |
+| BR-12 | Brain compiles its own decision plan rather than calling `compile_decision` | that function takes one append, one effect and one event; a Brain decision carries vectors of each. It shares the key templates, the row codecs, the participant vocabulary and the one compiler, and a test asserts the single-append case produces exactly `DECISION_ORDER` |
+| BR-13 | The agent's own budget movements ride inside the control update | two actions on one item are illegal in a `DynamoDB` transaction, and giving the node its own row would give it a second fence to keep in step with the first |
+| BR-14 | `plan::compile` bounds the **compiled** plan against `MAX_ACTIONS` as well as running `DecisionCommit::validate()` | the compiled plan is one action larger than the domain's estimate because of the head guard. Both exist: the first tells a caller to page, the second is the number the service enforces |
+| BR-15 | A settled effect row decodes as `OutcomeUnknown`, never as a specific outcome | the authoritative outcome is in the journal record the settlement was atomic with. An unrecognised state is a refusal rather than `Prepared`, because treating it as prepared is exactly how a possibly-sent request becomes a second generation |
+| BR-16 | Capacity is consumed as a spawn page is planned | otherwise a page of 32 admits 32 children into one free slot. The first child is admitted and the rest carry the reason that is actually binding |
+| BR-17 | Memory pressure **defers** where the safety cap **sheds** | the bytes come back and the work is admissible; an activation over the safety cap is not |
+| BR-18 | The health responder writes its own HTTP/1.1 response rather than mounting the shared `axum` composition | it must share nothing with the request path it reports on. That is the same reason it has its own OS thread; a router here would be one more thing that can be slow exactly when the probe matters |
+| BR-19 | `HEALTH_PORT` is a constant, not configuration | the ALB target group and the task definition both name it, and a defaulted-but-configurable port is a value two places can disagree about with no symptom until a deploy |
+| BR-20 | Four gate rows were added to `release/policy/workload-registry.toml` | plan 07's Slice 11 table names the fanout and crash/restart gates, but the registry carried no row for either, so a descriptor implementing them failed `aex-workload-unowned`. The rows are brain-core's own obligations |
+
+### 10. Still deferred, with what unblocks each
+
+| Deferred | Unblocked by |
+| --- | --- |
+| The mux's wake loop — receive, dedup, claim, fold, plan, dispatch, settle, ack — and with it the first vertical run (S-4.x) | the queue URL and `regional-work` table bindings. `Config` deliberately still declares four variables; adding two more is a composition-manifest change the delivery stream owns |
+| Live `DynamoDB`/S3/SQS behaviour: transaction conflict distributions, real paging, content placement, fault injection (S-2.3, S-2.5–S-2.7) | a deployed plane, or `aex_test_harness::DynamoDbLocalContainer` behind an `integration-engines` target |
+| The effect driver's recovery controller, cancel path and preview writer (S-5.3–S-5.6) | `ProviderPort` implementations from the providers stream |
+| Tool and Hands effect integration (S-6.x, S-7.x) | `ToolPort` and `HandsPort` implementations |
+| Executing any load campaign | the wake loop plus a deployed plane. The descriptors, their gates and their metric sets are landed and asserted; the executor fails loudly rather than reporting a green run of zero work |
+| Large-body content placement above 32 768 canonical bytes | `aex-content-aws`'s placement API, which Brain calls rather than writing S3 itself |
+| Rendezvous affinity | `desired_count > 1`, which needs an affinity benchmark first (BC-25) |
+
+### 11. Second-pass gate output
+
+```
+cargo fmt --all                                                    clean
+cargo clippy -p aex-brain-application -p aex-brain-store-aws \
+             -p brain-mux --all-targets -- -D warnings             clean
+cargo nextest run -p aex-brain-domain -p aex-brain-application \
+                  -p aex-brain-store-aws -p brain-mux
+    Summary [124.705s] 355 tests run: 355 passed, 0 skipped
+cargo nextest run -p aex-brain-application --features loom \
+                  --test concurrency  (LOOM_MAX_PREEMPTIONS=3)     6 passed
+cargo check --workspace --all-targets                              clean
+cargo run -p aex-workspace-check
+    133 member(s) and 139 package(s) satisfy every structural and registry rule
+cargo run -p aex-workspace-check -- registry build                 regenerated
+```
+
+Child-count coverage: the fanout planner is asserted at 1, 5, 10, 15, 50, 100
+and 200 children in the unit lane, including the page boundaries at 32 and 33.
+The same seven counts are declared as shapes in `brain-swarm-fanout.toml` and
+are asserted to be present there; executing that campaign needs a plane.
