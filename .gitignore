@@ -44,3 +44,7 @@ target/
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# insta writes a pending snapshot beside the source when one does not match.
+# It is a review artefact of a failing run, never a committed fact.
+*.pending-snap
