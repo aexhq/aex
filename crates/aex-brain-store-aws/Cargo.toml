@@ -25,6 +25,8 @@ scenarios = []
 
 [package.metadata.aex.targets]
 expressions = "unit"
+plans = "unit"
+adapters = "unit"
 
 [package.metadata.aex.not_applicable]
 integration = "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
@@ -45,11 +47,28 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+aex-brain-application = { path = "../aex-brain-application" }
 aex-brain-domain = { path = "../aex-brain-domain" }
+# The shared regional store machinery: key templates, row codecs, item
+# measurement, the one transaction-plan compiler and the error vocabulary. Brain
+# calls these rather than forking the item shapes they own.
+aex-session-dynamodb = { path = "../aex-session-dynamodb" }
+aex-work-dynamodb = { path = "../aex-work-dynamodb" }
+aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }
+aws-smithy-http-client.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [[test]]
 name = "expressions"
 path = "tests/expressions.rs"
+
+[[test]]
+name = "plans"
+path = "tests/plans.rs"
+
+[[test]]
+name = "adapters"
+path = "tests/adapters.rs"

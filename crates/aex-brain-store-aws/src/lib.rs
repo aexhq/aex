@@ -13,11 +13,19 @@
 //! - provider or tool transport
 //! - session authority rows (`aex-session-dynamodb`)
 
+pub mod control;
+pub mod effect;
 pub mod expressions;
 pub mod journal;
 pub mod keys;
 pub mod lease;
+pub mod plan;
+pub mod translate;
 pub mod wake;
 
 pub use expressions::{Action, ActionKind, Condition, Table, WakeItem, WorkExpressions};
-pub use keys::BRAIN_PREFIX;
+pub use journal::BrainStore;
+pub use keys::{BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, BrainKeyError};
+pub use plan::{DecisionContext, PlanError};
+pub use translate::TranslateError;
+pub use wake::{DueScan, SqsWakeQueue};
