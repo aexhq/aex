@@ -416,3 +416,197 @@ Derived sets, each asserted:
 
 Effective scopes are `token_scopes ∩ role_scopes(role)` for a person and
 `key_scopes ∩ WORKSPACE_KEY_MINTABLE` for a key. The edge never re-derives them.
+
+## 9. Second pass — the central HTTP composition and the four deployables
+
+Branch `rw/central-2`, off `main` after the contracts stream emitted the 146
+server-trait methods and after the store bodies landed. This closes the two
+largest gaps in §2 and one that §2 recorded as blocked on a peer.
+
+The store method bodies are **not** part of this pass: they were implemented and
+merged in parallel, and this branch keeps them as landed.
+
+### 9.1 `aex-central-http`
+
+All **27** central routes are mounted, across the eight generated groups.
+
+| Group | Routes | Served by |
+| --- | ---: | --- |
+| `ApiKeys` | 3 | `central-control-api` |
+| `Bootstrap` | 1 | `central-control-api` |
+| `CentralOperations` | 3 | `central-control-api` |
+| `Organizations` | 5 | `central-control-api` |
+| `Workspaces` | 4 | `central-control-api` |
+| `Auth` | 2 | `central-identity-api` |
+| `Billing` | 8 | `finance-api` |
+| `Identity` | 1 | `finance-api` |
+
+Every mount is a loop over `RouteGroup::routes()`; no template is written twice
+and none is written by hand. `every_generated_central_route_is_mounted` drives
+all 27 through `axum` and asserts each answers with an AEX envelope, and a path
+outside the table answers an unrouted `404` with no envelope at all — so an
+authored-but-unmounted route is a red suite rather than a runtime `404`.
+
+`CentralServiceId::groups()` is the one owner map, and two tests hold it to a
+partition: no route is served twice and the union is exactly the central route
+table.
+
+What the edge does, in the wire contract's precedence order:
+
+- **The authorizer context is read with a closed key set.** An undeclared key is
+  a refusal, because an authorizer that starts emitting a field the edge drops is
+  how an authorization input stops being enforced without anybody noticing.
+- **It is re-verified against its own window**, with the same thirty-second
+  ceiling the assertion envelope uses. A context that claims longer is refused at
+  parse; one outside its window is refused at every request. There is no grace
+  period and no cached-positive extension.
+- **The target is resolved before the decision, and the decision before the
+  account-state read.** Reading the state of an organization the caller may not
+  act in would be a side effect it is not entitled to cause, so `403` is decided
+  before `402` — and a pause-exempt route never reads the state at all.
+- **An unreadable account state rejects admission.** `503
+  account_state_unavailable`, retryable, never a fallback in either direction.
+- **Headers are strict in both directions.** A route that declares
+  `Idempotency-Key` refuses a request without one; a route that declares none
+  refuses one that supplies it; the same for `If-Match`.
+- **The body bound is applied before the parser**, and the read itself is bounded
+  at one byte over the limit, so an oversize body is refused after a bounded read
+  rather than buffered whole.
+- **Continuation cursors are decoded and minted here and nowhere else** — see
+  §9.3.
+- **A deployable cannot link a capability it did not declare.** `Grant<C>` has no
+  constructor outside a `Declares<C>` implementation, and `admit()` refuses a
+  configuration binding for an undeclared capability, an undeclared key, an
+  absent binding and an off-plane ARN, all before a client is opened.
+
+### 9.2 The four deployables
+
+Each resolves a typed, total configuration inside its own declared
+`config_env_namespace`, refuses any login role but its own, runs the capability
+admission check before any client is opened, and serves `/internal/healthz` and
+`/internal/readyz` with **fail-closed** readiness: a composition whose probes
+have not answered serves `503`, and one that probed nothing is never ready.
+
+| Deployable | Public routes | Capabilities | Notable |
+| --- | ---: | --- | --- |
+| `central-authz` | 0 | `authorization.read`, `assertion.sign` | `rds-data:ExecuteStatement` only — no transaction API at all. Readiness requires the **write probe to fail**. The signing key is unwrapped once per cold start, not signed per request. |
+| `central-identity-api` | 2 | `identity.write` | Cannot link a control write or the signing capability. |
+| `central-control-api` | 16 | `control.write`, `control.queue_publish`, `regional.control_invoke` | The regional endpoint map must cover every launch region, checked at start-up rather than at the first `POST /api/workspaces`. |
+| `central-control-worker` | 0 | + `control.queue_consume`, `mail.send`, `signing_key.administer` | `Handler::for_topic` is total over `Topic`, so an outbox topic without a duty is a compile error. A partial batch names only uncommitted items. |
+
+`issue_for_key` and `issue_for_actor` in `central-authz` are the two assertion
+issues, both pure and both tested: effective scopes are computed there and never
+re-derived at the edge, a revoked or lapsed credential never issues, and an
+`Unavailable` account state is a refusal rather than an `Active` envelope.
+
+The Lambda memory, timeout and reserved concurrency for all four are declared in
+`release/units.toml`, not in `[package.metadata.aex]` — that key set is closed at
+thirteen keys with `deny_unknown_fields`, so a `lambda` block there would fail
+`aex-metadata-unknown-key`. Each deployable's `resource_envelope.rs` asserts its
+unit row carries all three values.
+
+### 9.3 The continuation-cursor gap, closed
+
+§2 recorded that `AuroraControlStore` refused every non-empty cursor. The cause
+was a real defect one level down: `decode_cursor` compared the whole claim set
+including `last`, which is the position the cursor exists to *transport* — so
+the only caller who could use it was one who already knew the answer. It now
+compares the five fields a query fixes (endpoint, principal, scope, region,
+filter digest) and returns the carried position; a test asserts a continuation is
+readable without knowing it.
+
+With that fixed, the port carries decoded, authenticated keyset state:
+`PageRequest.after` is a `(created_at_ms, id)` and `Page.next` is the position to
+continue from, `None` when the page did not fill. The five list statements gained
+a null-tolerant `(created_at, id) > (…)` predicate, and `aex-central-http` is the
+only place that signs or verifies a cursor. **D-40 is withdrawn.**
+
+### 9.4 The migration suite
+
+Migrated from `AEX_CENTRAL_PG_URL`/`required_env!` to
+`aex_test_harness::containers::PostgresContainer::start()`, behind
+`required-features = ["integration-engines"]`, which now turns on the harness's
+`containers` feature. One digest-pinned engine per process, one fresh database
+per case. The suite writes no image name, tag or digest of its own. A Docker
+daemon that refuses the container fails the suite; it never skips. **D-37 is
+withdrawn**, and so is the first `TODO(cross-stream)` in §4.
+
+The include paths also moved: the finance stream renamed the bundle to
+timestamped filenames, so the four owned files are now
+`20260801000000_bootstrap`, `…000100_identity`, `…000200_control` and
+`…000300_control_functions`.
+
+### 9.5 The live companions
+
+Four companions, eight cases each, in the house style: every case `panic!`s with
+what it would have proved and why it cannot yet (`OD-07`). None self-skips, none
+is `#[ignore]`d, and none is an empty target. They are the specification of what
+the first credentialed run must demonstrate — including the two cases that decide
+whether a control is real at all:
+`the_read_only_role_is_denied_every_write_it_could_attempt` and
+`the_control_role_cannot_reach_a_finance_object`.
+
+### 9.6 What is still not done
+
+| Gap | Why |
+| --- | --- |
+| The Aurora-backed `AuthApi` and `ControlApi` implementations. `run()` is generic over them and every other part of both compositions is exercised; `main()` reports the missing service and exits non-zero. | A placeholder would answer `201` for a workspace nobody provisioned. Refusing is the honest behaviour, and the composition around it is complete and tested. |
+| `finance-api` mounts `Billing` and `Identity`. `aex-central-http` publishes `mount_billing_api` and `mount_identity_api`; the finance stream composes them. | Those two groups are finance handlers, and building them here would be a second owner for the money path. |
+| No live receipt of any kind. | `OD-07`. |
+
+### 9.7 Decisions taken in this pass
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| D-41 | `CentralServiceId::groups()` is the single owner map from a central route group to the binary that serves it, asserted to be a partition of the central route table. | The alternative is each deployable listing its own routes, which is the second route table the generated projection exists to prevent. It also makes "who serves `/api/billing/balance`" a compile-time fact rather than a deployment question. |
+| D-42 | The central plane's credential is the **authorizer context**, verified here, rather than the 323-byte envelope. | The envelope is what `central-authz` issues *to regional edges*. A central request never carries a raw credential to this crate: API Gateway invokes `central-authz` and hands back a resolved context. Verifying an envelope here as well would be a second central credential path. |
+| D-43 | The context carries its own issue and expiry instants and the edge re-checks both against the thirty-second ceiling. | The same rule as `assertion::verify` re-checking a validly signed lifetime: an authorizer bug must not be able to lengthen the window. |
+| D-44 | Precedence stages 1–9 render their own failures directly; only handler answers pass `dispatch::declared`. | Every route participates in the precedence table by definition, and no central route declares `account_paused` or `authentication_unavailable`. Filtering an edge-stage code against `RouteDescriptor::errors` would replace a correct `402` with a `500`. |
+| D-45 | A route whose `alt_principal` is `anonymous` admits a request with **no** authorizer context, and its replay identity is one shared sentinel principal. | The two device-flow routes are unauthenticated by contract. The sentinel means two anonymous callers presenting the same `Idempotency-Key` for the same intent share one grant, which is why the accepted design puts a per-IP usage-plan throttle in front of them. |
+| D-46 | `decode_cursor` compares the five *binding* fields and returns the carried position rather than comparing it. | See §9.3. The previous behaviour was unusable for its only purpose, and a failing test proves it. |
+| D-47 | `Page<T>` returns a keyset **position**, not an opaque cursor. | The port holds no signing secret. A store that minted its own token would be a second cursor authority. |
+| D-48 | `central-authz` declares `rds-data:ExecuteStatement` and no transaction call, and its readiness requires a write to fail. | A role that cannot open a transaction cannot write even if a statement tried to, and a read-only role that turns out to be able to write must be discovered before the first request rather than during one. |
+| D-49 | Every deployable's `Probes` is one boolean per probe rather than a single `ready` flag. | `/internal/readyz` names the dependency that did not resolve. A single flag answers "not ready" and leaves an operator to guess which of four things is wrong. |
+
+### 9.8 What a peer still owes
+
+Everything in §4 that is not withdrawn above, plus:
+
+| `TODO(cross-stream)` | Owner |
+| --- | --- |
+| The six error codes from §4 are still absent, so `workspace_provision_pending`, `idempotency_in_flight`, `commit_outcome_unknown`, `last_owner_required`, `resource_conflict` and `invalid_scope` are folded onto declared codes. | contracts |
+| No central route declares `account_paused`, `authentication_unavailable` or `account_state_unavailable` except `account_get` and `dashboard_bootstrap_get`, yet every route can produce all three at precedence stages 2–6. | contracts |
+| `finance-api` must mount `RouteGroup::Billing` and `RouteGroup::Identity` through `aex_central_http::{mount_billing_api, mount_identity_api}`. Nine of the 27 central routes are unserved until it does. | central finance |
+| The two public device-flow routes need the per-IP API Gateway usage-plan throttle; the shared anonymous replay principal assumes it. | infrastructure |
+| `cargo fmt --all` now exceeds the Windows command-line limit at 133 members (`os error 206`). Per-package `cargo fmt -p` works, and Linux CI is unaffected, but the gate as written no longer runs on this host. | delivery |
+
+### 9.9 Gate output
+
+```
+$ cargo fmt --all
+The filename or extension is too long. (os error 206)
+  # 133 workspace members exceed the Windows command-line limit. Run per
+  # package instead; done for every package this branch touches, after which
+  # `git diff` shows no formatting-only change.
+
+$ cargo clippy -p aex-identity-app -p aex-identity-aurora -p aex-control-app \
+    -p aex-control-aurora -p aex-central-http -p central-identity-api \
+    -p central-authz -p central-control-api -p central-control-worker \
+    --all-targets -- -D warnings
+(no output)
+
+$ cargo clippy -p aex-control-aurora --all-targets --features integration-engines -- -D warnings
+(no output)
+
+$ cargo nextest run -p aex-identity-app -p aex-identity-aurora -p aex-control-app \
+    -p aex-control-aurora -p aex-central-http -p central-identity-api \
+    -p central-authz -p central-control-api -p central-control-worker
+Summary [166.317s] 229 tests run: 229 passed, 0 skipped
+
+$ cargo check --workspace --all-targets
+(no output, exit 0)
+
+$ cargo run -p aex-workspace-check
+aex-workspace-check: 133 member(s) and 140 package(s) satisfy every structural and registry rule
+aex-workspace-check: 513 unearned-evidence row(s) recorded in the source-rewrite phase
+```

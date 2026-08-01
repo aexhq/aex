@@ -9,40 +9,42 @@
 //! connection; the `aws.rds_data.transaction` seam is claimed by the live
 //! companion.
 //!
-//! # Why this is not a `testcontainers` suite
+//! # The engine
 //!
-//! It should be, and it cannot be yet. The registry's `data-image-literal` rule
-//! bans the container library's only constructor in any path under `/tests/`
-//! and exempts one directory: the shared harness. So **no product crate can
-//! start a container at all** until the harness exposes a builder. That is
-//! recorded as a cross-stream requirement in
-//! `references/rewrite/central-identity.md`.
+//! One digest-pinned `PostgreSQL` container per process, started through
+//! `aex_test_harness::containers::PostgresContainer`. The suite writes no image
+//! name, tag or digest of its own — the `data-image-literal` rule bans that
+//! everywhere outside the harness, and the harness is the one place a pin is
+//! reviewed.
 //!
-//! Until it lands, the integration lane supplies the database and this suite
-//! resolves it through `aex_test_harness::required_env!`, which panics with the
-//! variable's name when it is absent. An absent prerequisite is a failure, never
-//! a skip.
+//! Every case mints its **own** database inside that server, so the cases
+//! parallelise without sharing a schema while paying for one container. A
+//! Docker daemon that refuses the container is a failure, never a skip: the
+//! whole suite panics with the container error rather than reporting green.
 
-use aex_test_harness::required_env;
+use std::sync::Arc;
+
+use aex_test_harness::containers::PostgresContainer;
 use sqlx::{Connection, Executor as _, PgConnection, Row as _};
+use tokio::sync::OnceCell;
 
 /// The four migration files this stream owns, in order.
 const MIGRATIONS: [(&str, &str); 4] = [
     (
-        "0001_bootstrap",
-        include_str!("../../../migrations/central/0001_bootstrap.sql"),
+        "20260801000000_bootstrap",
+        include_str!("../../../migrations/central/20260801000000_bootstrap.sql"),
     ),
     (
-        "0002_identity",
-        include_str!("../../../migrations/central/0002_identity.sql"),
+        "20260801000100_identity",
+        include_str!("../../../migrations/central/20260801000100_identity.sql"),
     ),
     (
-        "0003_control",
-        include_str!("../../../migrations/central/0003_control.sql"),
+        "20260801000200_control",
+        include_str!("../../../migrations/central/20260801000200_control.sql"),
     ),
     (
-        "0004_control_functions",
-        include_str!("../../../migrations/central/0004_control_functions.sql"),
+        "20260801000300_control_functions",
+        include_str!("../../../migrations/central/20260801000300_control_functions.sql"),
     ),
 ];
 
@@ -71,8 +73,25 @@ GRANT aex_authz          TO aex_authz_login; \
 GRANT aex_control_api    TO aex_control_api_login; \
 GRANT aex_control_worker TO aex_control_worker_login;";
 
-/// The environment variable the integration lane sets to a superuser URL.
-const DATABASE_URL: &str = "AEX_CENTRAL_PG_URL";
+/// The one engine this process runs against.
+///
+/// Shared because a container per case would pay a start-up cost sixteen times
+/// for a server every case immediately isolates itself inside anyway.
+static ENGINE: OnceCell<Arc<PostgresContainer>> = OnceCell::const_new();
+
+/// The running engine, started on first use.
+async fn engine() -> Arc<PostgresContainer> {
+    ENGINE
+        .get_or_init(|| async {
+            Arc::new(
+                PostgresContainer::start()
+                    .await
+                    .unwrap_or_else(|error| panic!("the pinned PostgreSQL starts: {error}")),
+            )
+        })
+        .await
+        .clone()
+}
 
 /// A freshly migrated database.
 ///
@@ -81,15 +100,18 @@ const DATABASE_URL: &str = "AEX_CENTRAL_PG_URL";
 struct Fixture {
     admin_url: String,
     database: String,
+    /// Keeps the shared engine alive for as long as any fixture uses it.
+    _engine: Arc<PostgresContainer>,
 }
 
 impl Fixture {
     async fn start() -> Self {
-        let admin_url = required_env!(DATABASE_URL);
+        let engine = engine().await;
+        let admin_url = engine.connection_url();
         let database = format!("aex_{}", uuid::Uuid::new_v4().simple());
         let mut admin = PgConnection::connect(&admin_url)
             .await
-            .unwrap_or_else(|error| panic!("`{DATABASE_URL}` is reachable: {error}"));
+            .unwrap_or_else(|error| panic!("the pinned engine is reachable: {error}"));
         // The name is a fixed prefix plus a fresh UUID; nothing caller-supplied
         // reaches this string.
         let create: &'static str =
@@ -101,6 +123,7 @@ impl Fixture {
         let fixture = Self {
             admin_url,
             database,
+            _engine: engine,
         };
         fixture.migrate().await;
         fixture

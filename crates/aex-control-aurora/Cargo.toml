@@ -12,10 +12,10 @@ publish = false
 workspace = true
 
 [features]
-# The real-PostgreSQL suite. A marker feature: the engine crates are ordinary
-# dev-dependencies, and the feature exists so `required-features` can keep the
-# suite out of the unit lane while the integration lane arms it.
-integration-engines = []
+# The real-PostgreSQL suite. Arming it turns on the harness's container
+# helpers, so the suite starts its own digest-pinned engine; the unit lane
+# never selects it, because `required-features` keeps it out.
+integration-engines = ["aex-test-harness/containers"]
 
 [package.metadata.aex]
 owner = "central-identity"
@@ -51,7 +51,7 @@ aex-wire = { path = "../aex-wire" }
 [dev-dependencies]
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 sqlx.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync"] }
 uuid.workspace = true
 
 [[test]]

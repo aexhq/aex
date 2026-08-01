@@ -24,6 +24,12 @@ security_tier = "public_edge"
 risk = ["iam", "untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+faults = "unit"
+security = "unit"
+resource_envelope = "e2e"
+
 [[bin]]
 name = "central-control-api"
 path = "src/main.rs"

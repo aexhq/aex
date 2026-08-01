@@ -8,20 +8,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-managed-web",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-mcp",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-test-support",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
@@ -29,45 +15,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-tool-catalog",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-central-http",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-central-test-support",
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-finance-app",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-finance-aurora",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-finance-domain",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -113,13 +64,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-regional-http",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-runtime-control",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
@@ -131,13 +75,6 @@
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
     "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-rating",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -162,34 +99,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "services/central-authz",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/central-control-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/central-identity-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/finance-api",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "services/finance-ingest",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -211,59 +120,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-authz",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-control-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-control-worker",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-identity-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
   },
   {
     "reason_class": "awaiting_owner",
@@ -407,24 +267,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-stripe-command-edge",
-    "owner": "central-finance",
-    "blocking_rule": "aex-orphan-companion",
-    "detail": "the TypeScript Stripe command edge lands with the central-finance stream (P-AUTH-EDGE)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-stripe-webhook-edge",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-stripe-webhook-edge",
-    "owner": "central-finance",
-    "blocking_rule": "aex-orphan-companion",
-    "detail": "the TypeScript Stripe webhook edge lands with the central-finance stream (P-AUTH-EDGE)"
   },
   {
     "reason_class": "awaiting_owner",
@@ -460,27 +306,6 @@
     "owner": "delivery",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the delivery stream; the rule fixtures land with the lint rules"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/central-control-worker",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/central-schema-admin",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/content-lifecycle-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -526,24 +351,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "workers/regional-secret-key-admin",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "workers/runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/session-operation-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -656,13 +467,6 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-workload-unowned",
     "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LOAD-STREAM-SOCKETS",
-    "owner": "regional-services",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-stream`"
   },
   {
     "reason_class": "pending_workload",
@@ -920,6 +724,34 @@
     "reason_class": "requires_deployment",
     "subject": "services/regional-stream",
     "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/stripe-webhook-edge",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -2276,6 +2108,13 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "services/central-identity-api",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
@@ -2458,6 +2297,34 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "services/stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
@@ -2616,6 +2483,13 @@
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -3259,7 +3133,21 @@
     "subject": "tests/live/aex-live-stripe-command-edge",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

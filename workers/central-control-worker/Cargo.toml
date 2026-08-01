@@ -24,6 +24,12 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+faults = "unit"
+security = "unit"
+resource_envelope = "e2e"
+
 [[bin]]
 name = "central-control-worker"
 path = "src/main.rs"
