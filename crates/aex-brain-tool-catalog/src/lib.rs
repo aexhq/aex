@@ -18,6 +18,7 @@ pub mod catalog;
 pub mod control;
 pub mod manifest;
 pub mod readiness;
+pub mod router;
 pub mod signature;
 pub mod wire_pending;
 

@@ -140,6 +140,7 @@ dependencies = [
 name = "aex-brain-tool-catalog"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
  "aex-brain-domain",
  "aex-wire",
  "insta",
