@@ -5516,15 +5516,25 @@ dependencies = [
 name = "regional-session-api"
 version = "0.1.0"
 dependencies = [
+ "aex-content-dynamodb",
  "aex-platform-telemetry",
  "aex-regional-http",
+ "aex-registry-dynamodb",
+ "aex-runtime-activity-dynamodb",
+ "aex-secret-custody-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
+ "aex-work-dynamodb",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
  "hex",
+ "lambda_http",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
