@@ -263,7 +263,7 @@ mod tests {
         for raw in [
             r#"{"request":"delete_journal"}"#,
             r#"{"request":"provider_event"}"#,
-            r#"{}"#,
+            r"{}",
         ] {
             assert!(
                 serde_json::from_str::<IngestRequest>(raw).is_err(),

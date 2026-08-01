@@ -102,6 +102,49 @@ impl MigrationBundle {
     pub fn versions(&self) -> Vec<i64> {
         self.files.iter().map(|file| file.version).collect()
     }
+
+    /// Whether any bundled migration declares itself destructive.
+    ///
+    /// A destructive bundle needs recorded backup evidence and an explicit
+    /// release gate; the runner refuses one without both.
+    #[must_use]
+    pub fn has_destructive(&self) -> bool {
+        self.files.iter().any(|file| file.destructive)
+    }
+
+    /// The parsed file for `version`, when the bundle holds one.
+    #[must_use]
+    pub fn file(&self, version: i64) -> Option<&MigrationFile> {
+        self.files.iter().find(|file| file.version == version)
+    }
+
+    /// The deterministic confirmation token for one repair.
+    ///
+    /// Derived from the version rather than minted, so the token a failed
+    /// precondition prints is the token the operator can be told to type, and
+    /// nothing else opens the repair path.
+    #[must_use]
+    pub fn repair_token(version: i64) -> String {
+        let digest = blake3::hash(format!("aex:schema-repair:{version}").as_bytes());
+        format!("rpr_{}", &digest.to_hex()[..16])
+    }
+
+    /// The committed sibling repair file for one non-transactional migration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError::MissingRepair`] when the version is not bundled or
+    /// is transactional, and [`BundleError::Io`] when the sibling file cannot be
+    /// read. A transactional migration is re-entrant by rerunning the exact
+    /// artifact and therefore has no repair path at all.
+    pub fn repair_sql(&self, path: &Path, version: i64) -> Result<String, BundleError> {
+        let file = self.file(version).ok_or(BundleError::MissingRepair)?;
+        if file.transactional {
+            return Err(BundleError::MissingRepair);
+        }
+        let repair = path.join(format!("{version:014}_{}.repair.sql", file.slug));
+        std::fs::read_to_string(repair).map_err(BundleError::Io)
+    }
 }
 
 /// Constructs `SQLx`'s native migrator with fail-closed history settings.

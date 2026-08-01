@@ -1,19 +1,21 @@
 //! One-shot central schema administration task.
 
-mod grants;
-mod migration;
-
 use std::path::PathBuf;
 
 use aex_wire::canonical::to_jcs_string;
+use central_schema_admin::connect::{
+    ADVISORY_LOCK_KEY, ConnectError, Endpoint, apply_timeouts, connect, resolve_credential,
+    take_outer_lock,
+};
+use central_schema_admin::grants::GrantSet;
+use central_schema_admin::migration::MigrationBundle;
+use central_schema_admin::runner::{
+    RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation, diff_grants,
+    expect_applied_head, migrate,
+};
+use central_schema_admin::{grants, migration};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-
-use crate::grants::GrantSet;
-use crate::migration::MigrationBundle;
-
-/// Fixed outer advisory lock, ASCII `AEX_MIGR`.
-pub const ADVISORY_LOCK_KEY: i64 = 0x4145_585F_4D49_4752;
 
 /// One-shot schema administration CLI.
 #[derive(Debug, Parser)]
@@ -176,63 +178,262 @@ struct Receipt<'a> {
     conservation: &'a str,
 }
 
+/// Maps a connection failure onto the exit contract.
+const fn connect_exit(error: &ConnectError) -> Exit {
+    match error {
+        ConnectError::SecretUnavailable(_) | ConnectError::SecretShape => Exit::SecretUnavailable,
+        ConnectError::RootCaUnreadable(_) | ConnectError::Connection(_) => Exit::Connection,
+        ConnectError::LockUnavailable => Exit::LockUnavailable,
+    }
+}
+
+/// Maps an online failure onto the exit contract.
+const fn runner_exit(error: &RunnerError) -> Exit {
+    match error {
+        RunnerError::ChecksumDrift(_) => Exit::ChecksumDrift,
+        RunnerError::HeadMismatch { .. } => Exit::HeadMismatch,
+        RunnerError::PreconditionFailed(_) => Exit::PreconditionFailed,
+        RunnerError::GrantDrift(_) => Exit::GrantDrift,
+        RunnerError::Conservation(_) => Exit::Conservation,
+        RunnerError::Database(_) => Exit::Connection,
+    }
+}
+
+/// The endpoint this invocation addresses.
+fn endpoint(cli: &Cli) -> Endpoint {
+    Endpoint {
+        host: cli.database_host.clone(),
+        port: cli.database_port,
+        database: cli.database_name.clone(),
+        tls_root_ca_path: cli.tls_root_ca_path.clone(),
+        connect_timeout: std::time::Duration::from_millis(cli.connect_timeout_ms),
+    }
+}
+
+/// Opens the DDL session and takes the outer lock.
+///
+/// Every mutating and verifying command goes through here, so "exactly one task
+/// per admitted migration" is a property of the runner rather than of the
+/// deployment configuration.
+async fn open(cli: &Cli) -> Result<sqlx::postgres::PgConnection, (Exit, String)> {
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let secrets = aws_sdk_secretsmanager::Client::new(&aws);
+    let credential = resolve_credential(&secrets, &cli.database_secret_arn)
+        .await
+        .map_err(|error| (connect_exit(&error), error.to_string()))?;
+    let mut connection = connect(&endpoint(cli), &credential)
+        .await
+        .map_err(|error| (connect_exit(&error), error.to_string()))?;
+    take_outer_lock(&mut connection)
+        .await
+        .map_err(|error| (connect_exit(&error), error.to_string()))?;
+    Ok(connection)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per subcommand; splitting the tree would hide the exit contract"
+)]
 async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
     debug_assert_eq!(Exit::ALL.len(), 10);
     let bundle_path = migration::bundle_path();
     let bundle = MigrationBundle::load(&bundle_path)
         .map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
-    migration::native_migrator()
+    let migrator = migration::native_migrator()
         .await
         .map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
-    let grants = GrantSet::load(grants::grants_path())
+    let grant_set = GrantSet::load(grants::grants_path())
         .map_err(|error| (Exit::GrantDrift, error.to_string()))?;
-    grants
+    grant_set
         .role("aex_provider_cost")
         .ok_or_else(|| (Exit::GrantDrift, "provider-cost role is absent".to_owned()))?;
+    let plane = match cli.plane {
+        Plane::Dev => "dev",
+        Plane::Prd => "prd",
+    };
+    let receipt = |before: Option<i64>, after: Option<i64>, conservation: &'static str| Receipt {
+        release_id: &cli.release,
+        plane,
+        bundle_head: bundle.head(),
+        applied_head_before: before,
+        applied_head_after: after,
+        migration_versions: bundle.versions(),
+        grant_roles: grant_set.role_names(),
+        lock_key: ADVISORY_LOCK_KEY,
+        conservation,
+    };
+    let render = |value: &Receipt<'_>| {
+        to_jcs_string(value).map_err(|error| (Exit::ChecksumDrift, error.to_string()))
+    };
+
     match &cli.command {
+        // `plan` is deliberately offline: it validates the artifact a release is
+        // about to run without holding a credential or a lock.
         Command::Plan {
             expect_applied_head,
-        } => {
-            let receipt = Receipt {
-                release_id: &cli.release,
-                plane: match cli.plane {
-                    Plane::Dev => "dev",
-                    Plane::Prd => "prd",
-                },
-                bundle_head: bundle.head(),
-                applied_head_before: *expect_applied_head,
-                applied_head_after: *expect_applied_head,
-                migration_versions: bundle.versions(),
-                grant_roles: grants.role_names(),
-                lock_key: ADVISORY_LOCK_KEY,
-                conservation: "not_requested",
-            };
-            to_jcs_string(&receipt).map_err(|error| (Exit::ChecksumDrift, error.to_string()))
-        }
+        } => render(&receipt(
+            *expect_applied_head,
+            *expect_applied_head,
+            "not_requested",
+        )),
+
         Command::Migrate {
             expect_head,
+            expect_applied_head: expected_applied,
+            lock_timeout_ms,
+            statement_timeout_ms,
             allow_destructive,
             backup_evidence,
-            ..
         } => {
             if *expect_head != bundle.head() {
                 return Err((
                     Exit::HeadMismatch,
-                    "bundle head does not match --expect-head".into(),
+                    format!(
+                        "the bundle head is {}, not the expected {expect_head}",
+                        bundle.head()
+                    ),
                 ));
             }
             if *allow_destructive && backup_evidence.as_deref().is_none_or(str::is_empty) {
                 return Err((
                     Exit::DestructiveEvidenceMissing,
-                    "destructive migration needs backup evidence".into(),
+                    "a destructive migration needs recorded backup evidence".to_owned(),
                 ));
             }
-            Err((Exit::SecretUnavailable, "credential resolution is deliberately not performed in an uncredentialed rewrite run".into()))
+            if bundle.has_destructive() && !*allow_destructive {
+                return Err((
+                    Exit::DestructiveEvidenceMissing,
+                    "the bundle declares a destructive migration; pass --allow-destructive with \
+                     --backup-evidence"
+                        .to_owned(),
+                ));
+            }
+            let mut connection = open(cli).await?;
+            apply_timeouts(&mut connection, *lock_timeout_ms, *statement_timeout_ms)
+                .await
+                .map_err(|error| (connect_exit(&error), error.to_string()))?;
+            if let Some(expected) = expected_applied {
+                expect_applied_head(&mut connection, *expected)
+                    .await
+                    .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            }
+            let before = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            migrate(&mut connection, &migrator)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            let after = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            render(&receipt(before, after, "not_requested"))
         }
-        _ => Err((
-            Exit::SecretUnavailable,
-            "database operation requires the DDL-only secret resolver".into(),
-        )),
+
+        Command::Verify {
+            expect_head,
+            check_conservation: conservation,
+        } => {
+            if *expect_head != bundle.head() {
+                return Err((
+                    Exit::HeadMismatch,
+                    format!(
+                        "the bundle head is {}, not the expected {expect_head}",
+                        bundle.head()
+                    ),
+                ));
+            }
+            let mut connection = open(cli).await?;
+            let applied = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            if applied != Some(bundle.head()) {
+                return Err((
+                    Exit::HeadMismatch,
+                    format!("the applied head is {applied:?}, not the bundle head {expect_head}"),
+                ));
+            }
+            let diffs = diff_grants(&mut connection, &grant_set)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            if !diffs.is_empty() {
+                return Err((
+                    Exit::GrantDrift,
+                    format!("{} grant difference(s) against grants.toml", diffs.len()),
+                ));
+            }
+            let verdict = if *conservation {
+                check_conservation(&mut connection)
+                    .await
+                    .map_err(|error| (runner_exit(&error), error.to_string()))?;
+                "holds"
+            } else {
+                "not_requested"
+            };
+            render(&receipt(applied, applied, verdict))
+        }
+
+        Command::Grants { check, apply } => {
+            let mut connection = open(cli).await?;
+            let diffs = diff_grants(&mut connection, &grant_set)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            if *check && !diffs.is_empty() {
+                return Err((
+                    Exit::GrantDrift,
+                    format!("{} grant difference(s) against grants.toml", diffs.len()),
+                ));
+            }
+            if *apply {
+                apply_grants(&mut connection, &diffs)
+                    .await
+                    .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            }
+            let applied = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            render(&receipt(applied, applied, "not_requested"))
+        }
+
+        Command::Backfill { migration, .. } => {
+            if !bundle.versions().contains(migration) {
+                return Err((
+                    Exit::HeadMismatch,
+                    format!("`{migration}` is not a bundled migration"),
+                ));
+            }
+            let mut connection = open(cli).await?;
+            // The durable cursor is the resumption point that lets a long
+            // backfill survive task replacement. The body itself belongs to the
+            // migration that declares one, and no bundled migration does yet.
+            let _cursor = backfill_cursor(&mut connection, *migration)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            let applied = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            render(&receipt(applied, applied, "not_requested"))
+        }
+
+        Command::Repair { migration, confirm } => {
+            let repair = bundle
+                .repair_sql(&bundle_path, *migration)
+                .map_err(|error| (Exit::PreconditionFailed, error.to_string()))?;
+            if confirm != &MigrationBundle::repair_token(*migration) {
+                return Err((
+                    Exit::PreconditionFailed,
+                    "the confirmation token does not match this repair".to_owned(),
+                ));
+            }
+            let mut connection = open(cli).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(repair))
+                .execute(&mut connection)
+                .await
+                .map_err(|error| (Exit::Connection, error.to_string()))?;
+            let applied = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            render(&receipt(applied, applied, "not_requested"))
+        }
     }
 }
 

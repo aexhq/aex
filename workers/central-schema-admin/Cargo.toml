@@ -7,9 +7,17 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
+
+[features]
+# The real-PostgreSQL suite. A marker feature: the engine crates are ordinary
+# dev-dependencies and the container starts through the shared harness, which
+# owns the digest-pinned image registry. The feature keeps the suite out of the
+# unit lane while the integration lane arms it.
+integration-engines = []
 
 [package.metadata.aex]
 owner = "central-finance"
@@ -17,15 +25,16 @@ role = "deployable"
 artifact = "oci_task"
 deployable = "central-schema-admin"
 live_suite = "aex-live-central-schema-admin"
-layers = ["unit", "smoke", "e2e"]
+layers = ["unit", "integration", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
-seams = ["aws.aurora.serverless_v2", "aws.ecs.run_task", "aws.iam.denial"]
-security_tier = "internal"
-risk = ["sql"]
+seams = ["aws.aurora.serverless_v2", "aws.iam.denial"]
+security_tier = "authority"
+risk = ["sql", "iam"]
 scenarios = []
 
 [package.metadata.aex.targets]
 conformance = "unit"
+migrations = "integration"
 smoke = "smoke"
 resource_envelope = "e2e"
 
@@ -34,9 +43,12 @@ name = "central-schema-admin"
 path = "src/main.rs"
 
 [dependencies]
-aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+aws-config.workspace = true
+aws-sdk-secretsmanager.workspace = true
+blake3.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -45,3 +57,25 @@ thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+aex-test-harness = { path = "../../tests/support/aex-test-harness", features = ["containers"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+uuid.workspace = true
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "migrations"
+path = "tests/migrations.rs"
+required-features = ["integration-engines"]
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+
+[[test]]
+name = "resource_envelope"
+path = "tests/resource_envelope.rs"
