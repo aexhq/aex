@@ -37,17 +37,29 @@ path = "src/main.rs"
 [dependencies]
 aex-central-http = { path = "../../crates/aex-central-http" }
 aex-control-app = { path = "../../crates/aex-control-app" }
+aex-control-aurora = { path = "../../crates/aex-control-aurora" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-rds-data = { path = "../../crates/aex-rds-data" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
-axum.workspace = true
-lambda_http.workspace = true
+aws-config.workspace = true
+aws-sdk-rdsdata.workspace = true
+# The pepper ring and the assertion private key, both read once at cold start.
+aws-sdk-secretsmanager.workspace = true
+# This function is invoked, never routed: `lambda_http` would parse an API
+# Gateway proxy event that never arrives.
+lambda_runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-tower.workspace = true
+async-trait.workspace = true
