@@ -37,6 +37,7 @@
 
 use aex_control_domain::epoch::{Epoch, EpochSubjectKind};
 use aex_control_domain::scope::{ScopeError, ScopeSet};
+use aex_internal_contracts::assertion::{AssertionAudience, AssertionError, IssuedAssertion};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -111,43 +112,34 @@ impl Plane {
     }
 }
 
-/// Which regional service may accept an assertion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(u8)]
-pub enum RegionalService {
-    /// `regional-session-api`.
-    SessionApi = 1,
-    /// `regional-secret-api`.
-    SecretApi = 2,
-    /// `regional-observation-api`.
-    ObservationApi = 3,
-    /// `regional-otlp`.
-    Otlp = 4,
-    /// `regional-stream`.
-    Stream = 5,
+/// The `audience_service` byte for one audience.
+///
+/// The audience vocabulary itself is
+/// [`aex_internal_contracts::assertion::AssertionAudience`], which is also what
+/// the two `central-authz` requests carry. This function is the *codec*, and it
+/// lives here because every other byte of the layout does. Declaration order in
+/// that enum is wire order, so `AssertionAudience::ALL[n]` is byte `n + 1`.
+#[must_use]
+pub const fn audience_code(audience: AssertionAudience) -> u8 {
+    match audience {
+        AssertionAudience::RegionalSession => 1,
+        AssertionAudience::RegionalSecret => 2,
+        AssertionAudience::RegionalObservation => 3,
+        AssertionAudience::RegionalOtlp => 4,
+        AssertionAudience::RegionalStream => 5,
+    }
 }
 
-impl RegionalService {
-    /// Every service, in wire order.
-    pub const ALL: [Self; 5] = [
-        Self::SessionApi,
-        Self::SecretApi,
-        Self::ObservationApi,
-        Self::Otlp,
-        Self::Stream,
-    ];
-
-    /// Resolves a wire discriminant.
-    #[must_use]
-    pub const fn from_wire(byte: u8) -> Option<Self> {
-        match byte {
-            1 => Some(Self::SessionApi),
-            2 => Some(Self::SecretApi),
-            3 => Some(Self::ObservationApi),
-            4 => Some(Self::Otlp),
-            5 => Some(Self::Stream),
-            _ => None,
-        }
+/// Resolves an `audience_service` byte.
+#[must_use]
+pub const fn audience_from_code(byte: u8) -> Option<AssertionAudience> {
+    match byte {
+        1 => Some(AssertionAudience::RegionalSession),
+        2 => Some(AssertionAudience::RegionalSecret),
+        3 => Some(AssertionAudience::RegionalObservation),
+        4 => Some(AssertionAudience::RegionalOtlp),
+        5 => Some(AssertionAudience::RegionalStream),
+        _ => None,
     }
 }
 
@@ -227,7 +219,7 @@ pub struct Audience {
     /// Which region.
     pub region: aex_wire::types::Region,
     /// Which service.
-    pub service: RegionalService,
+    pub service: AssertionAudience,
 }
 
 /// One `(kind, id, epoch)` slot.
@@ -440,6 +432,28 @@ impl Assertion {
             .map(Self)
             .map_err(|_| VerifyError::BadLength)
     }
+
+    /// The envelope as the internal exchange carries it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssertionError::Encoding`] never in practice: the envelope is
+    /// a fixed 323 bytes and its canonical encoding is well inside the
+    /// transport bound. It is a `Result` because the transport type owns its own
+    /// invariant and this crate does not restate it.
+    pub fn to_issued(&self) -> Result<IssuedAssertion, AssertionError> {
+        IssuedAssertion::new(self.to_base64url())
+    }
+
+    /// Parses an envelope out of the internal exchange.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::BadLength`] for anything that is not exactly
+    /// [`ASSERTION_ENVELOPE_LEN`] bytes.
+    pub fn from_issued(issued: &IssuedAssertion) -> Result<Self, VerifyError> {
+        Self::from_base64url(issued.as_str())
+    }
 }
 
 /// Why an assertion could not be issued.
@@ -554,7 +568,7 @@ pub fn signing_bytes(kid: KeyId, claims: &AssertionClaims) -> [u8; ASSERTION_SIG
     body[8..16].copy_from_slice(&claims.expires_at_ms.to_be_bytes());
     body[16] = claims.audience.plane as u8;
     body[17] = region_code(claims.audience.region);
-    body[18] = claims.audience.service as u8;
+    body[18] = audience_code(claims.audience.service);
     body[19] = claims.principal_kind as u8;
     body[20..36].copy_from_slice(claims.principal_id.as_bytes());
     body[36..68].copy_from_slice(&claims.credential_binding);
@@ -779,7 +793,7 @@ fn decode_body(body: &[u8]) -> Result<AssertionClaims, VerifyError> {
     let plane = Plane::from_wire(body[16]).ok_or(VerifyError::UnknownDiscriminant)?;
     let region = aex_control_domain::cursor::region_from_code(body[17])
         .ok_or(VerifyError::UnknownDiscriminant)?;
-    let service = RegionalService::from_wire(body[18]).ok_or(VerifyError::UnknownDiscriminant)?;
+    let service = audience_from_code(body[18]).ok_or(VerifyError::UnknownDiscriminant)?;
     let principal_kind =
         PrincipalKind::from_wire(body[19]).ok_or(VerifyError::UnknownDiscriminant)?;
     let workspace_region = aex_control_domain::cursor::region_from_code(body[100])

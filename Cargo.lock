@@ -490,6 +490,7 @@ name = "aex-identity-domain"
 version = "0.1.0"
 dependencies = [
  "aex-control-domain",
+ "aex-internal-contracts",
  "aex-wire",
  "ed25519-dalek",
  "hmac 0.13.0",
