@@ -75,9 +75,18 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::emit_routes::rust_routes(ir, &digest),
     );
     tree.insert(
+        "crates/aex-wire/src/generated/server.rs",
+        crate::emit_server::rust_server(ir, &digest),
+    );
+    tree.insert(
+        "crates/aex-wire/src/generated/client.rs",
+        crate::emit_client::rust_client(ir, &digest),
+    );
+    tree.insert(
         "conformance/routes/bindings.jsonl",
         route_binding_corpus(ir),
     );
+    tree.insert("conformance/routes/surface.jsonl", route_surface_corpus(ir));
     tree
 }
 
@@ -515,6 +524,51 @@ fn route_binding_corpus(ir: &ContractIr) -> String {
     out
 }
 
+/// `conformance/routes/surface.jsonl`: the generated server and client surface.
+///
+/// One line per operation naming the group it mounts in, the trait it lands on,
+/// the method name both sides use, and the request and response shapes. This is
+/// the artifact a peer stream reads to know what it is mounting, and the floor
+/// that makes "every operation is generated" an assertion rather than a claim.
+fn route_surface_corpus(ir: &ContractIr) -> String {
+    let groups = crate::surface::groups(ir);
+    let mut out = String::new();
+    for group in &groups {
+        for operation in &group.operations {
+            let response = crate::surface::ResponseShape::of(operation);
+            let request = crate::surface::RequestShape::of(operation);
+            let line = json!({
+                "operationId": operation.id,
+                "routeId": operation.variant,
+                "plane": operation.plane,
+                "group": group.key,
+                "trait": group.trait_name,
+                "method": operation.id,
+                "requestBuilder": format!("{}_request", operation.id),
+                "requestShape": request.corpus_name(),
+                "requestSchema": request_schema(&request),
+                "responseShape": response.corpus_name(),
+                "responseSchema": response.schema(),
+                "successStatus": operation.success_status,
+                "transport": operation.transport,
+                "idempotency": operation.idempotency,
+                "etag": operation.etag,
+            });
+            out.push_str(&String::from_utf8(jcs::to_jcs_bytes(&line)).unwrap_or_default());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The `SchemaId` a request shape names, if any.
+fn request_schema(shape: &crate::surface::RequestShape) -> Option<&str> {
+    match shape {
+        crate::surface::RequestShape::Json(schema) => Some(schema),
+        crate::surface::RequestShape::None | crate::surface::RequestShape::Otlp => None,
+    }
+}
+
 /// A deterministic concrete path for one operation.
 fn sample_path(ir: &ContractIr, operation: &OperationIr) -> String {
     let mut path = operation.path.clone();
@@ -554,12 +608,14 @@ fn sample_value(ir: &ContractIr, ty: &FieldType) -> String {
 /// `crates/aex-wire/src/generated/mod.rs`.
 fn rust_mod(digest: &str) -> String {
     let mut source = Source::new("Generated contract surface of `aex-wire`.", digest);
+    source.line("pub mod client;");
     source.line("pub mod errors;");
     source.line("pub mod ids;");
     source.line("pub mod limits;");
     source.line("pub mod models;");
     source.line("pub mod routes;");
     source.line("pub mod scopes;");
+    source.line("pub mod server;");
     source.finish()
 }
 

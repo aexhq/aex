@@ -708,3 +708,14 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+/// A route that reached the wrong group's dispatcher.
+///
+/// Every generated dispatcher is total over `RouteId`, so a route from another
+/// group is a composition defect that names itself rather than a handler quietly
+/// running against the wrong request.
+#[must_use]
+pub fn wrong_group(found: RouteId, group: &str) -> WireError {
+    WireError::new(ErrorCode::InternalError)
+        .with_message(format!("`{}` is not a `{group}` route", found.as_str()))
+}

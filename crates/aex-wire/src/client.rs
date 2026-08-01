@@ -18,6 +18,8 @@
 
 use std::fmt;
 
+pub use crate::generated::client::*;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -523,6 +525,103 @@ impl ToParam for Cursor {
 impl ToParam for Region {
     fn to_param(&self) -> String {
         self.as_str().to_owned()
+    }
+}
+
+/// The headers `id` requires, in a fixed order.
+///
+/// Header policy lives here rather than in 146 generated call sites: `Accept`
+/// follows the declared transport, `Content-Type` follows the declared body
+/// class, and the three identity headers are present exactly when the route
+/// declares them.
+#[must_use]
+pub fn request_headers(
+    id: RouteId,
+    idempotency_key: Option<&IdempotencyKey>,
+    operation_id: Option<OperationId>,
+    if_match: Option<&ETag>,
+) -> Vec<(&'static str, String)> {
+    let mut headers = vec![accept_header(id)];
+    if route(id).body_class != crate::routes::BodyClass::None {
+        headers.push(content_type_header());
+    }
+    if let Some(key) = idempotency_key {
+        headers.push(idempotency_header(key));
+    }
+    if let Some(operation_id) = operation_id {
+        headers.push(operation_header(operation_id));
+    }
+    if let Some(etag) = if_match {
+        headers.push(if_match_header(etag));
+    }
+    headers
+}
+
+/// A path template with its parameters bound in template order.
+///
+/// The template comes from the one route table, so a client can never call a
+/// path the server does not serve, and every segment is percent-encoded so a
+/// value cannot change the shape of the path it sits in.
+#[derive(Debug, Clone)]
+pub struct PathWriter {
+    /// The route whose template is being bound.
+    id: RouteId,
+    /// Bound values, in template order.
+    bound: Vec<String>,
+}
+
+impl PathWriter {
+    /// A writer over the template of `id`.
+    #[must_use]
+    pub const fn new(id: RouteId) -> Self {
+        Self {
+            id,
+            bound: Vec::new(),
+        }
+    }
+
+    /// Binds the next path parameter.
+    pub fn bind<T: ToParam + ?Sized>(&mut self, value: &T) {
+        self.bound.push(value.to_param());
+    }
+
+    /// The bound path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Encode`] when the number of bound values is not
+    /// the number the template declares. That is a generator defect rather than
+    /// caller input, and it fails rather than emitting a path with a literal
+    /// `{sessionId}` in it.
+    pub fn finish(self) -> Result<String, ClientError> {
+        let descriptor = route(self.id);
+        if self.bound.len() != descriptor.path_params.len() {
+            return Err(ClientError::Encode {
+                route: self.id,
+                reason: format!(
+                    "the template binds {} parameters, {} were supplied",
+                    descriptor.path_params.len(),
+                    self.bound.len()
+                ),
+            });
+        }
+        let mut path = String::with_capacity(descriptor.template.len() + 32);
+        let mut next = self.bound.iter();
+        for (index, segment) in descriptor.template.split('/').enumerate() {
+            if index > 0 {
+                path.push('/');
+            }
+            if segment.starts_with('{') && segment.ends_with('}') {
+                let value = next.next().ok_or_else(|| ClientError::Encode {
+                    route: self.id,
+                    reason: "a path parameter was not bound".to_owned(),
+                })?;
+                path.push_str(&percent_encode(value));
+            } else {
+                path.push_str(segment);
+            }
+        }
+        Ok(path)
     }
 }
 
