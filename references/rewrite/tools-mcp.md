@@ -32,9 +32,6 @@ status: implemented-depth-first
   executors/catalogs/tools fail at construction; detached operations remember
   the executor that created them, and an unknown durable identity returns
   `DetachedStatus::Unknown` instead of starting new work.
-- `aex-brain-test-support::tool_fake` is a deterministic FIFO fixture for
-  routes, invocations, Task-like query states, and fenced cancellation. It
-  reads no clock or random source and asserts that scripts are drained.
 - `aex-brain-managed-web::egress` enforces absolute HTTPS, port 443, no
   userinfo, a URL-size bound, the complete IPv4/IPv6 deny table, embedded IPv4
   unwrapping, full-record-set screening, and exact screened-address pinning.
@@ -101,8 +98,6 @@ The principal published paths are:
   ResponseBoundError, qualify_discovery}`
 - `aex_brain_mcp::recovery::{TaskCapability, McpTaskId, TaskState,
   TaskTransition, DropRecovery, after_stream_drop, task_transition}`
-- `aex_brain_test_support::tool_fake::{ToolFake, ScriptedTool,
-  FakeInvocation, FakeQueryStatus}`
 
 ## Temporary peer types and required peer changes
 
