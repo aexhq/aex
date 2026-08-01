@@ -1,0 +1,304 @@
+---
+title: Hands stream handoff — protocol semantics, guest agent and tools, trusted control, lifecycle and metering
+description: What the Hands stream implemented on rw/hands, what it deliberately left as tracked unavailable evidence, every cross-stream type it publishes with its exact path, every change it needs from a peer, and every decision it took beyond the orchestrator conventions.
+keywords:
+  - hands
+  - microvm
+  - true idle
+  - guest agent
+  - lifecycle
+  - metering
+audience: implementation agents and maintainers
+status: accepted
+last_verified: 2026-08-01
+related:
+  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
+  - references/rust-native-rewrite-2026-07-31/plans/10-hands-runtime.md
+  - references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md
+  - references/limits-and-ceilings-decision-2026-07-30.md
+  - references/rewrite/contracts.md
+  - references/rewrite/test-architecture.md
+---
+
+# Hands stream handoff
+
+Branch `rw/hands`. Everything below is on that branch and nothing is pushed. This
+stream resumed an interrupted predecessor whose work was preserved as a
+`wip(hands)` commit; §6 records what was kept and what was discarded.
+
+## 1. What is implemented
+
+### `crates/aex-runtime-control` — the pure lifecycle and true-idle model
+
+No clock, no `tokio`, no AWS client, no I/O. That is what makes the 180000 ms
+boundary an exhaustive table rather than a timing observation.
+
+| Module | What it owns |
+| --- | --- |
+| `clock` | saturating millisecond arithmetic over the wire `Timestamp` |
+| `shape` | the five compute shapes as a `ShapeCapacity` extension over `aex_wire::types::ComputeSize`, with the golden capacity table and the `$0.155/hour` derivation |
+| `generation` | the immutable generation tuple, the eleven-state machine, the F1–F6 fence algebra, admission and settlement |
+| `idle` | `IdleAssessment`, the exact 179999/180000 ms boundary, keepalive issuance and the jittered evaluation schedule |
+| `lifecycle` | provider state mapping with no unknown-state fallback, `ProviderCall` classification, the actively enforced eight-hour lifetime, intent records and reconciliation |
+| `pressure` | the total-order pressure ranking and the high/low-water release plan |
+| `usage` | compute, memory and storage fact derivation; `SnapshotIo` as zero-dollar observability; the `UsageFactSink` port |
+| `store` | the `RuntimeActivityStore` port the regional-stores peer implements |
+
+### `crates/aex-hands-agent` — the frame codec and the guest supervisor
+
+| Module | What it owns |
+| --- | --- |
+| `wire` | the 40/56-byte preambles, the five verbs, the pinned nine-step hostile decode order, result-payload splitting and body verification |
+| `crc` | CRC-32C, checked against the published Castagnoli vectors |
+| `journal` | the on-disk operation journal, its three ordering rules and replay classification |
+| `capture` | output retention bounds, UTF-8-safe attached framing and the mirror cap |
+| `session` | the start identity table, `status`/`result`/`cancel`, the cancel ladder and the provider lifecycle hooks |
+
+### `crates/aex-hands-tools` — the guest executors
+
+`port` (`GuestFs`/`GuestProc` and their typed errors), `command` (argv bounds and
+the deny-by-default environment), `filesystem` (read, list, stat, write, the
+revision-checked edit and its four matching tiers), `observation` (search and the
+path-containment properties).
+
+### `crates/aex-brain-hands` — the Brain-side adapter
+
+`adapter` (the three materialization collapse layers, admission and settlement
+plans, transport-mode selection, `HandsError` routing) and `operation` (the
+`git`/`package_install`/`code_run` argv constructors and the resumable
+`ResultAssembly`). The frame codec is re-exported from `aex-hands-agent`, not
+reimplemented.
+
+### `crates/aex-hands-control-aws` — the trusted provider adapter
+
+`provider` (the `MicrovmControlApi` seam, `RunRequest`, `RunHookPayload`,
+`EndpointToken`, the IAM action sets) and `lifecycle` (provider answer
+classification and the deterministic transition awaits).
+
+### `crates/aex-runtime-control-aws` — the worker's composition
+
+`composition` (the suspend transition and the authoritative recount) and `queue`
+(partial-batch folding and poison quarantine).
+
+### Deployables
+
+`workers/runtime-control-worker` gains a `health` module with the
+`/internal/healthz` and `/internal/readyz` paths, named readiness dependencies,
+the two work domains and the two usage categories it may write to.
+`runtimes/hands-image` gains an `image` module with the build inputs, the package
+manifest, the NEVRA lockfile comparison, the eight per-region variants and the
+rootfs contract. `runtimes/hands-agent` keeps its validated composition root.
+
+### Live companions
+
+`tests/live/aex-live-hands-image/tests/boundary.rs`,
+`tests/live/aex-live-runtime-control-worker/tests/lifecycle.rs` and
+`tests/live/aex-live-hands-agent/tests/guest.rs` each declare their cases and
+**fail loudly** when the live lane selects them. None self-skips. Each file states
+which unit-level test already covers the off-VM half of the same control, so a
+reader can see exactly what is and is not earned.
+
+## 2. Gate output
+
+Run at the end of the stream, from the worktree root, with `CARGO_BUILD_JOBS=4`.
+
+```
+cargo fmt --all
+  (clean)
+
+cargo clippy -p aex-brain-hands -p aex-hands-control-aws -p aex-hands-agent \
+  -p aex-hands-tools -p aex-runtime-control -p aex-runtime-control-aws \
+  -p runtime-control-worker -p hands-agent -p hands-image --all-targets -- -D warnings
+  Finished `dev` profile [unoptimized + debuginfo] target(s)
+
+cargo nextest run -p aex-brain-hands -p aex-hands-control-aws -p aex-hands-agent \
+  -p aex-hands-tools -p aex-runtime-control -p aex-runtime-control-aws \
+  -p runtime-control-worker -p hands-agent -p hands-image
+  Summary: 246 tests run: 246 passed, 0 skipped
+
+cargo check --workspace --all-targets
+  Finished `dev` profile [unoptimized + debuginfo] target(s)
+
+cargo run -p aex-workspace-check
+  aex-workspace-check: <structural check passed>
+```
+
+Zero `#[ignore]`, zero environment-conditional self-skips, zero retries. The
+default nextest profile already excludes `aex-live-*` by `default-filter`, so the
+live companions are declared and unearned rather than silently green.
+
+## 3. Types published to peers
+
+| Consumer | Path | What |
+| --- | --- | --- |
+| regional stores | `aex_runtime_control::store` | `RuntimeActivityStore`, `GenerationPointer`, `GenerationPlan`, `GenerationCommit`, `LifecycleIntentPlan`, `LifecycleReceiptPlan`, `LifecycleReceipt`, `IdleProbe`, `RuntimeShard`, `PageBudget`, `RuntimeDuePage`, `RuntimeStoreError` |
+| regional stores, brain | `aex_runtime_control::generation` | `HandsGeneration`, `GenerationHead`, `GenerationState`, `Revision`, `TransportMode`, `ImagePin`, `ImageCapability`, `NetworkPolicy`, `LimitsRevision`, the F1/F4/F6 functions |
+| brain | `aex_brain_hands::adapter` | `MaterializeStep`, `AdmitPlan`, `SettlePlan`, `HandsError`, `Alpn`, `transport_mode`, `pool_size`, `max_in_flight` |
+| brain | `aex_brain_hands::operation` | `ResultAssembly`, `IncorporateError`, `ConstructedCommand`, `CodeLanguage`, `PackageManager`, `git`, `package_install`, `code_run` |
+| brain, guest | `aex_hands_agent::wire` | `RequestPreamble`, `ResponsePreamble`, `Frame`, `FrameExpectation`, `FrameError`, `Verb`, `encode_request`/`decode_request`, `encode_response`/`decode_response`, `split_result_payload`, `verify_body`, `DECODE_STEPS` |
+| usage | `aex_runtime_control::usage` | `UsageFactSink`, `UsageCategory`, `FactContext`, `HandsUsage`, `SnapshotResidence`, `SnapshotIo`, `derive_usage`, `derive_facts`, `category_of` |
+| delivery | `hands_image::image` | `ImageLock`, `PinnedPackage`, `LockVerdict`, `ImageVariant`, `PackageGroup`, `ROOTFS_CONTRACT`, `variants()` |
+| all deployables | `aex_hands_control_aws::provider` | `MicrovmControlApi`, `RunRequest`, `RunHookPayload`, `EndpointToken`, `RUNTIME_IAM_ACTIONS`, `FORBIDDEN_IAM_ACTIONS` |
+
+## 4. Changes needed from peers
+
+### Contracts (`aex-hands-protocol`)
+
+Consumed as landed; not edited by this stream. Four gaps remain, each currently
+worked around inside this stream's own crates:
+
+1. **`OperationRequest` has no `Browser` arm.** The capability gate exists and is
+   evaluated before anything spawns (`aex_hands_agent::session::requires_browser`),
+   but it can never fire until the arm exists. The match is exhaustive, so adding
+   the arm will not compile until someone decides which side of the gate it is on.
+2. **`OperationRequest::ProcessStatus` has no `from_offset`/`max_bytes`.** Reading
+   a background process's incremental output can only return a tail today, which
+   loses backlog. The guest-side paging already exists on `Journal::read_output`.
+3. **`Materialize`/`Persist` carry a bare `ContentHash`, not a presigned plan
+   URL.** The guest holds no AWS credential and cannot resolve a hash, so these two
+   arms are currently unimplementable end to end.
+4. **`OperationFailure.reason` is a free `String`.** This stream emits the stable
+   codes from plan 10 §3.7 (`capability_unavailable`, `stale_write`,
+   `guest_interrupted`, …) but nothing enforces the closed set.
+
+### Orchestrator conventions §4
+
+`rust-toolchain.toml` needs `aarch64-unknown-linux-musl` in its target list. The
+guest binary must be static so an ordinary customer `pip`, `dnf` or `ldconfig`
+cannot break the supervisor out from under its own operation.
+
+### Regional stores (plan 05)
+
+- The `runtime-activity` `HEAD` needs `transportMode`, `protocolVersion`,
+  `agentBuild`, `capabilities` and `imageArtifactDigest`; the plan 05 attribute
+  list has the first four missing.
+- Plan 05 sketches the returned intent record as `LifecycleIntent`. That name is
+  taken by the contract's own transported action union, so the record published
+  here is `aex_runtime_control::lifecycle::IntentRecord`. **No alias is published**:
+  an alias would make a glob import resolve to the wrong type, which is precisely
+  the hazard the rename exists to avoid.
+
+### Brain (plan 07)
+
+`HandsPort` does not exist yet — `aex-brain-domain` and `aex-brain-application`
+are still skeletons. `aex_brain_hands::adapter::HandsError` already distinguishes
+`GenerationLost`, `Fenced`, `Interrupted`, `CapacityQueued`,
+`CapabilityUnavailable` and `Transport`, with `retry_same_effect()` and
+`interrupts()` as the routing predicates the recovery matrix needs.
+
+### Usage + finance
+
+`derive_facts` builds `FactIdempotency.business_key` as
+`{region}/{meter}/{fact_id}`. It is deterministic and idempotent, which is the
+property that matters here, but the settlement inbox owns the grammar and may pin
+a different spelling. The worker must be bound only to the compute and storage
+category ingresses; `workers/runtime-control-worker/src/health.rs` asserts it
+holds no transfer binding at all.
+
+## 5. Boundary controls and the test that falsifies each
+
+| # | Control | Falsifying test | Status |
+| --- | --- | --- | --- |
+| B1 | No AWS execution role | `aex-hands-control-aws` `provider::tests::no_execution_role_can_be_threaded_through_a_launch` — the struct has no such field and `deny_unknown_fields` refuses one from outside | earned |
+| B1 | IMDS unreachable from the guest | `aex-live-hands-image` `b1_the_guest_reaches_no_instance_credential` | unearned, declared |
+| B2 | No AEX VPC egress or private route | `aex-hands-control-aws` `provider::tests::the_launch_request_shape_is_exact` — egress is exactly `{INTERNET_EGRESS}` or empty | earned |
+| B2 | Private endpoint unreachable | `aex-live-hands-image` `b2_the_guest_reaches_no_private_aex_route` | unearned, declared |
+| B3 | No shell ingress | `aex-hands-control-aws` `provider::tests::no_shell_ingress_action_is_in_the_runtime_role` — ingress is `HTTP_INGRESS` and no `*Shell*` action is in the runtime set | earned |
+| B4 | No managed secret in the guest | `aex-hands-control-aws` `provider::tests::the_run_hook_payload_key_set_is_closed_and_sorted` — closed sorted key set; the launch ticket has no way back in | earned |
+| B4 | No secret in the environment | `aex-hands-tools` `command::tests::the_environment_is_deny_by_default` and `no_aws_variable_ever_reaches_a_spawn_environment` | earned |
+| B4 | No canary in a real rootfs | `aex-live-hands-image` `b4_no_planted_canary_secret_appears_anywhere_in_the_guest` | unearned, declared |
+| B5 | Endpoint token never leaves trusted memory | `aex-hands-control-aws` `provider::tests::an_endpoint_token_never_renders_its_secret` — no `Display`, no `Serialize`, redacted `Debug` | earned |
+| B5 | Proxy strips the header | `aex-live-hands-image` `b5_the_guest_never_observes_the_endpoint_auth_header` | unearned, declared |
+| B6 | Guest binary has no cloud authority | `aex-hands-agent` `no_cloud_authority.rs` — scans the whole normal-and-build dependency closure from `cargo metadata`, with a self-check proving the matcher works | earned |
+| B6 | Static binary, no SDK in the image | `aex-live-hands-image` `b6_the_agent_binary_is_static_and_carries_no_sdk` | unearned, declared |
+| B7 | Whole-VM ceilings | `aex-runtime-control` `shape::tests::the_golden_shape_table_is_exact`, `lifecycle::tests::the_lifetime_margins_are_exact`, `generation::tests::admission_stops_at_the_shape_concurrency_ceiling` | earned |
+| B7 | Hostile root workloads contained | `aex-live-hands-image` `b7_hostile_root_workloads_are_contained_by_the_vm` | unearned, declared |
+| B8 | No guest-reported fact is billable | `aex-hands-agent` `no_guest_billing.rs` — a forged length and a forged digest both journal nothing, and the manifest scan proves the guest links no crate that could name a `UsageFact` | earned |
+| B8 | Brain refuses a forged terminal | `aex-brain-hands` `operation::tests::a_deliberate_length_or_digest_mismatch_journals_nothing_and_keeps_diagnostics` and `brains_own_body_ceiling_bounds_a_guest_that_declares_a_huge_body` | earned |
+| B9 | Cross-tenant isolation is the `MicroVM` boundary | `aex-live-hands-image` `b9_two_generations_cannot_see_each_other` — there is no unit-level half, because the control **is** the hypervisor | unearned, declared |
+
+Deleted rather than ported, with the reason stated in code:
+`setpriv` per-uid isolation, the `nft` IMDS firewall and the `nft` egress counter.
+`runtimes/hands-image` `FORBIDDEN_INSTALL_PACKAGES` and `FORBIDDEN_ROOTFS_PATHS`
+are the regression guards, asserted by
+`the_deleted_packages_are_absent_from_every_group` and
+`the_deleted_artefacts_have_no_path_in_the_contract`.
+
+## 6. The tool surface actually implemented
+
+| Tool | Where | State |
+| --- | --- | --- |
+| `fs_read` | `aex_hands_tools::filesystem::read_file` | line windows, byte cap, explicit truncation notice, whole-file digest |
+| `fs_list` | `filesystem::list_dir` | `lstat` only, symlinks never followed, `.git` listed never descended, entry cap |
+| `fs_stat` | `filesystem::stat_path` | `lstat`, link target reported not followed |
+| `fs_write` | `filesystem::write_file` | atomic via the port's temp-sibling rename |
+| `fs_edit` | `filesystem::edit_file` | stateless revision check, four matching tiers reported, `stale_write` with the current digest, length and window |
+| `fs_search` | `observation::search` | literal, case-insensitive and glob matching; deadline, cap, binary skip and size skip all as explicit notices |
+| `shell_exec` | `command::build_spawn` + `build_env` | argv bounds, no shell, deny-by-default environment |
+| `git` | `aex_brain_hands::operation::git` | Brain-side argv constructor, fifteen `GIT_*` variables stripped |
+| `package_install` | `operation::package_install` | four managers, 64-package ceiling |
+| `code_run` | `operation::code_run` | three languages, file-not-stdin, wall-bound ceiling |
+| `process_status` / `process_stop` | `aex_hands_agent::session` + `journal::read_output` | paging exists; the wire arm lacks `from_offset` (see §4) |
+| `browser_*` | gate only | `requires_browser` is evaluated before any spawn; the executor waits on the contract arm |
+| `Materialize` / `Persist` | not implemented | blocked on the presigned-plan contract change (§4) |
+
+`SearchPattern::Regex` is matched as a literal for now. That is **narrower** than
+the contract promises, never wider, so no caller receives a match it should not
+have; a bounded engine is a later, auditable addition.
+
+## 7. What was kept and what was discarded from the interrupted predecessor
+
+Kept, ported onto the landed contract types: the shape capacity table and its
+golden test, the true-idle boundary table and its properties, the generation state
+machine and fence algebra, the provider state mapping, the lifetime margins, the
+intent/reconciliation model and the pressure ranking.
+
+Discarded: `wire_pending.rs` in full, and the local redefinitions of `Meter`,
+`UsageFact`, `FactId`, `Attribution`, `ServiceTime`, `FactBasis`, `RuntimeReceipt`,
+`TrueIdleEvidence`, `KeepaliveLease`, `ComputeSize`, `SchemaVersion`, `Timestamp`
+and every id newtype. All of those now exist in `aex-wire`,
+`aex-internal-contracts` or `aex-hands-protocol`, and keeping a second copy would
+have made the `RuntimeActivityStore` port unusable by the regional-stores peer that
+binds to it.
+
+## 8. Decisions taken beyond the orchestrator conventions
+
+| ID | Decision | Rationale |
+| --- | --- | --- |
+| HS-01 | The binary frame codec lives in `aex_hands_agent::wire`, not in `aex-hands-protocol` | The contracts stream owns and generates the protocol crate and this stream does not edit it. The guest is the side that must survive hostile bytes, so the codec sits beside the guest supervisor; `aex-brain-hands` re-exports it, so there is one codec and not two that can disagree. The alternative — a new `aex-hands-wire` crate — would have deviated from the frozen member inventory for no gain. |
+| HS-02 | `aex_runtime_control::shape` is an extension trait over `aex_wire::types::ComputeSize`, not a second enum | One shape vocabulary workspace-wide and no mapping table to drift. |
+| HS-03 | The 180000 ms decision lives in `IdleAssessment`, which pairs the contract's `TrueIdleEvidence` with a head-held `last_busy_at` | The wire evidence carries counters only. Keeping `last_busy_at` off the wire keeps a value a guest might try to influence out of the transported snapshot. |
+| HS-04 | The durable lifecycle record is `IntentRecord`, and no `LifecycleIntent` alias is published | `aex_hands_protocol::lifecycle::LifecycleIntent` already names the transported action union. An alias would let a glob import silently resolve to the wrong type. |
+| HS-05 | Snapshot I/O is `SnapshotIo`, a type with no `Meter` and no conversion into a `UsageFact` | OD-25 says snapshot I/O is zero-dollar observability. Making it structurally unable to become a fact is stronger than a comment saying it must not. |
+| HS-06 | "No allocation before the payload bound" is proven by asserting the decoded payload is a subslice of the caller's buffer, not by counting allocations | A `#[global_allocator]` needs `unsafe impl`, which the workspace forbids. The pointer-containment assertion is strictly stronger: a decoder that copied, or that reserved from `payload_len` before checking it, could not return a pointer inside the input. |
+| HS-07 | Directory fsync is a compile-time capability, `journal::DIRECTORY_SYNC_AVAILABLE` | The guest target is POSIX and always takes the real path. On a non-POSIX development host the directory half of ordering rule 1 cannot be exercised, and the constant says so rather than letting a green run imply coverage it did not have. |
+| HS-08 | `SearchPattern::Regex` is matched as a literal until a bounded engine lands | Narrower than promised, never wider. A caller can only miss a match it should have had, never receive one it should not. |
+| HS-09 | Settlement is deliberately **not** conditional on the fence | A suspend advances the fence while an operation is open. A fence-conditional settle would strand the counter above zero and the generation would never become idle. |
+| HS-10 | `runtime-control-worker` holds no transfer-authority binding at all | Hands egress is not charged at launch (OD-26) and snapshot I/O is not a transfer fact (OD-25), so there is nothing for the binding to do. Not holding it is stronger than holding it and not using it. |
+
+## 9. Known gaps
+
+Every gap below is recorded rather than guessed at. Each is either a live probe
+this run cannot make (OD-07) or a peer change this stream cannot land.
+
+| Gap | Handling |
+| --- | --- |
+| Rust SDK identity for the `MicroVM` control API | `MicrovmControlApi` is the seam. Bind to `aws-sdk-lambdamicrovms` if published, else a narrow SigV4 client over `lambda/latest/microvm-api`. The npm client is `@aws-sdk/client-lambda-microvms`; the Rust crate's existence is unverified. No implementation of the trait is committed, so nothing silently depends on the answer. |
+| Exact managed connector ARN suffix for `HTTP_INGRESS` | `HTTP_INGRESS` is pinned as a constant. Whether it exists under the same ARN suffix as `ALL_INGRESS` needs a live `RunMicrovm` probe. Launch is blocked on the check rather than silently reverting. |
+| Accepted range of `idlePolicy` fields | `maxIdleDurationSeconds` minimum is 60; the maximum is undocumented. Setting 28800 must be confirmed or the largest accepted value pinned. |
+| `clientToken` length and charset | `aexgen-{generation}` is 37 characters with the wire id spelling, asserted by test. The API's constraint is undocumented. |
+| Run-hook payload length metric | The 4096-UTF-8-byte hold is asserted before dispatch. Whether the service counts scalars, UTF-16 units or bytes needs the documented ASCII and four-byte-scalar canary. |
+| Whether the endpoint counts h2 streams or TCP connections | Decides whether `Multiplexed` actually removes the 8/16/32/64/128 ceiling. `max_concurrent_operations` stays at `min(32, max_connections * 2)` until measured. Declared as `aex-live-hands-agent` `the_endpoint_connection_cap_counts_streams_or_connections`. |
+| Provider-authoritative per-generation transmit bytes | `RuntimeReceipt.transmit_bytes` is `Option`; `None` produces no transfer fact at all, asserted by `usage::tests::no_transfer_fact_exists_while_the_provider_exposes_no_transmit_receipt`. |
+| Provider-reported snapshot size | `SnapshotResidence.bytes` is a field, not a constant, so a provider-reported size becomes authoritative without a type change. |
+| Cross-compilation to `aarch64-unknown-linux-musl` | **Unearned.** The build host is Windows and the target is not installed. The guest code is portable and tested natively; the cross-build and the resulting static-binary assertions are declared in `aex-live-hands-image` (`b6_the_agent_binary_is_static_and_carries_no_sdk`) rather than claimed. |
+| Local `hands-image` boot harness | **Unearned.** Running the rootfs as an `aarch64` container needs a container runtime and QEMU user emulation, neither of which is available here. The image *definition*, package manifest, lockfile comparison and rootfs contract are all implemented and unit-tested; the boot itself is declared in the live companion. |
+| Browser capability qualification | The gate is implemented and fails closed. Chromium under an ARM64 `MicroVM` at a 2 GiB baseline is unproven, so the capability ships disabled. |
+| Keepalive pricing | `KEEPALIVE_MAX_MS` defaults to 3600000. The commercial values are private inputs (OD-09) and are not invented here. |
+
+## 10. What this stream did not do
+
+Nothing was deployed, published or credentialed. No `MicroVM` was launched, no
+image was pushed, no AWS API was called, and no `.env` was read. There is no shim,
+no launch-authority Lambda, no opaque launch ticket and no compatibility layer for
+the retired WebSocket protocol.

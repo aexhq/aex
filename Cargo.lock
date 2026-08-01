@@ -2919,6 +2919,8 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
