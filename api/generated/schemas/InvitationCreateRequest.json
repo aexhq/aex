@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.aex.dev/v1/InvitationCreateRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Invite a person to an organization.",
+  "properties": {
+    "email": {
+      "description": "Who to invite.",
+      "maxLength": 320,
+      "minLength": 3,
+      "type": "string"
+    },
+    "role": {
+      "$ref": "aex:schema:InvitationRole",
+      "description": "The role to grant."
+    }
+  },
+  "required": [
+    "email",
+    "role"
+  ],
+  "title": "InvitationCreateRequest",
+  "type": "object"
+}

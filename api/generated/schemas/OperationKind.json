@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/OperationKind.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Every durable operation the platform admits.",
+  "enum": [
+    "session_stop",
+    "session_persist",
+    "session_fork",
+    "workspace_discard",
+    "session_delete",
+    "credential_rebind",
+    "telemetry_export",
+    "workspace_delete"
+  ],
+  "title": "OperationKind",
+  "type": "string"
+}

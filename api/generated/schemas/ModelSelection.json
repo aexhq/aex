@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ModelSelection.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An explicit provider and model pair; a model-only override is rejected.",
+  "properties": {
+    "credentialId": {
+      "description": "Which BYOK binding to use.",
+      "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "provider_credential"
+    },
+    "model": {
+      "description": "The exact provider-native model id.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "provider": {
+      "$ref": "aex:schema:ProviderId",
+      "description": "The provider."
+    }
+  },
+  "required": [
+    "model",
+    "provider"
+  ],
+  "title": "ModelSelection",
+  "type": "object"
+}

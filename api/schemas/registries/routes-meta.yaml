@@ -1,0 +1,29 @@
+# Route-table metadata.
+#
+# `expected` pins each plane's operation count. The generator fails if either
+# drifts, so a route cannot be added or lost without the change being visible in
+# this file's diff.
+#
+# `pathParams` is the one place a path parameter's type is declared. A fragment
+# names the parameter in its template and nothing else, so two routes can never
+# disagree about what `{sessionId}` is.
+contractVersion: v1
+expected:
+  central: 27
+  regional: 117
+pathParams:
+  organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
+  workspaceId: { type: id, of: workspace, doc: "The workspace the request is scoped to." }
+  apiKeyId: { type: id, of: api_key, doc: "The API key metadata record." }
+  statementId: { type: id, of: statement, doc: "The issued statement." }
+  operationId: { type: id, of: operation, doc: "The durable operation record." }
+  sessionId: { type: id, of: session, doc: "The session the request is scoped to." }
+  runId: { type: id, of: run, doc: "The run within the session." }
+  approvalId: { type: id, of: approval, doc: "The approval within the session." }
+  uploadId: { type: id, of: upload, doc: "The staged upload." }
+  exportId: { type: id, of: export, doc: "The telemetry export." }
+  gapId: { type: id, of: telemetry_gap, doc: "The recorded telemetry gap." }
+  providerCredentialId: { type: id, of: provider_credential, doc: "The provider-credential binding." }
+  limitId: { type: limit_id, doc: "The effective workspace limit." }
+  name: { type: resource_name, doc: "The registered resource or secret name." }
+  traceId: { type: trace_id, doc: "A W3C 32-hex trace identifier." }

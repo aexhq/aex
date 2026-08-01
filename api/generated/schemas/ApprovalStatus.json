@@ -1,0 +1,13 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ApprovalStatus.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where an approval is in its lifecycle.",
+  "enum": [
+    "pending",
+    "approved",
+    "denied",
+    "expired"
+  ],
+  "title": "ApprovalStatus",
+  "type": "string"
+}

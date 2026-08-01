@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsValidation.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Exactly where the body failed validation.",
+  "properties": {
+    "pointer": {
+      "description": "RFC 6901 pointer to the offending position.",
+      "format": "json-pointer",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why that position was rejected.",
+      "maxLength": 512,
+      "minLength": 0,
+      "type": "string"
+    }
+  },
+  "required": [
+    "pointer",
+    "reason"
+  ],
+  "title": "ErrorDetailsValidation",
+  "type": "object"
+}

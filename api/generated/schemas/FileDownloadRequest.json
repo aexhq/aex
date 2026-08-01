@@ -1,0 +1,23 @@
+{
+  "$id": "https://schemas.aex.dev/v1/FileDownloadRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Mint a download grant for one persisted file.",
+  "properties": {
+    "path": {
+      "description": "The entry to download.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    },
+    "range": {
+      "$ref": "aex:schema:ByteRange",
+      "description": "An explicit bounded range."
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "title": "FileDownloadRequest",
+  "type": "object"
+}

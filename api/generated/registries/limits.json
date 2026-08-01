@@ -1,0 +1,84 @@
+{
+  "limits": [
+    {
+      "description": "Largest accepted collection page size.",
+      "id": "query.page",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest accepted encoded JSON request body.",
+      "id": "request.body_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest accepted encoded and decoded OTLP body.",
+      "id": "otlp.body_bytes",
+      "shape": "map"
+    },
+    {
+      "description": "Largest NDJSON records frame in observations and bytes.",
+      "id": "stream.frame",
+      "shape": "map"
+    },
+    {
+      "description": "Concurrently non-idle sessions in the workspace.",
+      "id": "session.concurrent",
+      "shape": "scalar"
+    },
+    {
+      "description": "Deepest subagent nesting inside one run.",
+      "id": "session.subagent_depth",
+      "shape": "scalar"
+    },
+    {
+      "description": "Concurrently admitted subagents inside one run.",
+      "id": "session.subagent_concurrency",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest single staged upload part.",
+      "id": "upload.part_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest staged upload object.",
+      "id": "upload.object_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest byte range one download grant may sign.",
+      "id": "download.range_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest registered resource value.",
+      "id": "registry.value_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Registered resource count per kind.",
+      "id": "registry.entries",
+      "shape": "map"
+    },
+    {
+      "description": "Largest accepted secret value.",
+      "id": "secret.value_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Days an admitted observation is retained.",
+      "id": "telemetry.retention_days",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest telemetry export artifact.",
+      "id": "telemetry.export_bytes",
+      "shape": "scalar"
+    },
+    {
+      "description": "Structural bounds of an observation filter.",
+      "id": "observation.filter",
+      "shape": "map"
+    }
+  ]
+}

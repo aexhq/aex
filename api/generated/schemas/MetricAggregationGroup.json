@@ -1,0 +1,34 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MetricAggregationGroup.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One aggregated group.",
+  "properties": {
+    "key": {
+      "additionalProperties": {
+        "maxLength": 256,
+        "minLength": 0,
+        "type": "string"
+      },
+      "description": "The grouping attributes.",
+      "type": "object"
+    },
+    "sampleCount": {
+      "description": "How many points contributed.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "value": {
+      "description": "The computed value.",
+      "type": "number",
+      "x-aex-float": true
+    }
+  },
+  "required": [
+    "key",
+    "sampleCount",
+    "value"
+  ],
+  "title": "MetricAggregationGroup",
+  "type": "object"
+}

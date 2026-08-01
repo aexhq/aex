@@ -11,9 +11,23 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+default = ["models", "routes"]
+# The generated request/response models.
+models = []
+# The generated route registry and the framework-free matcher.
+routes = []
+# Server-side response wrappers and the per-fragment API traits.
+server = ["models", "routes"]
+# The low-level transport-generic client.
+client = ["models", "routes"]
+# The conformance-corpus loader.
+testing = ["models", "routes"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
-uuid.workspace = true
+zeroize.workspace = true
