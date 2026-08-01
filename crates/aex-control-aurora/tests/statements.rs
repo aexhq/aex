@@ -283,6 +283,17 @@ fn timestamp_is_safely_projected(projection: &str, column: &str) -> bool {
     })
 }
 
+/// The expression list that actually leaves the database, if this statement
+/// returns rows. Insert/update column lists are not projections.
+fn returned_projection(statement: &str) -> Option<&str> {
+    if let Some((_, projection)) = statement.rsplit_once("RETURNING ") {
+        return Some(projection);
+    }
+    statement
+        .starts_with("SELECT ")
+        .then(|| statement.split(" FROM ").next().unwrap_or_default())
+}
+
 #[test]
 fn no_statement_projects_a_bare_timestamptz() {
     // A projected timestamp must go through the epoch-millis cast. The scan is
@@ -290,6 +301,9 @@ fn no_statement_projects_a_bare_timestamptz() {
     // name outside an `EXTRACT(EPOCH` and fails, because a naive timestamp
     // string is correct only while the session time zone happens to be UTC.
     for (name, statement) in statements() {
+        let Some(projection) = returned_projection(statement) else {
+            continue;
+        };
         for column in [
             "retires_at",
             "created_at",
@@ -299,7 +313,6 @@ fn no_statement_projects_a_bare_timestamptz() {
             "activated_at",
             "deleted_at",
         ] {
-            let projection = statement.split(" FROM ").next().unwrap_or_default();
             assert!(
                 timestamp_is_safely_projected(projection, column),
                 "`{name}` projects `{column}` without the epoch-millis cast"

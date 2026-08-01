@@ -140,6 +140,351 @@ INSERT INTO control.audit_event \
 VALUES (:id, 'system', 'authz.write_probe', 'user', 'denied', :request_id, \
         (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond'))";
 
+/// Finds an idempotency record by its complete replay identity.
+pub const FIND_IDEMPOTENCY: &str = "\
+SELECT intent_hash, state, response_body, operation_id \
+  FROM control.idempotency_record \
+ WHERE key_kind = :key_kind AND key_value = :key_value \
+   AND principal_kind = :principal_kind AND principal_id = :principal_id \
+   AND scope_kind = :scope_kind AND scope_id = :scope_id \
+   AND method = :method AND route = :route";
+
+/// Inserts an in-flight replay record.
+pub const INSERT_IDEMPOTENCY: &str = "\
+INSERT INTO control.idempotency_record \
+  (id, key_kind, key_value, principal_kind, principal_id, scope_kind, scope_id, \
+   method, route, intent_hash, state, created_at, expires_at) \
+VALUES (:id, :key_kind, :key_value, :principal_kind, :principal_id, :scope_kind, :scope_id, \
+        :method, :route, :intent_hash, 'in_flight', \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :expires_at_ms * INTERVAL '1 millisecond')";
+
+/// Completes an idempotency record with its replay body.
+pub const COMPLETE_IDEMPOTENCY: &str = "\
+UPDATE control.idempotency_record \
+   SET state = 'completed', response_status = :response_status, response_body = :response_body, \
+       operation_id = :operation_id, \
+       completed_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ WHERE id = :id AND state = 'in_flight'";
+
+/// Attaches the durable operation while its replay record remains in flight.
+pub const ATTACH_IDEMPOTENCY_OPERATION: &str = "\
+UPDATE control.idempotency_record SET operation_id = :operation_id \
+ WHERE id = :id AND state = 'in_flight' AND operation_id IS NULL";
+
+/// Inserts an append-only audit event.
+pub const INSERT_AUDIT: &str = "\
+INSERT INTO control.audit_event \
+  (id, organization_id, workspace_id, actor_kind, actor_id, action, resource_kind, resource_id, \
+   outcome, request_id, operation_id, detail, occurred_at) \
+VALUES (:id, :organization_id, :workspace_id, :actor_kind, :actor_id, :action, :resource_kind, \
+        :resource_id, :outcome, :request_id, :operation_id, :detail, \
+        TIMESTAMPTZ 'epoch' + :occurred_at_ms * INTERVAL '1 millisecond')";
+
+/// Inserts one transactional-outbox message.
+pub const INSERT_OUTBOX: &str = "\
+INSERT INTO control.outbox_message \
+  (id, topic, dedupe_key, group_key, payload, attempts, available_at, created_at) \
+VALUES (:id, :topic, :dedupe_key, :group_key, :payload, :attempts, \
+        TIMESTAMPTZ 'epoch' + :available_at_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :created_at_ms * INTERVAL '1 millisecond')";
+
+/// Inserts an organization.
+pub const INSERT_ORGANIZATION: &str = "\
+INSERT INTO control.organization \
+  (id, name, slug, status, revision, created_at, updated_at, created_by_user_id) \
+VALUES (:id, :name, :slug, 'active', 1, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', :created_by_user_id)";
+
+/// Inserts an active membership.
+pub const INSERT_MEMBERSHIP: &str = "\
+INSERT INTO control.membership \
+  (id, organization_id, user_id, role, status, revision, created_at, updated_at) \
+VALUES (:id, :organization_id, :user_id, :role, 'active', 1, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
+
+/// Ensures the finance account exists in the same transaction as its organization.
+pub const ENSURE_FINANCE_ACCOUNT: &str =
+    "SELECT finance.ensure_account(:organization_id) AS ensured";
+
+/// Reads one organization.
+pub const GET_ORGANIZATION: &str = "\
+SELECT o.id, o.name, o.slug, o.status, o.revision, \
+       (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, o.created_by_user_id \
+  FROM control.organization o WHERE o.id = :organization_id";
+
+/// Lists an actor's organizations.
+pub const LIST_ORGANIZATIONS: &str = "\
+SELECT o.id, o.name, o.slug, o.status, o.revision, \
+       (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, o.created_by_user_id \
+  FROM control.organization o JOIN control.membership m ON m.organization_id = o.id \
+ WHERE m.user_id = :user_id AND m.status = 'active' \
+ ORDER BY o.created_at, o.id LIMIT :limit";
+
+/// Lists active and removed memberships for one organization.
+pub const LIST_MEMBERSHIPS: &str = "\
+SELECT m.id, m.organization_id, m.user_id, m.role, m.status, m.revision, \
+       (EXTRACT(EPOCH FROM m.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM m.updated_at)*1000)::bigint AS updated_at_ms \
+  FROM control.membership m WHERE m.organization_id = :organization_id \
+ ORDER BY m.created_at, m.id LIMIT :limit";
+
+/// Inserts an invitation with no secret column.
+pub const INSERT_INVITATION: &str = "\
+INSERT INTO control.invitation \
+  (id, organization_id, email, role, status, invited_by_user_id, created_at, expires_at) \
+VALUES (:id, :organization_id, :email, :role, 'pending', :invited_by_user_id, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :expires_at_ms * INTERVAL '1 millisecond')";
+
+/// Reads one invitation for a completed replay.
+pub const GET_INVITATION: &str = "\
+SELECT i.id, i.organization_id, i.email, i.role, i.status, i.invited_by_user_id, \
+       i.accepted_user_id, \
+       (EXTRACT(EPOCH FROM i.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM i.expires_at)*1000)::bigint AS expires_at_ms, \
+       (EXTRACT(EPOCH FROM i.resolved_at)*1000)::bigint AS resolved_at_ms \
+  FROM control.invitation i WHERE i.id = :invitation_id";
+
+/// Reads invitations that a verified address may accept, under lock.
+pub const FIND_ACCEPTABLE_INVITATIONS: &str = "\
+SELECT i.id, i.organization_id, i.email, i.role, i.status, i.invited_by_user_id, \
+       i.accepted_user_id, \
+       (EXTRACT(EPOCH FROM i.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM i.expires_at)*1000)::bigint AS expires_at_ms, \
+       (EXTRACT(EPOCH FROM i.resolved_at)*1000)::bigint AS resolved_at_ms \
+  FROM control.invitation i \
+ WHERE i.email = :email AND i.status = 'pending' \
+   AND i.expires_at > TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ ORDER BY i.created_at, i.id LIMIT 100 FOR UPDATE";
+
+/// Accepts one invitation.
+pub const ACCEPT_INVITATION: &str = "\
+UPDATE control.invitation SET status = 'accepted', accepted_user_id = :user_id, \
+       resolved_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ WHERE id = :invitation_id AND status = 'pending' \
+   AND expires_at > TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond'";
+
+/// Raises an existing membership to at least the invitation's role.
+pub const FIND_MEMBERSHIP: &str = "\
+SELECT m.id, m.organization_id, m.user_id, m.role, m.status, m.revision, \
+       (EXTRACT(EPOCH FROM m.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM m.updated_at)*1000)::bigint AS updated_at_ms \
+  FROM control.membership m \
+ WHERE m.organization_id = :organization_id AND m.user_id = :user_id AND m.status = 'active'";
+
+/// Raises but never lowers an active membership.
+pub const RAISE_MEMBERSHIP_ROLE: &str = "\
+UPDATE control.membership SET role = :role, revision = revision + 1, \
+       updated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ WHERE id = :membership_id AND status = 'active' \
+   AND CASE role WHEN 'member' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END \
+       < CASE :role WHEN 'member' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END";
+
+/// Inserts the hidden central half of a workspace.
+pub const INSERT_WORKSPACE: &str = "\
+INSERT INTO control.workspace \
+  (id, organization_id, name, slug, region, status, provision_operation_id, provision_fence, \
+   revision, created_at, updated_at, created_by_user_id) \
+VALUES (:id, :organization_id, :name, :slug, :region, 'provisioning', :operation_id, 1, 1, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', :created_by_user_id)";
+
+/// Inserts a central durable operation.
+pub const INSERT_OPERATION: &str = "\
+INSERT INTO control.durable_operation \
+  (id, kind, visibility, organization_id, workspace_id, principal_kind, principal_id, scopes, \
+   status, intent_hash, fence, attempt, created_at, updated_at, due_at) \
+VALUES (:id, :kind, :visibility, :organization_id, :workspace_id, :principal_kind, :principal_id, \
+        :scopes, 'queued', :intent_hash, 1, 0, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
+
+/// Reads one workspace, including tombstones.
+pub const GET_WORKSPACE: &str = "\
+SELECT w.id, w.organization_id, w.name, w.slug, w.region, w.status, \
+       w.provision_operation_id, w.provision_fence, w.deletion_operation_id, w.deletion_fence, \
+       w.revision, (EXTRACT(EPOCH FROM w.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM w.updated_at)*1000)::bigint AS updated_at_ms, \
+       (EXTRACT(EPOCH FROM w.activated_at)*1000)::bigint AS activated_at_ms, \
+       (EXTRACT(EPOCH FROM w.deleted_at)*1000)::bigint AS deleted_at_ms, w.created_by_user_id \
+  FROM control.workspace w WHERE w.id = :workspace_id";
+
+/// Lists only publicly visible workspaces.
+pub const LIST_WORKSPACES: &str = "\
+SELECT w.id, w.organization_id, w.name, w.slug, w.region, w.status, \
+       w.provision_operation_id, w.provision_fence, w.deletion_operation_id, w.deletion_fence, \
+       w.revision, (EXTRACT(EPOCH FROM w.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM w.updated_at)*1000)::bigint AS updated_at_ms, \
+       (EXTRACT(EPOCH FROM w.activated_at)*1000)::bigint AS activated_at_ms, \
+       (EXTRACT(EPOCH FROM w.deleted_at)*1000)::bigint AS deleted_at_ms, w.created_by_user_id \
+  FROM control.workspace w JOIN control.membership m ON m.organization_id = w.organization_id \
+ WHERE m.user_id = :user_id AND m.status = 'active' AND w.status <> 'provisioning' \
+   AND (:organization_id::uuid IS NULL OR w.organization_id = :organization_id) \
+ ORDER BY w.created_at, w.id LIMIT :limit";
+
+/// Marks both workspace halves durable under the accepted fence.
+pub const FINISH_WORKSPACE_PROVISION: &str = "\
+UPDATE control.workspace SET status = 'active', provision_fence = :fence, revision = revision + 1, \
+       activated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       updated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ WHERE id = :workspace_id AND provision_operation_id = :operation_id \
+   AND status = 'provisioning' AND provision_fence <= :fence";
+
+/// Finishes a durable operation successfully under its fence.
+pub const SUCCEED_OPERATION: &str = "\
+UPDATE control.durable_operation SET status = 'succeeded', result = :result, lease_owner = NULL, \
+       lease_expires_at = NULL, terminal_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       updated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', due_at = NULL \
+ WHERE id = :operation_id AND status IN ('queued','running') AND fence = :fence";
+
+/// Accepts workspace deletion and records its public operation.
+pub const BEGIN_WORKSPACE_DELETION: &str = "\
+UPDATE control.workspace SET status = 'deleting', deletion_operation_id = :operation_id, \
+       deletion_fence = 1, revision = revision + 1, \
+       updated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ WHERE id = :workspace_id AND organization_id = :organization_id AND status = 'active'";
+
+/// Revokes every key before deletion acceptance becomes visible.
+pub const REVOKE_WORKSPACE_KEYS: &str = "\
+UPDATE control.api_key SET revoked_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       revision = revision + 1 WHERE workspace_id = :workspace_id AND revoked_at IS NULL \
+RETURNING id";
+
+/// Advances one workspace or key epoch through its kind-specific wrapper.
+pub const BUMP_WORKSPACE_EPOCH: &str =
+    "SELECT control.bump_workspace_epoch(:workspace_id) AS epoch";
+/// Advances one API-key epoch through its kind-specific wrapper.
+pub const BUMP_KEY_EPOCH: &str = "SELECT control.bump_key_epoch(:key_id) AS epoch";
+
+/// Completes a workspace tombstone under the worker's current fence.
+pub const COMPLETE_WORKSPACE_DELETION: &str = "\
+UPDATE control.workspace SET status = 'deleted', deletion_fence = :fence, revision = revision + 1, \
+       deleted_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       updated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+ WHERE id = :workspace_id AND deletion_operation_id = :operation_id \
+   AND status = 'deleting' AND deletion_fence <= :fence";
+
+/// Inserts a workspace API key.
+pub const INSERT_API_KEY: &str = "\
+INSERT INTO control.api_key \
+  (id, workspace_id, organization_id, name, scopes, region, verifier, pepper_version, \
+   created_at, revision, created_by_user_id) \
+VALUES (:id, :workspace_id, :organization_id, :name, :scopes, :region, :verifier, :pepper_version, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', 1, :created_by_user_id)";
+
+/// Reads one API key without exposing its verifier.
+pub const GET_API_KEY: &str = "\
+SELECT k.id, k.workspace_id, k.organization_id, k.name, k.scopes, k.region, k.pepper_version, \
+       (EXTRACT(EPOCH FROM k.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM k.revoked_at)*1000)::bigint AS revoked_at_ms, \
+       k.revision, k.created_by_user_id FROM control.api_key k WHERE k.id = :key_id";
+
+/// Lists a workspace's keys.
+pub const LIST_API_KEYS: &str = "\
+SELECT k.id, k.workspace_id, k.organization_id, k.name, k.scopes, k.region, k.pepper_version, \
+       (EXTRACT(EPOCH FROM k.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM k.revoked_at)*1000)::bigint AS revoked_at_ms, \
+       k.revision, k.created_by_user_id FROM control.api_key k \
+ WHERE k.workspace_id = :workspace_id ORDER BY k.created_at, k.id LIMIT :limit";
+
+/// Revokes one API key and honors `If-Match` when supplied.
+pub const REVOKE_API_KEY: &str = "\
+UPDATE control.api_key SET revoked_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       revision = revision + 1 WHERE id = :key_id AND workspace_id = :workspace_id \
+   AND revoked_at IS NULL AND (:expected_revision::bigint IS NULL OR revision = :expected_revision)";
+
+/// Reads one durable operation.
+pub const GET_OPERATION: &str = "\
+SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
+       o.status, o.intent_hash, o.fence, o.attempt, o.lease_owner, \
+       (EXTRACT(EPOCH FROM o.lease_expires_at)*1000)::bigint AS lease_expires_at_ms, \
+       (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM o.started_at)*1000)::bigint AS started_at_ms, \
+       (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, \
+       (EXTRACT(EPOCH FROM o.terminal_at)*1000)::bigint AS terminal_at_ms, \
+       (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
+  FROM control.durable_operation o WHERE o.id = :operation_id";
+
+/// Lists public operations in one organization.
+pub const LIST_OPERATIONS: &str = "\
+SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
+       o.status, o.intent_hash, o.fence, o.attempt, o.lease_owner, \
+       (EXTRACT(EPOCH FROM o.lease_expires_at)*1000)::bigint AS lease_expires_at_ms, \
+       (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM o.started_at)*1000)::bigint AS started_at_ms, \
+       (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, \
+       (EXTRACT(EPOCH FROM o.terminal_at)*1000)::bigint AS terminal_at_ms, \
+       (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
+  FROM control.durable_operation o \
+ WHERE o.organization_id = :organization_id AND o.visibility = 'public' \
+ ORDER BY o.created_at, o.id LIMIT :limit";
+
+/// Claims a bounded batch of due operations with skip-locked exclusivity.
+pub const CLAIM_DUE_OPERATIONS: &str = "\
+WITH due AS (SELECT id FROM control.durable_operation \
+ WHERE status IN ('queued','running') AND attempt < 100 \
+   AND (due_at IS NULL OR due_at <= TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
+ ORDER BY due_at NULLS FIRST, id LIMIT :batch FOR UPDATE SKIP LOCKED) \
+UPDATE control.durable_operation o SET status = 'running', fence = fence + 1, attempt = attempt + 1, \
+       lease_owner = :owner, lease_expires_at = TIMESTAMPTZ 'epoch' + :lease_expires_at_ms * INTERVAL '1 millisecond', \
+       started_at = COALESCE(started_at, TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond'), \
+       updated_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       due_at = TIMESTAMPTZ 'epoch' + :lease_expires_at_ms * INTERVAL '1 millisecond' \
+  FROM due WHERE o.id = due.id \
+RETURNING o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
+ o.status, o.intent_hash, o.fence, o.attempt, o.lease_owner, \
+ (EXTRACT(EPOCH FROM o.lease_expires_at)*1000)::bigint, \
+ (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint, (EXTRACT(EPOCH FROM o.started_at)*1000)::bigint, \
+ (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint, (EXTRACT(EPOCH FROM o.terminal_at)*1000)::bigint, \
+ (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint";
+
+/// Claims a bounded outbox batch with skip-locked exclusivity.
+pub const CLAIM_OUTBOX: &str = "\
+WITH due AS (SELECT id FROM control.outbox_message \
+ WHERE dispatched_at IS NULL AND attempts < 100 \
+   AND available_at <= TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+   AND (claimed_until IS NULL OR claimed_until <= TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
+ ORDER BY available_at, id LIMIT :batch FOR UPDATE SKIP LOCKED) \
+UPDATE control.outbox_message o SET attempts = attempts + 1, claimed_by = :owner, \
+       claimed_until = TIMESTAMPTZ 'epoch' + :lease_expires_at_ms * INTERVAL '1 millisecond' \
+  FROM due WHERE o.id = due.id \
+RETURNING o.id, o.topic, o.dedupe_key, o.group_key, o.payload, o.attempts, \
+ (EXTRACT(EPOCH FROM o.available_at)*1000)::bigint, o.claimed_by, \
+ (EXTRACT(EPOCH FROM o.claimed_until)*1000)::bigint, \
+ (EXTRACT(EPOCH FROM o.dispatched_at)*1000)::bigint, o.last_error, \
+ (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint";
+
+/// Marks one claimed message dispatched.
+pub const MARK_OUTBOX_DISPATCHED: &str = "\
+UPDATE control.outbox_message SET dispatched_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
+       claimed_by = NULL, claimed_until = NULL, last_error = NULL \
+ WHERE id = :id AND dispatched_at IS NULL";
+
+/// Releases an outbox claim after a redacted failure.
+pub const RELEASE_OUTBOX: &str = "\
+UPDATE control.outbox_message SET available_at = TIMESTAMPTZ 'epoch' + :available_at_ms * INTERVAL '1 millisecond', \
+       claimed_by = NULL, claimed_until = NULL, last_error = :last_error \
+ WHERE id = :id AND dispatched_at IS NULL";
+
+/// Sweeps bounded expired replay rows.
+pub const GC_IDEMPOTENCY: &str = "\
+DELETE FROM control.idempotency_record WHERE id IN \
+ (SELECT id FROM control.idempotency_record \
+   WHERE expires_at <= TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
+   ORDER BY expires_at, id LIMIT :batch)";
+
+/// Sweeps bounded dispatched outbox rows.
+pub const GC_OUTBOX: &str = "\
+DELETE FROM control.outbox_message WHERE id IN \
+ (SELECT id FROM control.outbox_message WHERE dispatched_at IS NOT NULL \
+   ORDER BY dispatched_at, id LIMIT :batch)";
+
 /// Every statement this crate issues, for the discipline scan.
 pub const ALL: &[(&str, &str)] = &[
     ("RESOLVE_WORKSPACE_KEY", RESOLVE_WORKSPACE_KEY),
@@ -157,4 +502,45 @@ pub const ALL: &[(&str, &str)] = &[
     ("ACTIVE_CONTROL_PEPPER", ACTIVE_CONTROL_PEPPER),
     ("READINESS_PROBE", READINESS_PROBE),
     ("AUTHZ_WRITE_PROBE", AUTHZ_WRITE_PROBE),
+    ("FIND_IDEMPOTENCY", FIND_IDEMPOTENCY),
+    ("INSERT_IDEMPOTENCY", INSERT_IDEMPOTENCY),
+    ("COMPLETE_IDEMPOTENCY", COMPLETE_IDEMPOTENCY),
+    ("ATTACH_IDEMPOTENCY_OPERATION", ATTACH_IDEMPOTENCY_OPERATION),
+    ("INSERT_AUDIT", INSERT_AUDIT),
+    ("INSERT_OUTBOX", INSERT_OUTBOX),
+    ("INSERT_ORGANIZATION", INSERT_ORGANIZATION),
+    ("INSERT_MEMBERSHIP", INSERT_MEMBERSHIP),
+    ("ENSURE_FINANCE_ACCOUNT", ENSURE_FINANCE_ACCOUNT),
+    ("GET_ORGANIZATION", GET_ORGANIZATION),
+    ("LIST_ORGANIZATIONS", LIST_ORGANIZATIONS),
+    ("LIST_MEMBERSHIPS", LIST_MEMBERSHIPS),
+    ("INSERT_INVITATION", INSERT_INVITATION),
+    ("GET_INVITATION", GET_INVITATION),
+    ("FIND_ACCEPTABLE_INVITATIONS", FIND_ACCEPTABLE_INVITATIONS),
+    ("ACCEPT_INVITATION", ACCEPT_INVITATION),
+    ("FIND_MEMBERSHIP", FIND_MEMBERSHIP),
+    ("RAISE_MEMBERSHIP_ROLE", RAISE_MEMBERSHIP_ROLE),
+    ("INSERT_WORKSPACE", INSERT_WORKSPACE),
+    ("INSERT_OPERATION", INSERT_OPERATION),
+    ("GET_WORKSPACE", GET_WORKSPACE),
+    ("LIST_WORKSPACES", LIST_WORKSPACES),
+    ("FINISH_WORKSPACE_PROVISION", FINISH_WORKSPACE_PROVISION),
+    ("SUCCEED_OPERATION", SUCCEED_OPERATION),
+    ("BEGIN_WORKSPACE_DELETION", BEGIN_WORKSPACE_DELETION),
+    ("REVOKE_WORKSPACE_KEYS", REVOKE_WORKSPACE_KEYS),
+    ("BUMP_WORKSPACE_EPOCH", BUMP_WORKSPACE_EPOCH),
+    ("BUMP_KEY_EPOCH", BUMP_KEY_EPOCH),
+    ("COMPLETE_WORKSPACE_DELETION", COMPLETE_WORKSPACE_DELETION),
+    ("INSERT_API_KEY", INSERT_API_KEY),
+    ("GET_API_KEY", GET_API_KEY),
+    ("LIST_API_KEYS", LIST_API_KEYS),
+    ("REVOKE_API_KEY", REVOKE_API_KEY),
+    ("GET_OPERATION", GET_OPERATION),
+    ("LIST_OPERATIONS", LIST_OPERATIONS),
+    ("CLAIM_DUE_OPERATIONS", CLAIM_DUE_OPERATIONS),
+    ("CLAIM_OUTBOX", CLAIM_OUTBOX),
+    ("MARK_OUTBOX_DISPATCHED", MARK_OUTBOX_DISPATCHED),
+    ("RELEASE_OUTBOX", RELEASE_OUTBOX),
+    ("GC_IDEMPOTENCY", GC_IDEMPOTENCY),
+    ("GC_OUTBOX", GC_OUTBOX),
 ];
