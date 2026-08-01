@@ -5,6 +5,8 @@
 //! shapes are, so both planes render a `201`, a `202`, a `204` and an entity tag
 //! identically without re-typing the rule.
 
+pub use crate::generated::server::{RouteGroup, *};
+
 use crate::cursor::Cursor;
 use crate::error::ApiError;
 use crate::idempotency::{IdempotencyKey, PrincipalScope};

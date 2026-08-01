@@ -26,13 +26,16 @@
 
 pub mod classify;
 pub mod emit;
+pub mod emit_client;
 pub mod emit_models;
 pub mod emit_routes;
+pub mod emit_server;
 pub mod error;
 pub mod ir;
 pub mod jcs;
 pub mod load;
 pub mod rustsrc;
+pub mod surface;
 pub mod tree;
 
 use std::path::Path;

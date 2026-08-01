@@ -283,7 +283,11 @@ impl WorkAuthority for WorkStore {
 
         let mut items = Vec::new();
         for item in output.items.unwrap_or_default() {
-            let row = Row::bind(&item, codec::WORK)?;
+            // The due index is an `INCLUDE` projection and does not carry the
+            // discriminator, so a checked bind can never succeed here. The
+            // index is sparse on `duePartition`, which only a work row writes,
+            // so the family is already established by the key.
+            let row = Row::bind_projected(&item, codec::WORK);
             items.push(DueEntry {
                 work_id: row.string("workId")?.to_owned(),
                 kind: row.enumerated("kind", keys::KINDS)?.to_owned(),

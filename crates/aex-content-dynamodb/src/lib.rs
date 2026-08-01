@@ -1,17 +1,34 @@
-//! `aex-content-dynamodb` owns the `regional-content` table adapter: descriptor rows,
-//! Merkle pages, owner/root pins and the `GC` cursor.
+//! `aex-content-dynamodb` owns the `regional-content` table adapter: body
+//! descriptors, inline ciphertext bodies, Merkle pages, root and body pins,
+//! download grants, the garbage-collection epoch and its candidates.
 //!
 //! # Invariants
 //!
-//! - a root pin is re-read under the fence immediately before a delete decision
-//! - descriptor rows are immutable once written; a change is a new descriptor
-//! - the `GC` cursor advances only over pages it has fully evaluated
+//! - **every partition is workspace scoped.** The system this replaces addressed
+//!   a body without a workspace component, so identical bytes in two tenants
+//!   shared one physical row and one deletion fate; that is a cross-tenant
+//!   equality side channel and it is fixed here, not ported (D-15)
+//! - **pins live on roots.** A binding over 10,000 files writes one pin, not
+//!   10,000, and only a loose body carries a direct pin (D-10)
+//! - a download grant holds a content reference and a pin, **never a body copy**
+//!   (D-11) — the type has nowhere to put one
+//! - the collector re-reads the partition under strong consistency immediately
+//!   before it decides, and any lost condition keeps the body
+//! - `TTL` is never a fence: every expiring row also carries the explicit
+//!   `expiresAt` the reader checks (D-24)
 //!
 //! # Not this crate's job
 //!
 //! - content bytes: `S3` and `KMS` belong to `aex-content-aws`
-//! - the ownership-closure model (`aex-content-domain`)
-//! - lifecycle scheduling or deletion policy
+//! - the ownership-closure and Merkle model (`aex-content-domain`)
+//! - lifecycle scheduling or deletion policy (`content-lifecycle-worker`)
 
+pub mod codec;
 pub mod expressions;
+pub mod keys;
 pub mod store;
+pub mod wire_pending;
+
+pub use codec::{ContentDescriptor, ContentPin, DownloadGrant, GcCandidate, GcEpoch, TreePage};
+pub use store::{ContentMetadataStore, ContentStore, Reachability};
+pub use wire_pending::{Blake3Digest, GcSweepPlan, GrantPlan, PinOwner, SealedBytes};

@@ -170,7 +170,12 @@ fn emit_schema(
 }
 
 /// The Rust rendering of a field type, recording every import it needs.
-fn rust_type(ir: &ContractIr, ty: &FieldType, imports: &mut BTreeSet<String>) -> String {
+///
+/// # Panics
+///
+/// Never: `load` rejects an identifier kind that is not in the registry, so an
+/// unresolvable [`FieldType::Id`] cannot reach an emitter.
+pub fn rust_type(ir: &ContractIr, ty: &FieldType, imports: &mut BTreeSet<String>) -> String {
     let mut import = |path: &str| {
         imports.insert(path.to_owned());
     };
