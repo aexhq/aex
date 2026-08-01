@@ -45,6 +45,7 @@ tokio.workspace = true
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
 aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }

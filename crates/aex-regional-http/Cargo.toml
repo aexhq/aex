@@ -64,6 +64,11 @@ uuid.workspace = true
 zeroize.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
+# The one assertion implementation. Both crates are pure and link no AWS SDK:
+# the envelope layout, its Ed25519 verification and the epoch vocabulary all live
+# there, and re-stating any of them here is what produced two wire forms.
+aex-control-domain = { path = "../aex-control-domain" }
+aex-identity-domain = { path = "../aex-identity-domain" }
 # The projection module's inputs: the decoded authority rows. The alternative to
 # depending on the adapters is a third view type per model, which is exactly the
 # drift a single projection exists to prevent (RS-28).

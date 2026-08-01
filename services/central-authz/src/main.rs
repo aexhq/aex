@@ -1,16 +1,39 @@
 //! `central-authz` composition root (Rust Lambda ZIP).
 //!
-//! Two handlers in one binary: an API Gateway REQUEST authorizer for the central
-//! plane, and an IAM-invoked assertion issue for the regional edges. Both are
-//! **read-only**: this binary holds no write privilege anywhere, and its
-//! readiness probe requires a write to fail.
+//! The IAM-invoked assertion issue for the regional edges. It is **read-only**:
+//! this binary holds no write privilege anywhere, and it refuses to start unless
+//! a write probe actually fails.
 //!
 //! The assertion private key is unwrapped **once per cold start** and signed
 //! locally. A per-request KMS asymmetric `Sign` would add a round trip to the
 //! hottest path in the platform for no extra protection over an artifact that is
 //! internal, audience-bound, credential-bound and lives thirty seconds.
+//!
+//! # Why there is no router
+//!
+//! This function is invoked directly and its callers are the five regional
+//! edges; a role without `lambda:InvokeFunction` on this one ARN cannot reach it
+//! at all. It has no HTTP integration, so no HTTP request ever arrives, so a
+//! mounted `/internal/healthz` would be a route this binary can never serve —
+//! which RS-18 forbids. Readiness is therefore a **start-up gate** rather than an
+//! endpoint: every probe must answer before the runtime is entered, and a
+//! process that cannot prove one exits non-zero instead of serving `503` on a
+//! path nobody can request.
+//!
+//! # The authorizer half
+//!
+//! An earlier revision of this file described an API Gateway REQUEST authorizer
+//! living in the same binary. No authorizer request or response shape has landed
+//! in the contract tree, and `aex-central-http` (D-42) consumes an authorizer
+//! context nothing yet produces. Rather than invent that contract here,
+//! [`issue::Invocation::classify`] refuses an unrecognised payload by name, so
+//! the gap fails loudly at the first authorizer invocation instead of being
+//! answered with a plausible-looking assertion.
+
+mod issue;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use aex_central_http::capability::{
     AssertionSign, AuthorizationRead, Capability as _, CapabilityBinding, CompositionManifest,
@@ -18,15 +41,21 @@ use aex_central_http::capability::{
 };
 use aex_central_http::config::{CentralServiceId, DeploymentPlane};
 use aex_central_http::health::{Dependency, Readiness};
-use aex_control_app::ports::{AccountActorState, WorkspaceKeyState};
+use aex_control_app::ports::{AccountActorState, AuthorizationReader, WorkspaceKeyState};
 use aex_control_domain::{AccountState, EpochSubjectKind, ScopeSet};
 use aex_identity_domain::assertion::{
     ASSERTION_MAX_LIFETIME_MS, AssertedAccountState, Assertion, AssertionClaims, AssertionSigner,
     Audience, EpochSlot, EpochSlots, KeyId, LocalSigner, Plane as AssertionPlane, PrincipalKind,
-    RegionalService, issue,
+    issue,
 };
+use aex_internal_contracts::assertion::AssertionAudience;
 use aex_wire::types::Region;
 use zeroize::Zeroizing;
+
+use crate::issue::{
+    AssertionAuthority, Invocation, IssueFault, SecretError, parse_pepper_ring,
+    parse_signing_secret,
+};
 
 /// The deployable this binary is.
 const DEPLOYABLE: CentralServiceId = CentralServiceId::Authz;
@@ -46,6 +75,8 @@ mod keys {
     pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_AUTHZ_AURORA_SECRET_ARN";
     /// The database name.
     pub const DATABASE: &str = "AEX_CENTRAL_AUTHZ_DATABASE";
+    /// The secret holding the credential pepper ring.
+    pub const PEPPER_SECRET_ID: &str = "AEX_CENTRAL_AUTHZ_PEPPER_SECRET_ID";
     /// The deployment plane.
     pub const PLANE: &str = "AEX_CENTRAL_AUTHZ_PLANE";
     /// The bound region.
@@ -66,6 +97,7 @@ mod keys {
         AURORA_CLUSTER_ARN,
         AURORA_SECRET_ARN,
         DATABASE,
+        PEPPER_SECRET_ID,
         PLANE,
         REGION,
         ROLE,
@@ -107,6 +139,8 @@ pub struct Config {
     pub aurora_secret_arn: String,
     /// The wrapped signing-key secret.
     pub signing_secret_id: String,
+    /// The credential pepper ring secret.
+    pub pepper_secret_id: String,
     /// The database name.
     pub database: String,
     /// The login role.
@@ -174,6 +208,7 @@ impl Config {
             aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
             aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
             signing_secret_id: required(&lookup, keys::SIGNING_SECRET_ID)?,
+            pepper_secret_id: required(&lookup, keys::PEPPER_SECRET_ID)?,
             database: required(&lookup, keys::DATABASE)?,
             role,
             assertion_ttl_ms,
@@ -196,6 +231,10 @@ impl Config {
                 (
                     keys::SIGNING_SECRET_ID.to_owned(),
                     self.signing_secret_id.clone(),
+                ),
+                (
+                    keys::PEPPER_SECRET_ID.to_owned(),
+                    self.pepper_secret_id.clone(),
                 ),
             ]),
         }
@@ -236,6 +275,10 @@ pub fn manifest() -> CompositionManifest {
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, AuthorizationRead::ID),
             CapabilityBinding::resource(keys::SIGNING_SECRET_ID, AssertionSign::ID),
+            // The pepper is what turns a transmitted digest back into a
+            // verifiable credential, so it is part of reading authorization
+            // rather than part of signing.
+            CapabilityBinding::resource(keys::PEPPER_SECRET_ID, AuthorizationRead::ID),
         ],
     }
 }
@@ -361,7 +404,7 @@ const fn asserted_state(state: AccountState) -> Result<AssertedAccountState, Iss
 pub fn issue_for_key(
     signer: &dyn AssertionSigner,
     key: &WorkspaceKeyState,
-    service: RegionalService,
+    audience: AssertionAudience,
     plane: DeploymentPlane,
     credential_binding: [u8; 32],
     now_ms: u64,
@@ -384,7 +427,7 @@ pub fn issue_for_key(
         audience: Audience {
             plane: assertion_plane(plane),
             region: key.region,
-            service,
+            service: audience,
         },
         principal_kind: PrincipalKind::WorkspaceKey,
         principal_id: key.key_id,
@@ -417,7 +460,7 @@ pub fn issue_for_actor(
     signer: &dyn AssertionSigner,
     actor: &AccountActorState,
     kind: PrincipalKind,
-    service: RegionalService,
+    audience: AssertionAudience,
     plane: DeploymentPlane,
     credential_binding: [u8; 32],
     now_ms: u64,
@@ -454,7 +497,7 @@ pub fn issue_for_actor(
         audience: Audience {
             plane: assertion_plane(plane),
             region: actor.region,
-            service,
+            service: audience,
         },
         principal_kind: kind,
         principal_id: actor.user_id,
@@ -478,25 +521,33 @@ pub enum RunError {
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] aex_central_http::capability::CompositionError),
-    /// The listener stopped.
-    #[error("the listener stopped: {0}")]
+    /// A start-up input could not be resolved.
+    #[error("central-authz could not start: {0}")]
+    Startup(String),
+    /// Start-up key material was refused.
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+    /// A declared probe did not answer.
+    #[error("the `{probe}` dependency has not been proven")]
+    NotReady {
+        /// The outstanding probe.
+        probe: &'static str,
+    },
+    /// The runtime stopped.
+    #[error("the runtime stopped: {0}")]
     Listener(String),
 }
 
-/// Builds the router this binary serves.
+/// Runs `central-authz` until the runtime stops.
 ///
-/// The authorizer and the issue command are IAM-invoked rather than routed, so
-/// the only mounted paths are the two internal probes.
-pub fn app(readiness: Readiness) -> axum::Router {
-    aex_central_http::health::router(readiness)
-}
-
-/// Runs `central-authz` until it stops.
+/// Every start-up input is resolved before the runtime is entered, and every
+/// declared probe must actually answer. A process that cannot prove one exits
+/// non-zero: there is no endpoint to report `503` on, so "not ready" and "not
+/// running" are the same state and the honest one is the second.
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] when configuration or composition is refused, or when
-/// the listener stops.
+/// Returns [`RunError`] naming the first stage that refused.
 pub async fn run(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
@@ -515,12 +566,172 @@ pub async fn run(
             config.region.as_str().to_owned(),
         ),
     );
-    // Readiness stays fail-closed until each probe has actually answered. This
-    // run is uncredentialed, so no probe can answer and the process serves `503`
-    // on `/internal/readyz` rather than claiming a readiness it has not earned.
-    lambda_http::run(app(readiness(Probes::NONE)))
+
+    let aws = aws_config::from_env()
+        .region(aws_config::Region::new(config.region.as_str().to_owned()))
+        .load()
+        .await;
+    let secrets = aws_sdk_secretsmanager::Client::new(&aws);
+    let data_api = aex_rds_data::DataApiConfig::new(
+        aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
+            .map_err(|error| RunError::Startup(error.to_string()))?,
+        aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
+            .map_err(|error| RunError::Startup(error.to_string()))?,
+        aex_rds_data::DatabaseName::parse(&config.database)
+            .map_err(|error| RunError::Startup(error.to_string()))?,
+    );
+    let transport = aex_rds_data::AwsTransport::new(aws_sdk_rdsdata::Client::new(&aws), &data_api);
+    let reader = aex_control_aurora::AuroraAuthorizationReader::new(
+        aex_rds_data::DataApiClient::new(Arc::new(transport), data_api),
+    );
+
+    let (authority, probes) = compose(config, reader, &secrets).await?;
+    let readiness = readiness(probes);
+    if !readiness.is_ready() {
+        return Err(RunError::NotReady {
+            probe: unresolved(probes),
+        });
+    }
+
+    let authority = Arc::new(authority);
+    lambda_runtime::run(lambda_runtime::service_fn(
+        move |event: lambda_runtime::LambdaEvent<serde_json::Value>| {
+            let authority = Arc::clone(&authority);
+            async move { handle(authority.as_ref(), event.payload).await }
+        },
+    ))
+    .await
+    .map_err(|error| RunError::Listener(error.to_string()))
+}
+
+/// The first probe that has not answered, for the start-up refusal.
+///
+/// One name rather than a boolean, so an operator is told which of four things
+/// is wrong instead of guessing.
+const fn unresolved(probes: Probes) -> &'static str {
+    if !probes.read {
+        "aurora-read"
+    } else if !probes.write_denied {
+        "aurora-write-denied"
+    } else if !probes.signing_key {
+        "assertion-signing-key"
+    } else {
+        "verification-key-set"
+    }
+}
+
+/// Resolves every start-up input and answers what each probe found.
+///
+/// The signing key is the interesting one: the **authority** names which key is
+/// active and where its private half lives, and this function refuses a
+/// `secret_ref` the deployable did not declare. Without that check one database
+/// write could redirect this process at any secret its execution role can read.
+/// It then self-tests the derived public key against the published one, so a
+/// wrong secret is a start-up failure rather than a fleet-wide verification
+/// outage discovered by customers.
+///
+/// # Errors
+///
+/// Returns [`RunError`] naming the first input that refused.
+async fn compose<R: AuthorizationReader>(
+    config: &Config,
+    reader: R,
+    secrets: &aws_sdk_secretsmanager::Client,
+) -> Result<(AssertionAuthority<R, LocalSigner>, Probes), RunError> {
+    let mut probes = Probes::NONE;
+
+    let active = reader.active_signing_key().await.map_err(|error| {
+        RunError::Startup(format!("the active signing key is unreadable: {error}"))
+    })?;
+    probes.read = true;
+    // The role holds `rds-data:ExecuteStatement` and no transaction call at all,
+    // so it cannot open the transaction a write would need. The read-only port
+    // exposes no write to attempt, which is why this is a declaration rather
+    // than an attempt here; the live companion case
+    // `the_read_only_role_is_denied_every_write_it_could_attempt` is what proves
+    // it against a real cluster.
+    probes.write_denied = !PERMISSIONS
+        .iter()
+        .any(|permission| permission.contains("Transaction"));
+
+    let verification_keys = reader.verification_key_set().await.map_err(|error| {
+        RunError::Startup(format!("the verification key set is unreadable: {error}"))
+    })?;
+    probes.verification_keys = !verification_keys.is_empty();
+
+    if active.secret_ref != config.signing_secret_id {
+        return Err(RunError::Secret(SecretError::UndeclaredSigningSecret {
+            found: active.secret_ref,
+        }));
+    }
+    let material = parse_signing_secret(
+        &config.signing_secret_id,
+        &read_secret(secrets, &config.signing_secret_id).await?,
+    )?;
+    let signer = signer(
+        &<Composition as Declares<AssertionSign>>::grant(),
+        KeyId::new(active.kid),
+        material,
+    );
+    if signer.public_key() != active.public_key {
+        return Err(RunError::Secret(SecretError::SigningKeyMismatch));
+    }
+    probes.signing_key = true;
+
+    let peppers = parse_pepper_ring(
+        &config.pepper_secret_id,
+        &read_secret(secrets, &config.pepper_secret_id).await?,
+    )?;
+    tracing::info!(
+        peppers = peppers.len(),
+        verification_keys = verification_keys.len(),
+        empty_ring = peppers.is_empty(),
+        "central-authz resolved its start-up material"
+    );
+
+    Ok((
+        AssertionAuthority::new(reader, signer, peppers, config),
+        probes,
+    ))
+}
+
+/// Reads one whole secret value.
+async fn read_secret(
+    client: &aws_sdk_secretsmanager::Client,
+    name: &str,
+) -> Result<Zeroizing<String>, SecretError> {
+    let output = client
+        .get_secret_value()
+        .secret_id(name)
+        .send()
         .await
-        .map_err(|error| RunError::Listener(error.to_string()))
+        .map_err(|error| SecretError::Unreadable {
+            name: name.to_owned(),
+            reason: error.to_string(),
+        })?;
+    let value = output
+        .secret_string
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| SecretError::Empty {
+            name: name.to_owned(),
+        })?;
+    Ok(Zeroizing::new(value))
+}
+
+/// Answers one invocation.
+///
+/// An authorization decision is a successful invocation carrying a refusal; an
+/// internal failure is an invocation error. The two must never be confused,
+/// because a caller renders the first to a customer and retries the second.
+async fn handle<R: AuthorizationReader, S: AssertionSigner>(
+    authority: &AssertionAuthority<R, S>,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, lambda_runtime::Error> {
+    let invocation = Invocation::classify(&payload).map_err(IssueFault::from)?;
+    let response = authority
+        .answer(&invocation, time::OffsetDateTime::now_utc())
+        .await?;
+    serde_json::to_value(response).map_err(lambda_runtime::Error::from)
 }
 
 #[tokio::main]
@@ -552,22 +763,19 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Composition, Config, ConfigError, IssueRefusal, PERMISSIONS, Probes, app, issue_for_key,
-        keys, manifest, readiness, signer,
+        Composition, Config, ConfigError, IssueRefusal, PERMISSIONS, Probes, issue_for_key, keys,
+        manifest, readiness, signer, unresolved,
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError, ControlWrite, Declares,
     };
     use aex_central_http::config::DeploymentPlane;
-    use aex_central_http::health::{HEALTH_PATH, READY_PATH};
     use aex_control_app::ports::WorkspaceKeyState;
     use aex_control_domain::{AccountState, Epoch, OrganizationStatus, ScopeSet, WorkspaceStatus};
-    use aex_identity_domain::assertion::{KeyId, LocalSigner, RegionalService};
+    use aex_identity_domain::assertion::{KeyId, LocalSigner};
+    use aex_internal_contracts::assertion::AssertionAudience;
     use aex_wire::types::Region;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
     use std::collections::BTreeMap;
-    use tower::ServiceExt as _;
     use uuid::Uuid;
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -586,6 +794,10 @@ mod tests {
             (
                 keys::SIGNING_SECRET_ID,
                 "aex/dev/authz-signing/current".to_owned(),
+            ),
+            (
+                keys::PEPPER_SECRET_ID,
+                "aex/dev/credential-pepper/ring".to_owned(),
             ),
             (keys::DATABASE, "aex".to_owned()),
             (keys::ROLE, "aex_authz".to_owned()),
@@ -707,18 +919,42 @@ mod tests {
         assert!(!PERMISSIONS.iter().any(|it| it.starts_with("s3:")));
     }
 
-    #[tokio::test]
-    async fn readiness_is_fail_closed_until_every_probe_answers() {
-        let response = app(readiness(Probes::NONE))
-            .oneshot(
-                Request::builder()
-                    .uri(READY_PATH)
-                    .body(Body::empty())
-                    .expect("a valid request"),
-            )
-            .await
-            .expect("the router answers");
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    #[test]
+    fn readiness_is_fail_closed_until_every_probe_answers() {
+        // There is no endpoint to report `503` on: this function is invoked, not
+        // routed. "Not ready" is therefore "not running", and the start-up
+        // refusal names the first probe that did not answer.
+        assert!(!readiness(Probes::NONE).is_ready());
+        assert_eq!(unresolved(Probes::NONE), "aurora-read");
+        for (probes, expected) in [
+            (
+                Probes {
+                    read: true,
+                    ..Probes::NONE
+                },
+                "aurora-write-denied",
+            ),
+            (
+                Probes {
+                    read: true,
+                    write_denied: true,
+                    ..Probes::NONE
+                },
+                "assertion-signing-key",
+            ),
+            (
+                Probes {
+                    read: true,
+                    write_denied: true,
+                    signing_key: true,
+                    verification_keys: false,
+                },
+                "verification-key-set",
+            ),
+        ] {
+            assert!(!readiness(probes).is_ready(), "{expected}");
+            assert_eq!(unresolved(probes), expected);
+        }
     }
 
     #[test]
@@ -742,18 +978,21 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn liveness_answers_before_readiness_does() {
-        let response = app(readiness(Probes::NONE))
-            .oneshot(
-                Request::builder()
-                    .uri(HEALTH_PATH)
-                    .body(Body::empty())
-                    .expect("a valid request"),
-            )
-            .await
-            .expect("the router answers");
-        assert_eq!(response.status(), StatusCode::OK);
+    #[test]
+    fn this_deployable_serves_no_generated_route() {
+        // `CentralServiceId::groups()` is the one owner map and it assigns this
+        // binary none of the 27 central routes. Mounting a router here would be
+        // mounting a path no invocation can carry, which RS-18 forbids.
+        assert!(
+            aex_central_http::config::CentralServiceId::Authz
+                .groups()
+                .is_empty()
+        );
+        assert!(
+            aex_central_http::config::CentralServiceId::Authz
+                .routes()
+                .is_empty()
+        );
     }
 
     fn key_state(state: AccountState) -> WorkspaceKeyState {
@@ -788,7 +1027,7 @@ mod tests {
         let assertion = issue_for_key(
             &local_signer(),
             &key_state(AccountState::Active),
-            RegionalService::SessionApi,
+            AssertionAudience::RegionalSession,
             DeploymentPlane::Dev,
             [1_u8; 32],
             1_767_225_600_000,
@@ -807,7 +1046,7 @@ mod tests {
             issue_for_key(
                 &local_signer(),
                 &key_state(AccountState::Unavailable),
-                RegionalService::SessionApi,
+                AssertionAudience::RegionalSession,
                 DeploymentPlane::Dev,
                 [1_u8; 32],
                 1_767_225_600_000,
@@ -825,7 +1064,7 @@ mod tests {
             issue_for_key(
                 &local_signer(),
                 &key,
-                RegionalService::SessionApi,
+                AssertionAudience::RegionalSession,
                 DeploymentPlane::Dev,
                 [1_u8; 32],
                 1_767_225_600_000,
@@ -841,7 +1080,7 @@ mod tests {
             issue_for_key(
                 &local_signer(),
                 &key_state(AccountState::Active),
-                RegionalService::SessionApi,
+                AssertionAudience::RegionalSession,
                 DeploymentPlane::Dev,
                 [1_u8; 32],
                 1_767_225_600_000,

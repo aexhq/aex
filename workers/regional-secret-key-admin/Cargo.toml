@@ -36,6 +36,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-secret-keystore-dynamodb = { path = "../../crates/aex-secret-keystore-dynamodb" }
 aex-wire = { path = "../../crates/aex-wire" }

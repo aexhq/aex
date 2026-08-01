@@ -8,24 +8,45 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use aex_wire::dispatch::{DispatchOutcome, RawRequest, RawResponse, RequestLimits};
-use aex_wire::error::{ErrorCode, WireError};
+use aex_wire::error::WireError;
 use aex_wire::routes::{Plane, RouteId, match_route, route};
 use aex_wire::server::{RouteGroup, dispatch_observations, dispatch_telemetry_lifecycle};
-use aex_wire::types::{HttpMethod, Timestamp};
+use aex_wire::types::HttpMethod;
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodFilter, on};
 
+use aex_internal_contracts::assertion::AssertionAudience;
+use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
+use aex_regional_http::edge::{RegionalEdge, SystemClock};
+use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
+
 use crate::api::{ObservationRequest, ObservationService};
-use crate::edge::{Ed25519Anchors, HttpAssertionSource, RequestAuthority};
 
 /// The two groups this deployable owns.
 pub const GROUPS: [RouteGroup; 2] = [RouteGroup::Observations, RouteGroup::TelemetryLifecycle];
 
-/// The composed edge this deployable runs.
-pub type Edge = RequestAuthority<HttpAssertionSource, Ed25519Anchors>;
+/// The audience every assertion this deployable accepts must carry.
+///
+/// One deployable, one audience: an assertion minted for another regional role
+/// must never be accepted here, and the reverse. The envelope binds it, so this
+/// is a fact the signature covers rather than a check that can be skipped.
+pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalObservation;
+
+/// The edge every regional deployable runs.
+///
+/// There is one implementation of the precedence stages in the platform and this
+/// is it. An earlier revision of this binary carried a private copy — its own
+/// trust anchors, its own signed-assertion shape and an `HttpAssertionSource`
+/// that posted the customer's credential **verbatim** to a path `central-authz`
+/// does not expose. All three are gone.
+pub type Edge = RegionalEdge<
+    LambdaAssertionSource,
+    RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
+    SystemClock,
+>;
 
 /// Everything one request needs, resolved once at start-up.
 pub struct AppState {
@@ -146,15 +167,22 @@ async fn handle(
     if !GROUPS.contains(&group) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let descriptor = route(id);
-    let Ok(now) = Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc()) else {
-        return render_error(None, &WireError::new(ErrorCode::InternalError));
-    };
-    let authorized = match state.edge.authorize(descriptor, &headers, now).await {
-        Ok(authorized) => authorized,
+    let request_id = diagnostic_id(&headers);
+    let authorized = match state
+        .edge
+        .admit(&AdmissionRequest {
+            request_id: &request_id,
+            route: id,
+            method,
+            headers: &headers,
+            body: &body,
+        })
+        .await
+    {
+        Ok(context) => context,
         Err(failure) => return render_error(None, &failure),
     };
-    let context = authorized.context.clone();
+    let context = authorized.to_wire(accept_kind(&headers));
     let request = ObservationRequest::new(Arc::clone(&state.service), authorized);
     let raw = RawRequest {
         route: id,
@@ -212,6 +240,32 @@ fn render_frames(stream: crate::ndjson::FrameStream) -> Response {
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// The diagnostic identity the edge stamps this request with.
+fn diagnostic_id(headers: &HeaderMap) -> aex_wire::types::RequestId {
+    headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| aex_wire::types::RequestId::parse(value).ok())
+        .unwrap_or_else(|| {
+            aex_wire::types::RequestId::parse(&uuid::Uuid::now_v7().to_string())
+                .expect("a UUID is always a valid request id")
+        })
+}
+
+/// Which representation the caller asked for.
+fn accept_kind(headers: &HeaderMap) -> aex_wire::server::AcceptKind {
+    match headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(value) if value.contains("application/x-ndjson") => {
+            aex_wire::server::AcceptKind::Ndjson
+        }
+        Some(value) if value.contains("application/pdf") => aex_wire::server::AcceptKind::Pdf,
+        _ => aex_wire::server::AcceptKind::Json,
+    }
 }
 
 /// Renders one failure through the single published envelope.

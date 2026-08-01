@@ -106,7 +106,7 @@ pub const FORBIDDEN: [(&str, &str); 3] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Deployment plane.
-    pub plane: String,
+    pub plane: aex_identity_domain::assertion::Plane,
     /// Pinned region.
     pub region: Region,
     /// Release digest reported by readiness.

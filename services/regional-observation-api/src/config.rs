@@ -34,10 +34,23 @@ pub const METRIC_AGGREGATE_SCAN_VAR: &str = "AEX_OBS_METRIC_AGGREGATE_SCAN";
 pub const EXPORT_CLUSTER_VAR: &str = "AEX_EXPORT_CLUSTER";
 /// Environment variable naming the cursor signing key.
 pub const CURSOR_KEY_VAR: &str = "AEX_OBS_CURSOR_KEY";
-/// Environment variable naming the central authorization endpoint.
-pub const CENTRAL_AUTHZ_URL_VAR: &str = "AEX_CENTRAL_AUTHZ_URL";
-/// Environment variable naming the assertion trust anchors.
-pub const TRUST_ANCHORS_VAR: &str = "AEX_ASSERTION_TRUST_ANCHORS";
+/// Environment variable naming the `central-authz` function this edge invokes.
+///
+/// `central-authz` is IAM-invoked, not routed. There is no URL: a role without
+/// `lambda:InvokeFunction` on this one ARN cannot resolve an assertion at all.
+pub const AUTHZ_FUNCTION_ARN_VAR: &str = "AEX_AUTHZ_FUNCTION_ARN";
+/// Environment variable naming the Parameter Store trust-anchor document.
+///
+/// The anchors are a `SecureString`-capable document read once at cold start,
+/// not an inline environment value: rotating a signing key must not require a
+/// redeploy of every regional service.
+pub const AUTHZ_VERIFY_KEYS_PARAM_VAR: &str = "AEX_AUTHZ_VERIFY_KEYS_PARAM";
+/// Environment variable naming the read-only `regional-authz-projection` table.
+///
+/// Read on **every** request and never cached. It is the only thing that makes a
+/// 30-second assertion safe: a revoked key or a paused account takes effect
+/// inside the window rather than after it.
+pub const AUTHZ_PROJECTION_TABLE_VAR: &str = "AEX_AUTHZ_PROJECTION_TABLE";
 /// Environment variable naming the assertion cache byte budget.
 pub const ASSERTION_CACHE_BYTES_VAR: &str = "AEX_ASSERTION_CACHE_BYTES";
 
@@ -55,8 +68,9 @@ pub const REQUIRED_VARS: &[&str] = &[
     METRIC_AGGREGATE_SCAN_VAR,
     EXPORT_CLUSTER_VAR,
     CURSOR_KEY_VAR,
-    CENTRAL_AUTHZ_URL_VAR,
-    TRUST_ANCHORS_VAR,
+    AUTHZ_FUNCTION_ARN_VAR,
+    AUTHZ_VERIFY_KEYS_PARAM_VAR,
+    AUTHZ_PROJECTION_TABLE_VAR,
     ASSERTION_CACHE_BYTES_VAR,
 ];
 
@@ -86,7 +100,7 @@ pub enum ConfigError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     /// Deployment plane this process belongs to.
-    pub plane: String,
+    pub plane: aex_identity_domain::assertion::Plane,
     /// Region this process is bound to.
     pub region: Region,
     /// The observation-authority table.
@@ -105,10 +119,12 @@ pub struct Config {
     pub export_cluster: String,
     /// The cursor signing key.
     pub cursor_key: Vec<u8>,
-    /// The central authorization endpoint that issues assertions.
-    pub central_authz_url: String,
-    /// The assertion trust anchors, as `key id` to raw Ed25519 public key.
-    pub trust_anchors: Vec<(String, Vec<u8>)>,
+    /// The `central-authz` function this edge invokes for an assertion.
+    pub authz_function_arn: String,
+    /// The Parameter Store name holding the assertion trust anchors.
+    pub authz_verify_keys_param: String,
+    /// The read-only regional authorization projection table.
+    pub authz_projection_table: String,
     /// The assertion cache byte budget.
     pub assertion_cache_bytes: usize,
 }
@@ -137,13 +153,16 @@ impl Config {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+        let raw_plane = required(&lookup, PLANE_VAR)?;
+        // The typed plane the assertion envelope binds, not a validated string:
+        // the plane this process reports and the plane it will accept an
+        // assertion for must be the same value.
+        let plane = aex_identity_domain::assertion::Plane::parse(&raw_plane).ok_or_else(|| {
+            ConfigError::Invalid {
                 name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
-        }
+                reason: format!("expected one of {PLANES:?}, got `{raw_plane}`"),
+            }
+        })?;
         let raw_region = required(&lookup, REGION_VAR)?;
         let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
             name: REGION_VAR,
@@ -203,11 +222,32 @@ impl Config {
             )?,
             export_cluster: required(&lookup, EXPORT_CLUSTER_VAR)?,
             cursor_key: key(&lookup, CURSOR_KEY_VAR)?,
-            central_authz_url: url(&lookup, CENTRAL_AUTHZ_URL_VAR)?,
-            trust_anchors: trust_anchors(&lookup, TRUST_ANCHORS_VAR)?,
+            authz_function_arn: required(&lookup, AUTHZ_FUNCTION_ARN_VAR)?,
+            authz_verify_keys_param: required(&lookup, AUTHZ_VERIFY_KEYS_PARAM_VAR)?,
+            authz_projection_table: required(&lookup, AUTHZ_PROJECTION_TABLE_VAR)?,
             assertion_cache_bytes: usize::try_from(positive(&lookup, ASSERTION_CACHE_BYTES_VAR)?)
                 .unwrap_or(usize::MAX),
         })
+    }
+}
+
+impl Config {
+    /// The effective body and page bounds this deployable's edge enforces.
+    ///
+    /// The edge applies the body bound before anything parses a body. This
+    /// deployable owns no OTLP route, so its bound is the AEX JSON one.
+    ///
+    /// The page bounds are its own query budget rather than a second pair of
+    /// numbers: every listing here is planned and paged by
+    /// `aex-observation-query` against exactly these, so a shared paginator that
+    /// disagreed with the planner would be the drift this projection removes.
+    #[must_use]
+    pub fn effective_limits(&self) -> aex_regional_http::context::EffectiveLimits {
+        aex_regional_http::context::EffectiveLimits {
+            json_body_bytes: aex_wire::dispatch::RequestLimits::DEFAULT_JSON_BODY_BYTES,
+            query_page_items: self.budget.max_returned as usize,
+            query_page_bytes: usize::try_from(self.budget.max_bytes_read).unwrap_or(usize::MAX),
+        }
     }
 }
 
@@ -259,21 +299,6 @@ where
     Ok(value)
 }
 
-/// Reads a required `https` endpoint.
-fn url<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    let value = required(lookup, name)?;
-    if !value.starts_with("https://") {
-        return Err(ConfigError::Invalid {
-            name,
-            reason: format!("expected an `https://` endpoint, got `{value}`"),
-        });
-    }
-    Ok(value)
-}
-
 /// Reads a base64 symmetric key of at least 32 bytes.
 fn key<F>(lookup: &F, name: &'static str) -> Result<Vec<u8>, ConfigError>
 where
@@ -300,59 +325,6 @@ where
     Ok(bytes)
 }
 
-/// Reads the assertion trust anchors.
-///
-/// The spelling is `<key id>:<base64 raw Ed25519 public key>`, comma separated.
-/// A malformed anchor fails start-up: an edge that cannot verify an assertion
-/// must never start, because it would answer every request `401` instead.
-fn trust_anchors<F>(lookup: &F, name: &'static str) -> Result<Vec<(String, Vec<u8>)>, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    use base64::Engine as _;
-
-    let raw = required(lookup, name)?;
-    let mut anchors = Vec::new();
-    for entry in raw.split(',') {
-        let entry = entry.trim();
-        let Some((key_id, material)) = entry.split_once(':') else {
-            return Err(ConfigError::Invalid {
-                name,
-                reason: format!("`{entry}` is not `<key id>:<base64 key>`"),
-            });
-        };
-        if key_id.is_empty() || key_id.len() > 128 {
-            return Err(ConfigError::Invalid {
-                name,
-                reason: format!("`{key_id}` is not a usable key id"),
-            });
-        }
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(material)
-            .map_err(|error| ConfigError::Invalid {
-                name,
-                reason: format!("key `{key_id}` is not base64: {error}"),
-            })?;
-        if bytes.len() != 32 {
-            return Err(ConfigError::Invalid {
-                name,
-                reason: format!(
-                    "key `{key_id}` is {} bytes; an Ed25519 public key is 32",
-                    bytes.len()
-                ),
-            });
-        }
-        anchors.push((key_id.to_owned(), bytes));
-    }
-    if anchors.is_empty() {
-        return Err(ConfigError::Invalid {
-            name,
-            reason: "at least one trust anchor is required".to_owned(),
-        });
-    }
-    Ok(anchors)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -360,10 +332,11 @@ mod tests {
     use aex_observation_domain::limits;
 
     use super::{
-        ASSERTION_CACHE_BYTES_VAR, CENTRAL_AUTHZ_URL_VAR, CURSOR_KEY_VAR, Config, ConfigError,
-        EXPORT_CLUSTER_VAR, INDEX_SETTLE_VAR, METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR,
-        OBSERVATION_TABLE_VAR, PLANE_VAR, QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR,
-        QUERY_SEGMENTS_VAR, REGION_VAR, REQUIRED_VARS, SESSION_TABLE_VAR, TRUST_ANCHORS_VAR,
+        ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
+        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_VAR, Config, ConfigError, EXPORT_CLUSTER_VAR,
+        INDEX_SETTLE_VAR, METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR,
+        PLANE_VAR, QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
+        REQUIRED_VARS, SESSION_TABLE_VAR,
     };
 
     fn base64(bytes: &[u8]) -> String {
@@ -388,8 +361,18 @@ mod tests {
                 "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-export".to_owned(),
             ),
             (CURSOR_KEY_VAR, base64(&[5u8; 32])),
-            (CENTRAL_AUTHZ_URL_VAR, "https://authz.aex.dev".to_owned()),
-            (TRUST_ANCHORS_VAR, format!("kid:{}", base64(&[7u8; 32]))),
+            (
+                AUTHZ_FUNCTION_ARN_VAR,
+                "arn:aws:lambda:eu-west-1:000000000000:function:central-authz".to_owned(),
+            ),
+            (
+                AUTHZ_VERIFY_KEYS_PARAM_VAR,
+                "/aex/dev/authz/verify-keys".to_owned(),
+            ),
+            (
+                AUTHZ_PROJECTION_TABLE_VAR,
+                "regional-authz-projection".to_owned(),
+            ),
             (ASSERTION_CACHE_BYTES_VAR, (1024 * 1024).to_string()),
         ])
     }
@@ -401,7 +384,7 @@ mod tests {
     #[test]
     fn accepts_a_complete_environment() {
         let config = read(&complete()).expect("a complete environment starts");
-        assert_eq!(config.plane, "dev");
+        assert_eq!(config.plane, aex_identity_domain::assertion::Plane::Dev);
         assert_eq!(config.region.as_str(), "eu-west-1");
         assert_eq!(config.index_settle_ms, limits::OBS_INDEX_SETTLE_MS);
         assert_eq!(config.budget.max_segments, limits::QUERY_MAX_SEGMENTS);

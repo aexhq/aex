@@ -10,9 +10,11 @@ use aex_identity_domain::assertion::{
     ASSERTION_BODY_LEN, ASSERTION_ENVELOPE_LEN, ASSERTION_MAGIC, ASSERTION_MAX_LIFETIME_MS,
     ASSERTION_SIGNED_LEN, AssertedAccountState, Assertion, AssertionClaims, AssertionSigner,
     Audience, EPOCH_SLOTS, EpochProjection, EpochSlot, EpochSlots, IssueError, KeyId, LocalSigner,
-    MAX_VERIFICATION_KEYS, Plane, PrincipalKind, RegionalService, VerificationInputs,
-    VerificationKey, VerificationKeySet, VerifyError, issue, signing_bytes, verify,
+    MAX_VERIFICATION_KEYS, Plane, PrincipalKind, VerificationInputs, VerificationKey,
+    VerificationKeySet, VerifyError, audience_code, audience_from_code, issue, signing_bytes,
+    verify,
 };
+use aex_internal_contracts::assertion::AssertionAudience;
 use aex_wire::types::Region;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -58,7 +60,7 @@ fn claims() -> AssertionClaims {
         audience: Audience {
             plane: Plane::Prd,
             region: Region::EuWest1,
-            service: RegionalService::SessionApi,
+            service: AssertionAudience::RegionalSession,
         },
         principal_kind: PrincipalKind::WorkspaceKey,
         principal_id: Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0001),
@@ -373,7 +375,7 @@ fn every_audience_field_is_checked() {
             ..claims.audience
         },
         Audience {
-            service: RegionalService::Otlp,
+            service: AssertionAudience::RegionalOtlp,
             ..claims.audience
         },
     ];
@@ -658,7 +660,7 @@ fn every_regional_service_and_plane_round_trips() {
     let keys = key_set(&signer);
     let projection = fresh();
     for plane in [Plane::Dev, Plane::Prd] {
-        for service in RegionalService::ALL {
+        for service in AssertionAudience::ALL {
             let mut claims = claims();
             claims.audience = Audience {
                 plane,
@@ -680,6 +682,46 @@ fn every_regional_service_and_plane_round_trips() {
             assert_eq!(decoded.audience, claims.audience);
         }
     }
+}
+
+#[test]
+fn the_audience_codec_is_total_and_is_declaration_order() {
+    // One audience vocabulary, one byte codec. The enum lives in the contract
+    // crate because both `central-authz` requests carry it; the byte lives here
+    // because every other byte of the layout does. This test is what stops the
+    // two from drifting apart.
+    for (index, audience) in AssertionAudience::ALL.into_iter().enumerate() {
+        let code = audience_code(audience);
+        assert_eq!(
+            usize::from(code),
+            index + 1,
+            "`{audience:?}` is not at its declaration position"
+        );
+        assert_eq!(audience_from_code(code), Some(audience));
+    }
+    // Nothing outside the vocabulary decodes, so a forged envelope cannot name
+    // an audience the platform does not have.
+    assert_eq!(audience_from_code(0), None);
+    for byte in 6..=u8::MAX {
+        assert_eq!(audience_from_code(byte), None, "{byte}");
+    }
+}
+
+#[test]
+fn an_issued_envelope_round_trips_through_the_internal_exchange() {
+    let signer = signer();
+    let assertion = issue(&signer, &claims()).expect("signs");
+    let issued = assertion
+        .to_issued()
+        .expect("a fixed-length envelope encodes");
+    assert_eq!(
+        Assertion::from_issued(&issued).expect("decodes"),
+        assertion,
+        "the exchange must carry the envelope unchanged"
+    );
+    // The transport is exactly the envelope: nothing beside it can be tampered
+    // with, because there is nothing beside it.
+    assert_eq!(issued.as_str(), assertion.to_base64url());
 }
 
 #[test]

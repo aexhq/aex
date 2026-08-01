@@ -610,3 +610,250 @@ $ cargo run -p aex-workspace-check
 aex-workspace-check: 133 member(s) and 140 package(s) satisfy every structural and registry rule
 aex-workspace-check: 513 unearned-evidence row(s) recorded in the source-rewrite phase
 ```
+
+## 10. Third pass — one assertion, and `central-authz` serving it
+
+Branch `rw/assertion`, off `main`. This closes the fracture both the central and
+the regional handoffs recorded from opposite sides: §4 asked contracts to stop
+re-describing the envelope's claims, and `regional-services.md` §Seams recorded
+that "two assertion vocabularies exist and neither is served. One has to go."
+
+### 10.1 The binary envelope wins; the JSON claim set is deleted
+
+Three spellings of one exchange existed. There is now one.
+
+| Removed | Where it lived |
+| --- | --- |
+| `AuthorizationAssertion`, `signing_input`, `credential_bound_signing_input`, `AssertionSignature`, `MAX_SIGNATURE_BYTES`, `MAX_KEY_ID_BYTES`, `SignedAssertionEnvelope`, `ResolvedSessionAssertion` | `aex-internal-contracts::assertion` |
+| the local `verify`, `SignedAssertion`, the `KeyVerifier` port, `Ed25519Anchors` | `aex-regional-http::{assertion,authz}` |
+| `Ed25519Anchors`, `AssertionRequest`, `AssertionResponse`, `HttpAssertionSource`, `RequestAuthority`, `Authorized` | `regional-observation-api::edge`, `regional-otlp::edge` (both files deleted) |
+| `RegionalService` | `aex-identity-domain::assertion` |
+
+The choice is not "the one with more code behind it". Four properties decided it,
+and each is a defect the JSON form had rather than a feature the binary form
+adds:
+
+- **The binding cannot be a separate field.** `AuthorizationAssertion` carried no
+  credential binding, so `SignedAssertionEnvelope` bolted one on beside the claim
+  set and `credential_bound_signing_input` was invented to cover both. A verifier
+  then had two things to get right and the covered bytes had two definitions. The
+  envelope carries the binding at body offset 36, inside the signature.
+- **The binding is stronger.** The JSON form compared a bare `SHA-256(token)`.
+  The envelope binds `SHA-256("aex/authz/binding/v1" ‖ principal_kind ‖
+  principal_id ‖ SHA-256(token))`, so an envelope minted for a browser session
+  cannot admit a workspace-key request that presents the same token digest.
+  `a_browser_session_issues_the_same_envelope_bound_to_its_own_credential`
+  asserts the two bindings differ and that each refuses the other.
+- **Revocation is attributable.** The JSON form carried three unattributed
+  counters — `keyEpoch`, `accountEpoch`, `revocationEpoch` — with no subject ids,
+  so a membership or user revocation could not be expressed at all and a
+  browser-session assertion was structurally unrevocable. The envelope carries
+  five `(kind, id, epoch)` slots and the edge checks each against the subject it
+  belongs to.
+- **Nothing signed the JSON form.** `central-authz::issue_for_key` and
+  `issue_for_actor` already produced the envelope. Choosing JSON meant writing a
+  signer and deleting 859 source and 689 test lines with a hex golden and a
+  323-byte single-bit mutation sweep; choosing the envelope meant deleting ~200
+  lines of verification and delegating.
+
+What the exchange keeps is SD-01: the request names the key by
+`(keyId, presentedDigest)` and never carries it. `ResolveSessionForWorkspace`
+**gains** `presentedDigest`, which closes the gap §4 recorded as
+"`ResolvedSessionAssertion` carries a claim set and nothing that authenticates
+it": a session assertion is now credential-bound and therefore verifiable rather
+than replayable by anyone who obtains it.
+
+`aex-internal-contracts::assertion` now owns the exchange and not the artifact:
+`AssertionAudience`, `CredentialDigest`, the two requests, `IssuedAssertion` (the
+envelope in canonical base64url) and `AssertionResponse`. `AssertionAudience` is
+also the envelope's own `service` field — `RegionalService` was a second closed
+five-member enum for the same fact — and `aex-identity-domain` keeps only the
+byte codec, with `the_audience_codec_is_total_and_is_declaration_order` pinning
+the two together. The layout is unchanged and `SIGNED_GOLDEN` still holds.
+
+### 10.2 `central-authz` serves it
+
+`run()` mounted `aex_central_http::health::router` under `lambda_http` and
+nothing else, so both issue paths were unreachable and no assertion was ever
+issued. It now resolves its start-up material, gates on every probe, and enters
+`lambda_runtime::run`.
+
+**Routes mounted: 0, and that is the served number.** `CentralServiceId::groups()`
+assigns this binary none of the 27 central routes (D-41), and it is invoked
+rather than routed — there is no HTTP integration, so an API Gateway proxy event
+never arrives. The health router is therefore **removed rather than moved**: a
+path no invocation can carry is a route that cannot be served, which RS-18
+forbids. `release/units.toml` drops `health_path` and `ready_path` for the same
+reason, one layer out. The served surface is **two invoke operations**:
+
+| Operation | Path | Answers |
+| --- | --- | --- |
+| `ResolveWorkspaceKey` | `resolve_workspace_key` → verify digest → `issue_for_key` | `AssertionResponse` |
+| `ResolveSessionForWorkspace` | `resolve_session_for_workspace` → verify digest → `issue_for_actor(UserSession)` | `AssertionResponse` |
+
+Readiness became a **start-up gate**. With no endpoint to report `503` on, "not
+ready" and "not running" are the same state and the honest one is the second;
+`unresolved()` names the first probe that did not answer.
+
+Three decisions carry weight:
+
+- **A refusal is an answer; a fault is an error.** `AssertionRefusal` has exactly
+  two arms, `not_authorized` and `account_state_unavailable`, because those are
+  the two outcomes a caller renders differently. Unknown key, wrong digest,
+  revoked, lapsed, wrong region and inactive workspace all collapse into the
+  first, so an unauthenticated caller cannot learn which by asking. An unreachable
+  store, an unheld pepper version and a malformed envelope are invocation
+  **errors**: a caller must never say "your key is invalid" when the truth is "we
+  could not tell". `an_unverifiable_credential_is_a_fault_and_never_a_refusal`
+  holds the line.
+- **The signing key is taken from the authority and refused if it is not ours.**
+  `active_signing_key()` names both the `kid` and the `secret_ref`; start-up
+  refuses a `secret_ref` the deployable did not declare, because otherwise one
+  database write could redirect this process at any secret its execution role can
+  read. It then self-tests the derived public key against the published one, so a
+  wrong secret is a start-up failure rather than a fleet-wide verification outage
+  discovered by customers.
+- **An unrecognised payload is refused by name.** The API Gateway REQUEST
+  authorizer this binary's doc comment described has no landed request or
+  response contract, and `aex-central-http` (D-42) consumes an authorizer context
+  nothing produces. Rather than invent it, `Invocation::classify` refuses the
+  event explicitly, so the gap fails loudly at the first authorizer invocation
+  instead of being answered with a plausible assertion. **This is owed work, not
+  a closed item** — see §10.5.
+
+`AEX_CENTRAL_AUTHZ_PEPPER_SECRET_ID` is new: the pepper ring is what turns a
+transmitted digest back into a verifiable credential, so it is bound to
+`authorization.read` rather than to `assertion.sign`.
+
+### 10.3 The regional edge
+
+`aex-regional-http` verifies the envelope through
+`aex_identity_domain::assertion::verify` and keeps no verification of its own.
+The `KeyVerifier` generic disappears from `RegionalEdge` entirely — the key set
+is the concrete input, not a port.
+
+The floors are **two explicit stages**, and the split is forced rather than
+stylistic. A credential names its own key and nothing else; the workspace is a
+fact only the assertion carries, and an unverified claim must not choose which
+projection row is read.
+
+| Stage | Type | Unnamed subjects answer |
+| --- | --- | --- |
+| 1 — before the placement is known | `CredentialFloors` | `Epoch::NEVER`, **deferring** to stage 2 |
+| 2 — every request, cache hit or not | `RegionalFloors` | `u64::MAX`, so the assertion is stale and refused |
+
+Stage 2's fail-closed answer is the load-bearing one: the
+`regional-authz-projection` holds nothing about a person or a membership, so an
+envelope carrying either cannot be checked here and is refused rather than
+admitted for want of a reason to refuse it.
+`an_assertion_carrying_a_subject_this_region_cannot_project_is_refused` and
+`an_assertion_for_a_person_is_refused_by_a_regional_edge` assert both halves.
+
+`PresentedCredential` parses a workspace API key at construction — it is the only
+credential a regional host accepts — which removes the three sites that each
+re-parsed it and could have disagreed.
+
+### 10.4 The two private copies are gone
+
+`regional-observation-api/src/edge.rs` and `regional-otlp/src/edge.rs` were
+byte-identical apart from one constant. Both files are **deleted**. Both
+deployables now compose `aex_regional_http::authz` and admit through
+`RegionalEdge`, so the platform has one edge rather than three.
+
+This was not only deduplication. The private edge passed
+`ProjectedEpochs::default()` and read no projection at all, so on both
+deployables a revoked key kept working for the full assertion lifetime and a
+paused account was never gated. Both now read the revocation floor and the
+placement on every request, enforce the pause gate and the declared replay
+identity, and refuse a workspace placed in another region.
+
+The behaviour the brief named as the one to remove — `HttpAssertionSource`
+sending `{ "credential": "<the customer's key>" }` to
+`/internal/authz/assertions`, a path `central-authz` does not expose — is gone
+with the file. `the_issue_path_never_names_a_plaintext_credential` and
+`neither_request_can_carry_a_credential` assert from both ends that what crosses
+the region boundary is a digest.
+
+Configuration follows the transport: `AEX_CENTRAL_AUTHZ_URL` →
+`AEX_AUTHZ_FUNCTION_ARN` (IAM-invoked, no endpoint),
+`AEX_ASSERTION_TRUST_ANCHORS` → `AEX_AUTHZ_VERIFY_KEYS_PARAM` (a rotation must
+not need a redeploy of every regional service), plus a new
+`AEX_AUTHZ_PROJECTION_TABLE`. `reqwest` and `aws-lc-rs` leave both manifests.
+
+The trust-anchor document changes shape, because the envelope's `kid` is a raw
+UUID at a fixed header offset rather than a free string:
+
+```json
+{ "schemaVersion": 1,
+  "keys": [ { "keyId": "0193f0a1-…", "publicKey": "<43 chars base64url>",
+              "notAfterMs": 1798761600000 } ] }
+```
+
+`notAfterMs` is when the region stops accepting the key, which is what retires a
+rotated-out anchor without a redeploy.
+
+### 10.5 What a peer still owes
+
+| `TODO(cross-stream)` | Owner |
+| --- | --- |
+| The API Gateway REQUEST authorizer. No authorizer request or response shape is in the contract tree, and `aex-central-http` (D-42) consumes a context nothing produces. `Invocation::classify` refuses the event by name today, so the central plane's public routes cannot authenticate until this lands. | contracts + central identity |
+| Nothing writes the `regional-authz-projection`. `RegionalFloors` is fail-closed, so an absent or half-written table refuses every request rather than admitting one. The placement row must carry the workspace's organization, which `WorkspacePlacement` already declares. | central-control-worker |
+| No regional edge presents a browser session: `PresentedCredential` accepts a workspace key only. `ResolveSessionForWorkspace` is served and credential-bound, but which surface presents an `aex_ds_` token to a regional host — and how — is decided by no accepted record. | clients + regional services |
+| `AEX_CENTRAL_AUTHZ_PEPPER_SECRET_ID` and the signing secret are plain Secrets Manager values with no rotation ceremony. The pepper ring holds up to eight versions and refuses an unknown one as a fault, so a rotation is expressible; nothing performs one. | delivery |
+| `aex-identity-domain` now depends on `aex-internal-contracts` (audience vocabulary) and `aex-regional-http` on `aex-identity-domain` and `aex-control-domain` (the envelope and the epoch vocabulary). All are pure and link no AWS SDK, which the identity module's own doc comment anticipated. Confirm the edge is acceptable. | orchestration |
+
+### 10.6 Decisions taken in this pass
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| D-50 | The 323-byte binary envelope is the one assertion wire form; the JSON claim set, both signing inputs, the detached-signature type and the signed envelope are deleted | See §10.1. The JSON form could not carry the credential binding or the account state, so the binding had to sit outside the signature and the covered bytes had two definitions. |
+| D-51 | `AssertionAudience` is the one audience vocabulary and lives in the contract crate; `aex-identity-domain` owns only the byte codec | `RegionalService` was a second closed five-member enum for the same fact, and the requests already carried the first. A totality test pins declaration order to wire order. |
+| D-52 | The invoke answer is `AssertionResponse`, with a refusal as a **successful** invocation and an internal failure as an invocation error | A caller renders the first to a customer and retries the second. Reporting a revoked key through `function_error` would have made it indistinguishable from a central outage and retried forever. |
+| D-53 | `AssertionRefusal` has exactly two arms | Unknown key, wrong digest, revoked, lapsed, wrong region and inactive workspace are one outcome to a caller and must be one outcome on the wire, or the exchange is an oracle. |
+| D-54 | `central-authz` mounts no router at all and readiness is a start-up refusal | It is invoked, not routed; no HTTP request can reach it. A mounted `/internal/healthz` would be a route it can never serve (RS-18), and `units.toml` drops the declaration for the same reason. |
+| D-55 | Start-up refuses a `secret_ref` the deployable did not declare, and self-tests the signing key against the authority's published public half | Otherwise one database write redirects the process at any secret its role can read, and a wrong key is discovered as a fleet-wide verification outage rather than a start-up failure. |
+| D-56 | `ResolveSessionForWorkspace` gains `presentedDigest` | A session assertion that named no credential could be replayed by anyone who obtained it and no verifier could tell. It is now bound the same way its sibling is, and the plaintext session token stays regional too. |
+| D-57 | The regional floors split into `CredentialFloors` and `RegionalFloors`, and an unprojectable subject answers a floor no assertion can satisfy | The workspace is a fact only the assertion carries, so the placement cannot be read before the assertion verifies — but the epoch check needs it. Stage 2 runs on every request, so nothing is admitted on stage 1 alone, and a subject this plane holds nothing about is refused rather than defaulted to "no reason to refuse found". |
+| D-58 | `PresentedCredential` parses a workspace API key at construction | It is the only credential a regional host accepts. Three sites re-parsed it; one parse cannot disagree with itself. |
+| D-59 | `plane_name` resolves to the typed `Plane` rather than a validated `String` | The plane a process reports and the plane it will accept an assertion for must be one value. `Plane::as_str` returns the verbatim spelling for the encryption context. |
+| D-60 | `regional-otlp`'s `EffectiveLimits.json_body_bytes` is the OTLP encoded ceiling | Every route it owns carries an OTLP body, so the edge's single body bound is that one. A deployable owning both classes would need the edge to take the class from the route table; this one does not, and a second knob nothing reads is a knob that will eventually be set wrong. |
+
+### 10.7 Gate output
+
+`AWS_LC_SYS_PREBUILT_NASM=1` and `CARGO_BUILD_JOBS=4` were set for every Cargo
+gate. `cargo fmt --all` still cannot run on this host (`os error 206`, §9.8); the
+equivalent gate was run as `cargo fmt -p <package>` over every touched package.
+
+```
+$ cargo clippy -p aex-internal-contracts -p aex-identity-domain -p aex-regional-http \
+    -p central-authz -p regional-observation-api -p regional-otlp \
+    -p regional-session-api -p regional-secret-api -p regional-stream \
+    -p content-lifecycle-worker -p regional-secret-key-admin -p session-operation-worker \
+    --all-targets -- -D warnings
+    Checking aex-regional-http v0.1.0 (…\crates\aex-regional-http)
+    Checking regional-otlp v0.1.0 (…\services\regional-otlp)
+    Checking content-lifecycle-worker v0.1.0 (…\workers\content-lifecycle-worker)
+    Checking regional-stream v0.1.0 (…\services\regional-stream)
+    Checking aex-internal-contracts v0.1.0 (…\crates\aex-internal-contracts)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.14s
+
+$ cargo nextest run <the twelve packages above>
+    Summary [ 210.945s] 441 tests run: 441 passed, 0 skipped
+
+$ cargo check --workspace --all-targets
+    Checking aex-regional-http v0.1.0 (…\crates\aex-regional-http)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.37s
+
+$ cargo run -p aex-workspace-check
+aex-workspace-check: 133 member(s) and 140 package(s) satisfy every structural and registry rule
+aex-workspace-check: 501 unearned-evidence row(s) recorded in the source-rewrite phase
+
+$ cargo run -p aex-workspace-check -- registry build
+aex-workspace-check: wrote release/test-registry.json and release/unearned-evidence.json
+
+$ git diff --check
+(no output)
+```
+
+No test is `#[ignore]`d, self-skipping or retried to green, and nothing in this
+pass was deployed, credentialed or run against AWS.

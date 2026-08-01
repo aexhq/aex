@@ -9,6 +9,7 @@
 //! configuration" costs an operator a bisect; one that says
 //! `AEX_SESSION_TABLE is missing` costs them nothing.
 
+use aex_identity_domain::assertion::Plane;
 use aex_wire::types::Region;
 
 /// Reads one environment variable.
@@ -174,10 +175,15 @@ pub fn bounded_usize<L: Lookup + ?Sized>(
     })
 }
 
-/// The deployment plane, kept verbatim for the encryption context and telemetry.
+/// The deployment plane.
 ///
 /// There is no third plane and no default: a defaulted plane binds a process to
 /// the wrong environment's resources without any other symptom.
+///
+/// It resolves to the typed [`Plane`] the assertion envelope binds rather than
+/// to a validated string, so the plane a process reports in telemetry and the
+/// plane it will accept an assertion for are the same value. `Plane::as_str`
+/// gives the verbatim spelling back for the encryption context.
 ///
 /// # Errors
 ///
@@ -185,16 +191,12 @@ pub fn bounded_usize<L: Lookup + ?Sized>(
 pub fn plane_name<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
-) -> Result<String, ConfigError> {
+) -> Result<Plane, ConfigError> {
     let raw = required(lookup, name)?;
-    if matches!(raw.as_str(), "dev" | "prd") {
-        Ok(raw)
-    } else {
-        Err(ConfigError::Invalid {
-            name,
-            reason: format!("expected `dev` or `prd`, got `{raw}`"),
-        })
-    }
+    Plane::parse(&raw).ok_or_else(|| ConfigError::Invalid {
+        name,
+        reason: format!("expected `dev` or `prd`, got `{raw}`"),
+    })
 }
 
 /// A region this platform is enabled in.

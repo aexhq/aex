@@ -12,7 +12,6 @@
 mod admission;
 mod authority;
 mod config;
-mod edge;
 mod mount;
 
 use std::sync::Arc;
@@ -25,8 +24,7 @@ use aex_wire::dispatch::RequestLimits;
 use crate::admission::{CustodyManifests, OtlpService};
 use crate::authority::AdmissionAuthority;
 use crate::config::{Config, ConfigError, REQUIRED_VARS};
-use crate::edge::{AUDIENCE, Ed25519Anchors, HttpAssertionSource, RequestAuthority};
-use crate::mount::AppState;
+use crate::mount::{AUDIENCE, AppState};
 
 /// The capability grant this deployable is allowed to hold.
 pub const ROLE: Role = Role::Otlp;
@@ -139,23 +137,40 @@ pub async fn run(config: Config) -> Result<(), RunError> {
 
     compose(ROLE.granted(), &passed)?;
 
-    let source = HttpAssertionSource::new(&config.central_authz_url, AUDIENCE, config.region)
+    // The one shared edge, over the one shared exchange. `central-authz` is
+    // IAM-invoked rather than routed, so this is a direct invoke and the caller's
+    // execution role is the authentication; the credential is named by
+    // `(keyId, presentedDigest)` and never sent.
+    let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
+    let anchors = parameters
+        .trust_anchors(&config.authz_verify_keys_param)
+        .await
         .map_err(|error| RunError::Edge {
             reason: error.to_string(),
         })?;
-    let anchors = Ed25519Anchors::new(config.trust_anchors.clone());
-    if anchors.is_empty() {
-        return Err(RunError::Edge {
-            reason: "no assertion trust anchor resolved".to_owned(),
-        });
-    }
-    tracing::info!(anchors = anchors.len(), "assertion trust anchors resolved");
-    let edge = RequestAuthority::new(
-        source,
+    let edge = aex_regional_http::edge::RegionalEdge::new(
+        aex_regional_http::authz::LambdaAssertionSource::new(
+            aws_sdk_lambda::Client::new(&aws),
+            config.authz_function_arn.clone(),
+            AUDIENCE,
+            config.region,
+        ),
         anchors,
-        AUDIENCE,
-        config.region,
-        config.assertion_cache_bytes,
+        aex_regional_http::authz::RegionalProjection::new(
+            aex_session_dynamodb::projection::ProjectionReader::new(
+                dynamodb.clone(),
+                config.authz_projection_table.clone(),
+            ),
+            config.region,
+        ),
+        aex_regional_http::edge::SystemClock,
+        aex_regional_http::edge::EdgeBinding {
+            plane: config.plane,
+            audience: AUDIENCE,
+            region: config.region,
+            cache_budget_bytes: config.assertion_cache_bytes,
+            limits: config.effective_limits(),
+        },
     )
     .map_err(|error| RunError::Edge {
         reason: error.to_string(),
@@ -246,7 +261,7 @@ async fn main() -> std::process::ExitCode {
         )
         .with(
             aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
+            config.plane.as_str().to_owned(),
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,

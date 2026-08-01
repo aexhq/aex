@@ -32,6 +32,10 @@ live_suite = "pure domain crate; Area 9's registry declares no independent live 
 
 [dependencies]
 aex-control-domain = { path = "../aex-control-domain" }
+# The audience vocabulary and the issued-envelope transport. There is one
+# audience enum in the platform and it is the one the two `central-authz`
+# requests carry; this crate owns the byte that encodes it, not the enum.
+aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-wire = { path = "../aex-wire" }
 ed25519-dalek.workspace = true
 hmac.workspace = true

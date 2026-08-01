@@ -32,7 +32,7 @@ pub mod router;
 pub mod stream;
 
 pub use authz::{
-    Ed25519Anchors, LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
+    LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError, parse_trust_anchors,
 };
 pub use capability::{CompositionManifest, admit};
 pub use config::{ConfigError, Environment, Lookup};

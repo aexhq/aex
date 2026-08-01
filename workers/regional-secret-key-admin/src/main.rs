@@ -120,7 +120,7 @@ fn run(
         )
         .with(
             aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
+            config.plane.as_str().to_owned(),
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,

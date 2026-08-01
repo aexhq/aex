@@ -57,7 +57,7 @@ fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
 #[test]
 fn a_complete_environment_is_accepted() {
     let config = read(&complete()).expect("the complete environment is accepted");
-    assert_eq!(config.plane, "dev");
+    assert_eq!(config.plane, aex_identity_domain::assertion::Plane::Dev);
     assert_eq!(config.region.as_str(), "eu-west-1");
     assert_eq!(config.secret_kms_key.account, "000000000000");
     assert_eq!(config.crypto_partition(), "dev:eu-west-1");
