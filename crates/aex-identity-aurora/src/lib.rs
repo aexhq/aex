@@ -1,16 +1,21 @@
-//! `aex-identity-aurora` owns the identity `PostgreSQL` adapter: schema-bound statements,
-//! transactions and role denials over the Aurora Data API.
+//! `aex-identity-aurora` is the schema-owned SQL for the identity plane.
 //!
-//! # Invariants
+//! # Invariants asserted by this crate's own suite
 //!
-//! - every write runs inside one transaction that either commits or leaves no trace
-//! - a constraint violation maps to a typed domain error, never a raw driver string
-//! - the adapter uses only the identity schema; control and finance `DML` is denied by role
+//! - every statement is a `const &str` in [`sql`]; no format-string SQL and no
+//!   identifier interpolation
+//! - a single-use credential is consumed by a **conditional** `UPDATE` whose
+//!   predicate repeats the domain guard, so exactly one of N concurrent
+//!   consumers wins without the application having to arbitrate
+//! - resolving a session performs no write at all, which the read-only role
+//!   proves by holding no write privilege
 //!
 //! # Not this crate's job
 //!
-//! - identity policy or state transitions (`aex-identity-domain`)
-//! - schema migration or grants (`central-schema-admin`)
-//! - `HTTP` handling or authorization decisions
+//! - domain policy (`aex-identity-domain`)
+//! - retry policy: `aex-rds-data` classifies, the application decides
 
-pub mod store;
+pub mod error;
+pub mod sql;
+
+pub use error::map_store_error;

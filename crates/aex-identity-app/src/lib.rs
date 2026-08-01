@@ -1,18 +1,31 @@
-//! `aex-identity-app` owns identity use cases and the ports they need: command handling,
-//! idempotency, authorization and error mapping.
+//! `aex-identity-app` orchestrates the identity ceremonies over coarse ports.
 //!
 //! # Invariants
 //!
-//! - a command either commits once or fails closed; there is no partial identity mutation
-//! - an unknown downstream outcome is recorded as unknown and reconciled, never inferred from
-//!   a timeout
-//! - every port is an interface owned here, not a concrete client
+//! - one port method equals one atomic unit of work, so the adapter owns the
+//!   transaction and no unit-of-work handle crosses the port boundary
+//! - a [`TxOutcome::Unknown`] becomes a typed retryable error carrying the
+//!   preassigned identity; it is never retried under a *new* identity, because
+//!   that is how one lost response becomes two credentials
+//! - every use case validates with the domain, calls exactly one store method,
+//!   and maps the result; there is no second decision point
 //!
 //! # Not this crate's job
 //!
-//! - concrete vendor clients, connection pools or global singletons
-//! - the identity state machine itself (`aex-identity-domain`)
-//! - transport framing or route definitions
+//! - SQL, transactions or retry policy (`aex-identity-aurora`)
+//! - HTTP, status codes or headers (`aex-central-http`)
+//! - reading a clock, an RNG or the environment: [`ports::Clock`],
+//!   [`ports::IdFactory`] and `SecretRng` are injected
 
 pub mod ports;
 pub mod use_cases;
+
+pub use ports::{
+    Clock, IdFactory, IdentityStore, PepperKeystore, PepperPurpose, ReconcileIdentity,
+    RequestContext, RequestId, StoreError, TxOutcome, UnknownCommit,
+};
+pub use use_cases::{
+    ApproveDevice, CloseDashboardSession, ConsumeEmailLink, DenyDevice, DisableUser, IdentityError,
+    IssueEmailLink, OauthProfile, OpenDashboardSession, PollDevice, ResolveActor,
+    ResolveOauthSignIn, RevokeAccountToken, StartDeviceAuthorization, UnlinkProvider,
+};
