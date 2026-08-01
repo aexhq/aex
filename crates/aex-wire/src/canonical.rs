@@ -79,10 +79,16 @@ pub fn to_jcs_string<T: Serialize>(value: &T) -> Result<String, CanonicalError> 
     })
 }
 
-/// Rewrites integral floats as integers and rejects out-of-range numbers.
+/// Rewrites integral floats as integers, rejects out-of-range numbers, and puts
+/// every object's members into UTF-8 byte order.
 ///
-/// `serde_json::Map` is a `BTreeMap` in this workspace, so member ordering is
-/// already the UTF-8 byte order JCS requires and needs no separate pass.
+/// The ordering pass is **not** redundant. `serde_json::Map` is a `BTreeMap`
+/// only while the `preserve_order` feature is off, and that feature is not ours
+/// to control: `aws-smithy-http-client` enables it, so every binary linking any
+/// AWS SDK crate gets an insertion-ordered `IndexMap` instead. Relying on the
+/// map type made canonical bytes depend on which crates happened to share a
+/// build, which silently changes every digest, idempotency key and signature.
+/// Sorting here is correct under both map types.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -119,6 +125,15 @@ fn normalize(value: &mut Value, pointer: &JsonPointer) -> Result<(), CanonicalEr
         Value::Object(members) => {
             for (key, member) in members.iter_mut() {
                 normalize(member, &pointer.child(key))?;
+            }
+            // Rebuild in UTF-8 byte order. Under `BTreeMap` this is already the
+            // order and the rebuild is a no-op; under `IndexMap` the insertion
+            // order becomes the emitted order, which is what makes the two
+            // builds agree.
+            let mut sorted: Vec<(String, Value)> = core::mem::take(members).into_iter().collect();
+            sorted.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+            for (key, member) in sorted {
+                members.insert(key, member);
             }
             Ok(())
         }

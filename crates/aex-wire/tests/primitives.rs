@@ -171,6 +171,29 @@ fn jcs_matches_rfc_8785_ordering_and_number_rules() {
 }
 
 #[test]
+fn jcs_ordering_does_not_depend_on_the_serde_json_map_type() {
+    // `serde_json::Map` is a `BTreeMap` only while `preserve_order` is off, and
+    // `aws-smithy-http-client` turns it on — so any binary linking an AWS SDK
+    // crate canonicalises with an insertion-ordered `IndexMap`. Building the
+    // object by inserting out of order is what makes this test able to fail;
+    // parsing a sorted literal cannot distinguish the two map types.
+    let mut object = serde_json::Map::new();
+    object.insert("z".to_owned(), serde_json::Value::from(1));
+    object.insert("a".to_owned(), serde_json::Value::from(2));
+    object.insert("m".to_owned(), serde_json::Value::from(3));
+    let mut nested = serde_json::Map::new();
+    nested.insert("y".to_owned(), serde_json::Value::from(4));
+    nested.insert("b".to_owned(), serde_json::Value::from(5));
+    object.insert("n".to_owned(), serde_json::Value::Object(nested));
+
+    let bytes = to_jcs_bytes(&serde_json::Value::Object(object)).expect("jcs");
+    assert_eq!(
+        String::from_utf8(bytes).expect("utf8"),
+        r#"{"a":2,"m":3,"n":{"b":5,"y":4},"z":1}"#
+    );
+}
+
+#[test]
 fn jcs_rejects_a_non_finite_or_fractional_ambiguous_number() {
     let value: serde_json::Value = serde_json::from_str("{\"x\":1.5}").expect("input");
     assert!(to_jcs_bytes(&value).is_ok());
