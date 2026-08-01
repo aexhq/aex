@@ -63,6 +63,31 @@ pub enum QueryError {
         /// What the row says it is.
         actual: String,
     },
+    /// The read did not reach the projection, or the service refused it for a
+    /// reason that may not recur.
+    ///
+    /// Every call this crate makes is a read, so there is no ambiguous-commit
+    /// arm here: nothing was written, whatever the outcome.
+    #[error("the usage projection is unavailable: {reason}")]
+    Unavailable {
+        /// The service's own rendering, or why the request never arrived.
+        reason: String,
+    },
+    /// The caller's role is denied the read.
+    ///
+    /// Separated from [`QueryError::Unavailable`] because a denial never
+    /// improves by being retried: it is a deployment fact, not a transient one.
+    #[error("the caller is denied the usage projection read")]
+    Denied,
+    /// The configured table does not exist.
+    ///
+    /// This is a composition failure and never a customer `404`; an empty
+    /// projection answers with no rows, not with a missing table.
+    #[error("`{table}` does not exist; the composition is misconfigured")]
+    Misconfigured {
+        /// The physical table the read was issued against.
+        table: String,
+    },
 }
 
 /// How a page is bucketed.
