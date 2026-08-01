@@ -371,12 +371,6 @@ pub fn declared<T>(id: RouteId, outcome: WireResult<T>) -> WireResult<T> {
             if descriptor.declares(failure.code) {
                 return Err(failure);
             }
-            debug_assert!(
-                false,
-                "`{}` answered `{}`, which it does not declare",
-                descriptor.operation_id,
-                failure.code.as_str()
-            );
             Err(
                 WireError::new(ErrorCode::InternalError).with_message(format!(
                     "`{}` answered `{}`, which it does not declare",

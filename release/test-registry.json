@@ -2110,7 +2110,8 @@
         "targets": {
           "errors_and_routes": "unit",
           "ids": "unit",
-          "primitives": "unit"
+          "primitives": "unit",
+          "server_and_client": "unit"
         },
         "not_applicable": {
           "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
@@ -4115,7 +4116,8 @@
         "scenarios": [],
         "targets": {
           "canonical_agreement": "unit",
-          "determinism": "unit"
+          "determinism": "unit",
+          "surface": "unit"
         },
         "not_applicable": {
           "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane"
