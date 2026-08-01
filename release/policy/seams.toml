@@ -1,0 +1,238 @@
+# The closed external-seam registry.
+#
+# A seam is a boundary where AEX code meets a system it does not own: an AWS
+# service, a model provider, a payment processor, an MCP server, the public
+# internet, a package registry. Every package declares the seams it touches by
+# id; an id absent from this file fails `aex-unknown-seam`, and a seam with
+# `requires_live = true` that no live companion claims fails
+# `aex-unclaimed-seam`.
+#
+# `proves_locally` says how much of the seam the pinned local substrate
+# (`release/policy/test-images.toml`) can establish:
+#
+#   "none"    - nothing about this seam is provable without the real service;
+#   "partial" - request/expression shape and envelope limits are provable, the
+#               listed `live_only` behaviours are not;
+#   "full"    - the local engine is the same implementation as production.
+#
+# No launch seam is "full": every row below requires live evidence, which
+# `OD-07` forbids earning in this rewrite. Those rows are emitted to
+# `release/unearned-evidence.json` instead of being silently absent.
+
+schema = "aex.seams.v1"
+
+# --- DynamoDB ---------------------------------------------------------------
+
+[seam."aws.dynamodb.transact_write"]
+proves_locally = "partial"
+requires_live = true
+local = "expression syntax, the 100-action/4 MiB envelope, cancellation-reason vectors"
+live_only = "cross-table cancellation-reason ordering and TransactionConflict under real contention"
+
+[seam."aws.dynamodb.condition"]
+proves_locally = "partial"
+requires_live = true
+local = "single-item conditional writes and their failure shapes"
+live_only = "conditional-write behaviour under adaptive capacity and hot-partition throttling"
+
+[seam."aws.dynamodb.streams"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "shard behaviour, ordering, iterator age, and the EventBridge Pipe to SQS hint path"
+
+[seam."aws.dynamodb.ttl"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "TTL actually deleting within 48 h, and the proof that no fence depends on it having fired"
+
+[seam."aws.dynamodb.throughput"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "adaptive capacity, hot-partition throttling, and the workspace-axis GSI write ceiling"
+
+[seam."aws.dynamodb.pitr_restore"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "point-in-time recovery, restore into a new table, and deletion-denial replay"
+
+# --- S3 ---------------------------------------------------------------------
+
+[seam."aws.s3.conditional_put"]
+proves_locally = "partial"
+requires_live = true
+local = "MinIO If-None-Match conditional create"
+live_only = "bucket-policy denial of an unconditional put"
+
+[seam."aws.s3.multipart"]
+proves_locally = "partial"
+requires_live = true
+local = "create/upload/list/complete/abort and resume"
+live_only = "AWS checksum semantics on CompleteMultipartUpload (MpuObjectSize, CRC64NVME, EntityTooSmall)"
+
+[seam."aws.s3.unversioned_delete"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "the deny-delete NotPrincipal shape and conditional unversioned-key deletion"
+
+[seam."aws.s3.presigned_expiry"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "presigned-URL expiry and the s3:signatureAge condition (OD-17)"
+
+[seam."aws.s3.sse_kms"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "SSE-KMS, Bucket Keys and the KMS request-rate profile"
+
+# --- KMS and Aurora ---------------------------------------------------------
+
+[seam."aws.kms.encryption_context"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "encryption-context mismatch denial and cross-workspace denial (OD-18)"
+
+[seam."aws.kms.branch_key_rotation"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "branch-key rotation, cache expiry and re-wrap under a rotated generation"
+
+[seam."aws.rds_data.transaction"]
+proves_locally = "partial"
+requires_live = true
+local = "protocol double only; no local Data API implementation exists"
+live_only = "statement/transaction limits, the 1 MiB result and 64 KiB field caps, cold resume, commit ambiguity, throttling"
+
+[seam."aws.aurora.serverless_v2"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "ACU scaling, cold resume, failover, hot-account settlement contention and recovery"
+
+# --- SQS, ECS, Lambda, IAM, ALB, CloudWatch ---------------------------------
+
+[seam."aws.sqs.fifo"]
+proves_locally = "partial"
+requires_live = true
+local = "queue/message protocol shape, FIFO group ordering shape, partial-batch response shape"
+live_only = "the deduplication window, real visibility-timeout timing and DLQ behaviour at scale"
+
+[seam."aws.sqs.redrive"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "redrive at maxReceiveCount and partial-batch failure at scale"
+
+[seam."aws.ecs.run_task"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "RunTask/StopTask lifecycle, the 31-50 s task-start interval, drain and deregistration"
+
+[seam."aws.lambda.microvm"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "MicroVM launch/suspend/resume/terminate timings, the regional pool, and the per-second API rate limits"
+
+[seam."aws.iam.denial"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "every allow/deny matrix from each deployed role, including the negative cases"
+
+[seam."aws.alb.framing"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "ALB idle timeout, header casing and body framing parity with lambda_http"
+
+[seam."aws.cloudwatch.export"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "CloudWatch and OTel export behaviour under drop and backpressure"
+
+# --- Model providers (direct BYOK, six modules, OD/A11-3) -------------------
+
+[seam."provider.openai.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
+live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+
+[seam."provider.anthropic.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
+live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+
+[seam."provider.deepseek.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
+live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+
+[seam."provider.zai.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
+live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+
+[seam."provider.moonshotai.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
+live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+
+[seam."provider.google.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
+live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+
+# --- Payments, MCP, egress, registries, guest, hosting ----------------------
+
+[seam."stripe.test_mode.webhook"]
+proves_locally = "partial"
+requires_live = true
+local = "stripe-mock request/response protocol shape and API-version pinning"
+live_only = "signature verification against a real secret, idempotency replay, disputes/refunds, redelivery"
+
+[seam."mcp.streamable_http"]
+proves_locally = "partial"
+requires_live = true
+local = "in-process conformance server for protocol revision 2026-07-28 (OD-20)"
+live_only = "real MCP servers: the Tasks extension, disconnect recovery and reconnect"
+
+[seam."net.public_egress"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "DNS rebind windows, redirect chains and real TLS against the public internet (OD-22)"
+
+[seam."npm.registry.publish"]
+proves_locally = "partial"
+requires_live = true
+local = "packed tarball clean install outside the workspace"
+live_only = "registry publication identity, provenance attestation and install from the real registry"
+
+[seam."hands.guest.lifecycle"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "booted guest agent, snapshot suspend/resume, hostile-root isolation and per-shape boot on a real MicroVM"
+
+[seam."vercel.build_output.deploy"]
+proves_locally = "none"
+requires_live = true
+local = ""
+live_only = "Build Output deployment identity and plane binding"

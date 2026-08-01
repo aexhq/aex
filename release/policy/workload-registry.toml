@@ -1,0 +1,135 @@
+# The blocking prelaunch capacity gates and who owes each one.
+#
+# A gate is an absolute assertion on a pinned shape. `kind = "budget"` is an
+# engineering threshold with a named Area 10 or PERF-* source and it blocks its
+# own package; `kind = "diagnostic"` is recorded and never blocks. `kind = "slo"`
+# does not exist: Q-PERFORMANCE forbids a customer percentile promise as a
+# prelaunch release gate, and a percentile that is an engineering threshold is a
+# budget (D-07).
+#
+# Each row names the live package that owns the `load` target and the workload
+# descriptor under `tests/load/workloads/<owner>/<id>.toml` that implements it.
+# A gate whose descriptor does not exist yet is reported as a pending row in
+# `release/unearned-evidence.json`, never as a pass.
+
+schema = "aex.workload-registry.v1"
+
+[gate."LOAD-100-COMPLETE"]
+owner = "brain-core"
+target = "aex-live-brain-mux"
+kind = "budget"
+blocking = true
+assert = "completed == offered && duplicate_effects == 0 && accepted_work_lost == 0"
+source = "PERF-02; Area 10 T2 row 'Peak active/offered agents = 100'"
+
+[gate."LOAD-100-BUDGETS"]
+owner = "brain-core"
+target = "aex-live-brain-mux"
+kind = "budget"
+blocking = true
+assert = "admission_to_sqs_receive_p95 <= 250ms && receive_to_dispatch_p95 <= 25ms && rss_peak <= 0.70 * task_memory_limit"
+source = "07-brain-core.md Slice 11 declared budgets"
+
+[gate."LOAD-200-SAFE"]
+owner = "brain-core"
+target = "aex-live-brain-mux"
+kind = "budget"
+blocking = true
+assert = "rss_peak <= 0.85 * task_memory_limit && open_fds non-increasing over the last third && progress_stall_s < 60 && accepted_work_lost == 0"
+source = "Q-PERFORMANCE 200-active safety point; PERF-02; PERF-04"
+
+[gate."LOAD-500-BOUNDED"]
+owner = "brain-core"
+target = "aex-live-brain-mux"
+kind = "budget"
+blocking = true
+assert = "offered == completed + typed_rejected + queued_at_end && every rejection typed and retryable && jain_fairness >= 0.80 && max_queue_age <= declared"
+source = "Q-PERFORMANCE; Area 10 T3 row; 07-brain-core.md"
+
+[gate."LOAD-STREAM-SOCKETS"]
+owner = "regional-services"
+target = "aex-live-regional-stream"
+kind = "budget"
+blocking = true
+assert = "1000 sustained sockets on a 1 vCPU / 2 GiB task within the 4 MiB per-connection budget && residual_tasks == 0 && residual_bytes == 0 after a disconnect storm && reconnect from the durable cursor is frame-equivalent"
+source = "PERF-11; 06-regional-services.md section 5"
+
+[gate."LOAD-REGIONAL-ADMISSION"]
+owner = "regional-stores"
+target = "aex-live-regional-session-api"
+kind = "diagnostic"
+blocking = false
+assert = "no unbounded conflict growth across the 1/10/100/500 session and agent profiles"
+source = "PERF-09; PERF-13; 05-regional-stores.md section 8.4"
+
+[gate."LOAD-FINANCE-BACKLOG"]
+owner = "central-finance"
+target = "aex-live-finance-settlement-worker"
+kind = "budget"
+blocking = true
+assert = "50000 queued facts across 500 orgs settle with bounded queueing && no cross-org serialization storm && no starvation of payment ingest && no unbounded Aurora growth"
+source = "03-central-finance-schema.md G9"
+
+[gate."OTLP-STAGED-COMMIT"]
+owner = "observations-usage"
+target = "aex-live-regional-otlp"
+kind = "budget"
+blocking = true
+assert = "a maximal 2000-point / 16 MiB decoded batch commits within the 100-action and 4 MiB DynamoDB envelopes under ten concurrent series-claim writers && crash cleanup verified at every boundary"
+source = "PERF-08; 11-observations.md G7 (serial, gating)"
+
+[gate."LOAD-OBSERVATION-ADMISSION"]
+owner = "observations-usage"
+target = "aex-live-regional-otlp"
+kind = "budget"
+blocking = true
+assert = "sustained 10 MiB/s workspace ingest and the 40 MiB burst && ingress closes with typed retry before retained evidence is at risk"
+source = "PERF-09; 11-observations.md G10(50)"
+
+[gate."LOAD-OBSERVATION-EXPORT"]
+owner = "observations-usage"
+target = "aex-live-observation-export-task"
+kind = "budget"
+blocking = true
+assert = "multi-GB NDJSON and Parquet exports with task loss at randomized checkpoints && flat RSS under the reservation budget && hash equality against a single-run baseline"
+source = "11-observations.md G10(51), G5(31)"
+
+[gate."LEAK-USAGE-PROBE-12H"]
+owner = "observations-usage"
+target = "aex-live-usage-compute-worker"
+kind = "budget"
+blocking = true
+assert = "live_bytes returns to zero && no Drop audit counter grows over 12 h"
+source = "12-usage-metering.md U9"
+
+[gate."LEAK-SOAK-12H"]
+owner = "brain-core"
+target = "aex-live-brain-mux"
+kind = "budget"
+blocking = true
+assert = "over the final 8 h: d(rss)/dt <= 0.5 MiB/h && d(open_fds)/dt <= 0 && tokio_tasks bounded && every frontier returns to baseline && cost_micro_usd_per_completed_turn within 20% of the first hour"
+source = "Area 7 candidate-evidence rule; slope chosen, re-pinned from the first soak trace"
+
+[gate."LEAK-SOAK-24H"]
+owner = "brain-core"
+target = "aex-live-brain-mux"
+kind = "diagnostic"
+blocking = false
+assert = "the LEAK-SOAK-12H assertions over 24 h"
+source = "Area 7 scheduled-drift rule"
+
+[gate."PERF-BASELINE-JOURNAL-FOLD"]
+owner = "regional-domains"
+target = "aex-live-regional-session-api"
+kind = "budget"
+blocking = true
+assert = "journal fold of 10000 events <= 250ms on the pinned dedicated runner"
+source = "Area 10 measured 207 ms; the only PERF-BASELINE row that is a budget rather than a diagnostic"
+
+[gate."PERF-BASELINE-CODECS"]
+owner = "contracts"
+target = "aex-live-regional-session-api"
+kind = "diagnostic"
+blocking = false
+assert = "criterion baselines recorded for 64 KiB JSON body decode, RFC 8785 canonicalization of 1 MiB, a blake3 Merkle page and a 4 MiB OTLP protobuf decode"
+source = "Area 10; diagnostic only"
