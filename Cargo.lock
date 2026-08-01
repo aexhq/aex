@@ -720,17 +720,27 @@ dependencies = [
 name = "aex-regional-http"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-wire",
+ "async-trait",
  "axum",
+ "base64 0.23.0",
+ "bytes",
+ "hmac 0.13.0",
  "http 1.5.0",
  "lambda_http",
  "lambda_runtime",
+ "proptest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
+ "tokio",
  "tower",
  "tower-http 0.7.0",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

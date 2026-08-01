@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 122,
+    "awaiting_owner": 121,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -1367,7 +1367,7 @@
       "name": "aex-regional-http",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-stores",
+        "owner": "regional-services",
         "role": "composition",
         "artifact": "none",
         "layers": [
@@ -1375,6 +1375,8 @@
         ],
         "concerns": [
           "contract",
+          "property",
+          "fault",
           "security"
         ],
         "seams": [],
@@ -1383,14 +1385,15 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "primitives": "unit"
+        },
         "not_applicable": {
-          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion",
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-regional-test-support": {
       "name": "aex-regional-test-support",
