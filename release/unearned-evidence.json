@@ -358,52 +358,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-application",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-compute-aws",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-domain",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-query-aws",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-usage-rating",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-storage-aws",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-usage-transfer-aws",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",

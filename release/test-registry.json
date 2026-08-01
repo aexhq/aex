@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 128,
+    "awaiting_owner": 122,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -1819,14 +1819,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "probe_properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-usage-compute-aws": {
       "name": "aex-usage-compute-aws",
@@ -1855,13 +1856,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "isolation": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (concurrent producers on one workspace, closure-vector write, four discriminated fact shapes round-tripping) is unwritten. The expression and codec halves are covered at the unit layer."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-usage-domain": {
       "name": "aex-usage-domain",
@@ -1882,14 +1885,16 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "golden": "unit",
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-usage-query-aws": {
       "name": "aex-usage-query-aws",
@@ -1917,13 +1922,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "write_incapability": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (keyset paging under a scan budget, cursor expiry across a generation flip) is unwritten. The key grammar and the write-incapability proofs are covered at the unit layer."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-usage-rating": {
       "name": "aex-usage-rating",
@@ -1980,13 +1987,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "isolation": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (concurrent producers converging on a contiguous sequence, ambiguous-commit resolution by re-reading ID#, replay vs conflict discrimination) is unwritten. The expression and codec halves are covered at the unit layer; the transaction's live behaviour is not."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-usage-transfer-aws": {
       "name": "aex-usage-transfer-aws",
@@ -2014,13 +2023,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "isolation": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (the crossing-claim fence under concurrent adapters, counter-mode vs receipt-mode facts kept distinct) is unwritten. The expression and codec halves are covered at the unit layer."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-wire": {
       "name": "aex-wire",

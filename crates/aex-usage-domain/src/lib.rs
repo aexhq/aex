@@ -20,6 +20,7 @@ pub mod frontier;
 pub mod identity;
 pub mod intent;
 pub mod interval;
+pub mod keys;
 pub mod measurement;
 pub mod meter;
 pub mod quantity;
@@ -34,6 +35,7 @@ pub use identity::{
     AuthorityId, AuthorityKey, AuthorityKind, FactId, IdentityError, SegmentOrdinal,
 };
 pub use intent::{Blake3Digest, IntentHash};
+pub use keys::{AuthorityKeys, Item, ItemKey, ItemType, ItemValue, KeyError};
 pub use measurement::{
     BoundaryId, Evidence, FactBasis, Measurement, MeasurementError, ReceiptKind, ServiceTime,
     SourceReceipt,

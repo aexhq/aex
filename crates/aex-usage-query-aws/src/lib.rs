@@ -15,3 +15,5 @@
 
 pub mod cursor;
 pub mod expressions;
+
+pub use expressions::{Generation, ProjectionKey, ProjectionKeys, QueryError};
