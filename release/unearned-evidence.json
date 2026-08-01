@@ -274,13 +274,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-regional-test-support",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-registry-dynamodb",
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
@@ -351,13 +344,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-session-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-usage-application",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -404,13 +390,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-work-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",

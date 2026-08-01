@@ -1,0 +1,1040 @@
+{
+  "schema": "aex.regional-tables.v1",
+  "digest": "blake3:2d2af17c53c50a2f45c7eb1a1b2ce7a5f86463c3020234aaaabd1bf31053ac12",
+  "tables": [
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-authz-projection",
+      "owner": "regional-stores",
+      "purpose": "Read-only regional projection of workspace placement, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-authz",
+        "rationale": "Per-authority customer managed key. The projection carries authorization epochs, not credentials."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [],
+      "stream": {
+        "enabled": false,
+        "viewType": "NONE",
+        "consumers": [],
+        "rationale": "The projection is a read replica of central control state; regional consumers read it by key, never by change feed."
+      },
+      "timeToLive": {
+        "enabled": false,
+        "attribute": "",
+        "appliesTo": [],
+        "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
+      },
+      "itemTypes": [
+        "workspace_placement",
+        "key_revocation",
+        "feed_frontier"
+      ],
+      "iam": [
+        {
+          "role": "central-control-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:ConditionCheckItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-secret-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-otlp",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "authz-projection",
+        "aex:data-class": "projection",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-content",
+      "owner": "regional-stores",
+      "purpose": "Content body descriptors, inline ciphertext bodies, Merkle tree pages, root descriptors, root and body pins, download grants, GC epochs and GC candidates. Every partition is workspace scoped.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-content",
+        "rationale": "A dedicated content CMK, distinct from every other regional table (R-SECRETS). The key policy requires kms:EncryptionContext:aex:workspace to equal the caller workspace on Encrypt, Decrypt and GenerateDataKey (OD-18)."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        },
+        {
+          "name": "gcScanPk",
+          "type": "S"
+        },
+        {
+          "name": "gcScanSk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [
+        {
+          "name": "gsi_gc",
+          "partition": "gcScanPk",
+          "sort": "gcScanSk",
+          "sparse": true,
+          "rationale": "One index serves both mark (enumerate every body and page in 256 bounded buckets per workspace) and sweep (enumerate candidates). There is deliberately no reverse owner index and no reference count (R-DELETE): pin removal is a DeleteItem on a known key.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "workspaceId",
+              "digestSha256",
+              "pageDigest",
+              "placement",
+              "sizeBytes",
+              "objectKey",
+              "objectEtag",
+              "gcEpoch",
+              "notBefore",
+              "state"
+            ]
+          }
+        }
+      ],
+      "stream": {
+        "enabled": true,
+        "viewType": "KEYS_ONLY",
+        "consumers": [
+          "content-lifecycle-worker"
+        ],
+        "rationale": "KEYS_ONLY because the table holds ciphertext bodies; a NEW_IMAGE stream would duplicate every inline body into stream storage and into the pipe role blast radius. Storage usage facts ride regional-work transactionally instead."
+      },
+      "timeToLive": {
+        "enabled": true,
+        "attribute": "expiresAtEpochSeconds",
+        "appliesTo": [
+          "content_pin",
+          "download_grant"
+        ],
+        "rationale": "Grant pins and grant state rows only, at expiry plus a 3600 second grace. GC never trusts it: GC re-reads expiresAt and refuses to delete a body whose grant pin has not provably expired."
+      },
+      "itemTypes": [
+        "content_descriptor",
+        "content_body",
+        "content_pin",
+        "download_grant",
+        "root_descriptor",
+        "tree_page",
+        "gc_epoch",
+        "gc_candidate"
+      ],
+      "iam": [
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:TransactWriteItems",
+            "dynamodb:ConditionCheckItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "content-lifecycle-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "content",
+        "aex:data-class": "authority",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-registry",
+      "owner": "regional-stores",
+      "purpose": "The current (workspace, kind, name) registry pointer with its revision and ETag, multipart upload staging rows, and registry idempotency receipts.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-registry",
+        "rationale": "Per-authority customer managed key. The registry stores pointers and digests, never bodies."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [],
+      "stream": {
+        "enabled": false,
+        "viewType": "NONE",
+        "consumers": [],
+        "rationale": "D-22: pointer replacement stages the previous content for GC through a cross-table transaction with regional-content, so no stream consumer is needed."
+      },
+      "timeToLive": {
+        "enabled": true,
+        "attribute": "expiresAtEpochSeconds",
+        "appliesTo": [
+          "idempotency_receipt"
+        ],
+        "rationale": "Receipts only (OD-16, 24 hours). Upload rows deliberately have no TTL: a TTL deletion would orphan the live S3 multipart upload, and the 24-hour sweeper must abort the upload before removing the row."
+      },
+      "itemTypes": [
+        "registry_pointer",
+        "registry_upload",
+        "idempotency_receipt"
+      ],
+      "iam": [
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "registry",
+        "aex:data-class": "authority",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-secret-custody",
+      "owner": "regional-stores",
+      "purpose": "Workspace secret metadata, hidden source generations carrying ciphertext, session custody heads and bindings, the revocation epoch, managed-call authorizations, the provider-credential binding directory for BYOK, and the per-session redaction digest manifest.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-secret",
+        "rationale": "A dedicated secret CMK, distinct from content and from every other table (R-SECRETS). Application-layer AEAD is the real protection; SSE is defence in depth."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [],
+      "stream": {
+        "enabled": false,
+        "viewType": "NONE",
+        "consumers": [],
+        "rationale": "Disabled deliberately: no consumer role should ever be able to read secret ciphertext off a change feed, and there is no legitimate regional consumer."
+      },
+      "timeToLive": {
+        "enabled": false,
+        "attribute": "",
+        "appliesTo": [],
+        "rationale": "Deletion is explicit, so TTL would only create a silent erasure path for secret material."
+      },
+      "itemTypes": [
+        "workspace_secret",
+        "secret_lineage",
+        "secret_source_generation",
+        "session_custody",
+        "custody_binding",
+        "managed_call",
+        "call_authorization",
+        "rebind_intent",
+        "redaction_manifest",
+        "provider_credential",
+        "idempotency_receipt"
+      ],
+      "iam": [
+        {
+          "role": "regional-secret-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems",
+            "dynamodb:ConditionCheckItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-otlp",
+          "actions": [
+            "dynamodb:GetItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "secret-custody",
+        "aex:data-class": "secret",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-secret-keystore",
+      "owner": "regional-stores",
+      "purpose": "The provider-mandated hierarchical branch-key store. Key attribute names are branch-key-id and type because the AWS Encryption SDK hierarchical keyring defines them; this is the one table that does not use the pk and sk convention, and the deviation is deliberate. The logical key store name equals the physical table name and is cryptographically bound to every record, so it can never be changed after first use.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-secret-keystore",
+        "rationale": "Deleting this table permanently destroys every workspace secret, so it carries its own CMK and its own deletion protection."
+      },
+      "attributes": [
+        {
+          "name": "branch-key-id",
+          "type": "S"
+        },
+        {
+          "name": "type",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "branch-key-id",
+        "sort": "type"
+      },
+      "globalSecondaryIndexes": [],
+      "stream": {
+        "enabled": false,
+        "viewType": "NONE",
+        "consumers": [],
+        "rationale": "Wrapped branch-key material must never appear on a change feed."
+      },
+      "timeToLive": {
+        "enabled": false,
+        "attribute": "",
+        "appliesTo": [],
+        "rationale": "A branch key is decryptable material for every ciphertext ever sealed under it; expiry by TTL would silently destroy customer secrets."
+      },
+      "itemTypes": [
+        "branch_key_record"
+      ],
+      "iam": [
+        {
+          "role": "regional-secret-key-admin",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DescribeTable"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-secret-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "secret-keystore",
+        "aex:data-class": "secret",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-work",
+      "owner": "regional-stores",
+      "purpose": "Durable runnable work: wake, due, claim, lease, fence, attempt, dedupe claims and per-shard reconciliation cursors over one sharded due index. Also carries the transactional usage-fact outbox so usage workers need no content or session visibility.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-work",
+        "rationale": "Per-authority customer managed key; the work table never holds customer content, only typed non-content work metadata."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        },
+        {
+          "name": "dueShardPk",
+          "type": "S"
+        },
+        {
+          "name": "dueShardSk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [
+        {
+          "name": "gsi_due",
+          "partition": "dueShardPk",
+          "sort": "dueShardSk",
+          "sparse": true,
+          "rationale": "Sixty-four shards, never a literal single due partition. The index attributes are removed when work reaches done or poisoned, so the index holds only outstanding work. Priority is folded into effectiveDueAt as a lead, which gives priority ordering plus bounded ageing with one sort key.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "workId",
+              "kind",
+              "state",
+              "dueAt",
+              "attempt",
+              "maxAttempts",
+              "fence",
+              "sessionId",
+              "agentId",
+              "workspaceId",
+              "leaseExpiresAt"
+            ]
+          }
+        }
+      ],
+      "stream": {
+        "enabled": true,
+        "viewType": "NEW_IMAGE",
+        "consumers": [
+          "eventbridge-pipe:agent-wake",
+          "eventbridge-pipe:operation-step",
+          "eventbridge-pipe:content-lifecycle",
+          "eventbridge-pipe:runtime-control",
+          "eventbridge-pipe:usage-facts"
+        ],
+        "rationale": "NEW_IMAGE is safe only because the codec rejects a payload map larger than 4 KiB or carrying a key outside the declared per-kind schema, which keeps non-content work metadata only an enforced property rather than an assumed one."
+      },
+      "timeToLive": {
+        "enabled": true,
+        "attribute": "expiresAtEpochSeconds",
+        "appliesTo": [
+          "work"
+        ],
+        "rationale": "Set to updatedAt plus 24 hours when a record reaches done. A redelivered hint inside the window finds state done and acks; after it, the domain re-derives a no-op. Both arms are correct, so TTL timing is not a fence."
+      },
+      "itemTypes": [
+        "work",
+        "work_dedupe",
+        "work_cursor"
+      ],
+      "iam": [
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:TransactWriteItems",
+            "dynamodb:GetItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+            "dynamodb:PutItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "content-lifecycle-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "runtime-control-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:TransactWriteItems",
+            "dynamodb:GetItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-stream",
+          "actions": [
+            "dynamodb:GetRecords",
+            "dynamodb:GetShardIterator",
+            "dynamodb:DescribeStream",
+            "dynamodb:ListStreams"
+          ],
+          "resources": [
+            "stream"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "work",
+        "aex:data-class": "authority",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "runtime-activity",
+      "owner": "regional-stores",
+      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-runtime",
+        "rationale": "Per-authority customer managed key. The table holds generation metadata only, never customer content."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        },
+        {
+          "name": "rtDuePk",
+          "type": "S"
+        },
+        {
+          "name": "rtDueSk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [
+        {
+          "name": "gsi_runtime_due",
+          "partition": "rtDuePk",
+          "sort": "rtDueSk",
+          "sparse": true,
+          "rationale": "Sixteen shards over non-terminal generation heads. A dedicated due index rather than a regional-work item per evaluation, because the 180 second true-idle timer would otherwise cost a work-item rewrite per generation per evaluation; the index gives the reaper a bounded ordered scan at zero write cost between evaluations.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "sessionId",
+              "workspaceId",
+              "generationId",
+              "state",
+              "fence",
+              "idleSince",
+              "providerLifetimeExpiresAt",
+              "keepaliveLeaseUntil"
+            ]
+          }
+        }
+      ],
+      "stream": {
+        "enabled": true,
+        "viewType": "NEW_IMAGE",
+        "consumers": [
+          "runtime-control-worker"
+        ],
+        "rationale": "The table holds no customer content, only generation metadata, so NEW_IMAGE is safe and gives the worker a state-change hint without a read."
+      },
+      "timeToLive": {
+        "enabled": true,
+        "attribute": "expiresAtEpochSeconds",
+        "appliesTo": [
+          "idle_probe"
+        ],
+        "rationale": "Probes only, at 7 days. Receipts have no TTL: they are lifecycle evidence referenced by usage facts."
+      },
+      "itemTypes": [
+        "hands_generation",
+        "lifecycle_intent",
+        "lifecycle_receipt",
+        "idle_probe",
+        "current_generation"
+      ],
+      "iam": [
+        {
+          "role": "runtime-control-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "runtime-activity",
+        "aex:data-class": "authority",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "session-authority",
+      "owner": "regional-stores",
+      "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations and idempotency receipts. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAlias": "alias/aex-regional-session",
+        "rationale": "Per-authority customer managed key; content and secret authorities use different keys (R-SECRETS)."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        },
+        {
+          "name": "wsIndexPk",
+          "type": "S"
+        },
+        {
+          "name": "wsIndexSk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [
+        {
+          "name": "gsi_workspace_index",
+          "partition": "wsIndexPk",
+          "sort": "wsIndexSk",
+          "sparse": true,
+          "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "sessionId",
+              "operationId",
+              "workspaceId",
+              "status",
+              "lifecycle",
+              "kind",
+              "createdAt",
+              "updatedAt",
+              "revision",
+              "sessionRefId"
+            ]
+          }
+        }
+      ],
+      "stream": {
+        "enabled": true,
+        "viewType": "KEYS_ONLY",
+        "consumers": [
+          "regional-stream"
+        ],
+        "rationale": "Least privilege: the stream consumer role learns pk and sk and nothing else. Replay and ordering are always Query by cursor; the stream is never truth."
+      },
+      "timeToLive": {
+        "enabled": true,
+        "attribute": "expiresAtEpochSeconds",
+        "appliesTo": [
+          "idempotency_receipt"
+        ],
+        "rationale": "Space reclamation only (OD-16, 24 hours). Every TTL'd row also carries an explicit expiresAt the reader checks; no fence reads TTL."
+      },
+      "itemTypes": [
+        "session_head",
+        "message",
+        "run",
+        "session_event",
+        "approval",
+        "agent_index",
+        "agent_control",
+        "journal_entry",
+        "agent_effect",
+        "fanout_page",
+        "join_shard",
+        "budget_return",
+        "spend_reservation",
+        "operation",
+        "idempotency_receipt"
+      ],
+      "iam": [
+        {
+          "role": "regional-session-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems",
+            "dynamodb:ConditionCheckItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems",
+            "dynamodb:UpdateItem",
+            "dynamodb:PutItem",
+            "dynamodb:DeleteItem"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems",
+            "dynamodb:UpdateItem",
+            "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table",
+            "index/*"
+          ]
+        },
+        {
+          "role": "regional-stream",
+          "actions": [
+            "dynamodb:GetRecords",
+            "dynamodb:GetShardIterator",
+            "dynamodb:DescribeStream",
+            "dynamodb:ListStreams"
+          ],
+          "resources": [
+            "stream"
+          ]
+        }
+      ],
+      "tags": {
+        "aex:component": "session",
+        "aex:data-class": "authority",
+        "aex:plane": "regional"
+      }
+    }
+  ]
+}

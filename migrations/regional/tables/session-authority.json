@@ -1,0 +1,127 @@
+{
+  "schema": "aex.regional-table.v1",
+  "table": "session-authority",
+  "owner": "regional-stores",
+  "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations and idempotency receipts. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+  "billingMode": "PAY_PER_REQUEST",
+  "deletionProtection": true,
+  "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
+  "serverSideEncryption": {
+    "type": "KMS",
+    "keyAlias": "alias/aex-regional-session",
+    "rationale": "Per-authority customer managed key; content and secret authorities use different keys (R-SECRETS)."
+  },
+  "attributes": [
+    { "name": "pk", "type": "S" },
+    { "name": "sk", "type": "S" },
+    { "name": "wsIndexPk", "type": "S" },
+    { "name": "wsIndexSk", "type": "S" }
+  ],
+  "keySchema": { "partition": "pk", "sort": "sk" },
+  "globalSecondaryIndexes": [
+    {
+      "name": "gsi_workspace_index",
+      "partition": "wsIndexPk",
+      "sort": "wsIndexSk",
+      "sparse": true,
+      "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": [
+          "sessionId",
+          "operationId",
+          "workspaceId",
+          "status",
+          "lifecycle",
+          "kind",
+          "createdAt",
+          "updatedAt",
+          "revision",
+          "sessionRefId"
+        ]
+      }
+    }
+  ],
+  "stream": {
+    "enabled": true,
+    "viewType": "KEYS_ONLY",
+    "consumers": ["regional-stream"],
+    "rationale": "Least privilege: the stream consumer role learns pk and sk and nothing else. Replay and ordering are always Query by cursor; the stream is never truth."
+  },
+  "timeToLive": {
+    "enabled": true,
+    "attribute": "expiresAtEpochSeconds",
+    "appliesTo": ["idempotency_receipt"],
+    "rationale": "Space reclamation only (OD-16, 24 hours). Every TTL'd row also carries an explicit expiresAt the reader checks; no fence reads TTL."
+  },
+  "itemTypes": [
+    "session_head",
+    "message",
+    "run",
+    "session_event",
+    "approval",
+    "agent_index",
+    "agent_control",
+    "journal_entry",
+    "agent_effect",
+    "fanout_page",
+    "join_shard",
+    "budget_return",
+    "spend_reservation",
+    "operation",
+    "idempotency_receipt"
+  ],
+  "iam": [
+    {
+      "role": "regional-session-api",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:TransactWriteItems",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:PutItem"
+      ],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "session-operation-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:TransactWriteItems",
+        "dynamodb:UpdateItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem"
+      ],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "brain-mux",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:TransactWriteItems",
+        "dynamodb:UpdateItem",
+        "dynamodb:PutItem"
+      ],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-observation-api",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "regional-stream",
+      "actions": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:DescribeStream",
+        "dynamodb:ListStreams"
+      ],
+      "resources": ["stream"]
+    }
+  ],
+  "tags": { "aex:plane": "regional", "aex:component": "session", "aex:data-class": "authority" }
+}
