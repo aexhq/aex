@@ -446,6 +446,18 @@ impl Graph {
         }
     }
 
+    /// Whether an edge is a package dev-depending on itself.
+    ///
+    /// Cargo documents this as the way to turn a non-default feature on for a
+    /// package's own test targets, and it is not a build cycle: a dev edge
+    /// applies only to test and bench targets, so nothing links back into the
+    /// library. `aex-usage-application` uses it so `probe` is on for its own
+    /// tests while the three usage workers never link `rustix`. A dev cycle
+    /// between two *different* packages is still a real defect and is reported.
+    const fn is_self_dev_edge(from: u32, to: u32, kind: EdgeKind) -> bool {
+        from == to && matches!(kind, EdgeKind::CargoDev)
+    }
+
     fn find_cycle(&self, class: u8) -> Option<Vec<u32>> {
         #[derive(Clone, Copy, PartialEq)]
         enum Mark {
@@ -466,7 +478,10 @@ impl Graph {
                 start,
                 self.forward
                     .neighbours(start)
-                    .filter(|(_, kind)| kind.cycle_class() == class)
+                    .filter(|(target, kind)| {
+                        kind.cycle_class() == class
+                            && !Self::is_self_dev_edge(start, *target, *kind)
+                    })
                     .map(|(target, _)| target)
                     .collect(),
             )];
@@ -489,7 +504,10 @@ impl Graph {
                                 next,
                                 self.forward
                                     .neighbours(next)
-                                    .filter(|(_, kind)| kind.cycle_class() == class)
+                                    .filter(|(target, kind)| {
+                                        kind.cycle_class() == class
+                                            && !Self::is_self_dev_edge(next, *target, *kind)
+                                    })
                                     .map(|(target, _)| target)
                                     .collect(),
                             ));
