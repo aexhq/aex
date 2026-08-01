@@ -462,10 +462,16 @@ mod tests {
         // at or above the true number of live operations.
         let mut open = 0u32;
         let mut truth = 0u32;
+        let mut refusals = 0u32;
         for step in 0..96u32 {
             let current = head(GenerationState::Running, open);
-            let plan =
-                admit(&current, Fence(3), Revision::new(11), at(0)).expect("the head admits");
+            let Ok(plan) = admit(&current, Fence(3), Revision::new(11), at(0)) else {
+                // The shape's concurrency ceiling refused. A refusal changes
+                // nothing, which is itself part of the property.
+                refusals += 1;
+                assert!(open >= truth, "under-count after a refusal at step {step}");
+                continue;
+            };
             open = plan.open_operations;
             match step % 4 {
                 // Admit, then crash before dispatch: the increment survives.
@@ -482,6 +488,14 @@ mod tests {
             }
             assert!(open >= truth, "under-count at step {step}");
         }
+        assert!(
+            refusals > 0,
+            "the sequence must reach the concurrency ceiling, or the refusal arm proved nothing"
+        );
+        assert!(
+            open > truth,
+            "the crash-before-dispatch steps must leave a visible over-count"
+        );
     }
 
     #[test]
