@@ -4,11 +4,10 @@ variables {
   plane                       = "dev"
   region                      = "eu-west-1"
   name_prefix                 = "aex-dev-euw1-"
-  keystore_physical_name      = "aex-keystore-v1"
-  content_bucket_suffix       = "0a1b2c3d"
+  content_bucket_purpose      = "content"
   content_lifecycle_role_arn  = "arn:aws:iam::000000000000:role/aex-dev-content-lifecycle"
-  table_definitions_digest    = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-  expected_definitions_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  table_definitions_digest    = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+  expected_definitions_digest = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
 
   vpc = {
     name               = "aex-dev-euw1"
@@ -100,6 +99,7 @@ variables {
     {
       logical_name                = "keystore"
       authority                   = "secret"
+      pinned_physical_name        = "aex-keystore-v1"
       hash_key                    = "pk"
       billing_mode                = "PAY_PER_REQUEST"
       point_in_time_recovery_days = 35
@@ -113,13 +113,13 @@ run "the_region_foundation_plans" {
   command = plan
 
   assert {
-    condition     = module.content.bucket == "aex-content-dev-eu-west-1-0a1b2c3d"
-    error_message = "The content bucket name must be derived from the plane, region and suffix."
+    condition     = module.content.bucket == "aex-dev-eu-west-1-content"
+    error_message = "The content bucket name must be derived from the plane, the region and what the store holds."
   }
 
   assert {
-    condition     = module.tables.table_names["keystore"] == var.keystore_physical_name
-    error_message = "The keystore table must keep its pinned physical name."
+    condition     = module.tables.table_names["keystore"] == "aex-keystore-v1"
+    error_message = "A table that declares a pinned physical name must keep it."
   }
 }
 

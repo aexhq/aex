@@ -8,7 +8,7 @@
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
-    "keyAlias": "alias/aex-regional-session",
+    "keyAuthority": "regional-session",
     "rationale": "Per-authority customer managed key; content and secret authorities use different keys (R-SECRETS)."
   },
   "attributes": [
@@ -24,6 +24,7 @@
       "partition": "wsIndexPk",
       "sort": "wsIndexSk",
       "sparse": true,
+      "projectsRecordBody": false,
       "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
       "projection": {
         "type": "INCLUDE",

@@ -105,6 +105,11 @@ variable "action_grants" {
     ])
     error_message = "Every grant whose resource type supports scoping must carry a plane or region condition."
   }
+
+  validation {
+    condition     = length(distinct([for g in var.action_grants : g.sid])) == length(var.action_grants)
+    error_message = "Two grants share a statement id. AWS rejects a policy document with a duplicate `Sid`, and a role that generates one — a table read and a stream read on the same table, for instance — fails at apply rather than in review."
+  }
 }
 
 variable "wildcard_resource_allowlist" {

@@ -5,9 +5,9 @@
     {
       "id": "environment-root",
       "globs": [
-        "composition/roots/**/*.tf",
-        "composition/roots/**/*.tfvars.json",
-        "composition/roots/**/.terraform.lock.hcl"
+        "infra/terraform/composition/roots/**/*.tf",
+        "infra/terraform/composition/roots/**/*.tfvars.json",
+        "infra/terraform/composition/roots/**/.terraform.lock.hcl"
       ],
       "assertions": [
         "terraform-instantiation-only",
@@ -17,16 +17,16 @@
     {
       "id": "composition",
       "globs": [
-        "composition/{dev,prd}/**/binding.json",
-        "composition/{dev,prd}/**/binding.*.json",
-        "composition/{dev,prd}/**/config.*.json"
+        "infra/terraform/composition/{dev,prd}/**/binding.json",
+        "infra/terraform/composition/{dev,prd}/**/binding.*.json",
+        "infra/terraform/composition/{dev,prd}/**/config.*.json"
       ],
       "assertions": ["matches-schema:environment-binding", "no-plaintext-secret"]
     },
     {
       "id": "secret-reference",
       "globs": [
-        "composition/**/secrets.*.json",
+        "infra/terraform/composition/**/secrets.*.json",
         "**/*.sops.json",
         "**/*.age"
       ],
@@ -38,9 +38,19 @@
       "assertions": ["data-only", "no-executable-extension"]
     },
     {
+      "id": "environment-documentation",
+      "globs": [
+        "infra/terraform/composition/README.md",
+        "infra/terraform/composition/roots/**/README.md",
+        "infra/terraform/composition/{dev,prd}/**/README.md"
+      ],
+      "assertions": ["no-plaintext-secret"]
+    },
+    {
       "id": "operations-record",
       "globs": [
-        "operations/{runbooks,incidents,decisions,records,reviews}/**/*.{md,json}"
+        "operations/{runbooks,incidents,decisions,records,reviews}/**/*.{md,json}",
+        "infra/terraform/composition/operations/{runbooks,incidents,decisions,records,reviews}/**/*.{md,json}"
       ],
       "assertions": ["no-plaintext-secret"]
     },

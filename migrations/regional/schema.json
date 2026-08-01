@@ -43,13 +43,21 @@
         "retentionDays": { "const": 35 }
       }
     },
+    "physicalNamePinned": {
+      "description": "Set on a table whose physical name may not be derived from the environment prefix because the name itself is bound to the data — the hierarchical keyring's branch-key store is the only such table. The name is an environment decision and lives in the environment binding, never here: a physical name in this bundle could not be qualified by plane, and two planes share one account. The flag is what tells the environment root that a derived name would be wrong.",
+      "const": true
+    },
     "serverSideEncryption": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "keyAlias", "rationale"],
+      "required": ["type", "keyAuthority", "rationale"],
       "properties": {
         "type": { "const": "KMS" },
-        "keyAlias": { "type": "string", "pattern": "^alias/aex-regional-[a-z-]+$" },
+        "keyAuthority": {
+          "description": "The authority whose customer managed key encrypts this table. It is an authority id, never a physical alias: two planes share one account, so the physical alias is `alias/aex-{plane}-{region}-{authority}` and is composed by the environment root.",
+          "type": "string",
+          "pattern": "^regional-[a-z][a-z0-9-]*$"
+        },
         "rationale": { "type": "string", "minLength": 8 }
       }
     },
@@ -79,16 +87,28 @@
     },
     "globalSecondaryIndexes": {
       "type": "array",
-      "maxItems": 5,
+      "maxItems": 7,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "partition", "sort", "projection", "sparse", "rationale"],
+        "required": [
+          "name",
+          "partition",
+          "sort",
+          "projection",
+          "sparse",
+          "projectsRecordBody",
+          "rationale"
+        ],
         "properties": {
           "name": { "type": "string", "pattern": "^gsi_[a-z_]+$" },
           "partition": { "type": "string" },
           "sort": { "type": "string" },
           "sparse": { "const": true },
+          "projectsRecordBody": {
+            "description": "Whether this index deliberately projects the record body. A body-shaped attribute may appear in a projection only where this is true, and `rationale` must then say why a query over this index is allowed to return it. It is true for exactly the observation indexes, whose rows are the record the query returns; it is false everywhere a list must not be able to surface a prompt, a body or a receipt (D-29).",
+            "type": "boolean"
+          },
           "rationale": { "type": "string", "minLength": 8 },
           "projection": {
             "type": "object",
@@ -96,16 +116,25 @@
             "required": ["type", "attributes"],
             "properties": {
               "type": {
-                "description": "ALL is never permitted: D-29. A list query must not be able to start returning a prompt, a body or a receipt.",
-                "const": "INCLUDE"
+                "description": "ALL is never permitted: D-29. A list query must not be able to start returning a prompt, a body or a receipt. KEYS_ONLY carries the index and base key attributes and nothing else, and is the least a sparse index can project.",
+                "enum": ["INCLUDE", "KEYS_ONLY"]
               },
               "attributes": {
                 "type": "array",
-                "minItems": 1,
                 "uniqueItems": true,
                 "items": { "type": "string", "minLength": 1 }
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "type": { "const": "INCLUDE" } } },
+                "then": { "properties": { "attributes": { "minItems": 1 } } }
+              },
+              {
+                "if": { "properties": { "type": { "const": "KEYS_ONLY" } } },
+                "then": { "properties": { "attributes": { "maxItems": 0 } } }
+              }
+            ]
           }
         }
       }
@@ -164,6 +193,7 @@
                 "dynamodb:PutItem",
                 "dynamodb:UpdateItem",
                 "dynamodb:DeleteItem",
+                "dynamodb:BatchWriteItem",
                 "dynamodb:TransactWriteItems",
                 "dynamodb:TransactGetItems",
                 "dynamodb:ConditionCheckItem",

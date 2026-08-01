@@ -8,7 +8,7 @@
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
-    "keyAlias": "alias/aex-regional-work",
+    "keyAuthority": "regional-work",
     "rationale": "Per-authority customer managed key; the work table never holds customer content, only typed non-content work metadata."
   },
   "attributes": [
@@ -24,6 +24,7 @@
       "partition": "dueShardPk",
       "sort": "dueShardSk",
       "sparse": true,
+      "projectsRecordBody": false,
       "rationale": "Sixty-four shards, never a literal single due partition. The index attributes are removed when work reaches done or poisoned, so the index holds only outstanding work. Priority is folded into effectiveDueAt as a lead, which gives priority ordering plus bounded ageing with one sort key.",
       "projection": {
         "type": "INCLUDE",

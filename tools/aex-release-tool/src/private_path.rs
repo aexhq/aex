@@ -323,10 +323,39 @@ mod tests {
 
     #[test]
     fn the_shipped_policy_classifies_one_path_per_category() {
+        // The private tree lives at `infra/terraform/composition/`, so every
+        // glob that names it carries that prefix. A policy written against a
+        // path the repository does not have classifies every real file as
+        // `unclassified`, which is a boundary that fails open on arrival.
         let cases = [
-            ("composition/roots/dev/main.tf", "environment-root"),
-            ("composition/dev/binding.json", "composition"),
-            ("composition/dev/secrets.dev.json", "secret-reference"),
+            (
+                "infra/terraform/composition/roots/dev-eu-west-1/foundation.tf",
+                "environment-root",
+            ),
+            (
+                "infra/terraform/composition/roots/dev-eu-west-1/.terraform.lock.hcl",
+                "environment-root",
+            ),
+            (
+                "infra/terraform/composition/dev/eu-west-1/binding.application.json",
+                "composition",
+            ),
+            (
+                "infra/terraform/composition/dev/eu-west-1/secrets.dev.json",
+                "secret-reference",
+            ),
+            (
+                "infra/terraform/composition/README.md",
+                "environment-documentation",
+            ),
+            (
+                "infra/terraform/composition/roots/dev-eu-west-1/README.md",
+                "environment-documentation",
+            ),
+            (
+                "infra/terraform/composition/operations/runbooks/dev-teardown.md",
+                "operations-record",
+            ),
             ("business-data/price-book.json", "business-data"),
             ("operations/runbooks/deploy.md", "operations-record"),
             ("operations/contacts/oncall.md", "private-contact"),
@@ -366,6 +395,17 @@ mod tests {
     fn an_unlisted_path_is_unclassified_rather_than_allowed() {
         assert_eq!(
             classify(&policy(), "scratch/notes.txt"),
+            Verdict::Unclassified
+        );
+    }
+
+    #[test]
+    fn a_composition_tree_at_the_repository_root_is_not_classified_by_accident() {
+        // The globs name exactly one location. If the tree ever moves, the
+        // policy moves with it deliberately rather than covering both and
+        // classifying a stray copy nobody meant to keep.
+        assert_eq!(
+            classify(&policy(), "composition/roots/dev/main.tf"),
             Verdict::Unclassified
         );
     }

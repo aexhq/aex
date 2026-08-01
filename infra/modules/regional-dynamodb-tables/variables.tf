@@ -20,7 +20,7 @@ variable "region" {
 
 variable "name_prefix" {
   type        = string
-  description = "Physical name prefix applied to every table except the keystore, whose name is pinned."
+  description = "Physical name prefix applied to every table that does not declare a pinned physical name."
 
   validation {
     condition     = can(regex("^aex-[a-z0-9-]+-$", var.name_prefix))
@@ -32,6 +32,7 @@ variable "table_definitions" {
   type = list(object({
     logical_name                = string
     authority                   = string
+    pinned_physical_name        = optional(string)
     hash_key                    = string
     range_key                   = optional(string)
     billing_mode                = string
@@ -112,6 +113,42 @@ variable "table_definitions" {
 
   validation {
     condition = alltrue(flatten([
+      for t in var.table_definitions : [
+        for g in coalesce(t.global_secondary_indexes, []) :
+        g.projection_type != "INCLUDE" || length(coalesce(g.non_key_attributes, [])) > 0
+      ]
+    ]))
+    error_message = "An `INCLUDE` projection must name the attributes it projects; an empty list is `KEYS_ONLY` written ambiguously."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for t in var.table_definitions : [
+        for g in coalesce(t.global_secondary_indexes, []) :
+        g.projection_type != "KEYS_ONLY" || length(coalesce(g.non_key_attributes, [])) == 0
+      ]
+    ]))
+    error_message = "A `KEYS_ONLY` projection may not name projected attributes; AWS rejects the index and the intent is contradictory."
+  }
+
+  validation {
+    condition = alltrue([
+      for t in var.table_definitions :
+      t.pinned_physical_name == null || can(regex("^[a-zA-Z0-9_.-]{3,255}$", coalesce(t.pinned_physical_name, "none")))
+    ])
+    error_message = "A pinned physical name must be a valid DynamoDB table name."
+  }
+
+  validation {
+    condition = alltrue([
+      for t in var.table_definitions :
+      t.pinned_physical_name == null || !startswith(coalesce(t.pinned_physical_name, "none"), var.name_prefix)
+    ])
+    error_message = "A pinned name is pinned because it is bound to the table's own contents; one derived from `name_prefix` is a derived name pretending to be pinned."
+  }
+
+  validation {
+    condition = alltrue(flatten([
       for t in var.table_definitions : [for a in t.attributes : contains(["S", "N", "B"], a.type)]
     ]))
     error_message = "Attribute types must be `S`, `N` or `B`."
@@ -151,28 +188,13 @@ variable "kms_key_arn_by_authority" {
   }
 }
 
-variable "keystore_physical_name" {
-  type        = string
-  description = "Pinned physical name of the `keystore` table. It is immutable across environments and is therefore supplied verbatim, never derived from `name_prefix`."
-
-  validation {
-    condition     = can(regex("^[a-zA-Z0-9_.-]{3,255}$", var.keystore_physical_name))
-    error_message = "The keystore physical name must be a valid DynamoDB table name."
-  }
-
-  validation {
-    condition     = !startswith(var.keystore_physical_name, var.name_prefix)
-    error_message = "The keystore name is pinned and immutable; it must not be derived from `name_prefix`."
-  }
-}
-
 variable "table_definitions_digest" {
   type        = string
-  description = "Digest of the definition set actually passed in, as recorded by the root that decoded the bundle."
+  description = "The digest the decoded bundle carries for its own definition set. It is `blake3:` because that is the digest the bundler computes over the rendered table array and the only digest that exists for this artefact; a second digest over the same bytes would be a drift surface, not a second proof."
 
   validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.table_definitions_digest))
-    error_message = "The definitions digest must be `sha256:` followed by 64 hex characters."
+    condition     = can(regex("^blake3:[0-9a-f]{64}$", var.table_definitions_digest))
+    error_message = "The definitions digest must be `blake3:` followed by 64 hex characters, exactly as `migrations/regional/generated/regional-tables.json` carries it."
   }
 
   validation {
@@ -183,11 +205,11 @@ variable "table_definitions_digest" {
 
 variable "expected_definitions_digest" {
   type        = string
-  description = "Digest the release manifest pins for `migrations/regional/generated/regional-tables.json`."
+  description = "Digest the release manifest pins for `migrations/regional/generated/regional-tables.json`. It is the same value the bundle carries, in the same domain."
 
   validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.expected_definitions_digest))
-    error_message = "The expected definitions digest must be `sha256:` followed by 64 hex characters."
+    condition     = can(regex("^blake3:[0-9a-f]{64}$", var.expected_definitions_digest))
+    error_message = "The expected definitions digest must be `blake3:` followed by 64 hex characters."
   }
 }
 

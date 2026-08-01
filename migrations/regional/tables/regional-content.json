@@ -8,7 +8,7 @@
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
-    "keyAlias": "alias/aex-regional-content",
+    "keyAuthority": "regional-content",
     "rationale": "A dedicated content CMK, distinct from every other regional table (R-SECRETS). The key policy requires kms:EncryptionContext:aex:workspace to equal the caller workspace on Encrypt, Decrypt and GenerateDataKey (OD-18)."
   },
   "attributes": [
@@ -24,6 +24,7 @@
       "partition": "gcScanPk",
       "sort": "gcScanSk",
       "sparse": true,
+      "projectsRecordBody": false,
       "rationale": "One index serves both mark (enumerate every body and page in 256 bounded buckets per workspace) and sweep (enumerate candidates). There is deliberately no reverse owner index and no reference count (R-DELETE): pin removal is a DeleteItem on a known key.",
       "projection": {
         "type": "INCLUDE",

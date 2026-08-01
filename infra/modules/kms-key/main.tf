@@ -3,6 +3,44 @@ locals {
     for k, v in var.encryption_context_equals : "kms:EncryptionContext:${k}" => v
   }
 
+  # Every statement's explicit conditions, grouped the way IAM expects them:
+  # one block per operator, one key per condition variable, and the values of
+  # repeated (operator, variable) pairs merged rather than one silently winning.
+  explicit_conditions = {
+    for s in var.policy_statements : s.sid => {
+      for test in distinct([for c in coalesce(s.conditions, []) : c.test]) :
+      test => {
+        for variable in distinct([for c in coalesce(s.conditions, []) : c.variable if c.test == test]) :
+        variable => distinct(flatten([
+          for c in coalesce(s.conditions, []) : c.values if c.test == test && c.variable == variable
+        ]))
+      }
+    }
+  }
+
+  # The tenant condition on a data-plane grant. It is always `StringEquals`, so
+  # it is merged into any `StringEquals` the statement already carries instead
+  # of replacing it.
+  data_plane_equals = {
+    for s in var.policy_statements : s.sid => (
+      s.data_plane
+      ? merge(local.context_equals, { "kms:EncryptionContext:aex:workspace" = s.encryption_context_workspace })
+      : {}
+    )
+  }
+
+  conditions = {
+    for s in var.policy_statements : s.sid => merge(
+      local.explicit_conditions[s.sid],
+      s.data_plane ? {
+        StringEquals = merge(
+          lookup(local.explicit_conditions[s.sid], "StringEquals", {}),
+          local.data_plane_equals[s.sid],
+        )
+      } : {},
+    )
+  }
+
   key_policy = jsonencode({
     Version = "2012-10-17"
     Id      = "aex-kms-key-policy"
@@ -15,14 +53,7 @@ locals {
           Action    = s.actions
           Resource  = s.resources
         },
-        s.data_plane ? {
-          Condition = {
-            StringEquals = merge(
-              local.context_equals,
-              { "kms:EncryptionContext:aex:workspace" = s.encryption_context_workspace }
-            )
-          }
-        } : {}
+        length(local.conditions[s.sid]) > 0 ? { Condition = local.conditions[s.sid] } : {}
       )
     ]
   })

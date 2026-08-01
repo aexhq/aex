@@ -8,7 +8,7 @@
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
-    "keyAlias": "alias/aex-regional-usage-compute",
+    "keyAuthority": "regional-usage-compute",
     "rationale": "Billing evidence and customer content are different blast radii, so the usage authorities never share the content or secret key; one key per authority keeps a category compromise from reaching a sibling."
   },
   "attributes": [
@@ -25,6 +25,7 @@
       "partition": "factId",
       "sort": "pk",
       "sparse": true,
+      "projectsRecordBody": false,
       "rationale": "A settlement receipt carries only region, category and factId, so it needs a way back to the workspace partition. Only the ID# claim carries factId as a key attribute, which is also why the claim is a separate item: a GSI cannot be condition-checked and the admission fence has to be a condition. itemType is projected because an INCLUDE projection carries no discriminator of its own, and a row decoded without one is a row decoded as the wrong shape.",
       "projection": {
         "type": "INCLUDE",
@@ -36,6 +37,7 @@
       "partition": "outDuePk",
       "sort": "outDueSk",
       "sparse": true,
+      "projectsRecordBody": false,
       "rationale": "Sixteen shards over an enqueue-instant then sequence ordering, so the sweep reads the oldest undelivered facts first with a bounded page per shard. The index attributes exist only on a pending OUTBOX# row, so a confirmed SendMessage removes the row and with it the index entry.",
       "projection": {
         "type": "INCLUDE",

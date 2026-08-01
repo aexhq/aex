@@ -2,20 +2,20 @@ provider "aws" {
   region = var.region
 }
 
-resource "aws_ecs_cluster" "this" {
+module "cluster" {
+  source = "../../modules/ecs-cluster"
+
   name = var.cluster_name
   tags = var.tags
-
-  setting {
-    name  = "containerInsights"
-    value = "enhanced"
-  }
 }
 
-resource "aws_cloudwatch_log_group" "stream_service" {
-  name              = var.stream_service.log_group_name
-  retention_in_days = var.stream_service.log_retention_days
-  tags              = var.tags
+module "stream_log_group" {
+  source = "../../modules/log-group"
+
+  name           = var.stream_service.log_group_name
+  retention_days = var.stream_service.log_retention_days
+  kms_key_arn    = var.kms_key_arn
+  tags           = var.tags
 }
 
 module "role" {
@@ -93,7 +93,7 @@ module "stream_service" {
   source = "../../modules/ecs-service"
 
   name         = var.stream_service.name
-  cluster_arn  = aws_ecs_cluster.this.arn
+  cluster_arn  = module.cluster.arn
   cluster_name = var.cluster_name
 
   image          = var.stream_service.image
@@ -113,7 +113,7 @@ module "stream_service" {
   execution_role_arn = var.stream_service.execution_role_arn
   subnets            = var.private_subnet_ids
   security_group_ids = var.service_security_group_ids
-  log_group_name     = aws_cloudwatch_log_group.stream_service.name
+  log_group_name     = module.stream_log_group.name
   region             = var.region
 
   tags = var.tags

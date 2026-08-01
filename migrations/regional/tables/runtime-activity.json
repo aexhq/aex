@@ -8,7 +8,7 @@
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
-    "keyAlias": "alias/aex-regional-runtime",
+    "keyAuthority": "regional-runtime",
     "rationale": "Per-authority customer managed key. The table holds generation metadata only, never customer content."
   },
   "attributes": [
@@ -24,6 +24,7 @@
       "partition": "rtDuePk",
       "sort": "rtDueSk",
       "sparse": true,
+      "projectsRecordBody": false,
       "rationale": "Sixteen shards over non-terminal generation heads. A dedicated due index rather than a regional-work item per evaluation, because the 180 second true-idle timer would otherwise cost a work-item rewrite per generation per evaluation; the index gives the reaper a bounded ordered scan at zero write cost between evaluations.",
       "projection": {
         "type": "INCLUDE",

@@ -18,13 +18,13 @@ variable "region" {
   }
 }
 
-variable "bucket_name_suffix" {
+variable "purpose" {
   type        = string
-  description = "Suffix that makes the bucket name globally unique. Supplied by the root; the module invents no account-derived value."
+  description = "What this bucket holds: `content`, `observations`, and so on. It is the last component of the physical name, so one module serves every object store in a plane and no store carries another store's name. Supplied by the root; the module invents no account-derived value."
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{3,20}$", var.bucket_name_suffix))
-    error_message = "The suffix must be 4-21 lowercase alphanumeric or hyphen characters."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{3,20}$", var.purpose))
+    error_message = "The purpose must be 4-21 lowercase alphanumeric or hyphen characters."
   }
 }
 

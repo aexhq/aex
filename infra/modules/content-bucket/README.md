@@ -1,8 +1,14 @@
 # `content-bucket`
 
-The regional content store. Object keys are content-addressed, so the bucket is
-deliberately unversioned: a key either exists with exactly the bytes its digest
-names, or it does not exist.
+A regional content-addressed object store. Object keys are content-addressed, so
+the bucket is deliberately unversioned: a key either exists with exactly the
+bytes its digest names, or it does not exist.
+
+One plane has several such stores — content bodies, observation bodies and
+exports — and they differ only in what they hold, so `purpose` names the store
+rather than the module hardcoding one. A bucket called
+`aex-content-<plane>-<region>-observations` would be a content bucket claiming
+to hold observations.
 
 Because there is no version history to fall back on, every guardrail is a bucket
 policy denial rather than a convention.
@@ -13,7 +19,7 @@ policy denial rather than a convention.
 | --- | --- | --- |
 | `plane` | `string` | `dev` or `prd`. |
 | `region` | `string` | AWS region code. |
-| `bucket_name_suffix` | `string` | Suffix that makes the name globally unique. |
+| `purpose` | `string` | What the store holds; the last component of the name. |
 | `partition` | `string` | AWS partition used to build ARNs. |
 | `kms_key_arn` | `string` | Customer-managed key; every other key is denied. |
 | `lifecycle_role_arn` | `string` | The only principal permitted to delete an object. |
@@ -21,7 +27,8 @@ policy denial rather than a convention.
 | `abort_incomplete_multipart_days` | `number` | Must be 1, i.e. 24 hours. |
 | `tags` | `map(string)` | Tags applied to the bucket. |
 
-The bucket name is `aex-content-<plane>-<region>-<suffix>`.
+The bucket name is `aex-<plane>-<region>-<purpose>`, which is the same
+plane-qualified prefix every other resource in a plane carries.
 
 ## Outputs
 

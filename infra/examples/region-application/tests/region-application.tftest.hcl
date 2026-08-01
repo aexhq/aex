@@ -132,12 +132,12 @@ run "the_cluster_and_the_log_group_are_created_by_this_root" {
   command = plan
 
   assert {
-    condition     = aws_ecs_cluster.this.name == var.cluster_name
+    condition     = module.cluster.name == var.cluster_name
     error_message = "The ECS cluster must be created under the configured name."
   }
 
   assert {
-    condition     = aws_cloudwatch_log_group.stream_service.name == var.stream_service.log_group_name
+    condition     = module.stream_log_group.name == var.stream_service.log_group_name
     error_message = "The service log group must be created by this root, not assumed to exist."
   }
 }

@@ -22,6 +22,11 @@ variable "artifact_key" {
       resources                    = list(string)
       data_plane                   = bool
       encryption_context_workspace = optional(string)
+      conditions = optional(list(object({
+        test     = string
+        variable = string
+        values   = list(string)
+      })), [])
     }))
   })
   description = "The plane-wide key that encrypts published artifacts, and its complete policy. Every principal is named by the caller."

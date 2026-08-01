@@ -184,3 +184,30 @@ run "rejects_an_allowlist_that_is_itself_a_wildcard" {
 
   expect_failures = [var.wildcard_resource_allowlist]
 }
+
+run "rejects_two_grants_sharing_one_statement_id" {
+  command = plan
+
+  variables {
+    action_grants = [
+      {
+        sid              = "SessionAuthority"
+        actions          = ["dynamodb:GetItem"]
+        resources        = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-authority"]
+        scopable         = true
+        condition_key    = "aws:RequestedRegion"
+        condition_values = ["eu-west-1"]
+      },
+      {
+        sid              = "SessionAuthority"
+        actions          = ["dynamodb:GetRecords", "dynamodb:DescribeStream"]
+        resources        = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-authority/stream/*"]
+        scopable         = true
+        condition_key    = "aws:RequestedRegion"
+        condition_values = ["eu-west-1"]
+      },
+    ]
+  }
+
+  expect_failures = [var.action_grants]
+}

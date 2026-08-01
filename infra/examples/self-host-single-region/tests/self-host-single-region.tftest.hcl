@@ -12,12 +12,12 @@ variables {
   account_id                  = "000000000000"
   name_prefix                 = "aex-prd-euw1-"
   bucket_suffix               = "0a1b2c3d"
-  keystore_physical_name      = "aex-keystore-v1"
+  content_bucket_purpose      = "content"
   content_lifecycle_role_arn  = "arn:aws:iam::000000000000:role/aex-prd-content-lifecycle"
   artifact_retention_days     = 90
   ops_topic_name              = "aex-prd-ops"
-  table_definitions_digest    = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-  expected_definitions_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  table_definitions_digest    = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+  expected_definitions_digest = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
 
   vpc = {
     name               = "aex-prd-euw1"
@@ -98,6 +98,7 @@ variables {
     {
       logical_name                = "keystore"
       authority                   = "secret"
+      pinned_physical_name        = "aex-keystore-v1"
       hash_key                    = "pk"
       billing_mode                = "PAY_PER_REQUEST"
       point_in_time_recovery_days = 35
@@ -151,8 +152,8 @@ run "the_self_host_root_plans" {
   command = plan
 
   assert {
-    condition     = module.content.bucket == "aex-content-prd-eu-west-1-0a1b2c3d"
-    error_message = "The content bucket name must be derived from the plane, region and suffix."
+    condition     = module.content.bucket == "aex-prd-eu-west-1-content"
+    error_message = "The content bucket name must be derived from the plane, the region and what the store holds."
   }
 
   assert {

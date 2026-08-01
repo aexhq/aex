@@ -27,6 +27,13 @@ variables {
         actions        = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
         resources      = ["*"]
         data_plane     = false
+        conditions = [
+          {
+            test     = "StringEquals"
+            variable = "kms:ViaService"
+            values   = ["ecr.eu-west-1.amazonaws.com"]
+          },
+        ]
       },
     ]
   }

@@ -114,10 +114,11 @@ pub struct KeySchema {
 /// A secondary index projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Projection {
-    /// Always `INCLUDE`; `ALL` is rejected by the schema (D-29).
+    /// `INCLUDE` or `KEYS_ONLY`; `ALL` is rejected by the schema (D-29).
     #[serde(rename = "type")]
     pub projection_type: String,
-    /// The exhaustive attribute list a query over this index may observe.
+    /// The exhaustive attribute list a query over this index may observe, empty
+    /// on a `KEYS_ONLY` index.
     pub attributes: Vec<String>,
 }
 
@@ -132,6 +133,14 @@ pub struct GlobalSecondaryIndex {
     pub sort: String,
     /// Always true: only items carrying the index attributes appear.
     pub sparse: bool,
+    /// Whether this index deliberately projects the record body.
+    ///
+    /// A body-shaped attribute may appear in a projection only where this is
+    /// true. It is the declared exception to D-29, not a hole in it: the
+    /// observation indexes carry the record a query returns, and every other
+    /// index must stay unable to surface a prompt, a body or a receipt.
+    #[serde(rename = "projectsRecordBody")]
+    pub projects_record_body: bool,
     /// Why the index exists in this shape.
     pub rationale: String,
     /// The projection.
@@ -154,9 +163,13 @@ pub struct ServerSideEncryption {
     /// Always `KMS`.
     #[serde(rename = "type")]
     pub encryption_type: String,
-    /// The customer managed key alias.
-    #[serde(rename = "keyAlias")]
-    pub key_alias: String,
+    /// The authority whose customer managed key encrypts this table.
+    ///
+    /// An authority id, never a physical alias: two planes share one account, so
+    /// the alias is `alias/aex-{plane}-{region}-{authority}` and only an
+    /// environment root can compose it.
+    #[serde(rename = "keyAuthority")]
+    pub key_authority: String,
     /// Why this table has the key it has.
     pub rationale: String,
 }
@@ -217,6 +230,16 @@ pub struct TableDefinition {
     /// Always true.
     #[serde(rename = "deletionProtection")]
     pub deletion_protection: bool,
+    /// Set on a table whose physical name may not be derived from the
+    /// environment prefix. The name itself is an environment decision and is
+    /// never carried here; the flag is what makes a derived name a refusal
+    /// rather than a silent rename.
+    #[serde(
+        rename = "physicalNamePinned",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub physical_name_pinned: Option<bool>,
     /// Point-in-time recovery.
     #[serde(rename = "pointInTimeRecovery")]
     pub point_in_time_recovery: PointInTimeRecovery,
@@ -548,6 +571,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "observation-authority",
                 "regional-authz-projection",
                 "regional-content",
                 "regional-registry",
@@ -568,39 +592,77 @@ mod tests {
     fn no_index_projects_all() {
         for table in load_all(&definitions_directory()).expect("the definitions load") {
             for index in &table.global_secondary_indexes {
-                assert_eq!(
-                    index.projection.projection_type, "INCLUDE",
+                assert!(
+                    ["INCLUDE", "KEYS_ONLY"].contains(&index.projection.projection_type.as_str()),
                     "`{}` index `{}` projects {}",
-                    table.table, index.name, index.projection.projection_type
+                    table.table,
+                    index.name,
+                    index.projection.projection_type
                 );
+                if index.projection.projection_type == "KEYS_ONLY" {
+                    assert!(
+                        index.projection.attributes.is_empty(),
+                        "`{}` index `{}` is KEYS_ONLY and still names projected attributes",
+                        table.table,
+                        index.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// Attribute names that carry a record body, a prompt or a receipt.
+    const BODY_SHAPED: [&str; 10] = [
+        "bodyInline",
+        "bodyDigest",
+        "contentInline",
+        "ciphertext",
+        "responseInline",
+        "responseDigest",
+        "payload",
+        "resolvedConfig",
+        "resultInline",
+        "enc",
+    ];
+
+    #[test]
+    fn no_projection_can_carry_a_body_a_prompt_or_a_receipt() {
+        for table in load_all(&definitions_directory()).expect("the definitions load") {
+            for index in &table.global_secondary_indexes {
+                if index.projects_record_body {
+                    continue;
+                }
+                for attribute in &index.projection.attributes {
+                    assert!(
+                        !BODY_SHAPED.contains(&attribute.as_str()),
+                        "`{}` index `{}` projects `{attribute}` without declaring \
+                         `projectsRecordBody`",
+                        table.table,
+                        index.name
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn no_projection_can_carry_a_body_a_prompt_or_a_receipt() {
-        const FORBIDDEN: [&str; 10] = [
-            "bodyInline",
-            "bodyDigest",
-            "contentInline",
-            "ciphertext",
-            "responseInline",
-            "responseDigest",
-            "payload",
-            "resolvedConfig",
-            "resultInline",
-            "enc",
-        ];
+    fn a_body_projection_is_declared_only_where_a_body_is_actually_projected() {
         for table in load_all(&definitions_directory()).expect("the definitions load") {
             for index in &table.global_secondary_indexes {
-                for attribute in &index.projection.attributes {
-                    assert!(
-                        !FORBIDDEN.contains(&attribute.as_str()),
-                        "`{}` index `{}` projects `{attribute}`",
-                        table.table,
-                        index.name
-                    );
+                if !index.projects_record_body {
+                    continue;
                 }
+                assert!(
+                    index
+                        .projection
+                        .attributes
+                        .iter()
+                        .any(|attribute| BODY_SHAPED.contains(&attribute.as_str())),
+                    "`{}` index `{}` declares `projectsRecordBody` and projects no body; the \
+                     exception must never be wider than the thing it excepts",
+                    table.table,
+                    index.name
+                );
             }
         }
     }
@@ -644,6 +706,7 @@ mod tests {
                 partition: "ghostPk".to_owned(),
                 sort: "ghostSk".to_owned(),
                 sparse: true,
+                projects_record_body: false,
                 rationale: "a deliberate defect".to_owned(),
                 projection: Projection {
                     projection_type: "INCLUDE".to_owned(),
@@ -698,17 +761,47 @@ mod tests {
     #[test]
     fn the_three_secret_and_content_tables_hold_distinct_keys() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let aliases: Vec<&str> = tables
+        let authorities: Vec<&str> = tables
             .iter()
-            .map(|table| table.server_side_encryption.key_alias.as_str())
+            .map(|table| table.server_side_encryption.key_authority.as_str())
             .collect();
-        let mut unique = aliases.clone();
+        let mut unique = authorities.clone();
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(
-            aliases.len(),
+            authorities.len(),
             unique.len(),
-            "two regional tables share a customer managed key: {aliases:?}"
+            "two regional tables share a customer managed key: {authorities:?}"
+        );
+    }
+
+    #[test]
+    fn no_key_authority_is_a_physical_alias() {
+        for table in load_all(&definitions_directory()).expect("the definitions load") {
+            let authority = &table.server_side_encryption.key_authority;
+            assert!(
+                !authority.starts_with("alias/"),
+                "`{}` names the physical alias `{authority}`; two planes share one account and \
+                 cannot both own an alias, so the bundle carries the authority id and the \
+                 environment root composes `alias/aex-{{plane}}-{{region}}-{{authority}}`",
+                table.table
+            );
+        }
+    }
+
+    #[test]
+    fn exactly_one_table_pins_its_physical_name() {
+        let pinned: Vec<String> = load_all(&definitions_directory())
+            .expect("the definitions load")
+            .into_iter()
+            .filter(|table| table.physical_name_pinned == Some(true))
+            .map(|table| table.table)
+            .collect();
+        assert_eq!(
+            pinned,
+            vec!["regional-secret-keystore".to_owned()],
+            "the hierarchical keyring's branch-key store is the one table whose physical name \
+             is bound to its contents; any other pinned name is an environment escaping its prefix"
         );
     }
 

@@ -1,13 +1,19 @@
 locals {
   by_name = { for t in var.table_definitions : t.logical_name => t }
 
+  # A table carries a pinned physical name only when its name is bound to its
+  # own contents — the hierarchical keyring's branch-key store is the only such
+  # table — and then the name is supplied verbatim by the environment. Every
+  # other name is derived, so a table cannot silently escape the environment
+  # prefix and a pinned name cannot silently be re-derived.
   physical_names = {
-    for t in var.table_definitions : t.logical_name => (
-      t.logical_name == "keystore"
-      ? var.keystore_physical_name
-      : "${var.name_prefix}${replace(t.logical_name, "_", "-")}"
+    for t in var.table_definitions : t.logical_name => coalesce(
+      t.pinned_physical_name,
+      "${var.name_prefix}${replace(t.logical_name, "_", "-")}"
     )
   }
+
+  pinned = { for t in var.table_definitions : t.logical_name => t.pinned_physical_name if t.pinned_physical_name != null }
 }
 
 resource "aws_dynamodb_table" "this" {
@@ -35,11 +41,19 @@ resource "aws_dynamodb_table" "this" {
     for_each = coalesce(each.value.global_secondary_indexes, [])
 
     content {
-      name               = global_secondary_index.value.name
-      hash_key           = global_secondary_index.value.hash_key
-      range_key          = global_secondary_index.value.range_key
-      projection_type    = global_secondary_index.value.projection_type
-      non_key_attributes = global_secondary_index.value.non_key_attributes
+      name            = global_secondary_index.value.name
+      hash_key        = global_secondary_index.value.hash_key
+      range_key       = global_secondary_index.value.range_key
+      projection_type = global_secondary_index.value.projection_type
+
+      # A `KEYS_ONLY` index projects its own key attributes and nothing else;
+      # AWS rejects the create when a non-key attribute list accompanies it, and
+      # an empty list is the same mistake spelled differently.
+      non_key_attributes = (
+        global_secondary_index.value.projection_type == "INCLUDE"
+        ? global_secondary_index.value.non_key_attributes
+        : null
+      )
     }
   }
 
@@ -70,8 +84,12 @@ resource "aws_dynamodb_table" "this" {
 
   lifecycle {
     precondition {
-      condition     = each.key != "keystore" || local.physical_names[each.key] == var.keystore_physical_name
-      error_message = "The keystore table must be created under its pinned physical name, not under the environment name prefix."
+      condition = (
+        each.value.pinned_physical_name == null
+        ? local.physical_names[each.key] == "${var.name_prefix}${replace(each.key, "_", "-")}"
+        : local.physical_names[each.key] == each.value.pinned_physical_name
+      )
+      error_message = "Table `${each.key}` must be created under its pinned physical name when it declares one, and under the environment name prefix when it does not."
     }
   }
 }

@@ -8,7 +8,7 @@
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
-    "keyAlias": "alias/aex-regional-usage-query",
+    "keyAuthority": "regional-usage-query",
     "rationale": "The projection is customer-readable and holds no provider evidence, but it still derives from billing data, so it stays on a usage-owned key rather than on a content or secret key."
   },
   "attributes": [

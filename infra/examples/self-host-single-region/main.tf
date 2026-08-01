@@ -35,7 +35,6 @@ module "tables" {
   table_definitions           = var.table_definitions
   table_definitions_digest    = var.table_definitions_digest
   expected_definitions_digest = var.expected_definitions_digest
-  keystore_physical_name      = var.keystore_physical_name
 
   kms_key_arn_by_authority = { for k, m in module.authority_key : k => m.key_arn }
 
@@ -47,7 +46,7 @@ module "content" {
 
   plane              = var.plane
   region             = var.region
-  bucket_name_suffix = var.bucket_suffix
+  purpose            = var.content_bucket_purpose
   kms_key_arn        = module.authority_key[var.content_authority].key_arn
   lifecycle_role_arn = var.content_lifecycle_role_arn
   tags               = var.tags
