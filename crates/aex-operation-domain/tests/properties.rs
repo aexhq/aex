@@ -521,7 +521,7 @@ fn admission_outcomes_are_total() {
                 match (&fresh, guard_state.map(|value| value.state)) {
                     (AdmissionOutcome::Inserted(_), _) => {}
                     (AdmissionOutcome::DeletionInProgress { .. }, Some(DeletionState::Purging)) => {
-                        assert!(!kind.claims_session_deletion())
+                        assert!(!kind.claims_session_deletion());
                     }
                     (AdmissionOutcome::SessionPurged { .. }, Some(DeletionState::Purged)) => {
                         assert!(!kind.claims_session_deletion());
