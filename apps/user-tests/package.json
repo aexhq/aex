@@ -5,6 +5,29 @@
   "private": true,
   "type": "module",
   "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. Product SDK/CLI access goes through a child process whose cwd is a fresh `bun install` tempdir; the harness may import local test fixtures.",
+  "aex": {
+    "owner": "clients",
+    "role": "test_support",
+    "artifact": "none",
+    "layers": [
+      "unit",
+      "user"
+    ],
+    "concerns": [
+      "property",
+      "compatibility"
+    ],
+    "seams": [],
+    "security_tier": "public_edge",
+    "risk": [
+      "generated_code"
+    ],
+    "scenarios": [],
+    "not_applicable": {
+      "targets": "awaiting the clients stream; the black-box journeys land with the regenerated SDK",
+      "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion"
+    }
+  },
   "scripts": {
     "test:user": "bun scripts/user-bun-test.mjs --report=.tmp/junit-test-user.xml --isolate --timeout=620000 --sweep",
     "test:user:files": "bun scripts/user-bun-test.mjs --isolate --timeout=620000",

@@ -11,6 +11,22 @@ publish = false
 [lints]
 workspace = true
 
+[package.metadata.aex]
+owner = "central-identity"
+role = "deployable"
+artifact = "lambda_zip"
+deployable = "central-control-worker"
+live_suite = "aex-live-central-control-worker"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = ["aws.rds_data.transaction", "aws.sqs.fifo", "aws.iam.denial"]
+security_tier = "internal"
+risk = ["iam"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the central-identity stream; the cases land with the binary's own implementation"
+
 [[bin]]
 name = "central-control-worker"
 path = "src/main.rs"

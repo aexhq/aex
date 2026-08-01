@@ -10,3 +10,18 @@ publish = false
 
 [lints]
 workspace = true
+
+[package.metadata.aex]
+owner = "clients"
+role = "live_companion"
+artifact = "none"
+layers = ["smoke", "e2e"]
+concerns = ["fault", "security", "performance"]
+seams = ["aws.iam.denial", "vercel.build_output.deploy"]
+security_tier = "public_edge"
+risk = ["iam"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
+deployable = "the dashboard application lands with the clients stream (P-DASHBOARD); this companion is written and unselected until it does"

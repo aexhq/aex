@@ -1,0 +1,213 @@
+# Role -> minimum-evidence profiles, as machine data.
+#
+# `15-test-architecture.md` section 5 is this file's documentation; this file is
+# what the checker reads. A package declares `role`, and the profile named by
+# that role is the floor: it may declare more layers or concerns, never fewer.
+#
+# `forbid_not_applicable` names the fields a role may never excuse with a
+# `[package.metadata.aex.not_applicable]` entry, because the role makes the
+# field structurally true. A deployable can share a live companion, so
+# `live_suite` is excusable; a deployable always has a started artifact, so
+# `smoke` is not.
+#
+# `[concern.<id>]` maps a declared concern to the layer that carries its
+# evidence. `conventional_target` is the name that evidence usually lives under;
+# it is quoted in the failure message so a stream is told where to put the case,
+# but the check is on the layer, not the filename - `Q-SELECTION` forbids a
+# filename convention from deciding what a lane runs.
+
+schema = "aex.test-profiles.v1"
+
+# --- the closed value sets --------------------------------------------------
+#
+# These are the schema of `[package.metadata.aex]`. They live here, once, so the
+# registry checker and `aex-test-harness` cannot drift apart: both embed this
+# file. A value outside one of these lists fails `aex-metadata-bad-enum`.
+
+[values]
+owner = ["contracts", "central-identity", "central-finance", "regional-domains",
+         "regional-stores", "regional-services", "brain-core", "providers",
+         "tools-mcp", "hands", "observations-usage", "clients", "infrastructure",
+         "delivery", "test-architecture"]
+role = ["contract", "domain", "application", "adapter", "composition",
+        "deployable", "runtime_image", "test_support", "live_companion", "tool",
+        "client", "web_app", "infra_module", "bundle"]
+artifact = ["none", "lambda_zip", "oci_image", "oci_task", "native_binary",
+            "npm_package", "vercel_build_output", "static_site", "hands_image",
+            "terraform_module", "bundle"]
+layers = ["unit", "smoke", "integration", "e2e", "user"]
+concerns = ["contract", "property", "concurrency", "fault", "security",
+            "performance", "compatibility"]
+security_tier = ["public_edge", "authority", "money", "secret", "guest",
+                 "internal", "diagnostic"]
+risk = ["untrusted_input", "unsafe_code", "money", "concurrency", "sql", "iam",
+        "generated_code", "none"]
+
+# The lanes a test run can be minted for. `unit` and `integration` run locally,
+# so their TTL is a local cleanup deadline rather than the plan's live figure.
+[values.lane_ttl_minutes]
+unit = 15
+integration = 30
+smoke = 15
+e2e = 120
+user = 60
+load = 240
+soak = 1800
+
+# --- role profiles ----------------------------------------------------------
+
+[role.contract]
+layers = ["unit"]
+concerns = ["contract", "property", "security"]
+forbid_not_applicable = []
+evidence = "valid/invalid/golden corpus at the declared floors; deterministic double generation with a clean diff; TS/Rust byte parity; a fuzz target for every public decoder"
+
+[role.domain]
+layers = ["unit"]
+concerns = ["property"]
+forbid_not_applicable = []
+evidence = "reference state machine plus proptest command sequences with checked-in proptest-regressions; exhaustive enum coverage; a mutation gate on the invariant guards"
+
+[role.application]
+layers = ["unit"]
+concerns = ["property", "fault"]
+forbid_not_applicable = []
+evidence = "scripted-port command tests; the eight-row unknown-outcome matrix; the authorization matrix"
+
+[role.adapter]
+layers = ["unit", "integration"]
+concerns = ["contract", "property", "fault", "security"]
+forbid_not_applicable = []
+evidence = "request/expression tests against captured real request bytes; codec round-trip and hostile rejection; the error-mapping table; real-engine or protocol-double integration; a live companion claiming every requires_live seam"
+
+[role.composition]
+layers = ["unit"]
+concerns = ["contract", "security"]
+forbid_not_applicable = []
+evidence = "layer-order and precedence conformance; startup config denial; the mounted-route set equals the generated RouteId set"
+
+[role.deployable]
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+forbid_not_applicable = ["smoke", "e2e"]
+forbid_reason = "role `deployable` always has a started artifact"
+evidence = "config/startup/readiness; authorization-negative smoke; IAM least-privilege denial; log and trace redaction scan; the fault-recovery matrix; the resource-envelope check"
+
+[role.runtime_image]
+layers = ["unit", "smoke", "e2e"]
+concerns = ["fault", "security"]
+forbid_not_applicable = ["smoke"]
+forbid_reason = "role `runtime_image` always has a booted artifact"
+evidence = "local boot, package inventory, SBOM and reproducibility; credential, root and network isolation; a hostile workload; one case per compute shape"
+
+[role.test_support]
+layers = ["unit"]
+concerns = ["property"]
+forbid_not_applicable = []
+evidence = "builders are deterministic; fixtures contain no secret; absent from every production link graph"
+
+[role.live_companion]
+layers = ["smoke", "e2e"]
+concerns = ["fault", "security", "performance"]
+forbid_not_applicable = ["smoke"]
+forbid_reason = "role `live_companion` exists to carry the started-artifact evidence"
+evidence = "imports only public and generated contracts plus test support; fails, never skips, on an absent descriptor; owns the cleanup-ledger flush"
+
+[role.tool]
+layers = ["unit"]
+concerns = ["contract", "property"]
+forbid_not_applicable = []
+evidence = "determinism by double-run byte identity; an argument and exit-code corpus; self-update denial where applicable"
+
+[role.client]
+layers = ["unit", "user"]
+concerns = ["contract", "compatibility"]
+forbid_not_applicable = []
+evidence = "the conformance corpus on Node 22 and Bun 1.3; a packed clean install outside the workspace; invalid-response and error precedence; the provenance check"
+
+[role.web_app]
+layers = ["unit", "smoke", "e2e", "user"]
+concerns = ["security", "compatibility"]
+forbid_not_applicable = ["smoke"]
+forbid_reason = "role `web_app` always has a deployed build output"
+evidence = "component and accessibility tests; a built-bundle smoke; a deployed authz-negative case; journeys through public APIs only; no database or storage credential in the link graph"
+
+[role.infra_module]
+layers = ["unit", "integration"]
+concerns = ["security"]
+forbid_not_applicable = []
+evidence = "format/validate/test; plan policy; ephemeral apply/smoke/destroy; least-privilege denial; a drift assertion"
+
+[role.bundle]
+layers = ["unit", "integration"]
+concerns = ["contract", "compatibility"]
+forbid_not_applicable = []
+evidence = "clean-head and adjacent-head application, idempotent re-entry, interrupted-run resume, canonical digest stability"
+
+# --- concern -> target mapping ----------------------------------------------
+
+[concern.contract]
+requires_layer = "unit"
+conventional_target = "conformance"
+
+[concern.property]
+requires_layer = "unit"
+conventional_target = "properties"
+
+[concern.concurrency]
+requires_layer = "unit"
+conventional_target = "concurrency"
+
+[concern.fault]
+requires_layer = "unit"
+conventional_target = "faults"
+
+[concern.security]
+requires_layer = "unit"
+conventional_target = "security"
+
+[concern.performance]
+requires_layer = "e2e"
+conventional_target = "load"
+
+[concern.compatibility]
+requires_layer = "unit"
+conventional_target = "compatibility"
+
+# --- evidence classes with a named owner ------------------------------------
+#
+# An Area 9 evidence class that names an owning package. `aex-missing-evidence-
+# class` fails when the named package does not declare the required concern, so
+# a class cannot quietly lose its owner. Rows are added as each stream's Area 9
+# registry row is mechanised; the pending rows are listed in
+# `release/unearned-evidence.json` under `pending_authority`.
+
+[evidence_class."hands-compute-shape-golden-table"]
+owner_package = "aex-runtime-control"
+requires_concern = "property"
+detail = "golden table over the five public Hands compute shapes (512mb, 1gb, 2gb, 4gb, 8gb); the arity is five, not six"
+
+[evidence_class."usage-rating-golden-invoice"]
+owner_package = "aex-usage-rating"
+requires_concern = "property"
+detail = "golden invoice properties over exact rational arithmetic; no floating-point money"
+
+[evidence_class."session-journal-fold-determinism"]
+owner_package = "aex-session-domain"
+requires_concern = "property"
+detail = "journal fold determinism and the terminal barrier over arbitrary ordered histories"
+
+[evidence_class."finance-journal-conservation"]
+owner_package = "aex-finance-domain"
+requires_concern = "property"
+detail = "balanced-posting and conservation properties over generated transition sequences"
+
+[evidence_class."brain-fence-guards"]
+owner_package = "aex-brain-domain"
+requires_concern = "property"
+detail = "F1-F12 fence, terminal and effect-identity guards with a mutation gate"
+
+[evidence_class."contract-generator-determinism"]
+owner_package = "aex-contract-gen"
+requires_concern = "contract"
+detail = "double-run byte identity of the generated contract bundle"

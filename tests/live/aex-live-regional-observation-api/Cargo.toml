@@ -10,3 +10,18 @@ publish = false
 
 [lints]
 workspace = true
+
+[package.metadata.aex]
+owner = "regional-services"
+role = "live_companion"
+artifact = "none"
+deployable = "regional-observation-api"
+layers = ["smoke", "e2e"]
+concerns = ["fault", "security", "performance"]
+seams = ["aws.dynamodb.condition", "aws.dynamodb.streams", "aws.dynamodb.transact_write", "aws.iam.denial", "aws.s3.conditional_put"]
+security_tier = "public_edge"
+risk = ["iam"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"

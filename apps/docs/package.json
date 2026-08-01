@@ -1,6 +1,34 @@
 {
   "name": "@aexhq/docs",
   "version": "0.1.0",
+  "aex": {
+    "owner": "clients",
+    "role": "web_app",
+    "artifact": "static_site",
+    "deployable": "site",
+    "live_suite": "aex-live-site",
+    "layers": [
+      "unit",
+      "smoke",
+      "e2e",
+      "user"
+    ],
+    "concerns": [
+      "security",
+      "compatibility"
+    ],
+    "seams": [
+      "vercel.build_output.deploy"
+    ],
+    "security_tier": "public_edge",
+    "risk": [
+      "generated_code"
+    ],
+    "scenarios": [],
+    "not_applicable": {
+      "targets": "awaiting the clients stream; the directory is renamed to apps/site by P-PACKAGES"
+    }
+  },
   "license": "Apache-2.0",
   "private": true,
   "type": "module",

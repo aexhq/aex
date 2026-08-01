@@ -1,0 +1,8 @@
+id = "t2"
+description = "The launch steady-state tier: 100 concurrent full-path agents on the composed system."
+source = "Area 10 T2 row 'Peak active/offered agents = 100'; PERF-02"
+
+[vector]
+active_agents = 100
+offered_agents = 100
+duration_minutes = 30

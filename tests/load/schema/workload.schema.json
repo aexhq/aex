@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aex.dev/test/v1/workload.json",
+  "title": "aex.workload-descriptor.v1",
+  "description": "One load or soak workload. PERF-01: a capacity claim is only meaningful next to the shape that produced it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "owner", "target", "tier", "duration", "ttl", "arrival", "gate", "report"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+    "owner": {
+      "enum": ["contracts", "central-identity", "central-finance", "regional-domains",
+               "regional-stores", "regional-services", "brain-core", "providers",
+               "tools-mcp", "hands", "observations-usage", "clients", "infrastructure",
+               "delivery", "test-architecture"]
+    },
+    "target": { "type": "string", "pattern": "^aex-live-[a-z][a-z0-9-]*$" },
+    "tier": { "type": "string", "pattern": "^t[0-9]+$" },
+    "duration": { "$ref": "#/$defs/duration" },
+    "ttl": { "$ref": "#/$defs/duration" },
+    "budget_micro_usd": { "type": "integer", "minimum": 1 },
+    "arrival": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "mix"],
+      "properties": {
+        "mode": { "enum": ["open", "closed"] },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "rate_per_s": { "type": "number", "exclusiveMinimum": 0 },
+        "mix": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "closed" } } },
+          "then": { "required": ["concurrency"] }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "open" } } },
+          "then": { "required": ["rate_per_s"] }
+        }
+      ]
+    },
+    "gate": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "blocking", "assert", "source"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]{2,63}$" },
+          "kind": {
+            "enum": ["budget", "diagnostic"],
+            "description": "`slo` is deliberately absent: Q-PERFORMANCE forbids a customer percentile promise as a prelaunch release gate."
+          },
+          "blocking": { "type": "boolean" },
+          "assert": { "type": "string", "minLength": 8 },
+          "source": { "type": "string", "minLength": 4 }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics"],
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "minItems": 18,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["completed_per_s", "queue_delay_ms", "time_to_first_token_ms",
+                     "end_to_end_ms", "provider_wait_ms", "local_cpu_ms", "rss_peak_bytes",
+                     "open_fds", "tokio_tasks", "sockets", "journal_bytes", "checkpoint_bytes",
+                     "affinity_hit_rate", "scale_event_s", "recovery_s", "duplicate_effects",
+                     "gaps", "cost_micro_usd_per_completed_turn"]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "duration": { "type": "string", "pattern": "^[0-9]+[smhd]$" }
+  }
+}

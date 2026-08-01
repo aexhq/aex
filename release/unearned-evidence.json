@@ -1,0 +1,4097 @@
+[
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "apps/docs",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; the directory is renamed to apps/site by P-PACKAGES"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "apps/user-tests",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; the black-box journeys land with the regenerated SDK"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-application",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-domain",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-hands",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-managed-web",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-mcp",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the providers stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-store-aws",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-test-support",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-brain-tool-catalog",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-central-http",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-central-test-support",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-content-domain",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-content-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-control-app",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-control-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-control-domain",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-finance-app",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-finance-aurora",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-finance-domain",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-hands-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-hands-protocol",
+    "owner": "contracts",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-hands-tools",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-identity-app",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-identity-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-identity-domain",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-internal-contracts",
+    "owner": "contracts",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the providers stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-observation-application",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-observation-domain",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-observation-export",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-observation-query",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-observation-store-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-observation-test-support",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-operation-domain",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-otlp-admission",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-payment-contracts",
+    "owner": "contracts",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-rds-data",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-regional-http",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-regional-test-support",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-registry-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-runtime-activity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-runtime-control",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-runtime-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-secret-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-secret-custody-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-secret-domain",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-secret-keystore-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-session-app",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-session-domain",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-session-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-application",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-compute-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-domain",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-query-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-rating",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-storage-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-usage-transfer-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-wire",
+    "owner": "contracts",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-work-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "crates/aex-workspace-domain",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "packages/cli",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; OD-08 replaces this package with tools/aex-cli"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "packages/contracts",
+    "owner": "contracts",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the contracts stream; OD-08 deletes this package in favour of the generated bundle"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "packages/sdk",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; the SDK is regenerated over the new wire (OD-08)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "runtimes/hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "runtimes/hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "services/regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-orphan-companion",
+    "detail": "the dashboard application lands with the clients stream (P-DASHBOARD); this companion is written and unselected until it does"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the providers stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-orphan-companion",
+    "detail": "the model catalog is a non-package artifact; delivery declares its identity in release/artifact-metadata.toml"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-site",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-orphan-companion",
+    "detail": "the TypeScript Stripe command edge lands with the central-finance stream (P-AUTH-EDGE)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-orphan-companion",
+    "detail": "the TypeScript Stripe webhook edge lands with the central-finance stream (P-AUTH-EDGE)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tools/aex-cli",
+    "owner": "clients",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the clients stream; the cases land with the tool's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tools/aex-contract-gen",
+    "owner": "contracts",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the contracts stream; the cases land with the tool's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tools/aex-release-tool",
+    "owner": "delivery",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the delivery stream; the cases land with the tool's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tools/eslint-plugin-aex",
+    "owner": "delivery",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the delivery stream; the rule fixtures land with the lint rules"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "workers/usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+  },
+  {
+    "reason_class": "pending_authority",
+    "subject": "api/generated/registries/routes.json",
+    "owner": "contracts",
+    "blocking_rule": "aex-route-uncovered",
+    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
+  },
+  {
+    "reason_class": "pending_authority",
+    "subject": "cargo nextest list --message-format json",
+    "owner": "test-architecture",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
+  },
+  {
+    "reason_class": "pending_authority",
+    "subject": "migrations/central/*.sql",
+    "owner": "central-finance",
+    "blocking_rule": "aex-migration-uncovered",
+    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
+  },
+  {
+    "reason_class": "pending_authority",
+    "subject": "release/scenario-ownership.toml",
+    "owner": "delivery",
+    "blocking_rule": "aex-scenario-orphan",
+    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LEAK-SOAK-12H",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LEAK-SOAK-24H",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LEAK-USAGE-PROBE-12H",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-usage-compute-worker`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-100-BUDGETS",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-100-COMPLETE",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-200-SAFE",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-500-BOUNDED",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-FINANCE-BACKLOG",
+    "owner": "central-finance",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-finance-settlement-worker`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-OBSERVATION-ADMISSION",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-otlp`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-OBSERVATION-EXPORT",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-observation-export-task`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-REGIONAL-ADMISSION",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-STREAM-SOCKETS",
+    "owner": "regional-services",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-stream`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "OTLP-STAGED-COMMIT",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-otlp`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "PERF-BASELINE-CODECS",
+    "owner": "contracts",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "PERF-BASELINE-JOURNAL-FOLD",
+    "owner": "regional-domains",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/docs",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/docs",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/docs",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `user` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/user-tests",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `user` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "packages/cli",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `user` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "packages/contracts",
+    "owner": "contracts",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `user` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "packages/sdk",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `user` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "runtimes/hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "runtimes/hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "runtimes/hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "runtimes/hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-site",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-site",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "apps/docs",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `vercel.build_output.deploy` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-hands",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-hands",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-managed-web",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `net.public_egress` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-mcp",
+    "owner": "tools-mcp",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-provider-gateway",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-store-aws",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-store-aws",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-brain-store-aws",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.presigned_expiry` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.sse_kms` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.unversioned_delete` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-control-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-control-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-finance-aurora",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-finance-aurora",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-hands-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-hands-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-hands-tools",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-identity-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-identity-aurora",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-observation-export",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-observation-store-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-observation-store-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-observation-store-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-observation-store-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-platform-telemetry",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.cloudwatch.export` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-rds-data",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-registry-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-runtime-activity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-runtime-activity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-runtime-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-runtime-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-secret-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.branch_key_rotation` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-secret-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-secret-custody-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-secret-custody-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-secret-keystore-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-session-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-session-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-session-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.throughput` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-session-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-session-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-usage-compute-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-usage-compute-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-usage-query-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-usage-storage-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-usage-storage-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-usage-transfer-aws",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-work-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-work-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-work-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "packages/sdk",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `npm.registry.publish` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `net.public_egress` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "runtimes/hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.cloudwatch.export` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `net.public_egress` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-authz",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-identity-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.unversioned_delete` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `vercel.build_output.deploy` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.redrive` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-model-catalog",
+    "owner": "providers",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-otlp",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.branch_key_rotation` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.branch_key_rotation` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.throughput` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.presigned_expiry` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.sse_kms` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.unversioned_delete` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-stream",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-site",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `vercel.build_output.deploy` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.redrive` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/central-control-worker",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/central-schema-admin",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/content-lifecycle-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.unversioned_delete` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-settlement-worker",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.redrive` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-export-launcher",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-export-task",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/observation-reconciler",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/provider-cost-reconciler",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.branch_key_rotation` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-compute-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.redrive` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-storage-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  }
+]

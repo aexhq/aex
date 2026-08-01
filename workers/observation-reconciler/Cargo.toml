@@ -11,6 +11,22 @@ publish = false
 [lints]
 workspace = true
 
+[package.metadata.aex]
+owner = "observations-usage"
+role = "deployable"
+artifact = "lambda_zip"
+deployable = "observation-reconciler"
+live_suite = "aex-live-observation-reconciler"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = ["aws.dynamodb.streams", "aws.dynamodb.ttl", "aws.s3.conditional_put", "aws.iam.denial"]
+security_tier = "internal"
+risk = ["iam"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+
 [[bin]]
 name = "observation-reconciler"
 path = "src/main.rs"

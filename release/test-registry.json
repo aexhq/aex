@@ -1,0 +1,4978 @@
+{
+  "schema": "aex.test-registry.v1",
+  "phase": "source_rewrite",
+  "inputs": {
+    "migrations": "absent",
+    "nextest_list": "absent",
+    "routes_registry": "absent",
+    "scenario_ownership": "absent"
+  },
+  "totals": {
+    "awaiting_owner": 134,
+    "capacity_gates": 15,
+    "live_targets": 31,
+    "packages": 139,
+    "seams_claimed": 32,
+    "seams_declared": 34,
+    "workloads": 0
+  },
+  "packages": {
+    "apps/docs": {
+      "name": "@aexhq/docs",
+      "kind": "npm",
+      "meta": {
+        "owner": "clients",
+        "role": "web_app",
+        "artifact": "static_site",
+        "deployable": "site",
+        "live_suite": "aex-live-site",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e",
+          "user"
+        ],
+        "concerns": [
+          "security",
+          "compatibility"
+        ],
+        "seams": [
+          "vercel.build_output.deploy"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the clients stream; the directory is renamed to apps/site by P-PACKAGES"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "apps/user-tests": {
+      "name": "@aexhq/user-tests",
+      "kind": "npm",
+      "meta": {
+        "owner": "clients",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit",
+          "user"
+        ],
+        "concerns": [
+          "property",
+          "compatibility"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion",
+          "targets": "awaiting the clients stream; the black-box journeys land with the regenerated SDK"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-application": {
+      "name": "aex-brain-application",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-domain": {
+      "name": "aex-brain-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-hands": {
+      "name": "aex-brain-hands",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.lambda.microvm",
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-managed-web": {
+      "name": "aex-brain-managed-web",
+      "kind": "cargo",
+      "meta": {
+        "owner": "tools-mcp",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "net.public_egress"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-mcp": {
+      "name": "aex-brain-mcp",
+      "kind": "cargo",
+      "meta": {
+        "owner": "tools-mcp",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "mcp.streamable_http"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-provider-gateway": {
+      "name": "aex-brain-provider-gateway",
+      "kind": "cargo",
+      "meta": {
+        "owner": "providers",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "provider.openai.stream",
+          "provider.anthropic.stream",
+          "provider.deepseek.stream",
+          "provider.zai.stream",
+          "provider.moonshotai.stream",
+          "provider.google.stream"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the providers stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-store-aws": {
+      "name": "aex-brain-store-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.s3.conditional_put"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-test-support": {
+      "name": "aex-brain-test-support",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "test-only crate; must be absent from every production link graph",
+          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-brain-tool-catalog": {
+      "name": "aex-brain-tool-catalog",
+      "kind": "cargo",
+      "meta": {
+        "owner": "tools-mcp",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-central-http": {
+      "name": "aex-central-http",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "composition",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-central-test-support": {
+      "name": "aex-central-test-support",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "test-only crate; must be absent from every production link graph",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-content-aws": {
+      "name": "aex-content-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-session-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.s3.conditional_put",
+          "aws.s3.multipart",
+          "aws.s3.unversioned_delete",
+          "aws.s3.presigned_expiry",
+          "aws.s3.sse_kms",
+          "aws.kms.encryption_context"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-content-domain": {
+      "name": "aex-content-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-domains",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-content-dynamodb": {
+      "name": "aex-content-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-content-lifecycle-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-control-app": {
+      "name": "aex-control-app",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-control-aurora": {
+      "name": "aex-control-aurora",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-central-control-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.aurora.serverless_v2"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "sql"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-control-domain": {
+      "name": "aex-control-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-finance-app": {
+      "name": "aex-finance-app",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-finance-aurora": {
+      "name": "aex-finance-aurora",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-finance-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.aurora.serverless_v2"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-finance-domain": {
+      "name": "aex-finance-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-hands-agent": {
+      "name": "aex-hands-agent",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "guest",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-hands-control-aws": {
+      "name": "aex-hands-control-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-hands-image",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.lambda.microvm",
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-hands-protocol": {
+      "name": "aex-hands-protocol",
+      "kind": "cargo",
+      "meta": {
+        "owner": "contracts",
+        "role": "contract",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "guest",
+        "risk": [
+          "untrusted_input",
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
+          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-hands-tools": {
+      "name": "aex-hands-tools",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-hands-agent",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "guest",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-identity-app": {
+      "name": "aex-identity-app",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-identity-aurora": {
+      "name": "aex-identity-aurora",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-central-identity-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.aurora.serverless_v2"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "sql"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-identity-domain": {
+      "name": "aex-identity-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-internal-contracts": {
+      "name": "aex-internal-contracts",
+      "kind": "cargo",
+      "meta": {
+        "owner": "contracts",
+        "role": "contract",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "untrusted_input",
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
+          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-model-catalog": {
+      "name": "aex-model-catalog",
+      "kind": "cargo",
+      "meta": {
+        "owner": "providers",
+        "role": "domain",
+        "artifact": "none",
+        "live_suite": "aex-live-model-catalog",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [
+          "provider.openai.stream",
+          "provider.anthropic.stream",
+          "provider.deepseek.stream",
+          "provider.zai.stream",
+          "provider.moonshotai.stream",
+          "provider.google.stream"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the providers stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-observation-application": {
+      "name": "aex-observation-application",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-observation-domain": {
+      "name": "aex-observation-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-observation-export": {
+      "name": "aex-observation-export",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-observation-export-task",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.s3.multipart"
+        ],
+        "security_tier": "diagnostic",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-observation-query": {
+      "name": "aex-observation-query",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-observation-store-aws": {
+      "name": "aex-observation-store-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-observation-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.s3.conditional_put"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-observation-test-support": {
+      "name": "aex-observation-test-support",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "test-only crate; must be absent from every production link graph",
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-operation-domain": {
+      "name": "aex-operation-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-domains",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-otlp-admission": {
+      "name": "aex-otlp-admission",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-otlp",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-payment-contracts": {
+      "name": "aex-payment-contracts",
+      "kind": "cargo",
+      "meta": {
+        "owner": "contracts",
+        "role": "contract",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
+          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-platform-telemetry": {
+      "name": "aex-platform-telemetry",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.cloudwatch.export"
+        ],
+        "security_tier": "diagnostic",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {
+          "facade": "unit"
+        },
+        "not_applicable": {
+          "integration": "awaiting the observations-usage stream; the real-collector integration target lands with the OTLP pipeline"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-rds-data": {
+      "name": "aex-rds-data",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-central-identity-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "sql"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-regional-http": {
+      "name": "aex-regional-http",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "composition",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion",
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-regional-test-support": {
+      "name": "aex-regional-test-support",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "test-only crate; must be absent from every production link graph",
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-registry-dynamodb": {
+      "name": "aex-registry-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-session-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-runtime-activity-dynamodb": {
+      "name": "aex-runtime-activity-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-runtime-control-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-runtime-control": {
+      "name": "aex-runtime-control",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-runtime-control-aws": {
+      "name": "aex-runtime-control-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-runtime-control-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.ecs.run_task",
+          "aws.lambda.microvm"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-secret-aws": {
+      "name": "aex-secret-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-secret-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.kms.encryption_context",
+          "aws.kms.branch_key_rotation"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-secret-custody-dynamodb": {
+      "name": "aex-secret-custody-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-secret-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-secret-domain": {
+      "name": "aex-secret-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-domains",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "secret",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-secret-keystore-dynamodb": {
+      "name": "aex-secret-keystore-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-secret-key-admin",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-session-app": {
+      "name": "aex-session-app",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-domains",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-session-domain": {
+      "name": "aex-session-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-domains",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-session-dynamodb": {
+      "name": "aex-session-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-session-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.dynamodb.ttl",
+          "aws.dynamodb.throughput"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-telemetry-schema": {
+      "name": "aex-telemetry-schema",
+      "kind": "cargo",
+      "meta": {
+        "owner": "contracts",
+        "role": "contract",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "untrusted_input",
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {
+          "generated": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-usage-application": {
+      "name": "aex-usage-application",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "application",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property",
+          "fault"
+        ],
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-usage-compute-aws": {
+      "name": "aex-usage-compute-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-usage-compute-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-usage-domain": {
+      "name": "aex-usage-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-usage-query-aws": {
+      "name": "aex-usage-query-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-regional-observation-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-usage-rating": {
+      "name": "aex-usage-rating",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-usage-storage-aws": {
+      "name": "aex-usage-storage-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-usage-storage-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.s3.conditional_put"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-usage-transfer-aws": {
+      "name": "aex-usage-transfer-aws",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-usage-transfer-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.condition"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-wire": {
+      "name": "aex-wire",
+      "kind": "cargo",
+      "meta": {
+        "owner": "contracts",
+        "role": "contract",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input",
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
+          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-work-dynamodb": {
+      "name": "aex-work-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-session-operation-worker",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "crates/aex-workspace-domain": {
+      "name": "aex-workspace-domain",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-domains",
+        "role": "domain",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "packages/cli": {
+      "name": "@aexhq/cli",
+      "kind": "npm",
+      "meta": {
+        "owner": "clients",
+        "role": "client",
+        "artifact": "npm_package",
+        "layers": [
+          "unit",
+          "user"
+        ],
+        "concerns": [
+          "contract",
+          "compatibility"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "replaced by the native tools/aex-cli; no deployed endpoint of its own",
+          "targets": "awaiting the clients stream; OD-08 replaces this package with tools/aex-cli"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "packages/contracts": {
+      "name": "@aexhq/contracts",
+      "kind": "npm",
+      "meta": {
+        "owner": "contracts",
+        "role": "client",
+        "artifact": "npm_package",
+        "layers": [
+          "unit",
+          "user"
+        ],
+        "concerns": [
+          "contract",
+          "compatibility"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "generated contract package; no deployed endpoint of its own",
+          "targets": "awaiting the contracts stream; OD-08 deletes this package in favour of the generated bundle"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "packages/sdk": {
+      "name": "@aexhq/sdk",
+      "kind": "npm",
+      "meta": {
+        "owner": "clients",
+        "role": "client",
+        "artifact": "npm_package",
+        "layers": [
+          "unit",
+          "user"
+        ],
+        "concerns": [
+          "contract",
+          "compatibility"
+        ],
+        "seams": [
+          "npm.registry.publish"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint of its own, and D-18's aex-live-sdk is outside the frozen member set",
+          "targets": "awaiting the clients stream; the SDK is regenerated over the new wire (OD-08)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "runtimes/brain-mux": {
+      "name": "brain-mux",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "deployable",
+        "artifact": "oci_image",
+        "deployable": "brain-mux",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.ecs.run_task",
+          "aws.dynamodb.transact_write",
+          "aws.sqs.fifo",
+          "aws.iam.denial",
+          "provider.openai.stream",
+          "provider.anthropic.stream",
+          "provider.deepseek.stream",
+          "provider.zai.stream",
+          "provider.moonshotai.stream",
+          "provider.google.stream",
+          "mcp.streamable_http",
+          "net.public_egress",
+          "aws.lambda.microvm",
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the brain-core stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "runtimes/hands-agent": {
+      "name": "hands-agent",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "deployable",
+        "artifact": "native_binary",
+        "deployable": "hands-agent",
+        "live_suite": "aex-live-hands-agent",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "guest",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "runtimes/hands-image": {
+      "name": "hands-image",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "runtime_image",
+        "artifact": "hands_image",
+        "deployable": "hands-image",
+        "live_suite": "aex-live-hands-image",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "hands.guest.lifecycle",
+          "aws.lambda.microvm"
+        ],
+        "security_tier": "guest",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/central-authz": {
+      "name": "central-authz",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "central-authz",
+        "live_suite": "aex-live-central-authz",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/central-control-api": {
+      "name": "central-control-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "central-control-api",
+        "live_suite": "aex-live-central-control-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial",
+          "aws.alb.framing"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/central-identity-api": {
+      "name": "central-identity-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "central-identity-api",
+        "live_suite": "aex-live-central-identity-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial",
+          "aws.alb.framing"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/finance-api": {
+      "name": "finance-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "finance-api",
+        "live_suite": "aex-live-finance-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/finance-ingest": {
+      "name": "finance-ingest",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "finance-ingest",
+        "live_suite": "aex-live-finance-ingest",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo",
+          "aws.iam.denial",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/regional-observation-api": {
+      "name": "regional-observation-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "regional-observation-api",
+        "live_suite": "aex-live-regional-observation-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.s3.conditional_put",
+          "aws.iam.denial"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/regional-otlp": {
+      "name": "regional-otlp",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "regional-otlp",
+        "live_suite": "aex-live-regional-otlp",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/regional-secret-api": {
+      "name": "regional-secret-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "regional-secret-api",
+        "live_suite": "aex-live-regional-secret-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.kms.encryption_context",
+          "aws.dynamodb.condition",
+          "aws.iam.denial"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/regional-session-api": {
+      "name": "regional-session-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "regional-session-api",
+        "live_suite": "aex-live-regional-session-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.s3.conditional_put",
+          "aws.iam.denial",
+          "aws.alb.framing"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/regional-stream": {
+      "name": "regional-stream",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "oci_image",
+        "deployable": "regional-stream",
+        "live_suite": "aex-live-regional-stream",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.streams",
+          "aws.alb.framing",
+          "aws.iam.denial"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-brain-mux": {
+      "name": "aex-live-brain-mux",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "brain-mux",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.cloudwatch.export",
+          "aws.dynamodb.condition",
+          "aws.dynamodb.transact_write",
+          "aws.ecs.run_task",
+          "aws.iam.denial",
+          "aws.lambda.microvm",
+          "aws.s3.conditional_put",
+          "aws.sqs.fifo",
+          "hands.guest.lifecycle",
+          "mcp.streamable_http",
+          "net.public_egress",
+          "provider.anthropic.stream",
+          "provider.deepseek.stream",
+          "provider.google.stream",
+          "provider.moonshotai.stream",
+          "provider.openai.stream",
+          "provider.zai.stream"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-central-authz": {
+      "name": "aex-live-central-authz",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "central-authz",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-central-control-api": {
+      "name": "aex-live-central-control-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "central-control-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.alb.framing",
+          "aws.aurora.serverless_v2",
+          "aws.iam.denial",
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-central-control-worker": {
+      "name": "aex-live-central-control-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "central-control-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-central-identity-api": {
+      "name": "aex-live-central-identity-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "central-identity-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.alb.framing",
+          "aws.aurora.serverless_v2",
+          "aws.iam.denial",
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-central-schema-admin": {
+      "name": "aex-live-central-schema-admin",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "central-schema-admin",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.aurora.serverless_v2",
+          "aws.ecs.run_task",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-content-lifecycle-worker": {
+      "name": "aex-live-content-lifecycle-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "content-lifecycle-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.s3.unversioned_delete"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-dashboard": {
+      "name": "aex-live-dashboard",
+      "kind": "cargo",
+      "meta": {
+        "owner": "clients",
+        "role": "live_companion",
+        "artifact": "none",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "vercel.build_output.deploy"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "deployable": "the dashboard application lands with the clients stream (P-DASHBOARD); this companion is written and unselected until it does",
+          "targets": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-finance-api": {
+      "name": "aex-live-finance-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "finance-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.aurora.serverless_v2",
+          "aws.iam.denial",
+          "aws.rds_data.transaction",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-finance-ingest": {
+      "name": "aex-live-finance-ingest",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "finance-ingest",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-finance-reconcile": {
+      "name": "aex-live-finance-reconcile",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "finance-reconcile",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-finance-settlement-worker": {
+      "name": "aex-live-finance-settlement-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "finance-settlement-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo",
+          "aws.sqs.redrive"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-hands-agent": {
+      "name": "aex-live-hands-agent",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "hands-agent",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "guest",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-hands-image": {
+      "name": "aex-live-hands-image",
+      "kind": "cargo",
+      "meta": {
+        "owner": "hands",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "hands-image",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.lambda.microvm",
+          "hands.guest.lifecycle"
+        ],
+        "security_tier": "guest",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the hands stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-model-catalog": {
+      "name": "aex-live-model-catalog",
+      "kind": "cargo",
+      "meta": {
+        "owner": "providers",
+        "role": "live_companion",
+        "artifact": "none",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "provider.anthropic.stream",
+          "provider.deepseek.stream",
+          "provider.google.stream",
+          "provider.moonshotai.stream",
+          "provider.openai.stream",
+          "provider.zai.stream"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "deployable": "the model catalog is a non-package artifact; delivery declares its identity in release/artifact-metadata.toml",
+          "targets": "awaiting the providers stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-observation-export-launcher": {
+      "name": "aex-live-observation-export-launcher",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "observation-export-launcher",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.ecs.run_task",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-observation-export-task": {
+      "name": "aex-live-observation-export-task",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "observation-export-task",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.s3.multipart"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-observation-reconciler": {
+      "name": "aex-live-observation-reconciler",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "observation-reconciler",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.streams",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.s3.conditional_put"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-provider-cost-reconciler": {
+      "name": "aex-live-provider-cost-reconciler",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "provider-cost-reconciler",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-regional-observation-api": {
+      "name": "aex-live-regional-observation-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-observation-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial",
+          "aws.s3.conditional_put"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-regional-otlp": {
+      "name": "aex-live-regional-otlp",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-otlp",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-regional-secret-api": {
+      "name": "aex-live-regional-secret-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-secret-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.kms.branch_key_rotation",
+          "aws.kms.encryption_context"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-regional-secret-key-admin": {
+      "name": "aex-live-regional-secret-key-admin",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-secret-key-admin",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.iam.denial",
+          "aws.kms.branch_key_rotation"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-regional-session-api": {
+      "name": "aex-live-regional-session-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-session-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.alb.framing",
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.dynamodb.throughput",
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.kms.encryption_context",
+          "aws.s3.conditional_put",
+          "aws.s3.multipart",
+          "aws.s3.presigned_expiry",
+          "aws.s3.sse_kms",
+          "aws.s3.unversioned_delete"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-regional-stream": {
+      "name": "aex-live-regional-stream",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-stream",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.alb.framing",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-runtime-control-worker": {
+      "name": "aex-live-runtime-control-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "runtime-control-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.ttl",
+          "aws.ecs.run_task",
+          "aws.iam.denial",
+          "aws.lambda.microvm"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-session-operation-worker": {
+      "name": "aex-live-session-operation-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "session-operation-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.sqs.fifo"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-site": {
+      "name": "aex-live-site",
+      "kind": "cargo",
+      "meta": {
+        "owner": "clients",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "site",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "vercel.build_output.deploy"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-stripe-command-edge": {
+      "name": "aex-live-stripe-command-edge",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "deployable": "the TypeScript Stripe command edge lands with the central-finance stream (P-AUTH-EDGE)",
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-stripe-webhook-edge": {
+      "name": "aex-live-stripe-webhook-edge",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "deployable": "the TypeScript Stripe webhook edge lands with the central-finance stream (P-AUTH-EDGE)",
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-usage-compute-worker": {
+      "name": "aex-live-usage-compute-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "usage-compute-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-usage-receipt-dispatcher": {
+      "name": "aex-live-usage-receipt-dispatcher",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "usage-receipt-dispatcher",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.streams",
+          "aws.iam.denial",
+          "aws.sqs.fifo",
+          "aws.sqs.redrive"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-usage-storage-worker": {
+      "name": "aex-live-usage-storage-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "usage-storage-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.iam.denial",
+          "aws.s3.conditional_put"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/live/aex-live-usage-transfer-worker": {
+      "name": "aex-live-usage-transfer-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "usage-transfer-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tests/load/aex-load-harness": {
+      "name": "aex-load-harness",
+      "kind": "cargo",
+      "meta": {
+        "owner": "test-architecture",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {
+          "properties": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "test-only crate; the load executors it drives live in the owning live companion's `load` target (D-11)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "tests/support/aex-test-harness": {
+      "name": "aex-test-harness",
+      "kind": "cargo",
+      "meta": {
+        "owner": "test-architecture",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {
+          "properties": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "test-only crate; must be absent from every production link graph"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "tools/aex-cli": {
+      "name": "aex-cli",
+      "kind": "cargo",
+      "meta": {
+        "owner": "clients",
+        "role": "tool",
+        "artifact": "native_binary",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own",
+          "targets": "awaiting the clients stream; the cases land with the tool's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tools/aex-contract-gen": {
+      "name": "aex-contract-gen",
+      "kind": "cargo",
+      "meta": {
+        "owner": "contracts",
+        "role": "tool",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane",
+          "targets": "awaiting the contracts stream; the cases land with the tool's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tools/aex-release-tool": {
+      "name": "aex-release-tool",
+      "kind": "cargo",
+      "meta": {
+        "owner": "delivery",
+        "role": "tool",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane",
+          "targets": "awaiting the delivery stream; the cases land with the tool's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "tools/aex-workspace-check": {
+      "name": "aex-workspace-check",
+      "kind": "cargo",
+      "meta": {
+        "owner": "test-architecture",
+        "role": "tool",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {
+          "failure_fixtures": "unit",
+          "properties": "unit",
+          "workspace": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "workspace tool; it reads manifests and never reaches a deployed plane"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "tools/eslint-plugin-aex": {
+      "name": "eslint-plugin-aex",
+      "kind": "npm",
+      "meta": {
+        "owner": "delivery",
+        "role": "tool",
+        "artifact": "npm_package",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "live_suite": "lint plugin; it reaches no deployed plane",
+          "targets": "awaiting the delivery stream; the rule fixtures land with the lint rules"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/central-control-worker": {
+      "name": "central-control-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "central-control-worker",
+        "live_suite": "aex-live-central-control-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/central-schema-admin": {
+      "name": "central-schema-admin",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "oci_task",
+        "deployable": "central-schema-admin",
+        "live_suite": "aex-live-central-schema-admin",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.aurora.serverless_v2",
+          "aws.ecs.run_task",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "sql"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/content-lifecycle-worker": {
+      "name": "content-lifecycle-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "content-lifecycle-worker",
+        "live_suite": "aex-live-content-lifecycle-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.s3.unversioned_delete",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/finance-reconcile": {
+      "name": "finance-reconcile",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "finance-reconcile",
+        "live_suite": "aex-live-finance-reconcile",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/finance-settlement-worker": {
+      "name": "finance-settlement-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "finance-settlement-worker",
+        "live_suite": "aex-live-finance-settlement-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo",
+          "aws.sqs.redrive",
+          "aws.iam.denial"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/observation-export-launcher": {
+      "name": "observation-export-launcher",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "observation-export-launcher",
+        "live_suite": "aex-live-observation-export-launcher",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.ecs.run_task",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/observation-export-task": {
+      "name": "observation-export-task",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "deployable",
+        "artifact": "oci_task",
+        "deployable": "observation-export-task",
+        "live_suite": "aex-live-observation-export-task",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.s3.multipart",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/observation-reconciler": {
+      "name": "observation-reconciler",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "observation-reconciler",
+        "live_suite": "aex-live-observation-reconciler",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.streams",
+          "aws.dynamodb.ttl",
+          "aws.s3.conditional_put",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/provider-cost-reconciler": {
+      "name": "provider-cost-reconciler",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "provider-cost-reconciler",
+        "live_suite": "aex-live-provider-cost-reconciler",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/regional-secret-key-admin": {
+      "name": "regional-secret-key-admin",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "oci_task",
+        "deployable": "regional-secret-key-admin",
+        "live_suite": "aex-live-regional-secret-key-admin",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.kms.branch_key_rotation",
+          "aws.iam.denial"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/runtime-control-worker": {
+      "name": "runtime-control-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "runtime-control-worker",
+        "live_suite": "aex-live-runtime-control-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.ecs.run_task",
+          "aws.lambda.microvm",
+          "aws.dynamodb.condition",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/session-operation-worker": {
+      "name": "session-operation-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "session-operation-worker",
+        "live_suite": "aex-live-session-operation-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.sqs.fifo",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/usage-compute-worker": {
+      "name": "usage-compute-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "usage-compute-worker",
+        "live_suite": "aex-live-usage-compute-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/usage-receipt-dispatcher": {
+      "name": "usage-receipt-dispatcher",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "usage-receipt-dispatcher",
+        "live_suite": "aex-live-usage-receipt-dispatcher",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.sqs.fifo",
+          "aws.sqs.redrive",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/usage-storage-worker": {
+      "name": "usage-storage-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "usage-storage-worker",
+        "live_suite": "aex-live-usage-storage-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "workers/usage-transfer-worker": {
+      "name": "usage-transfer-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "observations-usage",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "usage-transfer-worker",
+        "live_suite": "aex-live-usage-transfer-worker",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.iam.denial"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    }
+  },
+  "live_targets": [
+    "aex-live-brain-mux",
+    "aex-live-central-authz",
+    "aex-live-central-control-api",
+    "aex-live-central-control-worker",
+    "aex-live-central-identity-api",
+    "aex-live-central-schema-admin",
+    "aex-live-content-lifecycle-worker",
+    "aex-live-finance-api",
+    "aex-live-finance-ingest",
+    "aex-live-finance-reconcile",
+    "aex-live-finance-settlement-worker",
+    "aex-live-hands-agent",
+    "aex-live-hands-image",
+    "aex-live-model-catalog",
+    "aex-live-observation-export-launcher",
+    "aex-live-observation-export-task",
+    "aex-live-observation-reconciler",
+    "aex-live-provider-cost-reconciler",
+    "aex-live-regional-observation-api",
+    "aex-live-regional-otlp",
+    "aex-live-regional-secret-api",
+    "aex-live-regional-secret-key-admin",
+    "aex-live-regional-session-api",
+    "aex-live-regional-stream",
+    "aex-live-runtime-control-worker",
+    "aex-live-session-operation-worker",
+    "aex-live-site",
+    "aex-live-usage-compute-worker",
+    "aex-live-usage-receipt-dispatcher",
+    "aex-live-usage-storage-worker",
+    "aex-live-usage-transfer-worker"
+  ],
+  "seam_claims": {
+    "aws.alb.framing": [
+      "aex-live-central-control-api",
+      "aex-live-central-identity-api",
+      "aex-live-regional-session-api",
+      "aex-live-regional-stream"
+    ],
+    "aws.aurora.serverless_v2": [
+      "aex-live-central-control-api",
+      "aex-live-central-identity-api",
+      "aex-live-central-schema-admin",
+      "aex-live-finance-api"
+    ],
+    "aws.cloudwatch.export": [
+      "aex-live-brain-mux"
+    ],
+    "aws.dynamodb.condition": [
+      "aex-live-brain-mux",
+      "aex-live-content-lifecycle-worker",
+      "aex-live-regional-observation-api",
+      "aex-live-regional-secret-api",
+      "aex-live-regional-secret-key-admin",
+      "aex-live-regional-session-api",
+      "aex-live-runtime-control-worker",
+      "aex-live-session-operation-worker",
+      "aex-live-usage-compute-worker",
+      "aex-live-usage-storage-worker",
+      "aex-live-usage-transfer-worker"
+    ],
+    "aws.dynamodb.streams": [
+      "aex-live-observation-reconciler",
+      "aex-live-regional-observation-api",
+      "aex-live-regional-session-api",
+      "aex-live-regional-stream",
+      "aex-live-usage-compute-worker",
+      "aex-live-usage-receipt-dispatcher",
+      "aex-live-usage-storage-worker",
+      "aex-live-usage-transfer-worker"
+    ],
+    "aws.dynamodb.throughput": [
+      "aex-live-regional-session-api"
+    ],
+    "aws.dynamodb.transact_write": [
+      "aex-live-brain-mux",
+      "aex-live-regional-observation-api",
+      "aex-live-regional-otlp",
+      "aex-live-regional-session-api",
+      "aex-live-session-operation-worker"
+    ],
+    "aws.dynamodb.ttl": [
+      "aex-live-content-lifecycle-worker",
+      "aex-live-observation-reconciler",
+      "aex-live-regional-secret-api",
+      "aex-live-regional-session-api",
+      "aex-live-runtime-control-worker",
+      "aex-live-session-operation-worker"
+    ],
+    "aws.ecs.run_task": [
+      "aex-live-brain-mux",
+      "aex-live-central-schema-admin",
+      "aex-live-observation-export-launcher",
+      "aex-live-runtime-control-worker"
+    ],
+    "aws.iam.denial": [
+      "aex-live-brain-mux",
+      "aex-live-central-authz",
+      "aex-live-central-control-api",
+      "aex-live-central-control-worker",
+      "aex-live-central-identity-api",
+      "aex-live-central-schema-admin",
+      "aex-live-content-lifecycle-worker",
+      "aex-live-dashboard",
+      "aex-live-finance-api",
+      "aex-live-finance-ingest",
+      "aex-live-finance-reconcile",
+      "aex-live-finance-settlement-worker",
+      "aex-live-observation-export-launcher",
+      "aex-live-observation-export-task",
+      "aex-live-observation-reconciler",
+      "aex-live-provider-cost-reconciler",
+      "aex-live-regional-observation-api",
+      "aex-live-regional-otlp",
+      "aex-live-regional-secret-api",
+      "aex-live-regional-secret-key-admin",
+      "aex-live-regional-session-api",
+      "aex-live-regional-stream",
+      "aex-live-runtime-control-worker",
+      "aex-live-session-operation-worker",
+      "aex-live-usage-compute-worker",
+      "aex-live-usage-receipt-dispatcher",
+      "aex-live-usage-storage-worker",
+      "aex-live-usage-transfer-worker"
+    ],
+    "aws.kms.branch_key_rotation": [
+      "aex-live-regional-secret-api",
+      "aex-live-regional-secret-key-admin"
+    ],
+    "aws.kms.encryption_context": [
+      "aex-live-regional-secret-api",
+      "aex-live-regional-session-api"
+    ],
+    "aws.lambda.microvm": [
+      "aex-live-brain-mux",
+      "aex-live-hands-image",
+      "aex-live-runtime-control-worker"
+    ],
+    "aws.rds_data.transaction": [
+      "aex-live-central-authz",
+      "aex-live-central-control-api",
+      "aex-live-central-control-worker",
+      "aex-live-central-identity-api",
+      "aex-live-finance-api",
+      "aex-live-finance-ingest",
+      "aex-live-finance-reconcile",
+      "aex-live-finance-settlement-worker",
+      "aex-live-provider-cost-reconciler"
+    ],
+    "aws.s3.conditional_put": [
+      "aex-live-brain-mux",
+      "aex-live-observation-reconciler",
+      "aex-live-regional-observation-api",
+      "aex-live-regional-session-api",
+      "aex-live-usage-storage-worker"
+    ],
+    "aws.s3.multipart": [
+      "aex-live-observation-export-task",
+      "aex-live-regional-session-api"
+    ],
+    "aws.s3.presigned_expiry": [
+      "aex-live-regional-session-api"
+    ],
+    "aws.s3.sse_kms": [
+      "aex-live-regional-session-api"
+    ],
+    "aws.s3.unversioned_delete": [
+      "aex-live-content-lifecycle-worker",
+      "aex-live-regional-session-api"
+    ],
+    "aws.sqs.fifo": [
+      "aex-live-brain-mux",
+      "aex-live-central-control-worker",
+      "aex-live-finance-ingest",
+      "aex-live-finance-settlement-worker",
+      "aex-live-session-operation-worker",
+      "aex-live-usage-receipt-dispatcher"
+    ],
+    "aws.sqs.redrive": [
+      "aex-live-finance-settlement-worker",
+      "aex-live-usage-receipt-dispatcher"
+    ],
+    "hands.guest.lifecycle": [
+      "aex-live-brain-mux",
+      "aex-live-hands-agent",
+      "aex-live-hands-image"
+    ],
+    "mcp.streamable_http": [
+      "aex-live-brain-mux"
+    ],
+    "net.public_egress": [
+      "aex-live-brain-mux"
+    ],
+    "provider.anthropic.stream": [
+      "aex-live-brain-mux",
+      "aex-live-model-catalog"
+    ],
+    "provider.deepseek.stream": [
+      "aex-live-brain-mux",
+      "aex-live-model-catalog"
+    ],
+    "provider.google.stream": [
+      "aex-live-brain-mux",
+      "aex-live-model-catalog"
+    ],
+    "provider.moonshotai.stream": [
+      "aex-live-brain-mux",
+      "aex-live-model-catalog"
+    ],
+    "provider.openai.stream": [
+      "aex-live-brain-mux",
+      "aex-live-model-catalog"
+    ],
+    "provider.zai.stream": [
+      "aex-live-brain-mux",
+      "aex-live-model-catalog"
+    ],
+    "stripe.test_mode.webhook": [
+      "aex-live-finance-api",
+      "aex-live-finance-ingest",
+      "aex-live-stripe-command-edge",
+      "aex-live-stripe-webhook-edge"
+    ],
+    "vercel.build_output.deploy": [
+      "aex-live-dashboard",
+      "aex-live-site"
+    ]
+  }
+}
