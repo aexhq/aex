@@ -275,10 +275,21 @@ impl GenerationState {
     pub const fn successors(self) -> &'static [Self] {
         match self {
             Self::Requested => &[Self::Launching, Self::Terminated, Self::Lost, Self::Unknown],
-            // A launch and a resume both await `RUNNING` and fail the same ways.
-            Self::Launching | Self::Resuming => {
-                &[Self::Running, Self::Lost, Self::Unknown, Self::Terminating]
-            }
+            Self::Launching => &[Self::Running, Self::Lost, Self::Unknown, Self::Terminating],
+            // A resume awaits `RUNNING` the way a launch does, and additionally
+            // falls back to `suspended`: a `ResumeMicrovm` the provider refuses
+            // outright had no effect, so the generation is still suspended and
+            // recording that is the truthful outcome. Without this arm one throttle
+            // strands the head in `resuming`, which admits nothing and resumes
+            // nothing. It is the exact mirror of the `suspending -> running`
+            // restore the suspend transition already relies on.
+            Self::Resuming => &[
+                Self::Running,
+                Self::Suspended,
+                Self::Lost,
+                Self::Unknown,
+                Self::Terminating,
+            ],
             Self::Running => &[
                 Self::Suspending,
                 Self::LifetimeDraining,

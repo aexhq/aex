@@ -23,14 +23,15 @@ use core::pin::Pin;
 
 use aex_hands_protocol::lifecycle::ProviderRequestId;
 use aex_hands_protocol::rpc::Fence;
-use aex_wire::ids::{GenerationId, SessionId};
+use aex_wire::ids::{GenerationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::generation::{GenerationHead, GenerationState, Revision, TransportMode};
+use crate::generation::{GenerationHead, GenerationState, Revision, TransportMode, supersedes};
 use crate::idle::IdleAssessment;
 use crate::lifecycle::{
-    IntentRecord, IntentState, LifecycleAction, LifecycleIntentId, MicrovmId, ProviderState,
+    IntentRecord, IntentState, LifecycleAction, LifecycleIntentId, Lifetime, MicrovmId,
+    ProviderState,
 };
 use crate::usage::SnapshotResidence;
 
@@ -48,6 +49,114 @@ pub struct GenerationPointer {
     pub fence: Fence,
     /// The current head revision.
     pub revision: Revision,
+}
+
+/// What the exact-generation fence decided about an inbound command.
+///
+/// A lifecycle command names the generation its sender observed. The session
+/// authority owns generation identity, so the pointer — never the message — decides
+/// whether the command may act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandBinding {
+    /// The command names the current generation. It may act under this fence.
+    Proceed {
+        /// The current fence.
+        fence: Fence,
+        /// The head revision every conditional write is conditional on.
+        revision: Revision,
+    },
+    /// The session has no generation at all. There is nothing left to act on.
+    NoGeneration,
+    /// The command names a generation the session has already moved past. Settled:
+    /// a redrive would never make it current again.
+    Superseded {
+        /// What the session points at now.
+        current: GenerationId,
+    },
+    /// The command names a generation strictly *newer* than the pointer. Only the
+    /// session authority allocates a generation, so no sender can legitimately know
+    /// of one the pointer has never held: the message is poison, not a race.
+    Unallocated {
+        /// The generation the command named.
+        named: GenerationId,
+        /// What the session points at.
+        current: GenerationId,
+    },
+}
+
+/// The exact-generation fence, as a pure function of the pointer and the command.
+#[must_use]
+pub fn bind_command(pointer: Option<&GenerationPointer>, named: GenerationId) -> CommandBinding {
+    let Some(pointer) = pointer else {
+        return CommandBinding::NoGeneration;
+    };
+    if pointer.generation == named {
+        return CommandBinding::Proceed {
+            fence: pointer.fence,
+            revision: pointer.revision,
+        };
+    }
+    if supersedes(pointer.generation, named) {
+        CommandBinding::Superseded {
+            current: pointer.generation,
+        }
+    } else {
+        CommandBinding::Unallocated {
+            named,
+            current: pointer.generation,
+        }
+    }
+}
+
+/// Everything one lifecycle evaluation needs about a generation, read in one
+/// bounded call.
+///
+/// The head alone is not enough: the worker also has to know which `MicroVM` the
+/// generation owns, when the provider started counting its eight hours, whether a
+/// lifecycle intent is still open, and which account the resulting usage facts
+/// belong to. Reading them as four calls would let the four disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenerationView {
+    /// The head as stored.
+    pub head: GenerationHead,
+    /// The session the generation belongs to.
+    pub session: SessionId,
+    /// The workspace the usage happened in.
+    pub workspace: WorkspaceId,
+    /// The account the money belongs to.
+    pub organization: OrganizationId,
+    /// The provider `MicroVM`, absent until a launch produces one.
+    pub microvm: Option<MicrovmId>,
+    /// When the provider started counting the eight-hour lifetime.
+    pub lifetime: Option<Lifetime>,
+    /// The start of the currently open accounting interval: the launch instant, or
+    /// the instant the last receipt closed. A receipt whose `from` were guessed
+    /// would either double-charge or drop the gap, and
+    /// [`aex_hands_protocol::lifecycle::RuntimeReceipt::validate`] rejects both.
+    pub accounted_from: Timestamp,
+    /// The most recent lifecycle intent, when one exists. A `dispatched` or
+    /// `unknown` intent forbids a second effect.
+    pub open_intent: Option<IntentRecord>,
+    /// When the current suspension started, for a suspended generation.
+    pub suspended_at: Option<Timestamp>,
+    /// How many suspensions this generation has had. The AEX-minted snapshot
+    /// lifecycle identity counts from zero at launch.
+    pub snapshot_ordinal: u32,
+    /// The declared retained snapshot size from the signed image catalog.
+    pub snapshot_bytes: u64,
+}
+
+impl GenerationView {
+    /// Whether a new lifecycle effect may be dispatched right now.
+    ///
+    /// Enforced by the intent's own conditional write as well; this is the cheap
+    /// read-side check that keeps the worker from even trying.
+    #[must_use]
+    pub fn permits_new_effect(&self) -> bool {
+        self.open_intent
+            .as_ref()
+            .is_none_or(IntentRecord::permits_new_effect)
+    }
 }
 
 /// A conditional write against one generation head.
@@ -210,7 +319,11 @@ pub enum RuntimeStoreError {
 }
 
 /// A boxed store future.
-type StoreFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, RuntimeStoreError>> + Send + 'a>>;
+///
+/// Public because the port is implemented outside this crate: an adapter must be
+/// able to name the return type without restating it.
+pub type StoreFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, RuntimeStoreError>> + Send + 'a>>;
 
 /// The runtime-activity port.
 ///
@@ -222,6 +335,12 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
         &self,
         session: SessionId,
     ) -> StoreFuture<'_, Option<GenerationPointer>>;
+
+    /// Everything one evaluation needs about a generation, read together.
+    fn load_generation_view(
+        &self,
+        generation: GenerationId,
+    ) -> StoreFuture<'_, Option<GenerationView>>;
 
     /// Lands a conditional generation-head write.
     fn commit_generation<'a>(
@@ -248,4 +367,94 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
         now: Timestamp,
         budget: PageBudget,
     ) -> StoreFuture<'_, RuntimeDuePage>;
+}
+
+/// The authoritative open-Hands-effect count, read from `session-authority`.
+///
+/// `openOperations` on the generation head is a fence and a fast path; the
+/// authority is Brain's own open Hands effects. The suspend transition recounts
+/// against this port **after** taking the lock and **before** any provider call,
+/// because acting on a counter that was just proven wrong is how a running job
+/// gets snapshotted.
+///
+/// `TODO(cross-stream) regional stores`: implement this over the bounded
+/// strongly-consistent open-Hands-effect query in `aex-session-dynamodb`. It is a
+/// separate port from [`RuntimeActivityStore`] on purpose: the two read different
+/// tables, and folding them into one trait would let a control-plane adapter
+/// silently acquire a session-authority read.
+pub trait OpenEffectCounter: Send + Sync + 'static {
+    /// How many Hands effects the session authority currently holds open for this
+    /// generation.
+    fn count_open_hands_effects(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+    ) -> StoreFuture<'_, u32>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandBinding, GenerationPointer, bind_command};
+    use crate::generation::Revision;
+    use aex_hands_protocol::rpc::Fence;
+    use aex_wire::ids::{GenerationId, PrefixedId as _, SessionId, Uuid7};
+
+    fn generation(millis: u64) -> GenerationId {
+        GenerationId::from_uuid7(Uuid7::compose(millis, [1; 10]))
+    }
+
+    fn pointer(current: GenerationId) -> GenerationPointer {
+        GenerationPointer {
+            session: SessionId::from_uuid7(Uuid7::compose(1, [2; 10])),
+            generation: current,
+            fence: Fence(4),
+            revision: Revision::new(9),
+        }
+    }
+
+    #[test]
+    fn a_command_naming_the_current_generation_proceeds_under_the_pointers_fence() {
+        let current = generation(10);
+        assert_eq!(
+            bind_command(Some(&pointer(current)), current),
+            CommandBinding::Proceed {
+                fence: Fence(4),
+                revision: Revision::new(9)
+            },
+            "the pointer, never the message, supplies the fence"
+        );
+    }
+
+    #[test]
+    fn a_command_naming_a_superseded_generation_is_settled_not_retried() {
+        let old = generation(10);
+        let new = generation(20);
+        assert_eq!(
+            bind_command(Some(&pointer(new)), old),
+            CommandBinding::Superseded { current: new },
+            "a redrive would never make an old generation current again"
+        );
+    }
+
+    #[test]
+    fn a_command_naming_an_unallocated_generation_is_poison() {
+        let current = generation(10);
+        let invented = generation(20);
+        assert_eq!(
+            bind_command(Some(&pointer(current)), invented),
+            CommandBinding::Unallocated {
+                named: invented,
+                current
+            },
+            "only the session authority allocates a generation"
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_pointer_has_nothing_to_act_on() {
+        assert_eq!(
+            bind_command(None, generation(10)),
+            CommandBinding::NoGeneration
+        );
+    }
 }

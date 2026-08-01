@@ -556,4 +556,16 @@ mod tests {
         assert!(!token.needs_refresh(at(1_499_999), TOKEN_TTL_SECONDS));
         assert!(token.needs_refresh(at(1_500_000), TOKEN_TTL_SECONDS));
     }
+    #[test]
+    fn the_trusted_and_guest_payload_key_sets_are_identical() {
+        // The guest cannot depend on this crate, so the two declarations are
+        // separate types. A drift between them would mean the trusted side sends
+        // a field the guest's `deny_unknown_fields` decoder refuses, which fails
+        // every launch — and the first place anyone would look is the provider.
+        assert_eq!(
+            RUN_HOOK_PAYLOAD_KEYS,
+            aex_hands_agent::boot::RUN_HOOK_KEYS,
+            "the run-hook payload has one shape, declared twice"
+        );
+    }
 }

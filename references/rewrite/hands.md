@@ -316,3 +316,138 @@ Nothing was deployed, published or credentialed. No `MicroVM` was launched, no
 image was pushed, no AWS API was called, and no `.env` was read. There is no shim,
 no launch-authority Lambda, no opaque launch ticket and no compatibility layer for
 the retired WebSocket protocol.
+
+---
+
+## 11. Composition
+
+Branch `rw/deploy-hands`, off `main`, unpushed. This wave replaces the three
+typed `NotImplemented` roots with real ones and makes the guest image buildable.
+
+### 11.1 `workers/runtime-control-worker`
+
+Configuration is total and typed. Thirteen variables are required and each is
+named when it is absent; the region resolves through `Region::from_name`, every
+queue and provider endpoint must be `https://` **and** contain the configured
+region, and the compute and storage ingresses may not be the same queue.
+
+The thirteen: `AEX_PLANE`, `AEX_REGION`, `AEX_RUNTIME_ACTIVITY_TABLE`,
+`AEX_SESSION_AUTHORITY_TABLE`, `AEX_RUNTIME_LIFECYCLE_QUEUE_URL`,
+`AEX_USAGE_COMPUTE_QUEUE_URL`, `AEX_USAGE_STORAGE_QUEUE_URL`,
+`AEX_MICROVM_CONTROL_ENDPOINT`, `AEX_HANDS_IMAGE_IDENTIFIER`,
+`AEX_RUNTIME_DUE_SHARDS`, `AEX_RUNTIME_DUE_PAGE_ITEMS`,
+`AEX_RUNTIME_DUE_PAGE_READS`, `AEX_PRICING_VERSION`.
+
+Two variables refuse the start outright rather than being accepted and ignored:
+
+| Variable | Why it is refused |
+| --- | --- |
+| `AEX_USAGE_TRANSFER_QUEUE_URL` | The worker holds no transfer-authority binding (OD-25/OD-26). Accepting the variable would leave a live queue URL in the environment for a later change to pick up. |
+| `AEX_TRUE_IDLE_MILLIS` | The 180000 ms threshold is a pinned constant. Accepting a tuning variable and ignoring it would let an operator believe they had moved a boundary that never moved (HR-21). |
+
+The engine lives in `aex_runtime_control_aws::worker` and the worker is the thin
+deployable over it. One handler serves three entry points, told apart by payload
+shape so a single deployable cannot be mis-wired into answering the wrong one:
+
+- an **SQS batch**, answered with a partial-batch response naming exactly the
+  failed identifiers;
+- a **scheduled sweep** (`{"runtimeSweep": n}`) over one shard of the due index;
+- the **internal health surface** (`{"internal": "/internal/readyz"}`). A Lambda
+  has no listening socket, so the probe is an invocation answered by the same
+  `axum` router an ALB would target — the two cannot answer differently.
+
+The exact-generation fence is `bind_command`, a pure function of the session
+pointer: a command naming the current generation proceeds under the pointer's
+fence, one naming a superseded generation is settled, and one naming a
+generation the authority never allocated is poison. The suspend transition runs
+in the required order and each step has its own falsifying test: take the fence,
+recount against the session authority, record the intent, dispatch, await,
+settle, then emit facts. A recount that disagrees repairs the counter, restores
+`running` and suspends nothing on that pass. The eight-hour lifetime is
+**active**: `Running -> LifetimeDraining` is a real fenced transition at
+`-300 s`, and `-60 s` terminates, closes the receipt and reports
+`continuity_lost` with the exact remaining number.
+
+No adapter exists yet for any of the five ports, and that is stated rather than
+stubbed: `readyz` names each unbound port and `run` refuses to start. A
+lifecycle worker that cannot recount open effects would suspend running jobs.
+
+### 11.2 `runtimes/hands-agent`
+
+The guest binary serves the five verbs, the attach path, the four provider
+lifecycle hooks and the two build hooks on one port — the same port
+`CreateMicrovmAuthToken` scopes the endpoint to. There is no shell port and no
+second listener. Three variables, none defaulted: `AEX_HANDS_LISTEN_ADDR`,
+`AEX_HANDS_JOURNAL_ROOT`, `AEX_HANDS_GUEST_ROOT`, all written by the image from
+the same `aex_hands_agent::boot` constants the binary reads.
+
+`/run` and `/resume` bump the incarnation, replay the journal, terminalize every
+operation whose process group is gone as `Interrupted`, write the binding and
+only then start accepting. A guest with no binding accepts nothing and answers a
+plain 503, because before `/run` it cannot encode a response preamble at all. A
+malformed run payload fails the launch closed.
+
+Process-group supervision is a `Runner` port, so the whole dispatcher is
+exercised off-VM. The POSIX halves refuse rather than guess: a host with no
+`/proc` reports that it cannot observe a group instead of reporting extinction,
+which would terminalize a live job.
+
+### 11.3 `runtimes/hands-image`
+
+A build tool with four commands: `context`, `build`, `publish` and `validate`.
+It writes a `Containerfile` generated from the rootfs contract itself — the
+`mkdir` lines come from `ROOTFS_CONTRACT` and a `RUN test ! -e` line from every
+entry of `FORBIDDEN_ROOTFS_PATHS` — so the built image and the checked contract
+cannot describe different trees.
+
+**The reproducibility pin, and why this one.** The recorded open item is closed
+with two pins that are *read*, not guessed:
+
+| Pin | Value | How it was obtained |
+| --- | --- | --- |
+| Container base, by digest | `public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3` | `docker buildx imagetools inspect`, 2026-08-01 |
+| Package source, by date | `--releasever=2023.12.20260629` | the pinned base image's own `/etc/os-release` |
+
+A digest pin alone would not fix the package set, because `dnf` resolves against
+a live mirror; a date pin alone would not fix the base, because a tag moves.
+AL2023 serves a frozen repository snapshot per `releasever`, so pinning it makes
+two builds resolve the same NEVRAs — and taking the value from the base image
+rather than from a changelog means the two halves of the build are the same
+release rather than two that happen to work together today. The resolved NEVRAs
+are then locked in `image.lock.json` and re-checked by `/validate`, so a mirror
+that moves anyway fails the build instead of silently changing the image.
+
+`SOURCE_DATE_EPOCH` is fixed, so the double-build check cannot pass or fail on
+the clock.
+
+### 11.4 What was earned, and what was not
+
+| Claim | State |
+| --- | --- |
+| Guest cross-build to `aarch64-unknown-linux-musl` | **Earned.** `file` reports `ELF 64-bit LSB executable, ARM aarch64, statically linked, stripped`, 2 059 448 bytes. The target was installed and linked with `rust-lld`; no C toolchain is in the inputs, because the guest takes the pure-Rust `blake3` on that target. |
+| Local `arm64` image build | **Not earned in this run.** The generated `Containerfile` is checked against the rootfs contract by test, the base digest and the `releasever` were both read from the real registry and the real base image, and `docker buildx --platform linux/arm64` was launched and was still resolving the package transaction under QEMU emulation when the wave closed. Nothing was pushed, no `CreateMicrovmImage` was called and no credential was read. The completed build belongs to `aex-live-hands-image` alongside the boot assertions. |
+| Everything needing a real `MicroVM` | Unearned and declared, unchanged from §5 and §9. |
+
+### 11.5 Decisions taken in this wave
+
+| ID | Decision | Rationale |
+| --- | --- | --- |
+| HS-11 | `GenerationState::Resuming` gains `Suspended` as a successor | A `ResumeMicrovm` the provider refuses outright had no effect, so the generation is still suspended. Without the arm one throttle strands the head in `resuming`, which admits nothing and resumes nothing. It is the mirror of the `suspending -> running` restore the suspend transition already relies on. |
+| HS-12 | The authoritative open-effect count is its own `OpenEffectCounter` port, not a method on `RuntimeActivityStore` | The two read different tables. Folding them into one trait would let a control-plane adapter silently acquire a session-authority read. |
+| HS-13 | `GenerationView` is one bounded read carrying the head, the `MicroVM`, the launch instant, the open accounting interval and the open intent | Reading them as four calls would let the four disagree, and the receipt's `from` cannot be guessed: `RuntimeReceipt::validate` rejects both a gap and an overlap. |
+| HS-14 | The worker's readiness and its start refusal are derived from the same five `Option`s | A probe that said "ready" while a port was unbound would be worse than no probe. |
+| HS-15 | The internal health surface is reachable by invocation on a Lambda deployable | A Lambda has no socket. Serving the probe from the same router an ALB would target is what keeps one naming rather than two answers. |
+| HS-16 | The guest takes pure-Rust `blake3` on `aarch64-unknown-linux-musl` only | A host C compiler in the build inputs is exactly what makes a byte-reproducibility claim untrue. Feature unification is per target, so no other member's build changes. |
+| HS-17 | `HostFs` maps the guest root onto a mount point rather than using the path verbatim | On the target the mapping is the identity; off-VM it points at a temporary directory, which is what makes the filesystem matrix evidence for the on-VM behaviour rather than a parallel implementation. |
+| HS-18 | The run-hook payload is declared twice — once trusted, once in the guest — with a test comparing the key sets | The guest links no trusted crate (B6), so a shared type is impossible. A drift would fail every launch, and the first place anyone would look is the provider. |
+
+### 11.6 Gaps this wave added or sharpened
+
+| Gap | Handling |
+| --- | --- |
+| No adapter binds any of the worker's five ports | `readyz` names each and the process refuses to start. Each is one line once the peer's adapter lands: `aex-runtime-activity-dynamodb` over `aex_runtime_control::store::RuntimeActivityStore` (the crate currently declares its own trait of the same name and carries the `TODO` saying so), the bounded open-Hands-effect query in `aex-session-dynamodb`, a `MicrovmControlApi` implementation, and the compute and storage usage ingresses. |
+| `Materialize`, `Persist`, `WriteFile` and `Exec` with stdin are refused by the guest | `ContentRef` is a digest and a length; the guest holds no credential and cannot resolve one. Presigned HTTPS would need a TLS client, and the workspace's pinned backend is `aws-lc-rs`, whose crate name the B6 closure scan rejects by prefix. `runtimes/hands-agent/tests/boundary.rs` asserts no TLS stack is linked, so the choice is checked rather than remembered. |
+| `ReadFile` with a byte range is refused | The wire asks for a byte range; `aex-hands-tools` windows by line. Serving the whole file would answer a different question than the caller asked. |
+| Attached delivery is not served | `start`'s `Attached` mode is refused explicitly rather than left to hang, so a caller never waits on a body that will not arrive. |
+| Pressure release and the orphan sweep are not wired | `plan_release` and `ORPHAN_GRACE_MS` are implemented and tested as pure models. Pressure needs a regional memory-utilization source the provider does not expose, and the orphan sweep needs an "is this `MicroVM` known" lookup the activity port does not offer. Neither is in this wave's scope and both are named here rather than half-built. |
+| `cargo fmt --all` cannot run on this host | The invocation exceeds the Windows command-line length limit for a 133-member workspace (`os error 206`). `cargo fmt -p <package>` was run for every owned package. This is a host condition, not a workspace defect. |

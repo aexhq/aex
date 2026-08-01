@@ -30,12 +30,17 @@
 //! - the tool executors (`aex-hands-tools`)
 //! - runtime lifecycle decisions (`aex-runtime-control`)
 
+pub mod boot;
 pub mod capture;
 pub mod crc;
 pub mod journal;
 pub mod session;
 pub mod wire;
 
+pub use boot::{
+    BROWSER_CAPABILITY, GUEST_ROOT, GUEST_ROOT_VAR, JOURNAL_ROOT, JOURNAL_ROOT_VAR, LISTEN_ADDR,
+    LISTEN_ADDR_VAR, REQUIRED_VARS, RUN_HOOK_KEYS, RunHook, RunHookBounds,
+};
 pub use capture::{ATTACH_STREAM_CAP_BYTES, Capture, CaptureOutcome, MirrorChunk};
 pub use crc::crc32c;
 pub use journal::{

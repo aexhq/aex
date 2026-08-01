@@ -1,181 +1,267 @@
-//! `hands-image` composition root (immutable guest rootfs artifact).
+//! `hands-image` — the Hands guest image definition and its local build.
 //!
-//! Exclusive responsibility: the Hands guest image definition: rootfs contents, package
-//! manifest and boot validation.
+//! The image is the rootfs a `MicroVM` boots: a static, credential-free agent, a
+//! digest-pinned base, a date-pinned package set locked by NEVRA, and an SBOM the
+//! customer can read back from inside their own VM.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! # What this binary does, and what it does not
+//!
+//! It writes a build context and can run a **local** container build. It publishes
+//! nothing: no registry push, no `CreateMicrovmImage`, no credential. The publish
+//! inputs are printed so a release job can use them, and the image-mutation IAM
+//! actions live in a separate release role no runtime deployable holds.
 
-pub mod image;
+mod build;
+mod image;
 
-/// Validated start-up configuration for `hands-image`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// Path to the checked-in rootfs package manifest.
-    pub resource: String,
-    /// Maximum permitted built image size in bytes.
-    pub budget: u32,
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
+use build::Variant;
+use clap::{Parser, Subcommand};
+
+/// The Hands guest image definition and its local build.
+#[derive(Debug, Parser)]
+#[command(name = "hands-image", about, version)]
+struct Cli {
+    /// What to do.
+    #[command(subcommand)]
+    command: Command,
 }
 
-/// Why `hands-image` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
+/// The commands this tool offers.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Writes the build context for one variant.
+    Context {
+        /// Which variant, such as `1gb` or `4gb-browser`.
+        #[arg(long)]
+        variant: String,
+        /// Where to write it.
+        #[arg(long)]
+        out: PathBuf,
+        /// The cross-built guest binary to stage.
+        #[arg(long)]
+        agent: Option<PathBuf>,
     },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
+    /// Writes the build context and runs a local container build.
+    ///
+    /// Local only. There is no push, and no credential is read.
+    Build {
+        /// Which variant.
+        #[arg(long)]
+        variant: String,
+        /// Where to write the context.
+        #[arg(long)]
+        out: PathBuf,
+        /// The cross-built guest binary to stage.
+        #[arg(long)]
+        agent: PathBuf,
+    },
+    /// Prints the `CreateMicrovmImage` inputs for one variant.
+    Publish {
+        /// Which variant.
+        #[arg(long)]
+        variant: String,
+        /// Which region the base image ARN names.
+        #[arg(long)]
+        region: String,
+    },
+    /// Compares an observed `rpm -qa` listing against the lockfile.
+    ///
+    /// This is the `/validate` build hook's decision, runnable off-VM.
+    Validate {
+        /// The lockfile.
+        #[arg(long)]
+        lock: PathBuf,
+        /// A file holding one NEVRA per line, as `rpm -qa` prints them.
+        #[arg(long)]
+        observed: PathBuf,
     },
 }
 
 /// Why `hands-image` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    /// Start-up configuration was rejected.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`hands-image` has no implementation yet")]
-    NotImplemented,
+enum RunError {
+    /// A variant name was not one of the eight.
+    #[error("{0}")]
+    Variant(String),
+    /// A file could not be read or written.
+    #[error("{path}: {source}")]
+    Io {
+        /// Which path.
+        path: PathBuf,
+        /// The cause.
+        source: std::io::Error,
+    },
+    /// The lockfile did not decode.
+    #[error("the lockfile did not decode: {0}")]
+    Lock(String),
+    /// The installed package set is not the locked one.
+    #[error(
+        "the package set drifted: {missing} locked and absent, {unexpected} installed and unlocked"
+    )]
+    Drift {
+        /// How many locked packages are missing.
+        missing: usize,
+        /// How many installed packages are not locked.
+        unexpected: usize,
+    },
+    /// The local container build failed.
+    #[error("the local build failed: {0}")]
+    Build(String),
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming path to the checked-in rootfs package manifest.
-pub const RESOURCE_VAR: &str = "AEX_HANDS_ROOTFS_MANIFEST";
-/// Environment variable naming maximum permitted built image size in bytes.
-pub const BUDGET_VAR: &str = "AEX_MAX_IMAGE_BYTES";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
-impl Config {
-    /// Reads and validates the configuration of `hands-image` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
+/// Wraps an I/O error with the path that produced it.
+fn io_at(path: &Path) -> impl FnOnce(std::io::Error) -> RunError + use<'_> {
+    move |source| RunError::Io {
+        path: path.to_path_buf(),
+        source,
     }
+}
 
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
+/// Writes the build context for one variant.
+fn write_context(variant: &Variant, out: &Path, agent: Option<&Path>) -> Result<PathBuf, RunError> {
+    std::fs::create_dir_all(out).map_err(io_at(out))?;
+    let sbom = out.join("sbom");
+    std::fs::create_dir_all(&sbom).map_err(io_at(&sbom))?;
+    for entry in build::SBOM_LAYOUT {
+        let path = sbom.join(entry.name);
+        if !path.exists() {
+            // A placeholder that states what belongs there, so a build that has not
+            // run the SBOM generators produces an image whose inventory says it is
+            // absent rather than an image with no inventory at all.
+            std::fs::write(&path, format!("{}\n", entry.records)).map_err(io_at(&path))?;
+        }
+    }
+    let containerfile = out.join("Containerfile");
+    std::fs::write(&containerfile, build::containerfile(variant)).map_err(io_at(&containerfile))?;
+    if let Some(agent) = agent {
+        let staged = out.join("hands-agent");
+        std::fs::copy(agent, &staged).map_err(io_at(agent))?;
+    }
+    Ok(containerfile)
+}
+
+/// Runs the whole tool.
+fn run(cli: &Cli) -> Result<(), RunError> {
+    match &cli.command {
+        Command::Context {
+            variant,
+            out,
+            agent,
+        } => {
+            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let written = write_context(&variant, out, agent.as_deref())?;
+            println!("{}", written.display());
+            for input in build::build_inputs(&variant) {
+                println!("{input}");
+            }
+            Ok(())
+        }
+        Command::Build {
+            variant,
+            out,
+            agent,
+        } => {
+            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            write_context(&variant, out, Some(agent))?;
+            let status = std::process::Command::new("docker")
+                .args([
+                    "buildx",
+                    "build",
+                    "--platform",
+                    "linux/arm64",
+                    "--load",
+                    "--file",
+                ])
+                .arg(out.join("Containerfile"))
+                .arg("--tag")
+                .arg(variant.tag())
+                .arg(out)
+                .env("SOURCE_DATE_EPOCH", build::SOURCE_DATE_EPOCH.to_string())
+                .status()
+                .map_err(|error| RunError::Build(error.to_string()))?;
+            if status.success() {
+                println!("built {}", variant.tag());
+                Ok(())
+            } else {
+                Err(RunError::Build(format!("docker exited with {status}")))
+            }
+        }
+        Command::Publish { variant, region } => {
+            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let memory = image::variants()
+                .into_iter()
+                .find(|published| {
+                    published.size == variant.size
+                        && published.capabilities.contains(&image::Capability::Browser)
+                            == variant.browser
+                })
+                .map_or(1_024, |published| published.minimum_memory_mib);
+            for input in build::create_image_inputs(&variant, region, memory) {
+                println!("{input}");
+            }
+            Ok(())
+        }
+        Command::Validate { lock, observed } => validate(lock, observed),
+    }
+}
+
+/// The `/validate` build hook's decision, runnable off-VM.
+fn validate(lock: &Path, observed: &Path) -> Result<(), RunError> {
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
+        let encoded = std::fs::read_to_string(lock).map_err(io_at(lock))?;
+        let locked: image::ImageLock =
+            serde_json::from_str(&encoded).map_err(|error| RunError::Lock(error.to_string()))?;
+        let listing = std::fs::read_to_string(observed).map_err(io_at(observed))?;
+        let installed: Vec<String> = listing
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect();
+        match locked.matches(&installed) {
+            verdict @ image::LockVerdict::Match => {
+                println!(
+                    "{} {} package(s) match",
+                    verdict.http_status(),
+                    locked.packages.len()
+                );
+                Ok(())
+            }
+            verdict @ image::LockVerdict::Drift { .. } => {
+                let status = verdict.http_status();
+                let image::LockVerdict::Drift {
+                    missing,
+                    unexpected,
+                } = verdict
+                else {
+                    unreachable!("the verdict is one of exactly two shapes");
+                };
+                eprintln!("{status} the installed package set is not the locked one");
+                for nevra in &missing {
+                    eprintln!("missing {nevra}");
+                }
+                for nevra in &unexpected {
+                    eprintln!("unexpected {nevra}");
+                }
+                Err(RunError::Drift {
+                    missing: missing.len(),
+                    unexpected: unexpected.len(),
+                })
+            }
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
     }
-}
-
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `hands-image` until it stops.
-///
-/// # Errors
-///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
-        ),
-    );
-    Err(RunError::NotImplemented)
 }
 
 fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("hands-image: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("hands-image: telemetry flush left {pending} record(s) undelivered");
-    }
-    match outcome {
+    let cli = Cli::parse();
+    match run(&cli) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("hands-image: stopped: {error}");
+            let mut stderr = std::io::stderr();
+            let _ = writeln!(stderr, "hands-image: {error}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -183,102 +269,119 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
-
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (RESOURCE_VAR, "aex-hands_image-fixture".to_owned()),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
-    }
-
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
+    use super::{Cli, Command, RunError, run, write_context};
+    use crate::build::Variant;
+    use clap::Parser as _;
 
     #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-hands_image-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
+    fn the_context_carries_the_containerfile_and_the_three_sbom_files() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let variant = Variant::parse("2gb-browser").expect("an offered variant");
+        let written = write_context(&variant, dir.path(), None).expect("the context is written");
+        assert!(written.exists());
+        let generated = std::fs::read_to_string(&written).expect("it reads back");
+        assert!(generated.contains("chromium-headless"));
+        for entry in crate::build::SBOM_LAYOUT {
+            assert!(
+                dir.path().join("sbom").join(entry.name).exists(),
+                "the image ships no `{}`, so the inventory is unreadable from inside the VM",
+                entry.name
             );
         }
     }
 
     #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
+    fn a_second_context_write_is_byte_identical() {
+        // The AEX half of the build is reproducible, and this is the cheapest place
+        // the claim can be falsified: the generated Containerfile is derived from
+        // constants only, so two writes must not differ.
+        let variant = Variant::parse("1gb").expect("an offered variant");
+        let first = tempfile::tempdir().expect("a temporary directory");
+        let second = tempfile::tempdir().expect("a temporary directory");
+        let left = write_context(&variant, first.path(), None).expect("written");
+        let right = write_context(&variant, second.path(), None).expect("written");
         assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
+            std::fs::read(&left).expect("it reads back"),
+            std::fs::read(&right).expect("it reads back")
         );
     }
 
     #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
+    fn a_drifting_package_set_fails_the_validate_command() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let lock = dir.path().join("image.lock.json");
+        std::fs::write(
+            &lock,
+            r#"{"version":1,"containerBase":"x","packages":[{"name":"bash","nevra":"bash-0:5.2.15-1.amzn2023.aarch64"}]}"#,
+        )
+        .expect("the lockfile is written");
+
+        let matching = dir.path().join("match.txt");
+        std::fs::write(&matching, "bash-0:5.2.15-1.amzn2023.aarch64\n").expect("written");
+        let cli = Cli::parse_from([
+            "hands-image",
+            "validate",
+            "--lock",
+            &lock.to_string_lossy(),
+            "--observed",
+            &matching.to_string_lossy(),
+        ]);
+        assert!(run(&cli).is_ok());
+
+        let drifted = dir.path().join("drift.txt");
+        std::fs::write(&drifted, "bash-0:5.2.15-2.amzn2023.aarch64\n").expect("written");
+        let cli = Cli::parse_from([
+            "hands-image",
+            "validate",
+            "--lock",
+            &lock.to_string_lossy(),
+            "--observed",
+            &drifted.to_string_lossy(),
+        ]);
         assert!(
             matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
+                run(&cli),
+                Err(RunError::Drift {
+                    missing: 1,
+                    unexpected: 1
+                })
             ),
-            "{error:?}"
+            "a moving mirror must fail the build rather than change the image"
         );
     }
 
     #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
+    fn an_unknown_variant_is_refused_before_anything_is_written() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let cli = Cli::parse_from([
+            "hands-image",
+            "context",
+            "--variant",
+            "16gb",
+            "--out",
+            &dir.path().join("context").to_string_lossy(),
+        ]);
+        assert!(matches!(run(&cli), Err(RunError::Variant(_))));
         assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
+            !dir.path().join("context").exists(),
+            "the arity is five and a sixth shape writes nothing at all"
         );
     }
 
     #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    fn the_publish_command_prints_inputs_and_pushes_nothing() {
+        let cli = Cli::parse_from([
+            "hands-image",
+            "publish",
+            "--variant",
+            "8gb",
+            "--region",
+            "eu-west-1",
+        ]);
+        assert!(run(&cli).is_ok());
+        // The command is a printer by construction: `Publish` carries no path to
+        // write to and the tool links no AWS SDK, so there is nothing for a
+        // credential to be used by.
+        assert!(matches!(cli.command, Command::Publish { .. }));
     }
 }

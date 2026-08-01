@@ -4,6 +4,14 @@
 //! deployable, which is also what the load balancer targets. One naming, checked
 //! here, rather than a per-service convention nobody can remember.
 
+use std::sync::Arc;
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::{Json, Router};
+use serde::Serialize;
+
 /// Liveness. Answers as soon as the process is up.
 pub const HEALTHZ_PATH: &str = "/internal/healthz";
 
@@ -39,6 +47,10 @@ impl Readiness {
 pub enum Dependency {
     /// The runtime-activity store.
     RuntimeActivity,
+    /// The authoritative open-Hands-effect count in `session-authority`. Separate
+    /// from the activity store because the two read different tables, and because
+    /// the suspend transition is unsound without the second one.
+    SessionEffects,
     /// The `MicroVM` control plane.
     MicrovmControl,
     /// The compute-authority usage sink.
@@ -49,8 +61,9 @@ pub enum Dependency {
 
 impl Dependency {
     /// Every dependency, in the order readiness reports them.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::RuntimeActivity,
+        Self::SessionEffects,
         Self::MicrovmControl,
         Self::ComputeSink,
         Self::StorageSink,
@@ -61,6 +74,7 @@ impl Dependency {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RuntimeActivity => "runtime-activity",
+            Self::SessionEffects => "session-open-effects",
             Self::MicrovmControl => "microvm-control",
             Self::ComputeSink => "usage-compute-sink",
             Self::StorageSink => "usage-storage-sink",
@@ -116,11 +130,77 @@ pub const WORK_DOMAINS: [&str; 2] = ["runtime.workspace_discard", "runtime.live_
 /// stronger than holding one and not using it.
 pub const USAGE_CATEGORIES: [&str; 2] = ["compute", "storage"];
 
+/// The body both probes answer with.
+///
+/// Readiness also states what this worker handles and what it may write to. An
+/// operator reading a 503 needs to know which role is degraded, not only that
+/// something is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Probe {
+    /// `ok`, `ready` or `not_ready`.
+    pub status: &'static str,
+    /// Which dependencies are not bound. Empty when ready.
+    pub missing: Vec<&'static str>,
+    /// The work domains this worker is the sole handler for.
+    pub work_domains: &'static [&'static str],
+    /// The usage authorities it may write to. Never three.
+    pub usage_categories: &'static [&'static str],
+}
+
+/// The internal health surface.
+///
+/// The paths are the workspace-wide ones, which is also what the load balancer
+/// targets. Readiness names what is missing, because "not ready" with no reason is
+/// an alarm nobody can act on.
+pub fn router(bindings: Bindings) -> Router {
+    Router::new()
+        .route(HEALTHZ_PATH, get(healthz))
+        .route(READYZ_PATH, get(readyz))
+        .with_state(Arc::new(bindings))
+}
+
+/// Liveness: the process is up.
+async fn healthz() -> Json<Probe> {
+    Json(Probe {
+        status: "ok",
+        missing: Vec::new(),
+        work_domains: &WORK_DOMAINS,
+        usage_categories: &USAGE_CATEGORIES,
+    })
+}
+
+/// Readiness: every composed dependency is bound.
+async fn readyz(State(bindings): State<Arc<Bindings>>) -> (StatusCode, Json<Probe>) {
+    let readiness = bindings.readiness();
+    let status =
+        StatusCode::from_u16(readiness.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let body = match readiness {
+        Readiness::Ready => Probe {
+            status: "ready",
+            missing: Vec::new(),
+            work_domains: &WORK_DOMAINS,
+            usage_categories: &USAGE_CATEGORIES,
+        },
+        Readiness::NotReady { missing } => Probe {
+            status: "not_ready",
+            missing,
+            work_domains: &WORK_DOMAINS,
+            usage_categories: &USAGE_CATEGORIES,
+        },
+    };
+    (status, Json(body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Bindings, Dependency, HEALTHZ_PATH, READYZ_PATH, Readiness, USAGE_CATEGORIES, WORK_DOMAINS,
+        router,
     };
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt as _;
 
     #[test]
     fn the_health_paths_are_the_workspace_wide_ones() {
@@ -139,6 +219,7 @@ mod tests {
             Readiness::NotReady {
                 missing: vec![
                     "runtime-activity",
+                    "session-open-effects",
                     "microvm-control",
                     "usage-compute-sink",
                     "usage-storage-sink"
@@ -149,6 +230,7 @@ mod tests {
 
         let partial = Bindings::default()
             .with(Dependency::RuntimeActivity)
+            .with(Dependency::SessionEffects)
             .with(Dependency::MicrovmControl)
             .with(Dependency::StorageSink);
         assert_eq!(
@@ -180,6 +262,59 @@ mod tests {
         assert!(
             !USAGE_CATEGORIES.contains(&"transfer"),
             "not holding the binding is stronger than holding it and not using it"
+        );
+    }
+
+    async fn status_and_body(bindings: Bindings, path: &str) -> (StatusCode, serde_json::Value) {
+        let response = router(bindings)
+            .oneshot(Request::get(path).body(Body::empty()).expect("a request"))
+            .await
+            .expect("a response");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("a bounded body");
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("the probe body is JSON"),
+        )
+    }
+
+    #[tokio::test]
+    async fn liveness_answers_while_readiness_still_names_what_is_missing() {
+        let (status, body) = status_and_body(Bindings::default(), HEALTHZ_PATH).await;
+        assert_eq!(status, StatusCode::OK, "liveness is not readiness");
+        assert_eq!(body["status"], "ok");
+
+        let (status, body) = status_and_body(Bindings::default(), READYZ_PATH).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["status"], "not_ready");
+        assert_eq!(
+            body["missing"],
+            serde_json::json!([
+                "runtime-activity",
+                "session-open-effects",
+                "microvm-control",
+                "usage-compute-sink",
+                "usage-storage-sink"
+            ])
+        );
+
+        let bound = Dependency::ALL
+            .into_iter()
+            .fold(Bindings::default(), Bindings::with);
+        let (status, body) = status_and_body(bound, READYZ_PATH).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "ready");
+        assert_eq!(body["missing"], serde_json::json!([]));
+        assert_eq!(
+            body["workDomains"],
+            serde_json::json!(["runtime.workspace_discard", "runtime.live_workspace_wake"])
+        );
+        assert_eq!(
+            body["usageCategories"],
+            serde_json::json!(["compute", "storage"]),
+            "a probe that named a transfer authority would be the first sign of a wrong binding"
         );
     }
 }

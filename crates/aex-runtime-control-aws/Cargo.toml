@@ -29,8 +29,12 @@ targets = "the `hands` stream places this crate's evidence in inline unit module
 [dependencies]
 aex-hands-control-aws = { path = "../aex-hands-control-aws" }
 aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control" }
 aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

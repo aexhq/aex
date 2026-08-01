@@ -18,6 +18,7 @@ use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::clock::{millis_between, plus_millis};
+use crate::generation::GenerationHead;
 
 /// Proven quiescence, in milliseconds, before a generation is idle.
 ///
@@ -122,6 +123,28 @@ pub struct IdleAssessment {
 }
 
 impl IdleAssessment {
+    /// The assessment a lifecycle evaluation takes straight off a generation head.
+    ///
+    /// The head carries the settled counter, so `admitted` and `queued` are zero
+    /// here by construction: those two are Brain's in-flight counts, which reach the
+    /// head only by being folded into `open_operations` on admission. Reading them
+    /// as anything else would double-count the same work.
+    #[must_use]
+    pub fn from_head(head: &GenerationHead, observed_at: Timestamp) -> Self {
+        Self {
+            evidence: TrueIdleEvidence {
+                generation: head.generation,
+                activity_revision: head.revision.value(),
+                admitted: 0,
+                queued: 0,
+                open: head.open_operations,
+                keepalive_lease: head.keepalive_lease.clone(),
+                observed_at,
+            },
+            last_busy_at: head.last_busy_at,
+        }
+    }
+
     /// Total authoritative work holding the generation busy.
     #[must_use]
     pub const fn busy_count(&self) -> u32 {
@@ -176,9 +199,11 @@ mod tests {
         issue_keepalive, lease_holds_at,
     };
     use crate::clock::plus_millis;
+    use crate::generation::{GenerationHead, GenerationState, Revision};
     use aex_hands_protocol::lifecycle::{KeepaliveLease, TrueIdleEvidence};
+    use aex_hands_protocol::rpc::Fence;
     use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
-    use aex_wire::types::Timestamp;
+    use aex_wire::types::{ComputeSize, Timestamp};
     use proptest::prelude::{Just, any, prop_oneof, proptest};
 
     const BUSY_AT: i64 = 1_000_000;
@@ -189,6 +214,48 @@ mod tests {
 
     fn generation() -> GenerationId {
         GenerationId::from_uuid7(Uuid7::compose(1, [1; 10]))
+    }
+
+    fn head(open: u32, lease: Option<KeepaliveLease>) -> GenerationHead {
+        GenerationHead {
+            generation: generation(),
+            size: ComputeSize::Gb1,
+            state: GenerationState::Running,
+            fence: Fence(2),
+            revision: Revision::new(5),
+            open_operations: open,
+            last_busy_at: at(BUSY_AT),
+            idle_since: None,
+            suspend_lock_expires_at: None,
+            keepalive_lease: lease,
+            transport_mode: None,
+        }
+    }
+
+    #[test]
+    fn an_assessment_read_off_a_head_decides_the_same_boundary() {
+        let idle = IdleAssessment::from_head(&head(0, None), at(BUSY_AT));
+        assert_eq!(idle.evidence.admitted, 0);
+        assert_eq!(idle.evidence.queued, 0);
+        assert_eq!(idle.evidence.open, 0);
+        assert_eq!(idle.last_busy_at, at(BUSY_AT));
+        assert!(!idle.is_true_idle(at(BUSY_AT + 179_999)));
+        assert!(idle.is_true_idle(at(BUSY_AT + 180_000)));
+
+        let busy = IdleAssessment::from_head(&head(1, None), at(BUSY_AT));
+        assert_eq!(busy.busy_count(), 1);
+        assert!(!busy.is_true_idle(at(BUSY_AT + 3_600_000)));
+    }
+
+    #[test]
+    fn a_head_held_lease_travels_into_the_assessment() {
+        let lease = KeepaliveLease {
+            lease_id: "kal_head".to_owned(),
+            expires_at: at(BUSY_AT + 600_000),
+        };
+        let leased = IdleAssessment::from_head(&head(0, Some(lease.clone())), at(BUSY_AT));
+        assert_eq!(leased.evidence.keepalive_lease, Some(lease));
+        assert_eq!(leased.idle_since(), Some(at(BUSY_AT + 600_000)));
     }
 
     fn assessment(admitted: u32, queued: u32, open: u32) -> IdleAssessment {

@@ -25,13 +25,39 @@ risk = ["untrusted_input"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the hands stream; the cases land with the binary's own implementation"
+targets = "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
 
 [[bin]]
 name = "hands-agent"
 path = "src/main.rs"
 
 [dependencies]
+aex-hands-agent = { path = "../../crates/aex-hands-agent" }
+aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
+aex-hands-tools = { path = "../../crates/aex-hands-tools" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+axum.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+
+# The guest artifact must cross-build with no C toolchain in its inputs: a host
+# compiler in the build inputs is exactly what makes a "byte-reproducible" claim
+# untrue. `blake3` compiles C for the aarch64 NEON path by default, so the guest
+# target takes the pure-Rust one. Feature unification is per target, so no other
+# member's build changes.
+[target.'cfg(all(target_arch = "aarch64", target_env = "musl"))'.dependencies]
+blake3 = { workspace = true, features = ["no_neon"] }
+
+[dev-dependencies]
+cargo_metadata.workspace = true
+tempfile.workspace = true
+tower.workspace = true
