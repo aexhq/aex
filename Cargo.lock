@@ -294,9 +294,11 @@ name = "aex-finance-aurora"
 version = "0.1.0"
 dependencies = [
  "aex-finance-app",
+ "aex-finance-domain",
  "aex-rds-data",
  "async-trait",
  "futures",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",

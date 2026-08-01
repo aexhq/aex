@@ -13,4 +13,10 @@
 //! - migrations and grants (`central-schema-admin`)
 //! - observation or usage query implementation
 
+pub mod row;
 pub mod store;
+pub mod tx;
+pub mod wire_pending;
+
+#[cfg(test)]
+mod tests;
