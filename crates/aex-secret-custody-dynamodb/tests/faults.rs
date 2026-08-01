@@ -7,7 +7,7 @@ use aex_secret_custody_dynamodb::codec::{
 };
 use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER};
 use aex_secret_domain::revocation::RevocationEpoch;
-use aex_secret_domain::secret::SecretRevision;
+use aex_secret_domain::secret::{SecretRevision, SourceGeneration};
 use aex_session_dynamodb::attr::CodecError;
 use aex_session_dynamodb::error::{StoreError, decode_cancellation};
 use aex_session_dynamodb::plan::Participant;
@@ -130,4 +130,19 @@ fn a_name_that_could_forge_a_key_stops_every_builder() {
     );
     assert!(aex_secret_custody_dynamodb::keys::secret(workspace(), "a#b").is_err());
     let _ = secret_name();
+}
+
+#[test]
+fn a_set_plan_refuses_a_revision_jump_and_mismatched_generation_identity() {
+    let mut jumped = metadata();
+    jumped.revision = SecretRevision(9);
+    let error = expressions::set(TABLE, &support::generation(), &jumped, None)
+        .expect_err("the first set writes revision one");
+    assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
+
+    let mut wrong_generation = support::generation();
+    wrong_generation.generation = SourceGeneration(2);
+    let error = expressions::set(TABLE, &wrong_generation, &metadata(), None)
+        .expect_err("metadata cannot point at a different generation identity");
+    assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
 }

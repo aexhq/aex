@@ -104,21 +104,32 @@ async fn a_set_writes_metadata_and_a_generation_that_never_share_a_partition() {
 }
 
 #[tokio::test]
-async fn a_second_set_at_the_revision_nobody_read_is_refused() {
+async fn an_identical_set_replay_inside_the_transport_window_is_successful() {
     let (_engine, _client, store) = engine().await;
     seed_secret(&store).await;
 
-    // An identical replay inside the provider's ten-minute transport window is
-    // an idempotent success: the plan's `ClientRequestToken` is a digest of the
-    // workspace, the name and the revision, so the same set really is the same
-    // request. The durable receipt remains the product authority beyond it.
     store
         .commit(&expressions::set(TABLE, &generation(), &metadata(), None).expect("compiles"))
         .await
         .expect("an identical replay is idempotent");
 
+    assert_eq!(
+        store
+            .load_secret(workspace(), &secret_name())
+            .await
+            .expect("the read succeeds"),
+        Some(metadata()),
+        "transport replay returns the first commit rather than applying a second mutation"
+    );
+}
+
+#[tokio::test]
+async fn a_distinct_set_at_the_revision_nobody_read_is_refused_atomically() {
+    let (_engine, _client, store) = engine().await;
+    seed_secret(&store).await;
+
     let mut replacement = metadata();
-    replacement.revision = SecretRevision(2);
+    replacement.revision = SecretRevision(8);
     replacement.generation = SourceGeneration(2);
     let mut next = generation();
     next.generation = SourceGeneration(2);
@@ -138,6 +149,23 @@ async fn a_second_set_at_the_revision_nobody_read_is_refused() {
             }
         ),
         "{stale}"
+    );
+
+    assert_eq!(
+        store
+            .load_secret(workspace(), &secret_name())
+            .await
+            .expect("the read succeeds"),
+        Some(metadata()),
+        "the stale write must not move the metadata revision"
+    );
+    assert!(
+        store
+            .load_generation(workspace(), &secret_name(), SourceGeneration(2))
+            .await
+            .expect("the generation read succeeds")
+            .is_none(),
+        "a cancelled transaction must not strand the stale writer's sealed generation"
     );
 }
 

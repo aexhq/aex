@@ -11,7 +11,7 @@
 
 use aex_secret_domain::custody::CustodyRevision;
 use aex_secret_domain::revocation::RevocationEpoch;
-use aex_secret_domain::secret::{SecretRevision, SourceGeneration};
+use aex_secret_domain::secret::{SecretRevision, SecretState, SourceGeneration};
 use aex_session_dynamodb::attr::{Item, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
@@ -61,6 +61,7 @@ pub fn set(
     metadata: &SecretMetadata,
     expected_revision: Option<SecretRevision>,
 ) -> Result<TransactionPlan, StoreError> {
+    validate_set(generation, metadata, expected_revision)?;
     let mut plan = TransactionPlan::new(token(
         "sec",
         &[
@@ -98,7 +99,8 @@ pub fn set(
         // `Missing { attribute: "itemType" }` the first time anyone lists, which
         // is what the engine-backed target caught.
         .update_expression(
-            "SET #itemType = :itemType, revision = :revision, #state = :ready, \
+            "SET #itemType = :itemType, \
+             revision = if_not_exists(revision, :zero) + :one, #state = :ready, \
              activeSourceGeneration = :generation, \
              revocationEpoch = if_not_exists(revocationEpoch, :zero), \
              revokedThroughRevision = if_not_exists(revokedThroughRevision, :zero), \
@@ -110,11 +112,11 @@ pub fn set(
         .expression_attribute_names("#itemType", "itemType")
         .expression_attribute_values(":itemType", s(codec::WORKSPACE_SECRET))
         .expression_attribute_values(":ready", s(secret_state_str(metadata.state)))
-        .expression_attribute_values(":revision", n(metadata.revision.0))
         .expression_attribute_values(":generation", n(metadata.generation.0))
         .expression_attribute_values(":name", s(metadata.name.as_str().to_owned()))
         .expression_attribute_values(":workspace", s(metadata.workspace.to_string()))
         .expression_attribute_values(":zero", n(0))
+        .expression_attribute_values(":one", n(1))
         .expression_attribute_values(":now", stamp(metadata.updated_at));
     if let Some(revision) = expected_revision {
         update = update.expression_attribute_values(":expectedRevision", n(revision.0));
@@ -139,6 +141,50 @@ pub fn set(
             .condition_expression(IMMUTABLE),
     )?;
     Ok(plan)
+}
+
+fn validate_set(
+    generation: &StoredGeneration,
+    metadata: &SecretMetadata,
+    expected_revision: Option<SecretRevision>,
+) -> Result<(), StoreError> {
+    let target_revision = match expected_revision {
+        None => SecretRevision::FIRST,
+        Some(revision) => {
+            SecretRevision(
+                revision
+                    .0
+                    .checked_add(1)
+                    .ok_or_else(|| StoreError::Invalid {
+                        detail: "the observed secret revision cannot be advanced".to_owned(),
+                    })?,
+            )
+        }
+    };
+    if metadata.revision != target_revision {
+        return Err(StoreError::Invalid {
+            detail: format!(
+                "the set plan targets revision {} after observing {}; expected {}",
+                metadata.revision.0,
+                expected_revision.map_or(0, |revision| revision.0),
+                target_revision.0
+            ),
+        });
+    }
+    if metadata.state != SecretState::Ready {
+        return Err(StoreError::Invalid {
+            detail: "a secret set must produce ready metadata".to_owned(),
+        });
+    }
+    if generation.workspace != metadata.workspace
+        || generation.name != metadata.name
+        || generation.generation != metadata.generation
+    {
+        return Err(StoreError::Invalid {
+            detail: "the sealed generation identity does not match the metadata pointer".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Builds the emergency revoke: one atomic fence, O(1) in the generation count.
