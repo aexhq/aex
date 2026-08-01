@@ -191,18 +191,20 @@ name = "aex-content-aws"
 version = "0.1.0"
 dependencies = [
  "aex-content-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
- "aws-sdk-kms",
  "aws-sdk-s3",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "bytes",
- "futures",
- "serde",
- "serde_json",
+ "base64 0.23.0",
+ "hex",
+ "proptest",
+ "sha2 0.11.0",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
@@ -221,16 +223,21 @@ name = "aex-content-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-content-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "blake3",
+ "hex",
+ "proptest",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
@@ -844,17 +851,20 @@ dependencies = [
 name = "aex-registry-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "aex-workspace-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "proptest",
  "serde_json",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
@@ -884,17 +894,20 @@ dependencies = [
 name = "aex-runtime-activity-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-hands-protocol",
  "aex-runtime-control",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "proptest",
  "serde_json",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
@@ -928,17 +941,20 @@ name = "aex-secret-aws"
 version = "0.1.0"
 dependencies = [
  "aex-secret-domain",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
+ "aws-lc-rs",
  "aws-sdk-kms",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "secrecy",
- "serde",
+ "hex",
+ "proptest",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
  "zeroize",
 ]
 
@@ -947,16 +963,20 @@ name = "aex-secret-custody-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-secret-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "hex",
+ "proptest",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
@@ -975,16 +995,18 @@ name = "aex-secret-keystore-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-secret-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "proptest",
  "serde_json",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
@@ -5543,16 +5565,6 @@ dependencies = [
  "generic-array",
  "pkcs8",
  "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "secrecy"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
-dependencies = [
- "serde",
  "zeroize",
 ]
 

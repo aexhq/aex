@@ -8,6 +8,12 @@
 /// `rustfmt`'s `max_width`, as pinned in `rustfmt.toml`.
 pub const MAX_WIDTH: usize = 100;
 
+/// `rustfmt`'s `fn_call_width` under the default small-heuristics profile.
+///
+/// A call whose comma-separated arguments are wider than this is laid out one
+/// argument per line, whatever the total line width.
+pub const FN_CALL_WIDTH: usize = 60;
+
 /// `rustfmt`'s `array_width` under the default small-heuristics profile.
 ///
 /// An array whose comma-separated contents are wider than this is laid out one
@@ -62,11 +68,102 @@ impl Source {
     }
 
     /// Appends a documentation comment, wrapped at [`MAX_WIDTH`].
+    ///
+    /// An empty line is written bare, because `rustfmt` strips the trailing
+    /// space from `/// ` and a renderer that emits one is not a fixed point.
     pub fn doc(&mut self, indent: usize, text: &str) {
         for line in wrap(text, MAX_WIDTH - indent - 4) {
-            self.text
-                .push_str(&format!("{:indent$}/// {line}\n", "", indent = indent));
+            if line.is_empty() {
+                self.text
+                    .push_str(&format!("{:indent$}///\n", "", indent = indent));
+            } else {
+                self.text
+                    .push_str(&format!("{:indent$}/// {line}\n", "", indent = indent));
+            }
         }
+    }
+
+    /// Appends the import block, in the order `rustfmt` sorts it.
+    ///
+    /// `rustfmt` sorts a keyword path (`crate`, `self`, `super`) ahead of a
+    /// crate name inside one contiguous block, so the two groups are written as
+    /// two blocks instead of relying on that ordering being reproduced here.
+    pub fn imports(&mut self, paths: &std::collections::BTreeSet<String>) {
+        let external: Vec<&String> = paths
+            .iter()
+            .filter(|path| !path.starts_with("crate::"))
+            .collect();
+        let internal: Vec<&String> = paths
+            .iter()
+            .filter(|path| path.starts_with("crate::"))
+            .collect();
+        for path in &external {
+            self.line(&format!("use {path};"));
+        }
+        if !external.is_empty() && !internal.is_empty() {
+            self.blank();
+        }
+        for path in &internal {
+            self.line(&format!("use {path};"));
+        }
+    }
+
+    /// Appends a `let` binding over a call, the way `rustfmt` lays it out.
+    ///
+    /// One line when it fits; otherwise a break after `=` when the whole call
+    /// fits on the continuation line; otherwise one argument per line.
+    pub fn bind_call(
+        &mut self,
+        indent: usize,
+        binding: &str,
+        callee: &str,
+        arguments: &[String],
+        suffix: &str,
+    ) {
+        let joined = arguments.join(", ");
+        let inner = indent + 4;
+        if joined.len() <= FN_CALL_WIDTH {
+            let single = format!(
+                "{:indent$}let {binding} = {callee}({joined}){suffix}",
+                "",
+                indent = indent
+            );
+            if single.len() <= MAX_WIDTH {
+                self.line(&single);
+                return;
+            }
+            let wrapped = format!("{:inner$}{callee}({joined}){suffix}", "", inner = inner);
+            if wrapped.len() <= MAX_WIDTH {
+                self.line(&format!("{:indent$}let {binding} =", "", indent = indent));
+                self.line(&wrapped);
+                return;
+            }
+        }
+        self.line(&format!(
+            "{:indent$}let {binding} = {callee}(",
+            "",
+            indent = indent
+        ));
+        for argument in arguments {
+            self.line(&format!("{:inner$}{argument},", "", inner = inner));
+        }
+        self.line(&format!("{:indent$}){suffix}", "", indent = indent));
+    }
+
+    /// Appends a macro invocation over a list, the way `rustfmt` lays it out.
+    pub fn macro_list(&mut self, indent: usize, name: &str, items: &[String]) {
+        let contents = items.join(", ");
+        let single = format!("{:indent$}{name}!({contents});", "", indent = indent);
+        if single.len() <= MAX_WIDTH {
+            self.line(&single);
+            return;
+        }
+        self.line(&format!("{:indent$}{name}!(", "", indent = indent));
+        let inner = indent + 4;
+        for item in items {
+            self.line(&format!("{:inner$}{item},", "", inner = inner));
+        }
+        self.line(&format!("{:indent$});", "", indent = indent));
     }
 
     /// Appends an array-valued field the way `rustfmt` lays it out.

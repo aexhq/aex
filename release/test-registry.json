@@ -529,13 +529,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-content-domain": {
       "name": "aex-content-domain",
@@ -593,13 +597,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-control-app": {
       "name": "aex-control-app",
@@ -1530,13 +1538,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-runtime-activity-dynamodb": {
       "name": "aex-runtime-activity-dynamodb",
@@ -1565,13 +1577,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-runtime-control": {
       "name": "aex-runtime-control",
@@ -1663,13 +1679,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-secret-custody-dynamodb": {
       "name": "aex-secret-custody-dynamodb",
@@ -1698,13 +1718,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-secret-domain": {
       "name": "aex-secret-domain",
@@ -1763,13 +1787,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-session-app": {
       "name": "aex-session-app",
@@ -2165,7 +2193,8 @@
         "targets": {
           "errors_and_routes": "unit",
           "ids": "unit",
-          "primitives": "unit"
+          "primitives": "unit",
+          "server_and_client": "unit"
         },
         "not_applicable": {
           "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
@@ -4124,7 +4153,8 @@
         "scenarios": [],
         "targets": {
           "canonical_agreement": "unit",
-          "determinism": "unit"
+          "determinism": "unit",
+          "surface": "unit"
         },
         "not_applicable": {
           "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane"

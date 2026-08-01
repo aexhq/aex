@@ -238,3 +238,184 @@ Even the local DynamoDB Local layer is currently unreachable — see the harness
 gap in §4 — so the strongest evidence this stream has today is protocol-level:
 the exact bytes of the request, and the exact participant a cancellation decodes
 to.
+
+---
+
+# Regional stores, second wave — landed state
+
+Branch `rw/regional-stores-2`, merged from `main` after the harness gained its
+`containers` feature and after the regional pure domains landed. Nothing is
+deployed, published or credentialed. Sections 1–7 above are the first wave and
+are unchanged; everything below is the remaining seven crates.
+
+## 8. Implemented
+
+| Crate | What landed |
+| --- | --- |
+| `aex-content-dynamodb` | §2.3 in full: workspace-scoped body/root/tree/grant/GC keys, the SHA-256 body vs `BLAKE3` page digest split, root pins, grant rows that hold a reference and a pin, the GC epoch state machine and the fenced sweep. 58 unit + 7 engine cases. |
+| `aex-content-aws` | §5 in full: `{workspace}/{2}/{2}/{sha256}` addressing, conditional create with the HEAD-compare resolution, the three-fact multipart integrity argument, presigned grants behind `RedactedUrl`, the fenced delete, the S3 error table, and the bucket-policy requirements as data. 52 unit + 7 engine cases. |
+| `aex-registry-dynamodb` | §2.4 in full on `aex-workspace-domain`: pointer/`ETag`/revision, the upload state machine as conditions, native ordered listing with signed continuations, no index and no stream. 43 unit + 5 engine cases. |
+| `aex-secret-custody-dynamodb` | §2.5 plus both additions: metadata and ciphertext in separate partitions, §3.6's four expressions verbatim, the `REDACT#{session}` manifest in its own partition, and the `pcr_` provider-credential directory. 36 unit + 5 engine cases. |
+| `aex-secret-aws` | The OD-33 envelope arm: KMS root key → per-workspace branch key → per-message HKDF-SHA512 wrapping key → AES-256-GCM with the encryption context as AAD, a bounded zeroizing role-partitioned cache, and seal/rewrap/reveal. 39 unit + 3 engine cases. |
+| `aex-secret-keystore-dynamodb` | §2.6: the provider schema verbatim, `KeyStoreBinding` with the logical name pinned to the physical table name, read-only introspection, and **no write path at all**. 24 unit + 3 engine cases. |
+| `aex-runtime-activity-dynamodb` | §2.7 in full: generation head, lifecycle intents, immutable receipts, idle probes, the current-generation pointer and the 16-shard evaluation due index. 36 unit + 4 engine cases. |
+
+Every crate now declares `layers = ["unit", "integration"]` with both covered:
+288 unit cases and 34 engine-backed cases, none skipped.
+
+### The engine-backed lane
+
+`aex-test-harness`'s `containers` feature is wired into all seven crates as
+`integration-engines = ["dep:tokio", "aex-test-harness/containers"]`, with one
+`[[test]] name = "integration"` per crate behind `required-features`. Six run
+against `DynamoDB` Local, one (`aex-content-aws`) against `MinIO`, and one
+(`aex-secret-aws`) against `LocalStack`'s KMS. Five of the six `DynamoDB` targets
+create their table from the checked-in `migrations/regional` definition rather
+than from a shape the test invented, so the engine runs what Terraform creates.
+
+The lane found four defects the protocol layer could not, each now fixed and
+each with a case pinning it:
+
+1. **Plan 05 §3.8's sweep transaction is illegal as written.** It carries a
+   `ConditionCheck` on the descriptor *and* a `Delete` of that same descriptor;
+   `DynamoDB` refuses two operations on one item and answers `ValidationException`
+   before evaluating anything. The delete already carried the identical
+   `gcEpoch = :markedEpoch` condition, so the check was redundant as well as
+   illegal. `SWEEP_ORDER` is three participants, and the fence is unchanged.
+2. **A row created by an `Update` never writes its own `itemType`.** The secret
+   `set` writes metadata by `Update` because it carries a monotone revision the
+   caller conditions on; the first `list_secrets` after a create then failed as
+   `Missing { attribute: "itemType" }`. Any create-by-update elsewhere has the
+   same hazard.
+3. **An `INCLUDE` projection carries no discriminator**, so binding the shared
+   typed row reader to a due-index row fails on every row. `runtime-activity`'s
+   due scan now decodes the projection as the explicitly named slim set it is.
+   **`aex_work_dynamodb::store::scan_due` has the identical `Row::bind` over
+   `gsi_due` and will fail the same way** — see §11.
+4. **An identical replay inside the ten-minute `ClientRequestToken` window is an
+   idempotent success, not a lost condition.** Two cases had asserted a
+   `PreconditionFailed` that the provider's transport deduplication never
+   produces. They now assert the replay *and* that the same token with a changed
+   payload is `IdempotencyConflict`.
+
+## 9. Deferred, with the reason
+
+| Item | State |
+| --- | --- |
+| `tests/live/aex-live-regional-stores/` | **Not created.** It would be a new workspace member, which this stream was told not to add, and `aex-workspace-check` additionally requires a live companion to name a `deployable` that is a member — this package would name none. Each of the seven crates instead points its `live_suite` at the existing companion for the deployable that exercises it (`aex-live-content-lifecycle-worker`, `aex-live-regional-session-api`, `aex-live-regional-secret-api`, `aex-live-regional-secret-key-admin`, `aex-live-runtime-control-worker`). Plan 05 §8.3's fourteen concerns belong in those packages; none of them is written, and all of them are blocked by OD-07 regardless. |
+| `tests/load/regional-stores/` | Not written (plan 05 §8.4). |
+| Merkle tree construction | The **rows** are here — tree pages, root descriptors, root pins, the GC scan index — but building, walking and copy-on-write persisting a tree is `aex-content-domain`'s, and plan 05 G-12's property burden lands there. |
+| Deep-verify sampling | The descriptor carries `verifiedAt` and both checksums; the sampled re-hash job itself is `content-lifecycle-worker`'s. |
+| `aex-content-aws` KMS client | The crate binds the encryption context through SSE-KMS headers and holds no KMS client. Application-layer AEAD for inline bodies and tree pages is `aex-secret-aws`'s envelope; there is exactly one crypto implementation. |
+
+## 10. Published interfaces
+
+- **`aex_content_dynamodb`** — `keys` (every `regional-content` template, `GC_PROJECTION`, `GC_BUCKETS`), `codec` (descriptor, inline body, pin, grant, root, tree page, GC epoch, GC candidate), `expressions` (`SWEEP_ORDER`, `sweep`, `mint_grant`, the epoch state machine, pin/unpin), `store::{ContentMetadataStore, ContentStore, Reachability, GcScanPage}`.
+- **`aex_content_aws`** — `ObjectKey`, `PRESIGN_EXPIRY`, `MAX_SIGNATURE_AGE_MILLIS`, `RedactedUrl`, `BucketBinding`, `ContentObjectStore`, `S3ContentObjects`, `CompletionManifest`, `ContentObjectError`, and `policy::REQUIRED_DENIES` — the bucket-policy `Deny` statements this adapter depends on, as data the infrastructure stream can consume instead of re-deriving.
+- **`aex_registry_dynamodb`** — `keys`, `codec` (built on `aex_workspace_domain::registry`/`upload`), `expressions` (pointer create/replace/delete, the upload transitions, completion begin/finish, consume), `store::{RegistryStore, RegistryDynamoStore, PointerPage}`.
+- **`aex_secret_custody_dynamodb`** — `keys` (including `redaction_manifest` and `provider_credential`), `codec::{SecretMetadata, StoredGeneration, CustodyHead, CallAuthorization, RedactionManifest, ProviderCredential}`, `expressions::{set, revoke, admit_custody, authorize_managed_call, SET_ORDER, AUTHORIZE_ORDER}`, `store::{SecretCustodyStore, CustodyStore}`.
+- **`aex_secret_aws`** — `context::{kms_pairs, aad_bytes, context_digest, name_digest}`, `envelope::{seal, open, header, BranchKeyMaterial, Entropy}`, `keystore::{BranchKeyProvider, KmsBranchKeys, BranchKeyCache}`, `crypto::{SecretCrypto, EnvelopeCrypto, SealedSecret, IMPLEMENTATION}`.
+- **`aex_secret_keystore_dynamodb`** — `branch_key` (the provider record and its vocabulary), `store::{KeyStoreBinding, BranchKeyStoreReader, KeyStoreReader, ActiveBranchKey}`. `KeyStoreBinding` is what `regional-secret-key-admin` and `aex-secret-aws` both take.
+- **`aex_runtime_activity_dynamodb`** — `keys` (templates, `DUE_PROJECTION`, `DUE_SHARDS`, the state spellings), `codec`, `expressions::{create_generation, transition, reschedule, record_intent, settle_intent, record_probe, point_current}`, `store::{RuntimeActivityStore, RuntimeActivityDynamoStore, DueGeneration}`.
+
+## 11. Changes needed from peers
+
+| Requirement | Owner |
+| --- | --- |
+| **`aex_work_dynamodb::store::scan_due` binds the typed row reader to a `gsi_due` row.** An `INCLUDE` projection carries the key attributes and the declared list and nothing else — not `itemType` — so `Row::bind` fails on every row and the reconciler returns `Corrupt` instead of a due page. `aex-runtime-activity-dynamodb` hit exactly this against `DynamoDB` Local and now decodes the projection directly; the same fix applies there. I did not edit the crate. | regional stores (first wave) |
+| **`TransactionPlan` tokens can exceed the provider's 36-character `ClientRequestToken` ceiling.** `aex_session_dynamodb::transactions` builds tokens like `format!("terminal:{run}")`, which is 39 characters for a 30-character `RunId`. My crates hash instead (`token(tag, parts)` → `tag-` plus 32 hex). Unverified against a live service — `DynamoDB` Local accepts the long form — but the AWS API reference pins the field at 1–36. | regional stores (first wave) |
+| **`aex_secret_domain::EncryptionContext::canonical_pairs` carries `aex:name` in the clear.** That is right for an in-process identity and wrong for KMS: an encryption context is authenticated *and* recorded in `CloudTrail`, and a customer-chosen secret name has no business in an audit log the customer cannot redact (D-17). `aex_secret_aws::context::kms_pairs` therefore substitutes `aex:name-digest` on the way out, salted with the workspace. The domain should either adopt the substitution or state that its context is never sent to a provider verbatim. | regional domains |
+| The seven adapters define their own port traits marked `TODO(cross-stream)`. Where a peer trait now exists — `aex_content_domain`, `aex_workspace_domain`, `aex_secret_domain`, `aex_runtime_control` — the **data types are already the peers'** and only the trait needs re-pointing at merge. `ContentMetadataStore`, `ContentObjectStore`, `RegistryStore`, `SecretCustodyStore`, `SecretCrypto`, `BranchKeyStoreReader` and `RuntimeActivityStore` are the seven. | regional domains, runtime control |
+| `aex-content-dynamodb` still carries `wire_pending::{Blake3Digest, SealedBytes, PinOwner, GrantPlan, GcSweepPlan}`. `aex_content_domain` now has `digest::PageDigest`, `pin::Pin`/`PinSubject` and `gc::SweepCandidate`, which are richer; the swap is mechanical but changes the key builders' signatures, so it is left as one deliberate edit rather than a rushed one. | regional stores + regional domains |
+| The content bucket policy must carry the three `Deny` statements in `aex_content_aws::policy::REQUIRED_DENIES` verbatim, including `s3:signatureAge > 300000`. The adapter signs for exactly 300 seconds and a case pins the two values together. | infrastructure |
+| The content and secret CMK policies still owe the `StringEquals` conditions on `kms:EncryptionContext:aex:workspace` and `aex:domain` (OD-18). `aex-secret-aws` sends the context on every `Decrypt` and `aex-content-aws` sends it on every SSE-KMS write; neither can enforce the condition. | infrastructure |
+| `regional-secret-key-admin` owns `CreateKey`/`VersionKey` and every write to `regional-secret-keystore`. It should consume `KeyStoreBinding` rather than address the table itself. | regional services |
+| `regional-otlp` reads the redaction manifest at `REDACT#{session_id}` / `MANIFEST` with `dynamodb:GetItem` and holds nothing else on that table. The manifest's HMAC algorithm and key id are row fields, so a rotation is explicit; the collector must compare digests rather than values. | observations |
+
+## 12. Decisions taken
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| RS-16 | Plan 05 §3.8's sweep is **three** actions, not four: the descriptor's `ConditionCheck` is dropped and its `Delete` carries the same condition. | `DynamoDB` rejects two operations on one item outright. The check was redundant anyway, so the fence is unchanged. |
+| RS-17 | A `ClientRequestToken` is a fixed-width digest of the operation identity (`tag-` plus 32 hex), never a concatenation of identifiers. | Two thirty-character identifiers already overflow the 36-character field. Hashing makes the token width independent of its inputs. |
+| RS-18 | The KMS-visible encryption context substitutes `aex:name-digest` for the domain's `aex:name`, salted with the workspace. | D-17. The context is recorded in `CloudTrail`; the salt additionally stops a reader correlating tenants by naming convention. |
+| RS-19 | A generation's ciphertext lives at `SECGEN#{workspace}#{name}` / `GEN#{generation:020}` rather than plan 05's `SECGEN#{workspace}#{source_generation_id}`. | The domain's `SourceGeneration` is a per-`(workspace, name)` `u64`, not a global id, so the name has to be in the key. The property plan 05 wanted — ciphertext out of the partition a list reads — is preserved, and the sort key now gives an ordered lineage for free. |
+| RS-20 | A grant pin declares `pinKind = "grant"`, outside `PIN_KINDS`. | It is addressed by `GRANT#{token}` rather than `PIN#{kind}#{id}` and is the only pin that expires, so folding it into the `PIN#` vocabulary would blur both facts. |
+| RS-21 | `aex-content-aws` holds **no** KMS client. The encryption context is bound through SSE-KMS headers; application-layer AEAD is `aex-secret-aws`'s envelope. | One crypto implementation in the workspace. The crate keeps its `aws.kms.encryption_context` seam because it is what sets the context. |
+| RS-22 | The presign lifetime and the `s3:signatureAge` deny are both 300 000 ms, and a case asserts they are equal. | OD-17 overrides plan 05 §5.5's six-minute proposal (G-7). Pinning them in one place makes the pair a test rather than a comment. |
+| RS-23 | The branch-key version is derived from the wrapped bytes (`sha256(wrapped)[..16]`), not stored beside them. | A stored row cannot then claim a version its material does not have, and a rotation is detectable from the ciphertext alone. |
+| RS-24 | `BranchKeyCache` is keyed by `(partition, branch key, version)` and evicts on a bound with no LRU accounting. | The bound is the security property; which entry goes is not. A cache miss costs one KMS call. |
+| RS-25 | Registry and secret names are `aex_wire::ids::ResourceName`, whose grammar is ASCII `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. | Plan 05 asks for "the canonical NFC name". An ASCII grammar is NFC by construction, so no normalization crate is needed and none was added. |
+| RS-26 | The stored registry `ETag` is recomputed from `(kind, revision, digest)` on every read and compared. | The tag is a pure function of the row; a stored copy that disagrees describes a value that no longer exists, and handing a client that tag would make its next `If-Match` meaningless. |
+| RS-27 | `aex-secret-keystore-dynamodb` decodes without the shared typed row reader. | The provider's schema has no `itemType`. Fabricating one would make the store unreadable by the provider's own tooling, which is the entire risk D-20 exists to avoid. |
+| RS-28 | The redaction manifest lives at `REDACT#{session}` / `MANIFEST`, in its own partition. | `regional-otlp` holds `dynamodb:GetItem` and nothing else on the custody table. A manifest inside `CUSTODY#{session}` would be one key-guess away from a custody row; in its own partition, one point read is all the grant can reach. |
+| RS-29 | A metadata row, a manifest and a credential binding all **refuse to decode** if they carry `ciphertext` or `wrappedKey`. | The types have nowhere to put sealed bytes, but a row written by hand or by an older revision could still have them. Refusing on read is what stops that becoming a leak on the list path. |
+| RS-30 | `tests/live/aex-live-regional-stores/` was not created. | It is a new workspace member, which this stream was told not to add, and the registry additionally requires a live companion to name a member deployable. The concerns are recorded against the existing companions instead. |
+
+## 13. Gate output
+
+Run on `rw/regional-stores-2` at the final commit, `CARGO_BUILD_JOBS=4`:
+
+```
+cargo fmt --all                                              clean
+cargo clippy -p aex-content-dynamodb -p aex-content-aws \
+  -p aex-registry-dynamodb -p aex-secret-custody-dynamodb \
+  -p aex-secret-keystore-dynamodb -p aex-secret-aws \
+  -p aex-runtime-activity-dynamodb --all-targets -- -D warnings
+                                                             clean
+cargo nextest run -p aex-content-dynamodb -p aex-content-aws \
+  -p aex-registry-dynamodb -p aex-secret-custody-dynamodb \
+  -p aex-secret-keystore-dynamodb -p aex-secret-aws \
+  -p aex-runtime-activity-dynamodb
+                                        288 tests run: 288 passed, 0 skipped
+cargo nextest run <the same seven> --features integration-engines \
+  --profile integration -E 'binary(integration)'
+                                         34 tests run:  34 passed, 0 skipped
+cargo check --workspace --all-targets                        clean
+cargo run -p aex-workspace-check         133 member(s) and 139 package(s)
+                                         satisfy every structural and registry rule
+cargo run -p aex-workspace-check -- registry build
+                                         wrote release/test-registry.json and
+                                         release/unearned-evidence.json (committed)
+```
+
+No `#[ignore]`, no environment self-skip, no empty suite, no retry-to-green. The
+engine lane starts real containers from the digest-pinned registry through
+`aex_test_harness::containers` and never names an image.
+
+## 14. What could only be asserted locally
+
+The engine lane raises the floor: expressions now provably parse and evaluate,
+`INCLUDE` projections provably return what they declare and nothing more, sparse
+indexes provably drop rows on a terminal transition, conditional writes provably
+lose, and a real KMS round-trips a wrapped branch key under an enforced
+encryption context. That is a materially stronger claim than the first wave
+could make.
+
+What the emulators cannot reach, stated rather than assumed:
+
+1. **`MinIO` evaluates no delete precondition.** It accepts a `DeleteObject`
+   whose `If-Match` does not match and answers `204` for an absent key, so
+   `FencedDeleteOutcome::Changed` and `AlreadyAbsent` are unreachable there. The
+   adapter's half — that it always sends the header — is asserted on the
+   serialized request; that the *service* refuses a delete without one is a
+   bucket-policy fact and is live-only. A case in the target says so out loud.
+2. **`MinIO` implements no SSE-KMS**, so `put_immutable` cannot run against it.
+   That gap is turned into a positive case instead: the adapter must refuse
+   rather than quietly store a body unencrypted, and it must leave no object
+   behind.
+3. **`LocalStack` implements no KMS key policy**, so OD-18's
+   `kms:EncryptionContext:aex:workspace` condition — the thing that makes the
+   binding enforceable at the key rather than advisory — is unproved. What *is*
+   proved there is that the context is carried and that a wrapped key presented
+   under another workspace's context is refused.
+4. **`DynamoDB` Local implements no TTL expiry**, no adaptive capacity, no
+   `TransactionConflict` under real contention, and no Streams. Every TTL claim
+   in these crates is therefore still "the reader checks `expiresAt` explicitly",
+   asserted at the unit layer, plus "no fence reads TTL", which only a soak can
+   establish.
+5. **No AWS checksum semantics anywhere.** `MpuObjectSize`, `COMPOSITE` versus
+   `CRC64NVME` and `EntityTooSmall` boundaries are protocol-asserted only.
+6. Bucket-policy denial, `s3:signatureAge`, presigned-URL expiry behaviour, PITR
+   and restore, real throttling shapes, and every IAM allow/deny matrix remain
+   plan 05 §8.3 items with no local proxy.
