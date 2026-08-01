@@ -269,7 +269,10 @@ pub fn repository_root() -> PathBuf {
 /// The directory holding the per-table definition files.
 #[must_use]
 pub fn definitions_directory() -> PathBuf {
-    repository_root().join("migrations").join("regional").join("tables")
+    repository_root()
+        .join("migrations")
+        .join("regional")
+        .join("tables")
 }
 
 /// The checked-in generated bundle path.
@@ -358,7 +361,10 @@ pub fn check_attribute_closure(definition: &TableDefinition) -> Result<(), Table
         used.push(index.sort.as_str());
     }
     for (position, attribute) in [
-        ("keySchema.partition", definition.key_schema.partition.as_str()),
+        (
+            "keySchema.partition",
+            definition.key_schema.partition.as_str(),
+        ),
         ("keySchema.sort", definition.key_schema.sort.as_str()),
     ] {
         if !declared.contains(&attribute) {
@@ -408,7 +414,10 @@ pub fn load_all(directory: &Path) -> Result<Vec<TableDefinition>, TableError> {
         })?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect();
     entries.sort();
 
@@ -619,17 +628,19 @@ mod tests {
     #[test]
     fn an_undeclared_index_attribute_is_rejected() {
         let mut definition = sample();
-        definition.global_secondary_indexes.push(GlobalSecondaryIndex {
-            name: "gsi_ghost".to_owned(),
-            partition: "ghostPk".to_owned(),
-            sort: "ghostSk".to_owned(),
-            sparse: true,
-            rationale: "a deliberate defect".to_owned(),
-            projection: Projection {
-                projection_type: "INCLUDE".to_owned(),
-                attributes: vec!["sessionId".to_owned()],
-            },
-        });
+        definition
+            .global_secondary_indexes
+            .push(GlobalSecondaryIndex {
+                name: "gsi_ghost".to_owned(),
+                partition: "ghostPk".to_owned(),
+                sort: "ghostSk".to_owned(),
+                sparse: true,
+                rationale: "a deliberate defect".to_owned(),
+                projection: Projection {
+                    projection_type: "INCLUDE".to_owned(),
+                    attributes: vec!["sessionId".to_owned()],
+                },
+            });
         let error = check_attribute_closure(&definition).expect_err("the ghost index is rejected");
         assert!(
             matches!(&error, TableError::UndeclaredAttribute { attribute, .. } if attribute == "ghostPk"),

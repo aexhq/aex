@@ -218,6 +218,10 @@ aws-sdk-secretsmanager = { version = "1.111.0", features = ["behavior-version-la
 aws-sdk-cloudwatch = { version = "1.123.0", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.6.1"
 aws-smithy-runtime-api = "1.14.0"
+# `capture_request` is how every adapter asserts the exact serialized request
+# body instead of comparing it against a hand-written mirror (plan 05 D-28). It
+# is a dev-dependency everywhere; no production target links it.
+aws-smithy-http-client = { version = "1.2.0", features = ["test-util"] }
 
 # --- serialization and schema ------------------------------------------------
 serde = { version = "1.0.229", features = ["derive"] }
@@ -249,6 +253,9 @@ uuid = { version = "1.24.0", features = ["v4", "v7", "serde"] }
 time = { version = "0.3.54", features = ["macros", "serde", "formatting", "parsing"] }
 sha2 = "0.11.0"
 blake3 = "1.8.5"
+# Shard selection only: `xxh3_64(id) % shards` spreads a due index over a fixed
+# partition set. Never used where a cryptographic digest is required.
+xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
 hmac = "0.13.0"
 base64 = "0.23.0"
 hex = "0.4.3"

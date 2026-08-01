@@ -19,9 +19,17 @@ fn the_bundle_is_a_pure_function_of_the_definition_files() {
 #[test]
 fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not_need() {
     for table in tables::rebuild().expect("the definitions load").tables {
-        assert!(!table.iam.is_empty(), "{} grants nobody access", table.table);
+        assert!(
+            !table.iam.is_empty(),
+            "{} grants nobody access",
+            table.table
+        );
         for grant in &table.iam {
-            if grant.actions.iter().any(|action| action == "dynamodb:DeleteItem") {
+            if grant
+                .actions
+                .iter()
+                .any(|action| action == "dynamodb:DeleteItem")
+            {
                 assert!(
                     matches!(
                         (table.table.as_str(), grant.role.as_str()),
