@@ -1,0 +1,597 @@
+/*
+ * Dashboard chrome. Every value here resolves to a role from `tokens.css`; no
+ * literal colour, radius, spacing or type size appears below. That is what makes
+ * the token merge with `apps/site` a deletion of one file rather than a rewrite.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* The body never scrolls sideways. Wide content scrolls inside `.scroller`. */
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-text-size-adjust: 100%;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-medium);
+}
+
+h1 {
+  font-size: var(--text-xl);
+}
+
+h2 {
+  font-size: var(--text-lg);
+}
+
+h3 {
+  font-size: var(--text-base);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------- primitives */
+
+.skip {
+  position: absolute;
+  left: var(--space-2);
+  top: calc(var(--space-2) * -8);
+  z-index: 10;
+  padding: var(--space-2) var(--space-3);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+}
+
+.skip:focus {
+  top: var(--space-2);
+}
+
+.frame {
+  width: 100%;
+  max-width: 80rem;
+  margin: 0 auto;
+  padding-inline: var(--space-4);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.stack-tight {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: var(--text-sm);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Wide content — tables, trace waterfalls — scrolls inside its own box. */
+.scroller {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------- header */
+
+.banner {
+  background: var(--elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.banner-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--space-7);
+  padding-block: var(--space-2);
+}
+
+.brand {
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.crumb {
+  color: var(--text-muted);
+}
+
+/* Switchers and the account menu are `<details>` — no hydration, no script. */
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--elevated);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  list-style: none;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu > summary::after {
+  content: "▾";
+  color: var(--text-muted);
+}
+
+.menu-panel {
+  position: absolute;
+  z-index: 5;
+  inset-inline-start: 0;
+  margin-top: var(--space-1);
+  min-width: 14rem;
+  max-width: min(22rem, calc(100vw - var(--space-6)));
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-2);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.menu-panel.end {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+.menu-panel a,
+.menu-panel button {
+  display: block;
+  width: 100%;
+  text-align: start;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menu-panel a:hover,
+.menu-panel button:hover {
+  background: var(--surface);
+}
+
+.menu-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------- navigation */
+
+.nav {
+  background: var(--elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-inner {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav-inner::-webkit-scrollbar {
+  display: none;
+}
+
+.nav-inner a {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-3);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.nav-inner a:hover {
+  color: var(--text-primary);
+}
+
+.nav-inner a[aria-current="page"] {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+/* --------------------------------------------------------------------- main */
+
+main {
+  display: block;
+  padding-block: var(--space-5) var(--space-8);
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+/* -------------------------------------------------------------------- cards */
+
+.card {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.card-body {
+  padding: var(--space-4);
+}
+
+.card-body.flush {
+  padding: 0;
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+}
+
+/* --------------------------------------------------------------- stat tiles */
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stat-label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+}
+
+.stat-note {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------- tables */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+caption {
+  text-align: start;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+th,
+td {
+  padding: var(--space-2) var(--space-4);
+  text-align: start;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--elevated);
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* ------------------------------------------------------------------- badges */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* The glyph carries the status colour; the label always carries the meaning. */
+.badge-glyph {
+  font-size: var(--text-xs);
+  line-height: 1;
+}
+
+.badge[data-status="good"] {
+  border-color: var(--status-good);
+}
+.badge[data-status="good"] .badge-glyph {
+  color: var(--status-good);
+}
+
+.badge[data-status="warning"] {
+  border-color: var(--status-warning);
+}
+.badge[data-status="warning"] .badge-glyph {
+  color: var(--status-warning);
+}
+
+.badge[data-status="serious"] {
+  border-color: var(--status-serious);
+}
+.badge[data-status="serious"] .badge-glyph {
+  color: var(--status-serious);
+}
+
+.badge[data-status="critical"] {
+  border-color: var(--status-critical);
+}
+.badge[data-status="critical"] .badge-glyph {
+  color: var(--status-critical);
+}
+
+/* ------------------------------------------------------------------ notices */
+
+.notice {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-inline-start-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--elevated);
+  font-size: var(--text-sm);
+}
+
+.notice[data-status="good"] {
+  border-inline-start-color: var(--status-good);
+}
+.notice[data-status="warning"] {
+  border-inline-start-color: var(--status-warning);
+}
+.notice[data-status="serious"] {
+  border-inline-start-color: var(--status-serious);
+}
+.notice[data-status="critical"] {
+  border-inline-start-color: var(--status-critical);
+}
+
+.notice-glyph {
+  flex: 0 0 auto;
+}
+
+.notice[data-status="good"] .notice-glyph {
+  color: var(--status-good);
+}
+.notice[data-status="warning"] .notice-glyph {
+  color: var(--status-warning);
+}
+.notice[data-status="serious"] .notice-glyph {
+  color: var(--status-serious);
+}
+.notice[data-status="critical"] .notice-glyph {
+  color: var(--status-critical);
+}
+
+.notice-title {
+  font-weight: var(--weight-medium);
+}
+
+.notice details {
+  margin-top: var(--space-2);
+}
+
+.notice summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--text-muted);
+}
+
+.button[data-variant="primary"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------- fields */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.field > span {
+  color: var(--text-muted);
+}
+
+input,
+select,
+textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  max-width: 100%;
+}
+
+/* ---------------------------------------------------------- panel placeholder */
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* A determinate, non-decorative loading affordance: three token-coloured bars. */
+.skeleton {
+  display: block;
+  height: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}

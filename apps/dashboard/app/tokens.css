@@ -1,0 +1,118 @@
+/*
+ * The AEX design-token contract.
+ *
+ * TODO(cross-stream): `apps/site` owns this contract. The site stream defines the
+ * colour roles, the type scale, the spacing scale, the radii and the elevation
+ * steps for the marketing surface; the dashboard consumes them unchanged so both
+ * surfaces read as one product. At the time this file was written `rw/site-design`
+ * had not landed on `main`, so the contract is declared here against the agreed
+ * role names. When the site's stylesheet lands, DELETE this file and import the
+ * site's token sheet instead — every consumer below references role names only,
+ * so the merge is a deletion, never a translation.
+ *
+ * Role names in this contract (do not rename without the site stream):
+ *   colour     --surface --elevated --border --text-primary --text-muted --accent
+ *              --accent-contrast --focus
+ *              --status-good --status-warning --status-serious --status-critical
+ *   type       --font-sans --font-mono
+ *              --text-xs --text-sm --text-base --text-lg --text-xl --text-2xl
+ *              --leading-tight --leading-normal
+ *              --weight-normal --weight-medium --weight-bold
+ *   spacing    --space-1 … --space-8
+ *   radii      --radius-sm --radius-md --radius-lg --radius-full
+ *   elevation  --shadow-sm --shadow-md
+ *
+ * Both modes are selected, not flipped. Dark values are declared twice: once under
+ * `prefers-color-scheme` for the OS setting and once under `:root[data-theme]` so a
+ * viewer-level toggle wins in both directions. The dashboard ships no toggle of its
+ * own; it honours the attribute so the shared system's toggle drops in unchanged.
+ *
+ * Status colours are the fixed four-role status palette and are never reused as a
+ * decorative accent. On the light surface `--status-warning` and `--status-serious`
+ * are below 3:1 by design: every status is rendered as glyph + text label with the
+ * label in `--text-primary`, so a status never depends on colour alone.
+ */
+
+:root {
+  color-scheme: light;
+
+  --surface: #fcfcfb;
+  --elevated: #ffffff;
+  --border: #e3e2dd;
+  --text-primary: #0b0b0b;
+  --text-muted: #52514e;
+  --accent: #1f62b8;
+  --accent-contrast: #ffffff;
+  --focus: #1f62b8;
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.09);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+
+    --surface: #1a1a19;
+    --elevated: #232322;
+    --border: #38372f;
+    --text-primary: #ffffff;
+    --text-muted: #c3c2b7;
+    --accent: #6aa9f0;
+    --accent-contrast: #0b0b0b;
+    --focus: #6aa9f0;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+    --shadow-md: 0 2px 8px rgb(0 0 0 / 0.6);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface: #1a1a19;
+  --elevated: #232322;
+  --border: #38372f;
+  --text-primary: #ffffff;
+  --text-muted: #c3c2b7;
+  --accent: #6aa9f0;
+  --accent-contrast: #0b0b0b;
+  --focus: #6aa9f0;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.6);
+}
