@@ -11,6 +11,12 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# The real-PostgreSQL suite lives in `aex-control-aurora`, which owns the
+# migration bundle; this crate's statements are prepared there against the same
+# database, so there is one fixture rather than two.
+integration-engines = ["aex-control-aurora/integration-engines"]
+
 [package.metadata.aex]
 owner = "central-identity"
 role = "adapter"
@@ -23,8 +29,11 @@ security_tier = "authority"
 risk = ["sql"]
 scenarios = []
 
+[package.metadata.aex.targets]
+statements = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the central-identity stream; the cases land with the crate's own implementation"
+integration = "the identity statements are prepared against the real schema by `aex-control-aurora`'s migration suite, which owns the single PostgreSQL fixture; a second container per crate would double the substrate for one shared database"
 
 [dependencies]
 async-trait.workspace = true
@@ -34,5 +43,14 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+aex-control-aurora = { path = "../aex-control-aurora" }
 aex-identity-app = { path = "../aex-identity-app" }
+aex-identity-domain = { path = "../aex-identity-domain" }
 aex-rds-data = { path = "../aex-rds-data" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[[test]]
+name = "statements"
+path = "tests/statements.rs"

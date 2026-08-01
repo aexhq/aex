@@ -2,13 +2,13 @@
   "schema": "aex.test-registry.v1",
   "phase": "source_rewrite",
   "inputs": {
-    "migrations": "absent",
+    "migrations": "present",
     "nextest_list": "absent",
     "routes_registry": "present",
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 128,
+    "awaiting_owner": 121,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -552,14 +552,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "use_cases": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-control-aurora": {
       "name": "aex-control-aurora",
@@ -588,13 +589,14 @@
           "sql"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "migrations": "integration",
+          "statements": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-control-domain": {
       "name": "aex-control-domain",
@@ -607,7 +609,8 @@
           "unit"
         ],
         "concerns": [
-          "property"
+          "property",
+          "security"
         ],
         "seams": [],
         "security_tier": "authority",
@@ -615,14 +618,16 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "authorization": "unit",
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-finance-app": {
       "name": "aex-finance-app",
@@ -866,14 +871,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "use_cases": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-identity-aurora": {
       "name": "aex-identity-aurora",
@@ -902,13 +908,15 @@
           "sql"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "statements": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "integration": "the identity statements are prepared against the real schema by `aex-control-aurora`'s migration suite, which owns the single PostgreSQL fixture; a second container per crate would double the substrate for one shared database"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-identity-domain": {
       "name": "aex-identity-domain",
@@ -921,22 +929,27 @@
           "unit"
         ],
         "concerns": [
-          "property"
+          "property",
+          "security"
         ],
         "seams": [],
-        "security_tier": "authority",
+        "security_tier": "secret",
         "risk": [
-          "concurrency"
+          "concurrency",
+          "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "assertion": "unit",
+          "properties": "unit",
+          "security": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-internal-contracts": {
       "name": "aex-internal-contracts",
@@ -1343,13 +1356,16 @@
           "sql"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit",
+          "transport": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "integration": "the Data API has no local emulator; the transport's real-endpoint evidence is claimed by aex-live-central-identity-api, and the repository crates carry the PostgreSQL container suites"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-regional-http": {
       "name": "aex-regional-http",
