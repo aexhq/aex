@@ -107,6 +107,13 @@ prd_lanes = ["smoke", "e2e", "user"]
 # `naming` says whether AEX minted the identity (`aex_minted`, so the identity
 # must also carry the run prefix) or the provider did (`provider_minted`, so the
 # tag set is the only binding available).
+#
+# `requires_declared_with` names kinds a `prd`-eligible scenario must ALSO
+# declare it provisions if it declares this one. It is not the reclamation
+# order: it is "creating one of these always creates those too, so a scenario
+# that lists only this one has not accounted for the rest". It exists because a
+# money path that declared only the customer is exactly how a saved card and an
+# enabled auto-recharge policy survived every run.
 
 [janitor.resource.auto_recharge_policy]
 rank = 0
@@ -119,6 +126,7 @@ rank = 1
 discovery = "provider_metadata"
 naming = "provider_minted"
 requires_reclaim_first = ["auto_recharge_policy"]
+requires_declared_with = ["auto_recharge_policy"]
 reclaim = "detach the payment method from the customer; a stored card on a surviving customer is a chargeable instrument"
 
 [janitor.resource.api_key]
@@ -216,6 +224,7 @@ rank = 13
 discovery = "provider_metadata"
 naming = "provider_minted"
 requires_reclaim_first = ["auto_recharge_policy", "payment_instrument", "organization"]
+requires_declared_with = ["auto_recharge_policy", "payment_instrument"]
 reclaim = "delete the customer only after the policy is disabled, the instrument detached and the organization that referenced it removed"
 
 [janitor.resource.sqs_message]

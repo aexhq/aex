@@ -1225,6 +1225,7 @@ mod tests {
                 "artifact",
                 "evidence",
                 "graph",
+                "janitor",
                 "ledger",
                 "manifest",
                 "migration",

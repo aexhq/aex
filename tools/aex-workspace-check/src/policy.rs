@@ -117,6 +117,10 @@ pub struct JanitorResource {
     /// Kinds that must be reclaimed before this one.
     #[serde(default)]
     pub requires_reclaim_first: Vec<String>,
+    /// Kinds a `prd`-eligible scenario must also declare if it declares this
+    /// one. Creating one of these always creates those too.
+    #[serde(default)]
+    pub requires_declared_with: Vec<String>,
     /// What reclaiming one does, and why the order matters.
     pub reclaim: String,
 }

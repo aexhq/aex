@@ -262,3 +262,202 @@ fn every_violation_is_reported_rather_than_only_the_first() {
         err.rules()
     );
 }
+
+// ---------------------------------------------------------------------------
+// OD-36: what may provision in `prd`
+// ---------------------------------------------------------------------------
+
+/// A scenario registry that marks a scenario prd-eligible, with one
+/// substitution point for the `[scenario.prd]` block under test.
+fn scenarios_with_prd(block: &str) -> String {
+    format!(
+        "schema = \"aex.scenario-ownership.v1\"\n\n\
+         [[scenario]]\n\
+         id = \"SC-DEMO\"\n\
+         owner = \"delivery\"\n\
+         observes = [\"artifact:demo-api\"]\n\n\
+         {block}\n"
+    )
+}
+
+fn prd_fixture(block: &str) -> std::path::PathBuf {
+    Fixture::new()
+        .add_crate(
+            CratePlan::new("demo-api", "services/demo-api")
+                .meta(deployable_meta("demo-api", "aex-live-demo-api")),
+        )
+        .add_crate(
+            CratePlan::new("aex-live-demo-api", "tests/live/aex-live-demo-api")
+                .meta(live_meta("demo-api")),
+        )
+        .units(SOUND_UNITS)
+        .scenarios(&scenarios_with_prd(block))
+        .build()
+}
+
+/// The hard rule. A scenario that creates something the janitor cannot find by
+/// tag has produced residue no sweep can ever remove, and the whole decision to
+/// provision in production rests on the sweep working.
+#[test]
+fn a_prd_eligible_scenario_creating_an_unreclaimable_kind_fails() {
+    let root = prd_fixture("[scenario.prd]\nrule = \"money_path\"\nprovisions = [\"sqs_message\"]");
+    let err = verify_fixture(&root).unwrap_err();
+    assert_eq!(err.exit.code(), 10);
+    assert!(
+        err.rules().contains(&"scenario-prd-unreclaimable"),
+        "{:?}",
+        err.rules()
+    );
+}
+
+/// The review's worst finding, mechanised: a money path that declares the
+/// customer but not the card and the auto-recharge policy leaves a recurring
+/// charge behind. Declaring one drags in the other two, or the check fails.
+#[test]
+fn a_prd_money_path_declaring_a_payment_customer_alone_fails() {
+    let root =
+        prd_fixture("[scenario.prd]\nrule = \"money_path\"\nprovisions = [\"payment_customer\"]");
+    let err = verify_fixture(&root).unwrap_err();
+    let detail = err
+        .violations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        err.rules().contains(&"scenario-prd-companion-undeclared"),
+        "{detail}"
+    );
+    assert!(detail.contains("auto_recharge_policy"), "{detail}");
+    assert!(detail.contains("payment_instrument"), "{detail}");
+}
+
+#[test]
+fn a_prd_rule_outside_the_closed_set_fails() {
+    let root = prd_fixture(
+        "[scenario.prd]\nrule = \"because_it_is_convenient\"\nprovisions = [\"api_key\"]",
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"scenario-prd-rule-unknown"));
+}
+
+#[test]
+fn a_prd_scenario_declaring_an_unknown_kind_fails() {
+    let root =
+        prd_fixture("[scenario.prd]\nrule = \"money_path\"\nprovisions = [\"aurora_cluster\"]");
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"scenario-prd-kind-unknown"));
+}
+
+#[test]
+fn a_prd_scenario_that_creates_nothing_fails_rather_than_being_marked() {
+    let root = prd_fixture("[scenario.prd]\nrule = \"money_path\"\nprovisions = []");
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"scenario-prd-provisions-nothing"));
+}
+
+/// Once anything is marked, the reduced set is one of each singleton rule, not
+/// breadth. A registry that opts in and then claims only the money path is
+/// missing the other three named paths.
+#[test]
+fn opting_in_to_prd_without_claiming_every_singleton_rule_fails() {
+    let root = prd_fixture(
+        "[scenario.prd]\nrule = \"money_path\"\nprovisions = [\n  \"api_key\",\n  \
+         \"payment_customer\",\n  \"payment_instrument\",\n  \"auto_recharge_policy\",\n]",
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    let detail = err
+        .violations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        err.rules().contains(&"scenario-prd-rule-cardinality"),
+        "{detail}"
+    );
+    assert!(detail.contains("session_lifecycle"), "{detail}");
+    assert!(detail.contains("content_path"), "{detail}");
+    assert!(detail.contains("secret_path"), "{detail}");
+}
+
+/// A registry that marks nothing is not doing prd provisioning at all, which is
+/// the safer state, so the cardinality rules do not fire on it.
+#[test]
+fn a_registry_that_marks_nothing_prd_eligible_verifies() {
+    let root = common::sound_fixture();
+    verify_fixture(&root).expect("no prd provisioning is a valid state");
+}
+
+/// The shipped registry, not a fixture: the four named journeys are each
+/// claimed exactly once, every prd-eligible scenario is reclaimable, and the
+/// out-list is out.
+#[test]
+fn the_shipped_prd_set_is_the_reduced_one() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../release/scenario-ownership.toml"),
+    )
+    .expect("the shipped scenario registry");
+    let registry: aex_release_tool::graph::inputs::ScenarioOwnership =
+        toml::from_str(&text).expect("it parses");
+    let policy = aex_workspace_check::policy::Policy::embedded();
+
+    let mut claims: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for scenario in &registry.scenarios {
+        if let Some(prd) = &scenario.prd {
+            claims
+                .entry(prd.rule.as_str())
+                .or_default()
+                .push(scenario.id.as_str());
+            for kind in &prd.provisions {
+                let row = policy
+                    .janitor
+                    .resources
+                    .get(kind)
+                    .unwrap_or_else(|| panic!("`{kind}` has no [janitor.resource] row"));
+                assert!(
+                    row.reclaimable_from_tags(),
+                    "scenario `{}` provisions unreclaimable `{kind}` in prd",
+                    scenario.id
+                );
+            }
+        }
+    }
+    for rule in [
+        "money_path",
+        "session_lifecycle",
+        "content_path",
+        "secret_path",
+    ] {
+        assert_eq!(
+            claims.get(rule).map(Vec::len),
+            Some(1),
+            "prd rule `{rule}` must be claimed by exactly one scenario, got {:?}",
+            claims.get(rule)
+        );
+    }
+    assert_eq!(claims["money_path"], vec!["SC-FINANCE-PAYMENT"]);
+
+    // The out-list: coverage rather than "does production work".
+    let out: std::collections::BTreeSet<&str> = registry
+        .scenarios
+        .iter()
+        .filter(|scenario| scenario.prd.is_none())
+        .map(|scenario| scenario.id.as_str())
+        .collect();
+    for excluded in [
+        "SC-HANDS-HOSTILE",
+        "SC-BRAIN-TURN",
+        "SC-SCHEMA-MIGRATE",
+        "SC-OBSERVATION-GAP",
+        "SC-OBSERVATION-EXPORT",
+        "SC-FINANCE-RECONCILE",
+        "SC-USAGE-SETTLE",
+    ] {
+        assert!(
+            out.contains(excluded),
+            "`{excluded}` is breadth or pressure and must not provision in prd"
+        );
+    }
+}
