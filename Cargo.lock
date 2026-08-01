@@ -810,19 +810,13 @@ dependencies = [
 name = "aex-runtime-control-aws"
 version = "0.1.0"
 dependencies = [
- "aex-runtime-activity-dynamodb",
+ "aex-hands-control-aws",
+ "aex-hands-protocol",
  "aex-runtime-control",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "aws-smithy-types",
- "futures",
+ "aex-wire",
  "serde",
  "serde_json",
  "thiserror",
- "time",
- "uuid",
 ]
 
 [[package]]
