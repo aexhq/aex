@@ -14,7 +14,7 @@ export const metadata = { title: "Sign in — AEX" };
  */
 export default function SignIn() {
   return (
-    <main id="main" className="frame" style={{ maxWidth: "26rem", paddingBlock: "var(--space-8)" }}>
+    <main id="main" className="frame" style={{ maxWidth: "26rem", paddingBlock: "var(--aex-space-9)" }}>
       <div className="stack">
         <div className="stack-tight">
           <h1>Sign in to AEX</h1>

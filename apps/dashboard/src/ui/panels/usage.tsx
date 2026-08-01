@@ -95,7 +95,7 @@ export function UsagePanel({
 
           return (
             <>
-              <div style={{ padding: "var(--space-4)" }} className="stack">
+              <div style={{ padding: "var(--aex-space-4)" }} className="stack">
                 {frontier === null ? (
                   <Notice status="serious" title="No pricing frontier was reported" live>
                     <p className="small">

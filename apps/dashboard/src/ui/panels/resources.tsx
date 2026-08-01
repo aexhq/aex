@@ -211,7 +211,7 @@ export function RegistriesPanel({ region, billingHref }: Scope) {
           ) : (
             <>
               {grant ? (
-                <div style={{ padding: "var(--space-4)" }}>
+                <div style={{ padding: "var(--aex-space-4)" }}>
                   <Notice status="good" title="Download ready" live>
                     <p className="small">
                       Signed for {bytes(grant.authorizedBytes)}, expires {instant(grant.expiresAt)}.

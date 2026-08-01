@@ -42,7 +42,7 @@ export function TracePanel({
           const span = Math.max(1, ended - started);
           return (
             <>
-              <div style={{ padding: "var(--space-4)" }} className="stack">
+              <div style={{ padding: "var(--aex-space-4)" }} className="stack">
                 {verdict.kind === "complete" ? null : <CoverageNotice verdict={verdict} />}
                 <dl className="row small">
                   <div><dt className="muted">Root</dt><dd>{trace.summary.rootName ?? "—"}</dd></div>

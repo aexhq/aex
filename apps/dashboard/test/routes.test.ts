@@ -63,7 +63,8 @@ test("the region table agrees with the SDK's own regional hosts", () => {
   const registry = JSON.parse(
     readFileSync(resolve(workspaceRoot, "api/generated/schemas/Workspace.json"), "utf8"),
   ) as { properties: { region: { enum: string[] } } };
-  expect(REGIONS.map((row) => row.region).sort()).toEqual([...registry.properties.region.enum].sort());
+  const declared: string[] = REGIONS.map((row) => row.region);
+  expect(declared.sort()).toEqual([...registry.properties.region.enum].sort());
   for (const row of REGIONS) {
     expect(regionalHost(row.code)).toBe(`https://${row.region}.api.aex.dev`);
   }

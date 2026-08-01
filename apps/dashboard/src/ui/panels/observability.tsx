@@ -100,7 +100,7 @@ export function ObservabilityPanels({
             const verdict = readCoverage(page.coverage);
             return (
               <>
-                <div style={{ padding: "var(--space-4)" }} className="stack">
+                <div style={{ padding: "var(--aex-space-4)" }} className="stack">
                   {verdict.kind === "complete" ? (
                     <p className="small muted">
                       Complete through {instant(new Date(verdict.completeThrough).toISOString())}, with no

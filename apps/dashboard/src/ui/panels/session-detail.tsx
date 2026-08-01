@@ -242,14 +242,14 @@ export function PersistedFilesPanel({ region, sessionId, billingHref }: Scope) {
           ) : (
             <>
               {problem ? (
-                <div style={{ padding: "var(--space-4)" }}>
+                <div style={{ padding: "var(--aex-space-4)" }}>
                   <Notice status="warning" title="Download not authorised" live>
                     <p className="small">{problem}</p>
                   </Notice>
                 </div>
               ) : null}
               {grant ? (
-                <div style={{ padding: "var(--space-4)" }}>
+                <div style={{ padding: "var(--aex-space-4)" }}>
                   <Notice status="good" title="Download ready" live>
                     <p className="small">
                       Signed for {bytes(grant.authorizedBytes)}, expires {instant(grant.expiresAt)}.
@@ -329,7 +329,7 @@ export function SessionEventsPanel({ slug, region, sessionId, billingHref }: Sco
           return (
             <>
               {verdict.kind === "complete" ? null : (
-                <div style={{ padding: "var(--space-4)" }}>
+                <div style={{ padding: "var(--aex-space-4)" }}>
                   <CoverageNotice verdict={verdict} />
                 </div>
               )}

@@ -157,7 +157,7 @@ export function AutoTopupPanel({ organizationId }: { organizationId: string }) {
                 <p className="small">{problem}</p>
               </Notice>
             ) : null}
-            <label className="row small" style={{ gap: "var(--space-2)" }}>
+            <label className="row small" style={{ gap: "var(--aex-space-2)" }}>
               <input type="checkbox" name="enabled" defaultChecked={policy.enabled} />
               <span>Top up automatically</span>
             </label>
@@ -214,7 +214,7 @@ export function StatementsPanel({ organizationId }: { organizationId: string }) 
           ) : (
             <>
               {grant ? (
-                <div style={{ padding: "var(--space-4)" }}>
+                <div style={{ padding: "var(--aex-space-4)" }}>
                   <Notice status="good" title="Statement ready" live>
                     <p className="small">The link expires {instant(grant.expiresAt)}.</p>
                     <p>

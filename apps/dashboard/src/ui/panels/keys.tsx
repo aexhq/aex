@@ -102,7 +102,7 @@ export function ApiKeysPanel({
             <legend className="small muted">Scopes</legend>
             <div className="row">
               {COMMON_SCOPES.map((scope) => (
-                <label key={scope} className="small row" style={{ gap: "var(--space-1)" }}>
+                <label key={scope} className="small row" style={{ gap: "var(--aex-space-1)" }}>
                   <input type="checkbox" name="scopes" value={scope} />
                   <span className="mono">{scope}</span>
                 </label>

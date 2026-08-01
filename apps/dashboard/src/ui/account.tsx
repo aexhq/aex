@@ -19,7 +19,7 @@ export function AccountBanner({
   if (account.status === "active") return null;
   const billing = organizations[0];
   return (
-    <div className="frame" style={{ paddingTop: "var(--space-4)" }}>
+    <div className="frame" style={{ paddingTop: "var(--aex-space-4)" }}>
       <Notice status="serious" title="This account is paused" live>
         <p className="small">
           {account.reason === "top_up_required"
