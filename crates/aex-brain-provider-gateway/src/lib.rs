@@ -43,3 +43,30 @@ pub use error::{ProviderFailureClass, ProviderFailureKind, RateLimitFeedback, Re
 pub use sse::{SseDecoder, SseError, SseEvent};
 pub use transport::{AuthScheme, Dispatched, SendGate, WireRequest};
 pub use wire_pending::{DispatchProof, DispatchStage, ProviderPort};
+
+#[cfg(test)]
+pub(crate) mod golden {
+    //! Order-insensitive comparison for provider request goldens.
+
+    /// Asserts two JSON documents are structurally equal, ignoring member order.
+    ///
+    /// A provider body is **not** canonicalised — it is sent to the provider as
+    /// built — so its serialised member order is whatever `serde_json::Map`
+    /// happens to be. That is a `BTreeMap` only while `preserve_order` is off,
+    /// and `aws-smithy-http-client` turns it on, so the byte order of a body
+    /// depends on which crates share the build. Object member order carries no
+    /// meaning in JSON (RFC 8259 §4), so a golden pinning exact bytes asserts
+    /// something that was never determinate. Compare structure instead.
+    #[track_caller]
+    pub(crate) fn assert_json_eq(actual: &str, expected: &str) {
+        let parse = |label: &str, text: &str| -> serde_json::Value {
+            serde_json::from_str(text)
+                .unwrap_or_else(|error| panic!("the {label} golden is not JSON: {error}\n{text}"))
+        };
+        let (left, right) = (parse("actual", actual), parse("expected", expected));
+        assert_eq!(
+            left, right,
+            "provider body differs from its golden\n  actual: {actual}\nexpected: {expected}"
+        );
+    }
+}

@@ -1956,8 +1956,8 @@ mod tests {
         };
         draft.max_output_tokens = 256;
         draft.temperature_milli = Some(700);
-        assert_eq!(
-            body_of(&entry(), &draft),
+        crate::golden::assert_json_eq(
+            &body_of(&entry(), &draft),
             concat!(
                 r#"{"contents":[{"parts":[{"text":"Weather?"}],"role":"user"}],"#,
                 r#""generationConfig":{"maxOutputTokens":256,"temperature":0.7},"#,
@@ -1965,7 +1965,7 @@ mod tests {
                 r#""toolConfig":{"functionCallingConfig":{"allowedFunctionNames":["get_weather"],"mode":"ANY"}},"#,
                 r#""tools":[{"functionDeclarations":[{"description":"Look up the weather.","#,
                 r#""name":"get_weather","parameters":{"properties":{"city":{"type":"string"}},"type":"object"}}]}]}"#
-            )
+            ),
         );
     }
 

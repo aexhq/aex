@@ -1362,8 +1362,8 @@ mod tests {
             effort: Some(ReasoningEffort::High),
         };
         draft.structured_output = Some(StructuredOutputRequest::JsonObject);
-        assert_eq!(
-            draft.json(&entry()),
+        crate::golden::assert_json_eq(
+            &draft.json(&entry()),
             concat!(
                 r#"{"max_tokens":4096,"#,
                 r#""messages":[{"content":"Answer in JSON.","role":"system"},"#,
@@ -1372,7 +1372,7 @@ mod tests {
                 r#""response_format":{"type":"json_object"},"stream":true,"#,
                 r#""stream_options":{"include_usage":true},"#,
                 r#""thinking":{"reasoning_effort":"high","type":"enabled"}}"#,
-            )
+            ),
         );
     }
 
@@ -1384,8 +1384,8 @@ mod tests {
             name: tool_name("lookup"),
         };
         draft.stop_sequences = vec![fixture::bounded("END")];
-        assert_eq!(
-            draft.json(&entry()),
+        crate::golden::assert_json_eq(
+            &draft.json(&entry()),
             concat!(
                 r#"{"max_tokens":4096,"messages":[{"content":"hello","role":"user"}],"#,
                 r#""model":"deepseek-v4-pro","stop":["END"],"stream":true,"#,
@@ -1393,7 +1393,7 @@ mod tests {
                 r#""tool_choice":{"function":{"name":"lookup"},"type":"function"},"#,
                 r#""tools":[{"function":{"description":"Look things up","name":"lookup","#,
                 r#""parameters":{"type":"object"},"strict":true},"type":"function"}]}"#,
-            )
+            ),
         );
     }
 
