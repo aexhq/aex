@@ -36,20 +36,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-managed-web",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-mcp",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-provider-gateway",
     "owner": "providers",
     "blocking_rule": "aex-empty-unit",

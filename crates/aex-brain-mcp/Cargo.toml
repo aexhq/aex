@@ -24,14 +24,16 @@ risk = ["untrusted_input"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
 
 [dependencies]
-async-trait.workspace = true
-futures.workspace = true
+aex-brain-managed-web = { path = "../aex-brain-managed-web" }
+aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
+aex-wire = { path = "../aex-wire" }
+base64.workspace = true
 rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-time.workspace = true
-tokio.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
