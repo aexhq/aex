@@ -13,7 +13,13 @@
 //! - concrete table or queue clients
 //! - rating arithmetic (`aex-usage-rating`)
 
+pub mod outbox;
 pub mod ports;
 #[cfg(feature = "probe")]
 pub mod probe;
+pub mod projection;
 pub mod use_cases;
+pub mod worker;
+
+#[cfg(test)]
+pub(crate) mod testing;

@@ -13,7 +13,7 @@
 use std::fmt;
 
 use crate::identity::FactId;
-use crate::meter::PublicCategory;
+use crate::meter::{Category, PublicCategory};
 use crate::wire_pending::WorkspaceId;
 
 /// A projection generation.
@@ -261,6 +261,12 @@ impl ProjectionKeys {
     /// from "we have not folded your facts yet". A page that omitted it would be
     /// confidently empty rather than honestly incomplete.
     ///
+    /// The public category is normalised to its authority's face by
+    /// [`coverage_face`], so memory and compute — two public categories in one
+    /// authority — share one coverage row. Two rows would each see only a subset
+    /// of one contiguous sequence, and the projection fence would stop meaning
+    /// anything.
+    ///
     /// # Errors
     ///
     /// Returns [`ProjectionKeyError::Separator`] for a forging component.
@@ -275,7 +281,7 @@ impl ProjectionKeys {
                 "{}#{}#{}",
                 generation.prefix(),
                 component(workspace.as_str())?,
-                category.id()
+                coverage_face(category).id()
             ),
             sk: Some("COVERAGE".to_owned()),
         })
@@ -288,6 +294,20 @@ impl ProjectionKeys {
             pk: "GENERATION".to_owned(),
             sk: Some("CURRENT".to_owned()),
         }
+    }
+}
+
+/// The public category one authority's coverage row is keyed by.
+///
+/// A frontier is one contiguous sequence per `(workspace, category)`, and the
+/// coverage row is that frontier copied. Memory therefore reports its coverage
+/// under compute: they are one sequence, so they are one row.
+#[must_use]
+pub const fn coverage_face(category: PublicCategory) -> PublicCategory {
+    match category.category() {
+        Category::Storage => PublicCategory::Storage,
+        Category::Compute => PublicCategory::Compute,
+        Category::Transfer => PublicCategory::DataTransfer,
     }
 }
 
@@ -419,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn the_coverage_vector_has_one_row_per_workspace_and_category() {
+    fn the_coverage_vector_has_one_row_per_workspace_and_authority() {
         let keys = ProjectionKeys;
         let coverage = keys
             .coverage(
@@ -428,7 +448,8 @@ mod tests {
                 PublicCategory::Memory,
             )
             .expect("builds");
-        assert_eq!(coverage.pk, "G0001#ws-1#memory");
+        // Memory reports under its authority's face: one sequence, one row.
+        assert_eq!(coverage.pk, "G0001#ws-1#compute");
         assert_eq!(coverage.sk.as_deref(), Some("COVERAGE"));
 
         // The coverage row sits outside every month partition, so it is readable
@@ -442,6 +463,37 @@ mod tests {
             )
             .expect("builds");
         assert_ne!(coverage.pk, aggregate);
+    }
+
+    #[test]
+    fn memory_and_compute_share_one_coverage_row() {
+        let keys = ProjectionKeys;
+        let compute = keys
+            .coverage(Generation::FIRST, &workspace(), PublicCategory::Compute)
+            .expect("builds");
+        let memory = keys
+            .coverage(Generation::FIRST, &workspace(), PublicCategory::Memory)
+            .expect("builds");
+        assert_eq!(
+            compute, memory,
+            "one authority is one contiguous sequence, so it is one coverage row"
+        );
+        assert!(compute.pk.ends_with("#compute"));
+
+        // The other two authorities keep their own rows.
+        let storage = keys
+            .coverage(Generation::FIRST, &workspace(), PublicCategory::Storage)
+            .expect("builds");
+        let transfer = keys
+            .coverage(
+                Generation::FIRST,
+                &workspace(),
+                PublicCategory::DataTransfer,
+            )
+            .expect("builds");
+        assert_ne!(compute, storage);
+        assert_ne!(compute, transfer);
+        assert_ne!(storage, transfer);
     }
 
     #[test]

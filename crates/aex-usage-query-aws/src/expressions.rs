@@ -104,6 +104,33 @@ pub struct AggregatePage {
     pub after: Option<String>,
 }
 
+/// Everything one bounded aggregate read needs.
+///
+/// Grouped into a struct rather than passed positionally: a caller cannot
+/// transpose the two bucket bounds, or the workspace and the month, without the
+/// type system noticing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregateRequest<'a> {
+    /// The generation the read is pinned to.
+    pub generation: Generation,
+    /// The workspace being read.
+    pub workspace: &'a WorkspaceId,
+    /// The public category being read.
+    pub category: PublicCategory,
+    /// The `YYYY-MM` partition.
+    pub month: &'a str,
+    /// Hourly or daily rollups.
+    pub granularity: Granularity,
+    /// The inclusive lower bucket bound.
+    pub from_bucket: &'a str,
+    /// The exclusive upper bucket bound.
+    pub until_bucket: &'a str,
+    /// The row budget.
+    pub limit: usize,
+    /// Where the previous page stopped.
+    pub after: Option<String>,
+}
+
 /// Read-only expression builders.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProjectionReads {
@@ -134,31 +161,28 @@ impl ProjectionReads {
     /// [`QueryError::Key`] when the partition cannot be built.
     pub fn aggregate_page(
         self,
-        generation: Generation,
-        workspace: &WorkspaceId,
-        category: PublicCategory,
-        month: &str,
-        granularity: Granularity,
-        from_bucket: &str,
-        until_bucket: &str,
-        limit: usize,
-        after: Option<String>,
+        request: &AggregateRequest<'_>,
     ) -> Result<AggregatePage, QueryError> {
-        if limit == 0 || limit > MAX_PAGE_ROWS {
-            return Err(QueryError::PageBudget { requested: limit });
+        if request.limit == 0 || request.limit > MAX_PAGE_ROWS {
+            return Err(QueryError::PageBudget {
+                requested: request.limit,
+            });
         }
-        if until_bucket <= from_bucket {
+        if request.until_bucket <= request.from_bucket {
             return Err(QueryError::InvertedRange);
         }
-        let partition = self
-            .keys
-            .aggregate_partition(generation, workspace, category, month)?;
+        let partition = self.keys.aggregate_partition(
+            request.generation,
+            request.workspace,
+            request.category,
+            request.month,
+        )?;
         Ok(AggregatePage {
             partition,
-            from: format!("{}{from_bucket}", granularity.prefix()),
-            until: format!("{}{until_bucket}", granularity.prefix()),
-            limit,
-            after,
+            from: format!("{}{}", request.granularity.prefix(), request.from_bucket),
+            until: format!("{}{}", request.granularity.prefix(), request.until_bucket),
+            limit: request.limit,
+            after: request.after.clone(),
         })
     }
 
@@ -256,17 +280,17 @@ mod tests {
     }
 
     fn page(limit: usize) -> Result<super::AggregatePage, QueryError> {
-        ProjectionReads::new().aggregate_page(
-            Generation::FIRST,
-            &workspace(),
-            PublicCategory::Compute,
-            "2026-08",
-            Granularity::Hourly,
-            "2026-08-01T00",
-            "2026-08-02T00",
+        ProjectionReads::new().aggregate_page(&super::AggregateRequest {
+            generation: Generation::FIRST,
+            workspace: &workspace(),
+            category: PublicCategory::Compute,
+            month: "2026-08",
+            granularity: Granularity::Hourly,
+            from_bucket: "2026-08-01T00",
+            until_bucket: "2026-08-02T00",
             limit,
-            None,
-        )
+            after: None,
+        })
     }
 
     #[test]
@@ -303,17 +327,17 @@ mod tests {
     #[test]
     fn an_inverted_or_empty_range_is_refused() {
         let build = |from: &str, until: &str| {
-            ProjectionReads::new().aggregate_page(
-                Generation::FIRST,
-                &workspace(),
-                PublicCategory::Storage,
-                "2026-08",
-                Granularity::Daily,
-                from,
-                until,
-                10,
-                None,
-            )
+            ProjectionReads::new().aggregate_page(&super::AggregateRequest {
+                generation: Generation::FIRST,
+                workspace: &workspace(),
+                category: PublicCategory::Storage,
+                month: "2026-08",
+                granularity: Granularity::Daily,
+                from_bucket: from,
+                until_bucket: until,
+                limit: 10,
+                after: None,
+            })
         };
         assert!(matches!(
             build("2026-08-02", "2026-08-01"),
@@ -353,17 +377,17 @@ mod tests {
 
     #[test]
     fn a_malformed_month_still_fails_through_the_shared_grammar() {
-        let outcome = ProjectionReads::new().aggregate_page(
-            Generation::FIRST,
-            &workspace(),
-            PublicCategory::Storage,
-            "2026-8",
-            Granularity::Daily,
-            "2026-08-01",
-            "2026-08-02",
-            10,
-            None,
-        );
+        let outcome = ProjectionReads::new().aggregate_page(&super::AggregateRequest {
+            generation: Generation::FIRST,
+            workspace: &workspace(),
+            category: PublicCategory::Storage,
+            month: "2026-8",
+            granularity: Granularity::Daily,
+            from_bucket: "2026-08-01",
+            until_bucket: "2026-08-02",
+            limit: 10,
+            after: None,
+        });
         assert!(matches!(outcome, Err(QueryError::Key(_))));
     }
 }

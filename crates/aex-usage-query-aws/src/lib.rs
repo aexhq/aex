@@ -17,6 +17,6 @@ pub mod cursor;
 pub mod expressions;
 
 pub use expressions::{
-    AggregatePage, AggregateRow, CoverageRow, Generation, Granularity, MAX_PAGE_ROWS,
-    ProjectionKey, ProjectionKeyError, ProjectionKeys, ProjectionReads, QueryError,
+    AggregatePage, AggregateRequest, AggregateRow, CoverageRow, Generation, Granularity,
+    MAX_PAGE_ROWS, ProjectionKey, ProjectionKeyError, ProjectionKeys, ProjectionReads, QueryError,
 };
