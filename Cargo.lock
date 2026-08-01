@@ -308,6 +308,9 @@ dependencies = [
 name = "aex-finance-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-wire",
+ "blake3",
+ "proptest",
  "serde",
  "thiserror",
  "time",
