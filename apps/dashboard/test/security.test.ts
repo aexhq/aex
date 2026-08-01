@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { authorizeDashboardRoute } from "../src/server/routes.js";
-import { verifyCsrf } from "../src/server/csrf.js";
-import { dashboardSessionCookie } from "../src/server/session.js";
+import { authorizeDashboardRoute } from "../src/server/routes";
+import { verifyCsrf } from "../src/server/csrf";
+import { dashboardSessionCookie } from "../src/server/session";
 
 test("off-allowlist routes are refused before credential attachment", () => {
   expect(authorizeDashboardRoute("session_get")).toEqual(expect.objectContaining({ id: "session_get" }));

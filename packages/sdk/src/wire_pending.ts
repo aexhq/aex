@@ -21,6 +21,7 @@ export type RouteId =
   | "billing_statement_download_create"
   | "billing_statements_list"
   | "billing_top_up_checkout_create"
+  | "dashboard_bootstrap_get"
   | "observations_events_query"
   | "observations_metrics_aggregate"
   | "observations_traces_query"
@@ -197,6 +198,18 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
     idempotency: "idempotency_key",
     transport: "unary",
     pathParams: ["organizationId"],
+    queryParams: [],
+    pauseExempt: true,
+  },
+  dashboard_bootstrap_get: {
+    id: "dashboard_bootstrap_get",
+    method: "GET",
+    path: "/api/bootstrap",
+    plane: "central",
+    safeRetry: true,
+    idempotency: "none",
+    transport: "unary",
+    pathParams: [],
     queryParams: [],
     pauseExempt: true,
   },

@@ -3,8 +3,23 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "plugins": [{ "name": "next" }],
-    "types": ["node", "bun"]
+    "types": ["node", "bun"],
+    // Next bundles this app; it is never resolved by Node's ESM loader. The `next`
+    // package publishes `next/navigation` and `next/headers` as bare files with no
+    // `exports` map, which NodeNext resolution cannot see from an ESM package. The
+    // bundler algorithm is the one that actually runs here, so it is the one the
+    // type checker uses. Every other package keeps NodeNext from the base config.
+    "module": "preserve",
+    "moduleResolution": "bundler"
   },
-  "include": ["next-env.d.ts", "app/**/*.ts", "app/**/*.tsx", "src/**/*.ts", "test/**/*.ts", ".next/types/**/*.ts"],
+  "include": [
+    "next-env.d.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "test/**/*.ts",
+    ".next/types/**/*.ts"
+  ],
   "exclude": ["node_modules"]
 }
