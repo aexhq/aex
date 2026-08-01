@@ -359,12 +359,14 @@ dependencies = [
 name = "aex-hands-tools"
 version = "0.1.0"
 dependencies = [
- "bytes",
+ "aex-hands-protocol",
+ "aex-wire",
+ "blake3",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
- "time",
- "tokio",
+ "tracing",
 ]
 
 [[package]]

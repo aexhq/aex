@@ -162,13 +162,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-hands-tools",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-identity-app",
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
