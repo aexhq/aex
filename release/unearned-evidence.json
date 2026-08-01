@@ -764,13 +764,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "workers/content-lifecycle-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "workers/finance-reconcile",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -821,13 +814,6 @@
   {
     "reason_class": "awaiting_owner",
     "subject": "workers/runtime-control-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/session-operation-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"

@@ -2428,6 +2428,7 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "serde",
  "thiserror",
 ]
 
@@ -5063,7 +5064,10 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "blake3",
+ "serde",
  "thiserror",
+ "xxhash-rust",
 ]
 
 [[package]]
