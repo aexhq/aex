@@ -1643,6 +1643,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-ecs"
+version = "1.136.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bd6e03cac8400440aeb04c1e8c88fa76d4b11c4eeb4075a0e7829ed3c012c60"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-kms"
 version = "1.114.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4763,30 +4789,72 @@ dependencies = [
 name = "observation-export-launcher"
 version = "0.1.0"
 dependencies = [
+ "aex-observation-domain",
  "aex-observation-store-aws",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-lc-rs",
+ "aws-sdk-dynamodb",
+ "aws-sdk-ecs",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "observation-export-task"
 version = "0.1.0"
 dependencies = [
+ "aex-observation-domain",
+ "aex-observation-export",
  "aex-observation-store-aws",
+ "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-lc-rs",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "axum",
+ "http-body-util",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
 name = "observation-reconciler"
 version = "0.1.0"
 dependencies = [
+ "aex-observation-domain",
  "aex-observation-store-aws",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "aws-sdk-sqs",
+ "aws-smithy-http-client",
+ "lambda_runtime",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5490,10 +5558,35 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "regional-observation-api"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
+ "aex-observation-domain",
+ "aex-observation-query",
  "aex-observation-store-aws",
+ "aex-otlp-admission",
  "aex-platform-telemetry",
+ "aex-regional-http",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-lc-rs",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "axum",
+ "base64 0.23.0",
+ "bytes",
+ "futures",
+ "http 1.5.0",
+ "lambda_http",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
