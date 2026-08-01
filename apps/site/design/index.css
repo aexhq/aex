@@ -1,0 +1,24 @@
+/*
+ * The AEX design system, as one import.
+ *
+ * Import this file once, from an app's root layout, before any app-specific
+ * stylesheet:
+ *
+ *   apps/site      → import "../design/index.css";
+ *   apps/dashboard → import "../../site/design/index.css";
+ *
+ * The three files are ordered deliberately: tokens define the variables, base
+ * styles bare elements with them, components add the shared classes.
+ *
+ * The dashboard's import leaves its own app directory. Next infers the monorepo
+ * root from the lockfile at the repository root, so both apps already share
+ * one root and the relative path resolves. If a future Next version narrows
+ * that inference, pin it explicitly rather than copying the palette:
+ *
+ *   // apps/dashboard/next.config.mjs
+ *   turbopack: { root: new URL("../..", import.meta.url).pathname }
+ */
+
+@import "./tokens.css";
+@import "./base.css";
+@import "./components.css";

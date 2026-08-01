@@ -1,6 +1,146 @@
-:root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-body { max-width: 72rem; margin: 0 auto; padding: 1.5rem; line-height: 1.6; }
-header { display: flex; justify-content: space-between; }
-nav a, header > a { color: inherit; font-weight: 700; }
-main { min-height: 70vh; padding: 4rem 0; }
-footer { border-top: 1px solid currentColor; padding-top: 1rem; }
+/*
+ * Site-specific layout. Anything reusable by the dashboard belongs in
+ * `apps/site/design/`, not here.
+ *
+ * Every grid track uses `minmax(min(<width>, 100%), 1fr)` so a narrow viewport
+ * collapses to one column instead of overflowing: the `min()` is what keeps a
+ * 320px phone from scrolling sideways.
+ */
+
+.site-header {
+  border-bottom: var(--aex-border-width) solid var(--aex-color-border);
+  background: var(--aex-color-canvas);
+}
+
+.site-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aex-space-4);
+  min-height: 4rem;
+}
+
+.site-wordmark {
+  color: var(--aex-color-text);
+  font-size: var(--aex-text-lg);
+  font-weight: var(--aex-weight-semibold);
+  letter-spacing: var(--aex-tracking-wide);
+  text-decoration: none;
+}
+
+.site-nav-link {
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-sm);
+  font-weight: var(--aex-weight-medium);
+  text-decoration: none;
+}
+
+.site-nav-link:hover {
+  color: var(--aex-color-text);
+}
+
+.site-footer {
+  border-top: var(--aex-border-width) solid var(--aex-color-border);
+  padding-block: var(--aex-space-6);
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-sm);
+}
+
+.site-footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--aex-space-2) var(--aex-space-6);
+  justify-content: space-between;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+/* Hero */
+
+.hero {
+  padding-block: var(--aex-space-9) var(--aex-space-8);
+}
+
+@media (min-width: 48rem) {
+  .hero {
+    padding-block: var(--aex-space-11) var(--aex-space-10);
+  }
+}
+
+.hero__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--aex-space-5);
+  max-width: var(--aex-width-prose);
+}
+
+.hero__lede {
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-xl);
+  line-height: var(--aex-leading-snug);
+  max-width: var(--aex-measure);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--aex-space-3);
+  margin-top: var(--aex-space-2);
+}
+
+.hero__note {
+  max-width: var(--aex-measure);
+}
+
+/* Sections */
+
+.section__head {
+  max-width: var(--aex-measure);
+  margin-bottom: var(--aex-space-7);
+}
+
+.section__lede {
+  margin-top: var(--aex-space-4);
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-lg);
+}
+
+.grid {
+  display: grid;
+  gap: var(--aex-space-5);
+}
+
+.grid--cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+}
+
+.grid--list {
+  gap: var(--aex-space-6) var(--aex-space-8);
+  grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aex-space-3);
+}
+
+.entry--ruled {
+  padding-left: var(--aex-space-4);
+  border-left: 2px solid var(--aex-color-border-strong);
+}
+
+.entry__body {
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-sm);
+}
+
+/* Docs */
+
+.docs__lede {
+  margin-top: var(--aex-space-4);
+  color: var(--aex-color-text-muted);
+}

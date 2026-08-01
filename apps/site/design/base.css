@@ -1,0 +1,149 @@
+/*
+ * AEX element base. Everything here styles a bare HTML element, so a document
+ * written as plain semantic markup already looks like AEX before a single class
+ * is applied. Component classes live in `components.css`.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--aex-color-canvas);
+  color: var(--aex-color-text);
+  font-family: var(--aex-font-sans);
+  font-size: var(--aex-text-base);
+  line-height: var(--aex-leading-normal);
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * No page may scroll sideways. Long, unbreakable content — a table, a wide
+ * code block — must scroll inside its own container instead of pushing the
+ * document out.
+ */
+body {
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: var(--aex-weight-semibold);
+  letter-spacing: var(--aex-tracking-tight);
+  line-height: var(--aex-leading-tight);
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--aex-text-display);
+}
+
+h2 {
+  font-size: var(--aex-text-3xl);
+}
+
+h3 {
+  font-size: var(--aex-text-lg);
+  letter-spacing: normal;
+  line-height: var(--aex-leading-snug);
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+}
+
+li {
+  list-style: none;
+}
+
+a {
+  color: var(--aex-color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  transition: color var(--aex-duration-fast) var(--aex-ease);
+}
+
+a:hover {
+  color: var(--aex-color-accent-hover);
+}
+
+/*
+ * A visible focus ring on every interactive element, keyboard or not, drawn
+ * outside the box so it is never clipped by a rounded corner.
+ */
+:focus-visible {
+  outline: 2px solid var(--aex-color-focus);
+  outline-offset: 3px;
+  border-radius: var(--aex-radius-sm);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--aex-font-mono);
+  font-size: 0.9em;
+}
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+hr {
+  border: 0;
+  border-top: var(--aex-border-width) solid var(--aex-color-border);
+  margin: 0;
+}
+
+::selection {
+  background: var(--aex-color-accent-surface);
+  color: var(--aex-color-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
