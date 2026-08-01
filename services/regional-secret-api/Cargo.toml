@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 secrets = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "regional-secret-api"
@@ -43,3 +44,7 @@ zeroize.workspace = true
 [[test]]
 name = "secrets"
 path = "tests/secrets.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 lifecycle = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "content-lifecycle-worker"
@@ -41,3 +42,7 @@ thiserror.workspace = true
 [[test]]
 name = "lifecycle"
 path = "tests/lifecycle.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

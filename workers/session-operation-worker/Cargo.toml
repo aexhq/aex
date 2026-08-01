@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 continuations = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "session-operation-worker"
@@ -43,3 +44,7 @@ xxhash-rust.workspace = true
 [[test]]
 name = "continuations"
 path = "tests/continuations.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

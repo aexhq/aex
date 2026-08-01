@@ -2658,6 +2658,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "performance_contract": "e2e",
           "secrets": "unit"
         },
         "not_applicable": {}
@@ -2699,7 +2700,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "admission": "unit"
+          "admission": "unit",
+          "performance_contract": "e2e"
         },
         "not_applicable": {}
       },
@@ -2738,6 +2740,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "performance_contract": "e2e",
           "streaming": "unit"
         },
         "not_applicable": {}
@@ -4289,7 +4292,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "lifecycle": "unit"
+          "lifecycle": "unit",
+          "performance_contract": "e2e"
         },
         "not_applicable": {}
       },
@@ -4552,6 +4556,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "performance_contract": "e2e",
           "rotation": "unit"
         },
         "not_applicable": {}
@@ -4630,7 +4635,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "continuations": "unit"
+          "continuations": "unit",
+          "performance_contract": "e2e"
         },
         "not_applicable": {}
       },

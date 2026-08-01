@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 streaming = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "regional-stream"
@@ -42,3 +43,7 @@ thiserror.workspace = true
 [[test]]
 name = "streaming"
 path = "tests/streaming.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"
