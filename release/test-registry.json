@@ -4,11 +4,11 @@
   "inputs": {
     "migrations": "absent",
     "nextest_list": "absent",
-    "routes_registry": "absent",
+    "routes_registry": "present",
     "scenario_ownership": "absent"
   },
   "totals": {
-    "awaiting_owner": 134,
+    "awaiting_owner": 129,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -802,14 +802,15 @@
           "generated_code"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "hostile_input": "unit"
+        },
         "not_applicable": {
-          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
-          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-hands-tools": {
       "name": "aex-hands-tools",
@@ -959,14 +960,15 @@
           "generated_code"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "boundaries": "unit"
+        },
         "not_applicable": {
-          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
-          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-model-catalog": {
       "name": "aex-model-catalog",
@@ -1269,14 +1271,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "effects": "unit"
+        },
         "not_applicable": {
-          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
-          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-platform-telemetry": {
       "name": "aex-platform-telemetry",
@@ -2041,14 +2044,17 @@
           "generated_code"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "errors_and_routes": "unit",
+          "ids": "unit",
+          "primitives": "unit"
+        },
         "not_applicable": {
-          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own",
-          "targets": "awaiting the contracts stream; the cases land with the crate's own implementation"
+          "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-work-dynamodb": {
       "name": "aex-work-dynamodb",
@@ -4038,14 +4044,16 @@
           "none"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "canonical_agreement": "unit",
+          "determinism": "unit"
+        },
         "not_applicable": {
-          "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane",
-          "targets": "awaiting the contracts stream; the cases land with the tool's own implementation"
+          "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tools/aex-release-tool": {
       "name": "aex-release-tool",
