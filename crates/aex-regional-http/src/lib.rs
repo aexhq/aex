@@ -17,6 +17,7 @@ pub mod assertion;
 pub mod capability;
 pub mod context;
 pub mod cursor;
+pub mod edge;
 pub mod envelope;
 pub mod error;
 pub mod health;
@@ -30,6 +31,10 @@ pub mod stream;
 pub use capability::{CompositionManifest, admit};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
 pub use cursor::{CursorBinding, decode, encode};
+pub use edge::{
+    EdgeBinding, EdgeClock, ProjectedState, ProjectionError, ProjectionReader, RegionalEdge,
+    SystemClock,
+};
 pub use idempotency::IdempotencyIdentity;
 pub use mount::{
     AdmissionRequest, EdgeAdmission, MountError, Mounted, UnaryDispatch, mount_unary, not_served,

@@ -67,6 +67,17 @@ pub trait UnaryDispatch: Send + Sync + 'static {
     /// The deployable whose owned route set this dispatcher serves.
     fn owner(&self) -> RouteOwner;
 
+    /// The routes this deployable fully serves, in `RouteId` order.
+    ///
+    /// It defaults to the whole owned set and is a subset of it. A deployable
+    /// narrows it only while a named application capability is still owed by a
+    /// peer: RS-18 forbids mounting a route that cannot be fully served, so the
+    /// route is *absent* from the router rather than mounted and answering a
+    /// permanent failure.
+    fn served(&self) -> Vec<RouteId> {
+        self.owner().routes()
+    }
+
     /// Decodes, calls and encodes one request through the generated dispatchers.
     ///
     /// # Errors
@@ -150,7 +161,7 @@ impl<D, A> Clone for MountState<D, A> {
     }
 }
 
-/// Mounts every route the dispatcher's deployable owns.
+/// Mounts every route the dispatcher declares it serves.
 ///
 /// The loop iterates the owned projection of the generated table. Two routes
 /// sharing a template are mounted as two method filters on that one template, so
@@ -159,7 +170,7 @@ impl<D, A> Clone for MountState<D, A> {
 ///
 /// # Errors
 ///
-/// Returns [`MountError`] when the owned set is empty, contains a duplicate, or
+/// Returns [`MountError`] when the served set is empty, contains a duplicate, or
 /// contains a route this deployable does not own.
 pub fn mount_unary<D, A>(
     api: Arc<D>,
@@ -171,7 +182,7 @@ where
     A: EdgeAdmission,
 {
     let owner = api.owner();
-    let routes = owner.routes();
+    let routes = api.served();
     if routes.is_empty() {
         return Err(MountError::Empty {
             deployable: owner.deployable(),
