@@ -22,12 +22,22 @@ security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
 
+[package.metadata.aex.targets]
+properties = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the regional-domains stream; the cases land with the crate's own implementation"
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
-serde.workspace = true
+aex-content-domain = { path = "../aex-content-domain" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-operation-domain = { path = "../aex-operation-domain" }
+aex-secret-domain = { path = "../aex-secret-domain" }
+aex-wire = { path = "../aex-wire" }
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
-uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true

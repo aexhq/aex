@@ -16,18 +16,44 @@ owner = "central-identity"
 role = "domain"
 artifact = "none"
 layers = ["unit"]
-concerns = ["property"]
+concerns = ["property", "security"]
 seams = []
-security_tier = "authority"
-risk = ["concurrency"]
+security_tier = "secret"
+risk = ["concurrency", "untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+properties = "unit"
+security = "unit"
+assertion = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the central-identity stream; the cases land with the crate's own implementation"
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
+aex-control-domain = { path = "../aex-control-domain" }
+aex-wire = { path = "../aex-wire" }
+ed25519-dalek.workspace = true
+hmac.workspace = true
 serde.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"
+
+[[test]]
+name = "assertion"
+path = "tests/assertion.rs"

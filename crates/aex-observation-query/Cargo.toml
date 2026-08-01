@@ -27,8 +27,13 @@ targets = "awaiting the observations-usage stream; the cases land with the crate
 live_suite = "application crate; its ports are exercised through its deployable's companion"
 
 [dependencies]
+aex-observation-domain = { path = "../aex-observation-domain" }
+aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

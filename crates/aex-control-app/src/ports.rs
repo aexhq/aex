@@ -1,2 +1,870 @@
-//! `ports` surface of `aex-control-app`. The owning implementation stream fills this
-//! module; the crate-level documentation states what may and may not live here.
+//! The coarse ports the control application depends on.
+
+use async_trait::async_trait;
+use time::{Duration, OffsetDateTime};
+use uuid::Uuid;
+
+use aex_control_domain::{
+    ApiKey, AuditEvent, Epoch, EpochSubjectKind, IntentHash, Invitation, Membership, Operation,
+    OrgRole, Organization, OutboxMessage, ScopeSet, Slug, Workspace,
+};
+
+pub use aex_identity_app::ports::{
+    Clock, IdFactory, ReconcileIdentity, RequestId, StoreError, TxOutcome, UnknownCommit,
+};
+
+/// Everything a control use case knows about its caller.
+#[derive(Debug, Clone)]
+pub struct RequestContext {
+    /// Which request.
+    pub request_id: RequestId,
+    /// The instant the whole request is evaluated against.
+    pub now: OffsetDateTime,
+    /// Which principal, already authorized.
+    pub principal_kind: aex_control_domain::PrincipalKindTag,
+    /// Which principal.
+    pub principal_id: Uuid,
+    /// The organization the request acts in, once resolved.
+    pub organization_id: Option<Uuid>,
+    /// The effective scopes admission granted.
+    pub effective_scopes: ScopeSet,
+}
+
+/// One page of a keyset-paged read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page<T> {
+    /// The rows, in `(created_at, id)` order.
+    pub items: Vec<T>,
+    /// The cursor for the next page, when there is one.
+    pub next_cursor: Option<String>,
+}
+
+/// The largest page any control read may return.
+pub const MAX_PAGE_LIMIT: u32 = 1_000;
+
+/// Why a cross-plane effect did not complete.
+///
+/// `Unknown` is deliberately distinct from `Unavailable`: the first means the
+/// effect may have happened, the second means it definitely did not. Collapsing
+/// them is how a workspace gets provisioned twice.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EffectError {
+    /// The peer refused, and said why.
+    #[error("the effect was rejected: {code}")]
+    Rejected {
+        /// A stable machine code.
+        code: &'static str,
+        /// Whether the same call may be retried.
+        retryable: bool,
+    },
+    /// The peer could not be reached. Nothing happened.
+    #[error("the peer is unavailable")]
+    Unavailable,
+    /// The response was lost. The effect may or may not have happened.
+    #[error("the effect outcome is unknown")]
+    Unknown,
+}
+
+/// Create an organization, its first owner membership and its finance account.
+#[derive(Debug, Clone)]
+pub struct CreateOrganizationTx {
+    /// The organization id.
+    pub preassigned_id: Uuid,
+    /// The first membership's id.
+    pub preassigned_membership_id: Uuid,
+    /// Display name.
+    pub name: String,
+    /// Globally unique slug.
+    pub slug: Slug,
+    /// Who is creating it, and becomes its first owner.
+    pub created_by_user_id: Uuid,
+    /// The replay identity this command was admitted under.
+    pub idempotency: IdempotencyRecordKey,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// The eight-field replay identity, as the adapter keys its record by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdempotencyRecordKey {
+    /// The record's own id.
+    pub id: Uuid,
+    /// Which header carried the key.
+    pub key_kind: aex_control_domain::IdempotencyKeyKind,
+    /// The caller-supplied key.
+    pub key_value: String,
+    /// Which kind of principal.
+    pub principal_kind: aex_control_domain::PrincipalKindTag,
+    /// Which principal.
+    pub principal_id: Uuid,
+    /// Which kind of scope.
+    pub scope_kind: aex_control_domain::ScopeKind,
+    /// Which scope.
+    pub scope_id: Uuid,
+    /// The HTTP method.
+    pub method: aex_wire::types::HttpMethod,
+    /// The canonical route template.
+    pub route: String,
+    /// The canonical intent.
+    pub intent_hash: IntentHash,
+    /// When the record expires.
+    pub expires_at: OffsetDateTime,
+}
+
+/// Invite somebody to an organization.
+#[derive(Debug, Clone)]
+pub struct CreateInvitationTx {
+    /// The invitation id.
+    pub preassigned_id: Uuid,
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// The normalized address.
+    pub email: String,
+    /// The offered role. Never `owner`.
+    pub role: OrgRole,
+    /// Who invited.
+    pub invited_by_user_id: Uuid,
+    /// When it lapses.
+    pub expires_at: OffsetDateTime,
+    /// The replay identity.
+    pub idempotency: IdempotencyRecordKey,
+    /// The outbox row committed alongside.
+    pub outbox: OutboxMessage,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Redeem every pending invitation matching a verified address.
+#[derive(Debug, Clone)]
+pub struct AcceptInvitationsTx {
+    /// Who is accepting.
+    pub user_id: Uuid,
+    /// Their normalized address.
+    pub email: String,
+    /// Whether their address is verified. Acceptance requires `true`.
+    pub email_verified: bool,
+    /// Membership ids to use, one per invitation, preassigned.
+    pub preassigned_membership_ids: Vec<Uuid>,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Open the first half of workspace provisioning.
+#[derive(Debug, Clone)]
+pub struct BeginWorkspaceProvisionTx {
+    /// The workspace id.
+    pub preassigned_workspace_id: Uuid,
+    /// The internal operation id.
+    pub preassigned_operation_id: Uuid,
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// Display name.
+    pub name: String,
+    /// Slug, unique inside the organization.
+    pub slug: Slug,
+    /// Placement, immutable from here on.
+    pub region: aex_wire::types::Region,
+    /// Who created it.
+    pub created_by_user_id: Uuid,
+    /// The replay identity.
+    pub idempotency: IdempotencyRecordKey,
+    /// The outbox row committed alongside.
+    pub outbox: OutboxMessage,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Close workspace provisioning once both halves are durable.
+#[derive(Debug, Clone)]
+pub struct FinishWorkspaceProvisionTx {
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which operation.
+    pub operation_id: Uuid,
+    /// The fence the regional half completed under.
+    pub fence: aex_control_domain::Fence,
+    /// The replay record to complete.
+    pub idempotency_id: Uuid,
+    /// The response body to record for a replay.
+    pub response_body: serde_json::Value,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Accept a workspace deletion, closing admission immediately.
+#[derive(Debug, Clone)]
+pub struct BeginWorkspaceDeletionTx {
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which organization it belongs to.
+    pub organization_id: Uuid,
+    /// The public operation id, which is the caller's `Aex-Operation-Id`.
+    pub operation_id: Uuid,
+    /// The replay identity.
+    pub idempotency: IdempotencyRecordKey,
+    /// The outbox row committed alongside.
+    pub outbox: OutboxMessage,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Close a workspace deletion once the regional half is gone.
+#[derive(Debug, Clone)]
+pub struct CompleteWorkspaceDeletionTx {
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which operation.
+    pub operation_id: Uuid,
+    /// The fence the regional half completed under.
+    pub fence: aex_control_domain::Fence,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Mint a workspace API key.
+#[derive(Debug, Clone)]
+pub struct CreateApiKeyTx {
+    /// The key id, which is also the credential lookup key.
+    pub preassigned_id: Uuid,
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// Display name.
+    pub name: String,
+    /// The scopes, already narrowed to the mintable ceiling.
+    pub scopes: ScopeSet,
+    /// The region, matching the workspace.
+    pub region: aex_wire::types::Region,
+    /// The keyed verifier.
+    pub verifier: [u8; 32],
+    /// Which pepper it was computed under.
+    pub pepper_version: u16,
+    /// Who minted it.
+    pub created_by_user_id: Uuid,
+    /// The replay identity.
+    pub idempotency: IdempotencyRecordKey,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// Revoke a workspace API key.
+#[derive(Debug, Clone)]
+pub struct RevokeApiKeyTx {
+    /// Which key.
+    pub key_id: Uuid,
+    /// Which workspace it must belong to.
+    pub workspace_id: Uuid,
+    /// The `If-Match` revision the caller asserted, when they supplied one.
+    pub expected_revision: Option<u64>,
+    /// The audit row committed alongside.
+    pub audit: AuditEvent,
+    /// When it happened.
+    pub now: OffsetDateTime,
+}
+
+/// A bounded keyset page request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageRequest {
+    /// The opaque cursor, when continuing.
+    pub cursor: Option<String>,
+    /// How many rows, capped at [`MAX_PAGE_LIMIT`].
+    pub limit: u32,
+}
+
+/// List an actor's organizations.
+#[derive(Debug, Clone)]
+pub struct ListOrganizations {
+    /// Whose organizations.
+    pub user_id: Uuid,
+    /// Paging.
+    pub page: PageRequest,
+}
+
+/// List an organization's workspaces.
+#[derive(Debug, Clone)]
+pub struct ListWorkspaces {
+    /// Whose workspaces, by membership.
+    pub user_id: Uuid,
+    /// Restrict to one organization, when the caller asked for one.
+    pub organization_id: Option<Uuid>,
+    /// Paging.
+    pub page: PageRequest,
+}
+
+/// List a workspace's API keys.
+#[derive(Debug, Clone)]
+pub struct ListApiKeys {
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Paging.
+    pub page: PageRequest,
+}
+
+/// List an organization's public operations.
+#[derive(Debug, Clone)]
+pub struct ListOperations {
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// Paging.
+    pub page: PageRequest,
+}
+
+/// Claim due operations for a worker.
+#[derive(Debug, Clone)]
+pub struct ClaimDueOperations {
+    /// Which worker.
+    pub owner: String,
+    /// How long the lease lasts.
+    pub lease: Duration,
+    /// How many to claim.
+    pub batch: u32,
+    /// When the claim happened.
+    pub now: OffsetDateTime,
+}
+
+/// Claim outbox rows for dispatch.
+#[derive(Debug, Clone)]
+pub struct ClaimOutbox {
+    /// Which worker.
+    pub owner: String,
+    /// How long the lease lasts.
+    pub lease: Duration,
+    /// How many to claim.
+    pub batch: u32,
+    /// When the claim happened.
+    pub now: OffsetDateTime,
+}
+
+/// Sweep expired replay records and dispatched outbox rows.
+#[derive(Debug, Clone)]
+pub struct GcExpired {
+    /// The instant expiry is evaluated against.
+    pub now: OffsetDateTime,
+    /// How many rows per sweep.
+    pub batch: u32,
+}
+
+/// What one sweep reclaimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GcReport {
+    /// How many replay records were removed.
+    pub idempotency_records: u64,
+    /// How many dispatched outbox rows were removed.
+    pub outbox_messages: u64,
+}
+
+/// The control authority.
+#[async_trait]
+pub trait ControlStore: Send + Sync {
+    /// Creates an organization, its first owner and its finance account.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn create_organization(
+        &self,
+        command: &CreateOrganizationTx,
+    ) -> Result<TxOutcome<Organization>, StoreError>;
+
+    /// Lists an actor's organizations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn list_organizations(
+        &self,
+        query: &ListOrganizations,
+    ) -> Result<Page<Organization>, StoreError>;
+
+    /// Reads one organization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn get_organization(&self, id: Uuid) -> Result<Option<Organization>, StoreError>;
+
+    /// Lists an organization's memberships.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn list_memberships(
+        &self,
+        organization_id: Uuid,
+        page: &PageRequest,
+    ) -> Result<Page<Membership>, StoreError>;
+
+    /// Records an invitation and its notification request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn create_invitation(
+        &self,
+        command: &CreateInvitationTx,
+    ) -> Result<TxOutcome<Invitation>, StoreError>;
+
+    /// Redeems every pending invitation matching a verified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn accept_invitations_for_email(
+        &self,
+        command: &AcceptInvitationsTx,
+    ) -> Result<TxOutcome<Vec<Membership>>, StoreError>;
+
+    /// Opens the first half of provisioning.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn begin_workspace_provision(
+        &self,
+        command: &BeginWorkspaceProvisionTx,
+    ) -> Result<TxOutcome<(Workspace, Operation)>, StoreError>;
+
+    /// Closes provisioning once the regional half is durable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn finish_workspace_provision(
+        &self,
+        command: &FinishWorkspaceProvisionTx,
+    ) -> Result<TxOutcome<Workspace>, StoreError>;
+
+    /// Lists workspaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn list_workspaces(&self, query: &ListWorkspaces) -> Result<Page<Workspace>, StoreError>;
+
+    /// Reads one workspace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn get_workspace(&self, id: Uuid) -> Result<Option<Workspace>, StoreError>;
+
+    /// Accepts a deletion, revoking every key for the workspace in the same
+    /// transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn begin_workspace_deletion(
+        &self,
+        command: &BeginWorkspaceDeletionTx,
+    ) -> Result<TxOutcome<(Workspace, Operation)>, StoreError>;
+
+    /// Closes a deletion once the regional half is gone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn complete_workspace_deletion(
+        &self,
+        command: &CompleteWorkspaceDeletionTx,
+    ) -> Result<TxOutcome<Workspace>, StoreError>;
+
+    /// Mints a workspace API key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn create_api_key(
+        &self,
+        command: &CreateApiKeyTx,
+    ) -> Result<TxOutcome<ApiKey>, StoreError>;
+
+    /// Lists a workspace's API keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn list_api_keys(&self, query: &ListApiKeys) -> Result<Page<ApiKey>, StoreError>;
+
+    /// Revokes a workspace API key, advancing its epoch in the same transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    async fn revoke_api_key(&self, command: &RevokeApiKeyTx) -> Result<TxOutcome<()>, StoreError>;
+
+    /// Reads one operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn get_operation(&self, id: Uuid) -> Result<Option<Operation>, StoreError>;
+
+    /// Lists an organization's public operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn list_operations(&self, query: &ListOperations) -> Result<Page<Operation>, StoreError>;
+
+    /// Claims operations whose lease has lapsed or which have never run.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn claim_due_operations(
+        &self,
+        command: &ClaimDueOperations,
+    ) -> Result<Vec<Operation>, StoreError>;
+
+    /// Claims outbox rows for dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn claim_outbox(&self, command: &ClaimOutbox) -> Result<Vec<OutboxMessage>, StoreError>;
+
+    /// Marks an outbox row dispatched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn mark_outbox_dispatched(&self, id: Uuid, now: OffsetDateTime)
+    -> Result<(), StoreError>;
+
+    /// Releases an outbox claim after a failure, backing off.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn release_outbox(
+        &self,
+        id: Uuid,
+        available_at: OffsetDateTime,
+        error: &str,
+    ) -> Result<(), StoreError>;
+
+    /// Sweeps expired replay records and dispatched outbox rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn gc_expired(&self, command: &GcExpired) -> Result<GcReport, StoreError>;
+}
+
+/// A workspace API key, as the authorization read sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceKeyState {
+    /// Which key.
+    pub key_id: Uuid,
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// The scopes the row carries, before the mintable ceiling.
+    pub scopes: ScopeSet,
+    /// The stored keyed verifier.
+    pub verifier: [u8; 32],
+    /// Which pepper it was computed under.
+    pub pepper_version: u16,
+    /// Whether the key was revoked.
+    pub key_revoked: bool,
+    /// The workspace's region.
+    pub region: aex_wire::types::Region,
+    /// The workspace's status.
+    pub workspace_status: aex_control_domain::WorkspaceStatus,
+    /// The organization's status.
+    pub organization_status: aex_control_domain::OrganizationStatus,
+    /// The account state, `unavailable` when the finance row is absent.
+    pub account_state: aex_control_domain::AccountState,
+    /// The key's epoch.
+    pub epoch_key: Epoch,
+    /// The workspace's epoch.
+    pub epoch_workspace: Epoch,
+    /// The account's epoch.
+    pub epoch_account: Epoch,
+}
+
+impl WorkspaceKeyState {
+    /// The epoch subjects an assertion for this key must carry.
+    #[must_use]
+    pub fn epoch_subjects(&self) -> [(EpochSubjectKind, Uuid, Epoch); 3] {
+        [
+            (EpochSubjectKind::Key, self.key_id, self.epoch_key),
+            (
+                EpochSubjectKind::Workspace,
+                self.workspace_id,
+                self.epoch_workspace,
+            ),
+            (
+                EpochSubjectKind::Account,
+                self.organization_id,
+                self.epoch_account,
+            ),
+        ]
+    }
+}
+
+/// A person's credential, as the workspace-scoped authorization read sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountActorState {
+    /// Which credential.
+    pub credential_id: Uuid,
+    /// Which person.
+    pub user_id: Uuid,
+    /// Which membership.
+    pub membership_id: Uuid,
+    /// Their role.
+    pub role: OrgRole,
+    /// The scopes the credential carries.
+    pub scopes: ScopeSet,
+    /// The stored keyed verifier.
+    pub verifier: [u8; 32],
+    /// Which pepper it was computed under.
+    pub pepper_version: u16,
+    /// Whether the credential was revoked.
+    pub credential_revoked: bool,
+    /// Whether the credential lapsed.
+    pub credential_expired: bool,
+    /// Whether the person may authenticate.
+    pub user_active: bool,
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// The workspace's region.
+    pub region: aex_wire::types::Region,
+    /// The account state.
+    pub account_state: aex_control_domain::AccountState,
+    /// The person's epoch.
+    pub epoch_user: Epoch,
+    /// The membership's epoch.
+    pub epoch_membership: Epoch,
+    /// The workspace's epoch.
+    pub epoch_workspace: Epoch,
+    /// The account's epoch.
+    pub epoch_account: Epoch,
+}
+
+/// A person's credential, as the central authorizer sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CentralActorState {
+    /// Which credential.
+    pub credential_id: Uuid,
+    /// Which person.
+    pub user_id: Uuid,
+    /// The scopes the credential carries.
+    pub scopes: ScopeSet,
+    /// The stored keyed verifier.
+    pub verifier: [u8; 32],
+    /// Which pepper it was computed under.
+    pub pepper_version: u16,
+    /// Whether the credential was revoked.
+    pub credential_revoked: bool,
+    /// Whether the credential lapsed.
+    pub credential_expired: bool,
+    /// Whether the person may authenticate.
+    pub user_active: bool,
+    /// Every active membership.
+    pub memberships: Vec<aex_control_domain::OrgMembership>,
+}
+
+/// The Ed25519 signing key a region will accept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SigningKeyRecord {
+    /// Which key.
+    pub kid: Uuid,
+    /// The public half.
+    pub public_key: [u8; 32],
+    /// Where the private half lives.
+    pub secret_ref: String,
+    /// Its lifecycle state.
+    pub state: String,
+    /// When a region stops accepting it.
+    pub retires_at: OffsetDateTime,
+}
+
+/// The read-only authorization surface.
+///
+/// Every method performs zero writes, which the adapter proves by running it as
+/// a role that holds no write privilege anywhere.
+#[async_trait]
+pub trait AuthorizationReader: Send + Sync {
+    /// Resolves a workspace key in exactly one statement and no transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn resolve_workspace_key(
+        &self,
+        key_id: Uuid,
+    ) -> Result<Option<WorkspaceKeyState>, StoreError>;
+
+    /// Resolves an account token scoped to one workspace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn resolve_account_token_for_workspace(
+        &self,
+        token_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<AccountActorState>, StoreError>;
+
+    /// Resolves a browser session scoped to one workspace.
+    ///
+    /// This is what makes every regional dashboard panel implementable: a
+    /// browser session resolves through the same 30-second assertion as an
+    /// account token, not a second credential mechanism.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn resolve_session_for_workspace(
+        &self,
+        session_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<AccountActorState>, StoreError>;
+
+    /// Resolves an account token for the central plane.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn resolve_account_token_central(
+        &self,
+        token_id: Uuid,
+    ) -> Result<Option<CentralActorState>, StoreError>;
+
+    /// Resolves a browser session for the central plane.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn resolve_dashboard_session_central(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Option<CentralActorState>, StoreError>;
+
+    /// The keys a region will accept right now.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn verification_key_set(&self) -> Result<Vec<SigningKeyRecord>, StoreError>;
+
+    /// The one active signing key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] when no key is active, which is a
+    /// readiness failure rather than a reason to serve unsigned artifacts.
+    async fn active_signing_key(&self) -> Result<SigningKeyRecord, StoreError>;
+}
+
+/// Ask a region to create or remove the regional half of a workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionWorkspaceRequest {
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which organization.
+    pub organization_id: Uuid,
+    /// Which region.
+    pub region: aex_wire::types::Region,
+    /// The fence this attempt runs under.
+    pub fence: aex_control_domain::Fence,
+    /// The canonical intent, so a replay is recognisable.
+    pub intent_hash: IntentHash,
+}
+
+/// What a region answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionWorkspaceResponse {
+    /// Which workspace the region created or already had.
+    pub workspace_id: Uuid,
+    /// Whether this call created it.
+    pub created: bool,
+}
+
+/// Ask a region to remove the regional half of a workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteWorkspaceRequest {
+    /// Which workspace.
+    pub workspace_id: Uuid,
+    /// Which region.
+    pub region: aex_wire::types::Region,
+    /// The fence this attempt runs under.
+    pub fence: aex_control_domain::Fence,
+}
+
+/// What a region answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteWorkspaceResponse {
+    /// Whether the regional half is gone.
+    pub removed: bool,
+}
+
+/// The regional control authority.
+#[async_trait]
+pub trait RegionalControlPort: Send + Sync {
+    /// Creates the regional half of a workspace, idempotently under its fence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EffectError`]; `Unknown` means the region may have created it
+    /// and the caller must reconcile rather than retry blindly.
+    async fn provision_workspace(
+        &self,
+        request: &ProvisionWorkspaceRequest,
+    ) -> Result<ProvisionWorkspaceResponse, EffectError>;
+
+    /// Removes the regional half of a workspace, idempotently under its fence.
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`RegionalControlPort::provision_workspace`].
+    async fn delete_workspace(
+        &self,
+        request: &DeleteWorkspaceRequest,
+    ) -> Result<DeleteWorkspaceResponse, EffectError>;
+}
+
+/// One invitation notification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvitationEmail {
+    /// The outbox row this delivery is keyed by, so a retry is one message.
+    pub message_id: Uuid,
+    /// The recipient.
+    pub to: String,
+    /// The organization's display name.
+    pub organization_name: String,
+    /// The role offered.
+    pub role: OrgRole,
+}
+
+/// The notification sender.
+#[async_trait]
+pub trait MailerPort: Send + Sync {
+    /// Sends an invitation notification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EffectError`]; the email is a notification and never a
+    /// credential, so a lost one costs a resend and nothing else.
+    async fn send_invitation(&self, mail: &InvitationEmail) -> Result<(), EffectError>;
+}

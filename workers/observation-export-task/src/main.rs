@@ -48,6 +48,18 @@ pub enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// The process holds a capability its role must not.
+    #[error("this deployable must not hold the `{capability}` capability")]
+    Capability {
+        /// The offending capability.
+        capability: &'static str,
+    },
+    /// A declared readiness probe has not passed.
+    #[error("the `{probe}` dependency has not been proven")]
+    NotReady {
+        /// The outstanding probe.
+        probe: &'static str,
+    },
     /// The behaviour of this deployable has not been implemented yet.
     #[error("`observation-export-task` has no implementation yet")]
     NotImplemented,
@@ -280,5 +292,78 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+}
+
+// --- composition ------------------------------------------------------------
+
+/// The capability grant this deployable is allowed to hold.
+///
+/// Asserted at startup: a role that observes a capability outside its grant
+/// refuses to start rather than running with more authority than it declared.
+pub const ROLE: aex_observation_store_aws::composition::Role =
+    aex_observation_store_aws::composition::Role::ExportTask;
+
+/// The dependencies this deployable proves before it reports ready.
+pub const REQUIRED_PROBES: &[aex_observation_store_aws::health::Probe] = &[
+    aex_observation_store_aws::health::Probe::ObservationTable,
+    aex_observation_store_aws::health::Probe::ObservationBucket,
+];
+
+/// Asserts the observed capability grant and the readiness probe set.
+///
+/// # Errors
+///
+/// Returns [`RunError::Capability`] when the process holds a capability its role
+/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
+/// probe that has not passed is never assumed.
+pub fn compose(
+    observed: &[aex_observation_store_aws::composition::Capability],
+    passed: &[aex_observation_store_aws::health::Probe],
+) -> Result<(), RunError> {
+    aex_observation_store_aws::composition::assert_grant(ROLE, observed).map_err(|violation| {
+        RunError::Capability {
+            capability: violation.capability.as_str(),
+        }
+    })?;
+    match aex_observation_store_aws::health::readiness(REQUIRED_PROBES, passed) {
+        aex_observation_store_aws::health::Readiness::Ready => Ok(()),
+        aex_observation_store_aws::health::Readiness::NotReady { outstanding } => {
+            Err(RunError::NotReady {
+                probe: outstanding.as_str(),
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod composition_tests {
+    use super::{REQUIRED_PROBES, ROLE, RunError, compose};
+    use aex_observation_store_aws::composition::Capability;
+
+    #[test]
+    fn its_own_grant_and_a_complete_probe_set_start() {
+        compose(ROLE.granted(), REQUIRED_PROBES).expect("the declared composition starts");
+    }
+
+    #[test]
+    fn a_capability_outside_the_grant_refuses_to_start() {
+        for denied in ROLE.denied() {
+            let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
+            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn an_unproven_probe_is_never_assumed() {
+        if let Some(first) = REQUIRED_PROBES.first() {
+            let error = compose(ROLE.granted(), &[]).expect_err("refused");
+            match error {
+                RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+                other => panic!("expected a readiness failure, got {other:?}"),
+            }
+        }
+        assert!(!ROLE.granted().is_empty());
+        assert!(!Capability::ALL.is_empty());
     }
 }

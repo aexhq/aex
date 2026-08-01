@@ -22,11 +22,19 @@ security_tier = "guest"
 risk = ["untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+hostile_frames = "unit"
+no_cloud_authority = "unit"
+no_guest_billing = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the hands stream; the cases land with the crate's own implementation"
 live_suite = "application crate; its ports are exercised through its deployable's companion"
 
 [dependencies]
+aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-wire = { path = "../aex-wire" }
+blake3.workspace = true
 bytes.workspace = true
 futures.workspace = true
 serde.workspace = true
@@ -35,4 +43,8 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-aex-hands-protocol = { path = "../aex-hands-protocol" }
+
+[dev-dependencies]
+cargo_metadata.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
