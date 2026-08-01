@@ -41,7 +41,7 @@ Before changing code, config, tests, or docs, read
 | Public product orientation | [`README.md`](README.md) |
 | Contributor entry point and the maintainer asymmetry | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Community conduct | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
-| Canonical SDK documentation | [`packages/sdk/docs/`](packages/sdk/docs/) |
+| Canonical SDK documentation | [`apps/site/content/docs/`](apps/site/content/docs/) |
 | Public website source | [`apps/docs/content/docs/`](apps/docs/content/docs/) |
 | Security reporting | [`SECURITY.md`](SECURITY.md) |
 

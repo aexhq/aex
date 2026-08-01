@@ -45,7 +45,7 @@ metadata, or file.
 Model inputs and responses leave the workspace region when the selected managed
 model is served. Review the service's current subprocessor and data-processing
 terms before sending regulated data. Public billing behavior is documented in
-[`packages/sdk/docs/billing.md`](packages/sdk/docs/billing.md).
+the billing section of [`apps/site/content/docs/`](apps/site/content/docs/).
 
 ### Workspace keys and secrets
 
@@ -79,10 +79,7 @@ part of the resulting customer-visible data. Deciding what an agent may read and
 emit remains the workspace owner's responsibility.
 
 Public handling guidance is documented in
-[`packages/sdk/docs/authentication.md`](packages/sdk/docs/authentication.md),
-[`packages/sdk/docs/resources.md`](packages/sdk/docs/resources.md),
-[`packages/sdk/docs/networking.md`](packages/sdk/docs/networking.md),
-[`packages/sdk/docs/files.md`](packages/sdk/docs/files.md), and
-[`packages/sdk/docs/limits.md`](packages/sdk/docs/limits.md).
+the authentication, resources, networking, files and limits sections of
+[`apps/site/content/docs/`](apps/site/content/docs/).
 
 Security-sensitive hosted implementation details are maintained privately.

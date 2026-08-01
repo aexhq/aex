@@ -60,9 +60,9 @@ This workspace has not released `1.0.0`.
 - Account, organization, workspace, API-key, billing, usage, and statement
   resources live on the bootstrap surface.
 
-See the [SDK quickstart](packages/sdk/docs/quickstart.md), [registered
-resources](packages/sdk/docs/resources.md), [files](packages/sdk/docs/files.md),
-[telemetry](packages/sdk/docs/telemetry.md), and [public
+See the [SDK quickstart](apps/site/content/docs/), [registered
+resources](apps/site/content/docs/), [files](apps/site/content/docs/),
+[telemetry](apps/site/content/docs/), and [public
 architecture](references/architecture.md).
 
 ## Repository boundary

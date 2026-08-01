@@ -19,7 +19,7 @@ related:
 
 This page describes the supported public contract, not the hosted substrate.
 The strict schemas in
-[`packages/contracts/src/v1-resources.ts`](../packages/contracts/src/v1-resources.ts),
+[`api/schemas/`](../packages/contracts/src/v1-resources.ts),
 [`v1-content.ts`](../packages/contracts/src/v1-content.ts), and
 [`v1-telemetry.ts`](../packages/contracts/src/v1-telemetry.ts) are the wire
 authority. The SDK documentation under [`packages/sdk/docs/`](../packages/sdk/docs/)

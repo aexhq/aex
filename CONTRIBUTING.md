@@ -45,7 +45,7 @@ surprises.
 - **No skipped tests.** The release gate asserts zero skipped or disabled
   entries; a test that cannot run is one to fix or delete, never to skip.
 - **Public API changes need docs** under
-  [`packages/sdk/docs/`](packages/sdk/docs/).
+  [`apps/site/content/docs/`](apps/site/content/docs/).
 - **Never hand-edit generated output.** `apps/docs/content/docs/` is written by
   `scripts/docs/generate-all.mjs`, and the OpenAPI document and its types are
   generated from the Zod schemas. Edit the source and rerun the generator; a
