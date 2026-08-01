@@ -144,10 +144,22 @@ export interface UsageFrontier {
   readonly workspaceId: string;
 }
 
-export interface UsageAggregate {
-  readonly category: "storage" | "compute" | "memory" | "data_transfer";
-  readonly [key: string]: unknown;
+export interface UsageAttribution {
+  readonly workspaceId: string;
+  readonly region: string;
+  readonly source: string;
+  readonly ratedCents: string;
+  readonly serviceTime: { readonly gte: string; readonly lt: string };
+  readonly sessionId?: string;
+  readonly runId?: string;
+  readonly operationId?: string;
 }
+
+export type UsageAggregate =
+  | { readonly category: "storage"; readonly attribution: UsageAttribution; readonly byteMinutes: string }
+  | { readonly category: "compute"; readonly attribution: UsageAttribution; readonly millicpuMilliseconds: string }
+  | { readonly category: "memory"; readonly attribution: UsageAttribution; readonly byteMilliseconds: string }
+  | { readonly category: "data_transfer"; readonly attribution: UsageAttribution; readonly egressBytes: string };
 
 export interface UsagePage {
   readonly items: readonly UsageAggregate[];
@@ -230,12 +242,16 @@ export interface RegisteredEntry {
   readonly updatedAt: string;
 }
 
+export type LimitValue =
+  | { readonly shape: "scalar"; readonly value: string }
+  | { readonly shape: "map"; readonly values: Readonly<Record<string, string>> };
+
 export interface EffectiveWorkspaceLimit {
   readonly id: string;
   readonly source: "default" | "workspace_override";
   readonly revision: number;
   readonly changedAt: string;
-  readonly effectiveValue: { readonly shape: "scalar" | "map"; readonly [key: string]: unknown };
+  readonly effectiveValue: LimitValue;
 }
 
 export interface FileEntry {
