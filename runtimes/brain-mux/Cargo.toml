@@ -32,6 +32,18 @@ name = "brain-mux"
 path = "src/main.rs"
 
 [dependencies]
+aex-brain-application = { path = "../../crates/aex-brain-application" }
+aex-brain-domain = { path = "../../crates/aex-brain-domain" }
+aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+# The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,
+# `MemoryReservation` and `CpuReconciler` from here rather than declaring its
+# own: two definitions of a billing unit is how a bill and a receipt come to
+# disagree.
+aex-usage-application = { path = "../../crates/aex-usage-application", features = ["probe"] }
+aex-usage-domain = { path = "../../crates/aex-usage-domain" }
 thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time", "net", "io-util"] }
