@@ -4536,6 +4536,7 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
  "thiserror",
 ]
 
@@ -4559,7 +4560,9 @@ name = "regional-stream"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-regional-http",
  "aex-telemetry-schema",
+ "aex-wire",
  "thiserror",
 ]
 

@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 117,
+    "awaiting_owner": 115,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -2737,13 +2737,13 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "streaming": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-brain-mux": {
       "name": "aex-live-brain-mux",
@@ -4551,13 +4551,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "rotation": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/runtime-control-worker": {
       "name": "runtime-control-worker",
