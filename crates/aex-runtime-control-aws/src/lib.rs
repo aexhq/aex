@@ -15,9 +15,14 @@
 
 pub mod composition;
 pub mod queue;
+pub mod worker;
 
 pub use composition::{HoldReason, SUSPEND_LOCK_MS, SuspendDecision, evaluate_suspend, recount};
 pub use queue::{
     BatchItem, BatchItemFailure, BatchResult, ItemOutcome, MAX_RECEIVE_COUNT, PartialBatchFailure,
     Quarantined, fold_batch,
+};
+pub use worker::{
+    AWAIT_BUDGET_MS, CommandOutcome, Pace, QueueRecord, RuntimeCommand, RuntimeControl,
+    RuntimePorts, RuntimeSettings, SchedulePass, Settled, intent_id,
 };

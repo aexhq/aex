@@ -52,9 +52,10 @@ pub use shape::{
     parse_compute_size,
 };
 pub use store::{
-    GenerationCommit, GenerationPlan, GenerationPointer, IdleProbe, LifecycleIntentPlan,
-    LifecycleReceipt, LifecycleReceiptPlan, PageBudget, RuntimeActivityStore, RuntimeDuePage,
-    RuntimeShard, RuntimeStoreError,
+    CommandBinding, GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
+    LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan, OpenEffectCounter, PageBudget,
+    RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
+    bind_command,
 };
 pub use usage::{
     DerivationError, FactContext, HandsUsage, SinkError, SnapshotIo, SnapshotResidence,
