@@ -281,6 +281,9 @@ name = "aex-finance-app"
 version = "0.1.0"
 dependencies = [
  "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
+ "aex-wire",
  "async-trait",
  "futures",
  "serde",
