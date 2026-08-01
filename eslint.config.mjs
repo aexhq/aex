@@ -45,6 +45,8 @@ export default tseslint.config(
       "**/coverage/**",
       "**/.cache/**",
       "**/.release-worktrees/**",
+      "packages/sdk/src/generated/**",
+      "apps/site/.generated/**",
       // Skipped/sample / template files committed for offline tests.
       "**/test/fixtures/**",
       // GENERATED artefacts that happen to live outside `dist/`: the OpenAPI
