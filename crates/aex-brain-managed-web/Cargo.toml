@@ -28,7 +28,9 @@ scenarios = []
 [dependencies]
 aex-wire = { path = "../aex-wire" }
 async-trait.workspace = true
+brotli.workspace = true
 encoding_rs.workspace = true
+flate2.workspace = true
 futures.workspace = true
 html5ever.workspace = true
 reqwest.workspace = true

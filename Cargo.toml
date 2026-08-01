@@ -199,7 +199,7 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 http = "1.5.0"
 http-body = "1.1.0"
 http-body-util = "0.1.4"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "query", "stream", "http2", "charset", "gzip", "brotli"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "query", "stream", "http2", "charset"] }
 rustls = { version = "0.23.43", default-features = false, features = ["aws-lc-rs", "logging", "tls12", "std"] }
 webpki-roots = "1.0.9"
 aws-lc-rs = "1.17.3"
@@ -287,6 +287,7 @@ rmcp = { version = "=3.1.0", default-features = false, features = ["client", "tr
 # metadata that `cargo lambda --output-format zip` does not guarantee. Only the
 # DEFLATE stream is borrowed; every header field is written explicitly.
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+brotli = "8.0.4"
 
 # --- general utilities -------------------------------------------------------
 regex = "1.13.1"

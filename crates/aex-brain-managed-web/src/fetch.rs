@@ -1,13 +1,16 @@
 //! Bounded, pinned-address fetch and deterministic response formatting.
 
 use std::collections::BTreeSet;
+use std::io::Read as _;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use aex_wire::ids::ContentHash;
 use encoding_rs::Encoding;
 use futures::StreamExt as _;
-use reqwest::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
+use reqwest::header::{
+    ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -156,8 +159,8 @@ async fn send(target: &ValidatedTarget) -> Result<reqwest::Response, FetchReject
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(TOTAL_TIMEOUT)
-        .gzip(true)
-        .brotli(true)
+        .no_gzip()
+        .no_brotli()
         .resolve_to_addrs(&target.host, &pinned)
         .build()
         .map_err(|_| FetchRejection::ClientBuild)?;
@@ -191,6 +194,11 @@ async fn read_response(
         .and_then(|value| value.to_str().ok())
         .ok_or(FetchRejection::MissingContentType)?
         .to_owned();
+    let content_encoding = response
+        .headers()
+        .get(CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let declared_length = response
         .headers()
         .get(CONTENT_LENGTH)
@@ -200,22 +208,54 @@ async fn read_response(
         return Err(FetchRejection::BodyTooLarge { limit: max_bytes });
     }
     let mut stream = response.bytes_stream();
-    let mut body = Vec::new();
+    let mut encoded = Vec::new();
     let mut window = (Instant::now(), 0usize);
     while let Some(chunk) = tokio::time::timeout(PROGRESS_WINDOW, stream.next())
         .await
         .map_err(|_| FetchRejection::MinimumProgress)?
     {
         let chunk = chunk.map_err(|_| FetchRejection::Transport)?;
-        body.extend_from_slice(&chunk);
+        encoded.extend_from_slice(&chunk);
         window.1 = window.1.saturating_add(chunk.len());
-        enforce_stream_bounds(&body, declared_length, max_bytes, &mut window)?;
+        enforce_stream_bounds(&encoded, None, max_bytes, &mut window)?;
     }
+    let body = decode_body(&encoded, content_encoding.as_deref(), max_bytes)?;
     Ok(DownloadedResponse {
         status,
         content_type,
         body,
     })
+}
+
+pub(crate) fn decode_body(
+    encoded: &[u8],
+    content_encoding: Option<&str>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, FetchRejection> {
+    let mut decoded = Vec::new();
+    match content_encoding.map(str::trim) {
+        None | Some("" | "identity") => decoded.extend_from_slice(encoded),
+        Some("gzip") => {
+            flate2::read::GzDecoder::new(encoded)
+                .take(u64::try_from(max_bytes).expect("web ceiling fits u64") + 1)
+                .read_to_end(&mut decoded)
+                .map_err(|_| FetchRejection::Decompression)?;
+        }
+        Some("br") => {
+            brotli::Decompressor::new(encoded, 4_096)
+                .take(u64::try_from(max_bytes).expect("web ceiling fits u64") + 1)
+                .read_to_end(&mut decoded)
+                .map_err(|_| FetchRejection::Decompression)?;
+        }
+        Some(_) => return Err(FetchRejection::ContentEncodingNotAllowed),
+    }
+    if !encoded.is_empty() && decoded.len() > encoded.len().saturating_mul(100) {
+        return Err(FetchRejection::CompressionRatio);
+    }
+    if decoded.len() > max_bytes {
+        return Err(FetchRejection::BodyTooLarge { limit: max_bytes });
+    }
+    Ok(decoded)
 }
 
 fn enforce_stream_bounds(
@@ -366,6 +406,12 @@ pub enum FetchRejection {
     /// Decompression exceeded the maximum admitted expansion ratio.
     #[error("managed web compression ratio exceeded 100:1")]
     CompressionRatio,
+    /// Server selected an encoding outside gzip, Brotli, and identity.
+    #[error("managed web response Content-Encoding is not allowed")]
+    ContentEncodingNotAllowed,
+    /// Gzip or Brotli bytes were malformed.
+    #[error("managed web response decompression failed")]
+    Decompression,
     /// HTTP or response streaming failed.
     #[error("managed web transport failed")]
     Transport,

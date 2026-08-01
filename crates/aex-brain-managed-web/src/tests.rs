@@ -1,8 +1,10 @@
+use std::io::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::egress::{DnsResolver, EgressPolicy, EgressRejection, resolve_and_screen, validate};
 use crate::fetch::{
-    FetchFormat, FetchRejection, FetchRequest, fetch, format_document, media_type_allowed,
+    FetchFormat, FetchRejection, FetchRequest, decode_body, fetch, format_document,
+    media_type_allowed,
 };
 use crate::search::{WebSearchCredential, WebSearchProviderId, normalize_brave, normalize_serper};
 use crate::serializer::{html_to_markdown, html_to_text};
@@ -247,6 +249,38 @@ async fn fetch_rejects_invalid_bounds_before_resolution() {
         ));
         assert_eq!(resolver.calls(), 0);
     }
+}
+
+#[test]
+fn response_decompression_is_closed_bounded_and_ratio_checked() {
+    let body = b"bounded response";
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gzip.write_all(body).expect("gzip fixture");
+    let gzip = gzip.finish().expect("gzip fixture");
+    assert_eq!(decode_body(&gzip, Some("gzip"), 1_024).expect("gzip"), body);
+
+    let mut encoded = Vec::new();
+    {
+        let mut writer = brotli::CompressorWriter::new(&mut encoded, 4_096, 5, 22);
+        writer.write_all(body).expect("Brotli fixture");
+    }
+    assert_eq!(
+        decode_body(&encoded, Some("br"), 1_024).expect("Brotli"),
+        body
+    );
+    assert_eq!(
+        decode_body(body, Some("deflate"), 1_024),
+        Err(FetchRejection::ContentEncodingNotAllowed)
+    );
+
+    let bomb = vec![b'x'; 200_000];
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    gzip.write_all(&bomb).expect("bomb fixture");
+    let gzip = gzip.finish().expect("bomb fixture");
+    assert_eq!(
+        decode_body(&gzip, Some("gzip"), 500_000),
+        Err(FetchRejection::CompressionRatio)
+    );
 }
 
 #[test]
