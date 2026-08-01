@@ -1,0 +1,10 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BundleFormat.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The only accepted bundle format.",
+  "enum": [
+    "tar.gz"
+  ],
+  "title": "BundleFormat",
+  "type": "string"
+}

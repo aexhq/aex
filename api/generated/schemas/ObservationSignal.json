@@ -1,0 +1,15 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationSignal.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The six observable signals.",
+  "enum": [
+    "events",
+    "logs",
+    "spans",
+    "metrics",
+    "traces",
+    "telemetry"
+  ],
+  "title": "ObservationSignal",
+  "type": "string"
+}

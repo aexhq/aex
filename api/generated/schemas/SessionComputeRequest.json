@@ -1,0 +1,22 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionComputeRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The only customer compute selector.",
+  "properties": {
+    "size": {
+      "description": "The baseline shape; defaults to `1gb`.",
+      "enum": [
+        "512mb",
+        "1gb",
+        "2gb",
+        "4gb",
+        "8gb"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [],
+  "title": "SessionComputeRequest",
+  "type": "object"
+}

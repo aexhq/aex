@@ -1,0 +1,416 @@
+# Sessions, messages and runs.
+#
+# Session create accepts no runtime kind, checkpoint, suspend/resume, runtime
+# profile, ephemeral/durable, region or continuity-policy input. `compute.size`
+# is the only customer compute selector; everything else in `resolvedConfig` is
+# provider-derived.
+module: regional
+schemas:
+  SessionStatus:
+    doc: What a session is doing right now.
+    type: enum
+    values:
+      - { value: idle, doc: "No run is in flight." }
+      - { value: running, doc: "A run is executing." }
+      - { value: awaiting_approval, doc: "A bound tool call is waiting on a decision." }
+      - { value: deleting, doc: "A deletion operation is running." }
+
+  RunStatus:
+    doc: Where a run ended up.
+    type: enum
+    values:
+      - { value: queued, doc: "Admitted, not started." }
+      - { value: running, doc: "Executing." }
+      - { value: succeeded, doc: "Completed normally." }
+      - { value: failed, doc: "Terminal failure." }
+      - { value: timed_out, doc: "Exceeded its wall bound." }
+      - { value: cancelled, doc: "Stopped by an explicit operation." }
+      - { value: interrupted, doc: "Lost its execution substrate." }
+
+  NetworkMode:
+    doc: What the guest may reach.
+    type: enum
+    values:
+      - { value: none, doc: "No outbound network." }
+      - { value: public_internet, doc: "Managed outbound Internet egress." }
+
+  PackageEcosystem:
+    doc: The package ecosystems a session may pre-install from.
+    type: enum
+    values:
+      - { value: apt, doc: "Debian packages." }
+      - { value: pip, doc: "Python packages." }
+      - { value: npm, doc: "Node packages." }
+
+  PackageRequest:
+    doc: One exactly-pinned package to pre-install.
+    type: object
+    fields:
+      ecosystem: { type: ref, to: PackageEcosystem, doc: "Which ecosystem." }
+      name: { type: string, min: 1, max: 214, doc: "The package name." }
+      version: { type: string, min: 1, max: 64, doc: "The exact version; ranges are rejected." }
+
+  SecretRef:
+    doc: A reference to a workspace secret by name. Values never appear here.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The secret name." }
+
+  SessionCredentials:
+    doc: Which workspace secrets the session may hold custody of.
+    type: object
+    fields:
+      secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The named secrets." }
+
+  SessionRegisteredSelection:
+    doc: Which registered resources the session mounts.
+    type: object
+    fields:
+      files: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered files." }
+      skills: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered skills." }
+      tools: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered tools." }
+      instructions: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered instructions." }
+      mcpServers: { type: array, max: 64, optional: true, items: { type: resource_name }, doc: "Registered MCP servers." }
+
+  SessionComputeRequest:
+    doc: The only customer compute selector.
+    type: object
+    fields:
+      size: { type: compute_size, optional: true, doc: "The baseline shape; defaults to `1gb`." }
+
+  HandsNetworkRequest:
+    doc: The guest network policy.
+    type: object
+    fields:
+      mode: { type: ref, to: NetworkMode, doc: "What the guest may reach." }
+
+  SessionNetworkRequest:
+    doc: Network policy for the session.
+    type: object
+    fields:
+      hands: { type: ref, to: HandsNetworkRequest, doc: "The guest policy." }
+
+  ApprovalPolicyAllowAll:
+    doc: Every tool call runs without an approval.
+    type: object
+    fields: {}
+
+  ApprovalPolicyRequireForTools:
+    doc: Named tools require an explicit decision before they run.
+    type: object
+    fields:
+      tools: { type: array, max: 256, items: { type: resource_name }, doc: "Tools that need approval." }
+
+  ApprovalPolicy:
+    doc: When a bound tool call needs a human decision.
+    type: union
+    tag: mode
+    variants:
+      - { value: allow_all, payload: ApprovalPolicyAllowAll, doc: "Never ask." }
+      - { value: require_for_tools, payload: ApprovalPolicyRequireForTools, doc: "Ask for the named tools." }
+
+  SessionCreateRequest:
+    doc: Create a session. The provider and model pair is explicit and required.
+    type: object
+    fields:
+      provider: { type: provider_id, doc: "The direct BYOK provider." }
+      model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
+      providerCredentialId: { type: id, of: provider_credential, optional: true, doc: "Which BYOK binding to use." }
+      registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Registered resources to mount." }
+      credentials: { type: ref, to: SessionCredentials, optional: true, doc: "Secrets to take custody of." }
+      compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "The baseline compute shape." }
+      network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "The guest network policy." }
+      packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Packages to pre-install." }
+      approvalPolicy: { type: ref, to: ApprovalPolicy, optional: true, doc: "When to ask for a decision." }
+      metadata: { type: map, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
+
+  ComputeShape:
+    doc: One resolved compute dimension.
+    type: object
+    fields:
+      memoryMiB: { type: integer, min: 0, max: 262144, doc: "Memory in mebibytes." }
+      vcpus: { type: float, doc: "Virtual CPUs; fractional at the smaller shapes." }
+
+  ResolvedCompute:
+    doc: The complete provider-derived capacity of the selected shape.
+    type: object
+    fields:
+      size: { type: compute_size, doc: "The selected baseline token." }
+      baseline: { type: ref, to: ComputeShape, doc: "Guaranteed capacity." }
+      peak: { type: ref, to: ComputeShape, doc: "Burst ceiling." }
+      maxDiskGiB: { type: integer, min: 1, max: 1024, doc: "Maximum guest disk." }
+      endpointBandwidthMBps: { type: integer, min: 1, max: 1024, doc: "Endpoint bandwidth." }
+      maxConcurrentConnections: { type: integer, min: 1, max: 4096, doc: "Concurrent connection ceiling." }
+
+  ResolvedNetwork:
+    doc: The resolved guest network policy.
+    type: object
+    fields:
+      hands: { type: ref, to: HandsNetworkRequest, doc: "What the guest may reach." }
+
+  ResolvedConfig:
+    doc: Everything the platform actually resolved for this session.
+    type: object
+    fields:
+      provider: { type: provider_id, doc: "The provider." }
+      model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
+      providerCredentialId: { type: id, of: provider_credential, optional: true, doc: "The BYOK binding in use." }
+      compute: { type: ref, to: ResolvedCompute, doc: "Resolved capacity." }
+      network: { type: ref, to: ResolvedNetwork, doc: "Resolved network policy." }
+      registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved registered selection." }
+      approvalPolicy: { type: ref, to: ApprovalPolicy, doc: "Resolved approval policy." }
+      packages: { type: array, max: 64, items: { type: ref, to: PackageRequest }, doc: "Resolved packages." }
+
+  WorkspaceContinuity:
+    doc: What survives between runs, and from when.
+    type: object
+    fields:
+      rootHash: { type: content_hash, optional: true, doc: "The persisted workspace root." }
+      persistRevision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic persist revision." }
+      lastPersistedAt: { type: timestamp, optional: true, doc: "When the workspace was last persisted." }
+      liveGenerationId: { type: id, of: generation, optional: true, doc: "The live generation, when one exists." }
+
+  SessionLineage:
+    doc: Immutable provenance. A fork records its parent exactly once.
+    type: object
+    fields:
+      parentSessionId: { type: id, of: session, optional: true, doc: "The session this was forked from." }
+      forkedAtPersistRevision: { type: integer, min: 0, max: 9007199254740991, optional: true, doc: "The parent revision forked from." }
+      forkOperationId: { type: id, of: operation, optional: true, doc: "The operation that forked it." }
+
+  Session:
+    doc: A durable conversation and the workspace it owns.
+    type: object
+    fields:
+      id: { type: id, of: session, doc: "Identity." }
+      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
+      status: { type: ref, to: SessionStatus, doc: "What the session is doing." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      continuity: { type: ref, to: WorkspaceContinuity, doc: "What survives between runs." }
+      lineage: { type: ref, to: SessionLineage, doc: "Immutable provenance." }
+      resolvedConfig: { type: ref, to: ResolvedConfig, doc: "Everything the platform resolved." }
+      metadata: { type: map, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
+      createdAt: { type: timestamp, doc: "When it was created." }
+      updatedAt: { type: timestamp, doc: "When it last changed." }
+
+  SessionListItem:
+    doc: The collection projection of a session; `resolvedConfig` is omitted.
+    type: object
+    fields:
+      id: { type: id, of: session, doc: "Identity." }
+      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
+      status: { type: ref, to: SessionStatus, doc: "What the session is doing." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      provider: { type: provider_id, doc: "The provider." }
+      model: { type: string, min: 1, max: 256, doc: "The model." }
+      createdAt: { type: timestamp, doc: "When it was created." }
+      updatedAt: { type: timestamp, doc: "When it last changed." }
+
+  SessionListPage:
+    doc: One page of sessions.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: SessionListItem }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  DeletingSession:
+    doc: A session whose deletion is running; rendered at 410.
+    type: object
+    fields:
+      id: { type: id, of: session, doc: "Identity." }
+      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
+      operationId: { type: id, of: operation, doc: "The deletion operation." }
+      startedAt: { type: timestamp, doc: "When deletion began." }
+
+  SessionTombstone:
+    doc: What remains of a deleted session; rendered at 410.
+    type: object
+    fields:
+      id: { type: id, of: session, doc: "The deleted session." }
+      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
+      deletedAt: { type: timestamp, doc: "When deletion committed." }
+      operationId: { type: id, of: operation, doc: "The operation that deleted it." }
+      cascaded: { type: boolean, doc: "Whether descendants were deleted too." }
+
+  MessageRole:
+    doc: Who produced a message.
+    type: enum
+    values:
+      - { value: user, doc: "The customer." }
+      - { value: assistant, doc: "The model." }
+      - { value: tool, doc: "A tool result." }
+
+  FileSource:
+    doc: Where a referenced file lives. Only persisted files may be attached.
+    type: enum
+    values:
+      - { value: persisted, doc: "The persisted workspace tree." }
+
+  MessagePartText:
+    doc: A text part.
+    type: object
+    fields:
+      text: { type: string, min: 0, max: 1048576, doc: "The text." }
+
+  MessagePartFile:
+    doc: A reference to a persisted file.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The normalized POSIX path." }
+      source: { type: ref, to: FileSource, doc: "Always the persisted tree." }
+      mediaType: { type: string, min: 1, max: 255, optional: true, doc: "Declared media type." }
+
+  MessagePart:
+    doc: One part of a message.
+    type: union
+    tag: type
+    variants:
+      - { value: text, payload: MessagePartText, doc: "Text." }
+      - { value: file, payload: MessagePartFile, doc: "A persisted file reference." }
+
+  Message:
+    doc: One message in a session.
+    type: object
+    fields:
+      id: { type: id, of: message, doc: "Identity." }
+      sessionId: { type: id, of: session, doc: "The owning session." }
+      runId: { type: id, of: run, optional: true, doc: "The run that produced it." }
+      role: { type: ref, to: MessageRole, doc: "Who produced it." }
+      content: { type: array, max: 256, items: { type: ref, to: MessagePart }, doc: "The parts." }
+      createdAt: { type: timestamp, doc: "When it was recorded." }
+
+  MessagePage:
+    doc: One page of messages.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Message }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  MessageSendRequest:
+    doc: Admit a message and start or queue its run.
+    type: object
+    fields:
+      content: { type: array, max: 256, items: { type: ref, to: MessagePart }, doc: "The parts." }
+      maxSpendCents: { type: cents, optional: true, doc: "Spend ceiling for the resulting run." }
+
+  MessageSendResult:
+    doc: The admitted message and the run it started.
+    type: object
+    fields:
+      message: { type: ref, to: Message, doc: "The admitted message." }
+      run: { type: ref, to: Run, doc: "The queued or started run." }
+
+  Run:
+    doc: One admitted turn of execution.
+    type: object
+    fields:
+      id: { type: id, of: run, doc: "Identity." }
+      sessionId: { type: id, of: session, doc: "The owning session." }
+      messageId: { type: id, of: message, doc: "The message that admitted it." }
+      status: { type: ref, to: RunStatus, doc: "Where it ended up." }
+      maxSpendCents: { type: cents, doc: "The effective spend ceiling." }
+      queuedAt: { type: timestamp, doc: "When it was admitted." }
+      startedAt: { type: timestamp, optional: true, doc: "When execution began." }
+      terminalAt: { type: timestamp, optional: true, doc: "When it reached a terminal status." }
+      outputMessageIds: { type: array, max: 1000, optional: true, items: { type: id, of: message }, doc: "Messages it produced." }
+      error: { type: ref, to: ApiErrorBody, optional: true, doc: "The terminal failure." }
+      telemetryComplete: { type: boolean, optional: true, doc: "Whether the run has no recorded gaps." }
+      telemetryGapIds: { type: array, max: 100, optional: true, items: { type: id, of: telemetry_gap }, doc: "Gaps recorded during the run." }
+
+  RunPage:
+    doc: One page of runs.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Run }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  SessionPersistRequest:
+    doc: Admit the durable persist operation.
+    type: object
+    fields:
+      include: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to include." }
+      exclude: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to exclude." }
+
+  ForkFiles:
+    doc: Which file tree a fork starts from.
+    type: enum
+    values:
+      - { value: current, doc: "The parent's current persisted tree." }
+      - { value: initial, doc: "The parent's tree as first persisted." }
+      - { value: none, doc: "An empty tree." }
+
+  ForkCredentials:
+    doc: Whether a fork inherits credential custody.
+    type: enum
+    values:
+      - { value: copy, doc: "Copy the parent's custody bindings." }
+      - { value: none, doc: "Start with no custody." }
+
+  SessionForkRequest:
+    doc: Admit the durable fork operation.
+    type: object
+    fields:
+      files: { type: ref, to: ForkFiles, doc: "Which tree to start from." }
+      credentials: { type: ref, to: ForkCredentials, doc: "Whether to inherit custody." }
+
+  SessionWorkspaceDiscardRequest:
+    doc: Admit the durable workspace-discard operation.
+    type: object
+    fields:
+      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only discard this exact generation." }
+
+  SessionCredentialRebindRequest:
+    doc: Admit the durable credential-rebind operation.
+    type: object
+    fields:
+      secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The new custody set." }
+
+  SessionDeleteRequest:
+    doc: Admit the durable session-deletion operation.
+    type: object
+    fields:
+      cascade: { type: boolean, doc: "Whether forked descendants are deleted too." }
+
+  SessionStopResult:
+    doc: The result of a stop operation.
+    type: object
+    fields:
+      sessionId: { type: id, of: session, doc: "The session." }
+      changed: { type: boolean, doc: "Whether anything was actually stopped." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the stop." }
+
+  SessionPersistResult:
+    doc: The result of a persist operation.
+    type: object
+    fields:
+      sessionId: { type: id, of: session, doc: "The session." }
+      changed: { type: boolean, doc: "Whether the tree actually changed." }
+      persistRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the persist." }
+      rootHash: { type: content_hash, doc: "The persisted root." }
+      lastPersistedAt: { type: timestamp, doc: "When the persist committed." }
+      added: { type: decimal, doc: "Entries added." }
+      updated: { type: decimal, doc: "Entries replaced." }
+      deleted: { type: decimal, doc: "Entries removed." }
+      bytesMoved: { type: decimal, doc: "Bytes written to durable content." }
+
+  SessionForkResult:
+    doc: The result of a fork operation.
+    type: object
+    fields:
+      session: { type: ref, to: Session, doc: "The new session." }
+
+  WorkspaceDiscardResult:
+    doc: The result of a workspace-discard operation.
+    type: object
+    fields:
+      sessionId: { type: id, of: session, doc: "The session." }
+      changed: { type: boolean, doc: "Whether a live workspace was actually discarded." }
+      continuity: { type: ref, to: WorkspaceContinuity, doc: "Continuity after the discard." }
+
+  CredentialRebindResult:
+    doc: The result of a credential-rebind operation.
+    type: object
+    fields:
+      sessionId: { type: id, of: session, doc: "The session." }
+      custodyRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The custody revision after the rebind." }
+      secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The bound secrets." }

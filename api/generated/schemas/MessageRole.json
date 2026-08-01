@@ -1,0 +1,12 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessageRole.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Who produced a message.",
+  "enum": [
+    "user",
+    "assistant",
+    "tool"
+  ],
+  "title": "MessageRole",
+  "type": "string"
+}

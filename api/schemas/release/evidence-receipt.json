@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aex.dev/release/v1/evidence-receipt.json",
+  "title": "aex.evidence-receipt.v1",
+  "description": "The only thing a promotion decision reads. JUnit, logs, traces and profiles are hashed attachments, never the verdict. The counters that must be zero are constants in this schema, not defaults, so a receipt reporting a skip is structurally invalid rather than merely rejected later.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "receiptDigest",
+    "receiptId",
+    "class",
+    "layer",
+    "lane",
+    "source",
+    "selection",
+    "inventory",
+    "data",
+    "startedAt",
+    "completedAt",
+    "conclusion"
+  ],
+  "properties": {
+    "schema": { "const": "aex.evidence-receipt.v1" },
+    "receiptDigest": { "$ref": "#/$defs/sha256" },
+    "receiptId": { "type": "string", "pattern": "^rc_[A-Za-z0-9_-]{1,64}$" },
+    "class": {
+      "enum": [
+        "unit",
+        "property",
+        "contract",
+        "conformance",
+        "integration",
+        "lint",
+        "deny",
+        "package-integrity",
+        "sbom",
+        "license",
+        "vulnerability",
+        "determinism",
+        "boundary",
+        "routing",
+        "no-affected-unit",
+        "smoke",
+        "e2e",
+        "user",
+        "capacity",
+        "load",
+        "soak",
+        "fuzz",
+        "mutation",
+        "miri",
+        "sanitizer",
+        "drift",
+        "quota",
+        "cost",
+        "backup-readiness",
+        "arch-qualification"
+      ]
+    },
+    "layer": { "enum": ["unit", "smoke", "integration", "e2e", "user"] },
+    "lane": { "enum": ["pr", "main", "assurance", "release"] },
+    "concerns": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "contract",
+          "property",
+          "concurrency",
+          "fault",
+          "security",
+          "performance",
+          "compatibility"
+        ]
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commitSha",
+        "treeClean",
+        "workflowRunId",
+        "runAttempt",
+        "jobName",
+        "builderId"
+      ],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "commitSha": { "$ref": "#/$defs/sha1" },
+        "treeClean": { "const": true },
+        "workflowRunId": { "type": "string", "pattern": "^[0-9]+$" },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "jobName": { "type": "string" },
+        "builderId": { "type": "string" }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cargoLockDigest": { "$ref": "#/$defs/sha256" },
+        "bunLockDigest": { "$ref": "#/$defs/sha256" },
+        "terraformLockDigest": { "$ref": "#/$defs/sha256" },
+        "toolchainDigest": { "$ref": "#/$defs/sha256" },
+        "testSourceDigest": { "$ref": "#/$defs/sha256" },
+        "testArchiveDigest": { "$ref": "#/$defs/sha256" },
+        "fixtureCorpusDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifactEnvelopeDigest": { "$ref": "#/$defs/sha256" },
+        "releaseId": { "$ref": "#/$defs/sha256" },
+        "unitIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "filterset", "packages"],
+      "properties": {
+        "mode": { "enum": ["affected", "full", "shadow"] },
+        "filterset": { "type": "string", "minLength": 1 },
+        "packages": { "type": "array", "items": { "type": "string" } },
+        "partition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["index", "total"],
+          "properties": {
+            "index": { "type": "integer", "minimum": 0 },
+            "total": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "reasonsDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declared",
+        "collected",
+        "passed",
+        "failed",
+        "skipped",
+        "ignored",
+        "filteredAtRuntime",
+        "retried",
+        "flaky"
+      ],
+      "properties": {
+        "declared": { "type": "integer", "minimum": 1 },
+        "collected": { "type": "integer", "minimum": 1 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "const": 0 },
+        "ignored": { "const": 0 },
+        "filteredAtRuntime": { "const": 0 },
+        "retried": { "const": 0 },
+        "flaky": { "const": 0 }
+      }
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "message", "firstAttempt"],
+        "properties": {
+          "id": { "type": "string" },
+          "message": { "type": "string" },
+          "firstAttempt": { "type": "boolean" }
+        }
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "digest", "uri", "sizeBytes"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "junit",
+              "log",
+              "trace",
+              "profile",
+              "recording",
+              "coverage",
+              "first-failure",
+              "cleanup-ledger",
+              "nextest-list"
+            ]
+          },
+          "digest": { "$ref": "#/$defs/sha256" },
+          "uri": { "type": "string" },
+          "sizeBytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["residue", "secretCanaryObserved"],
+      "properties": {
+        "budgetMicroUsd": { "type": "integer", "minimum": 0 },
+        "spentMicroUsd": { "type": "integer", "minimum": 0 },
+        "cleanupLedgerDigest": { "$ref": "#/$defs/sha256" },
+        "residue": { "enum": ["none", "explained"] },
+        "secretCanaryObserved": { "const": false },
+        "residueExplanation": { "type": "string", "minLength": 8 }
+      }
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "conclusion": { "enum": ["passed", "failed", "infrastructure_failed", "incomplete"] }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

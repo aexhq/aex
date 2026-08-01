@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/FileWakePolicy.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether a live read may wake a retained session.",
+  "enum": [
+    "retained",
+    "never"
+  ],
+  "title": "FileWakePolicy",
+  "type": "string"
+}

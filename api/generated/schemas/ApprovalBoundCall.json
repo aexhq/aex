@@ -1,0 +1,57 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ApprovalBoundCall.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The exact call an approval is bound to. Nothing else may run under it.",
+  "properties": {
+    "agentId": {
+      "description": "The agent inside the run.",
+      "pattern": "^agt_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "agent"
+    },
+    "argumentsDigest": {
+      "description": "Canonical digest of the arguments.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "expectedGenerationId": {
+      "description": "The generation the call must run in.",
+      "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "generation"
+    },
+    "implementationDigest": {
+      "description": "Digest of the tool implementation and config.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "runId": {
+      "description": "The run.",
+      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "run"
+    },
+    "toolCallId": {
+      "description": "The tool call.",
+      "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "tool_call"
+    },
+    "toolName": {
+      "description": "The canonical tool name.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agentId",
+    "argumentsDigest",
+    "implementationDigest",
+    "runId",
+    "toolCallId",
+    "toolName"
+  ],
+  "title": "ApprovalBoundCall",
+  "type": "object"
+}

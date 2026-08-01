@@ -1,0 +1,47 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ApiErrorBody.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The failure itself.",
+  "properties": {
+    "code": {
+      "description": "The closed v1 error code.",
+      "type": "string",
+      "x-aex-registry": "errors"
+    },
+    "details": {
+      "$ref": "aex:schema:ErrorDetails",
+      "description": "Typed remediation detail."
+    },
+    "message": {
+      "description": "A human message; never a provider body.",
+      "maxLength": 2048,
+      "minLength": 0,
+      "type": "string"
+    },
+    "operationId": {
+      "description": "The durable operation this failure belongs to.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    },
+    "requestId": {
+      "description": "The diagnostic request identifier.",
+      "maxLength": 128,
+      "minLength": 0,
+      "type": "string"
+    },
+    "retryable": {
+      "description": "Whether an identical retry can succeed.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "requestId",
+    "retryable"
+  ],
+  "title": "ApiErrorBody",
+  "type": "object"
+}

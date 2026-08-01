@@ -1,0 +1,14 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RotateReason.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Why a stream ended after its 200.",
+  "enum": [
+    "budget_exhausted",
+    "server_rotating",
+    "client_idle",
+    "upstream_unavailable",
+    "failed"
+  ],
+  "title": "RotateReason",
+  "type": "string"
+}

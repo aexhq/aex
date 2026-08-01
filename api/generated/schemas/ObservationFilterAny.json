@@ -1,0 +1,21 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationFilterAny.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "At least one child must match.",
+  "properties": {
+    "filters": {
+      "description": "The children.",
+      "items": {
+        "$ref": "aex:schema:ObservationFilter"
+      },
+      "maxItems": 16,
+      "type": "array"
+    }
+  },
+  "required": [
+    "filters"
+  ],
+  "title": "ObservationFilterAny",
+  "type": "object"
+}

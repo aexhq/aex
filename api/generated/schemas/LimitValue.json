@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LimitValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The effective value of a limit, discriminated by shape.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:LimitScalarValue",
+      "x-aex-discriminator-value": "scalar"
+    },
+    {
+      "$ref": "aex:schema:LimitMapValue",
+      "x-aex-discriminator-value": "map"
+    }
+  ],
+  "title": "LimitValue",
+  "x-aex-discriminator": "shape"
+}

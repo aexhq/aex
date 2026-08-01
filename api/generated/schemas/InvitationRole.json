@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/InvitationRole.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The role an invitation grants; ownership is never invited.",
+  "enum": [
+    "admin",
+    "member"
+  ],
+  "title": "InvitationRole",
+  "type": "string"
+}

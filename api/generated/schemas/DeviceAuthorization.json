@@ -1,0 +1,54 @@
+{
+  "$id": "https://schemas.aex.dev/v1/DeviceAuthorization.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A pending device authorization the user must approve in a browser.",
+  "properties": {
+    "deviceCode": {
+      "description": "The polling secret.",
+      "maxLength": 256,
+      "minLength": 32,
+      "type": "string"
+    },
+    "expiresAt": {
+      "description": "When the device code stops working.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "intervalSeconds": {
+      "description": "Minimum polling interval.",
+      "maximum": 60,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "userCode": {
+      "description": "The short code the user types.",
+      "maxLength": 16,
+      "minLength": 6,
+      "type": "string"
+    },
+    "verificationUri": {
+      "description": "Where the user approves.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "verificationUriComplete": {
+      "description": "The same page with the code prefilled.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceCode",
+    "expiresAt",
+    "intervalSeconds",
+    "userCode",
+    "verificationUri",
+    "verificationUriComplete"
+  ],
+  "title": "DeviceAuthorization",
+  "type": "object"
+}

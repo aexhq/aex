@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UploadState.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where a staged upload is in its lifecycle.",
+  "enum": [
+    "staging",
+    "ready"
+  ],
+  "title": "UploadState",
+  "type": "string"
+}

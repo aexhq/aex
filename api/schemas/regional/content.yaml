@@ -1,0 +1,565 @@
+# Files, registered resources, uploads, secrets, provider credentials,
+# approvals and effective limits.
+module: regional
+schemas:
+  FileEntryType:
+    doc: What a file entry is.
+    type: enum
+    values:
+      - { value: file, doc: "A regular file." }
+      - { value: directory, doc: "A directory." }
+      - { value: symlink, doc: "A symbolic link." }
+
+  FileWakePolicy:
+    doc: Whether a live read may wake a retained session.
+    type: enum
+    values:
+      - { value: retained, doc: "Wake a retained session if needed." }
+      - { value: never, doc: "Never wake; fail instead." }
+
+  FileConsistency:
+    doc: How coherent a live read has to be.
+    type: enum
+    values:
+      - { value: coherent, doc: "Observe a single consistent generation." }
+      - { value: best_effort, doc: "Accept whatever the current generation reports." }
+
+  FileEntry:
+    doc: One file entry, identified by its normalized POSIX path.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The normalized POSIX path." }
+      type: { type: ref, to: FileEntryType, doc: "What the entry is." }
+      sizeBytes: { type: decimal, doc: "Size in bytes." }
+      sha256: { type: content_hash, optional: true, doc: "Content hash, for regular files." }
+      mode: { type: string, min: 4, max: 4, pattern: "^0[0-7]{3}$", doc: "POSIX mode, four octal digits." }
+      mtime: { type: timestamp, doc: "Modification time." }
+      target: { type: file_path, optional: true, doc: "Link target, for symlinks." }
+
+  FileEntryPage:
+    doc: One page of file entries.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: FileEntry }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  LiveFileEntry:
+    doc: One live file entry plus what the read did to the workspace.
+    type: object
+    fields:
+      entry: { type: ref, to: FileEntry, doc: "The entry." }
+      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What the read did." }
+
+  LiveFileEntryPage:
+    doc: One page of live file entries plus what the read did.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: FileEntry }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What the read did." }
+
+  LiveDownloadGrant:
+    doc: A download grant plus what minting it did to the workspace.
+    type: object
+    fields:
+      grant: { type: ref, to: DownloadGrant, doc: "The grant." }
+      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What minting it did." }
+
+  FileListRequest:
+    doc: List persisted files; an observational read that never mutates.
+    type: object
+    fields:
+      path: { type: file_path, optional: true, doc: "Subtree to list; defaults to the root." }
+      recursive: { type: boolean, optional: true, doc: "Whether to descend; defaults to false." }
+      limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
+      cursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  FileStatRequest:
+    doc: Stat one persisted file.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The entry to stat." }
+
+  FileDownloadRequest:
+    doc: Mint a download grant for one persisted file.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The entry to download." }
+      range: { type: byte_range, optional: true, doc: "An explicit bounded range." }
+
+  LiveFileListRequest:
+    doc: List live workspace files.
+    type: object
+    fields:
+      path: { type: file_path, optional: true, doc: "Subtree to list; defaults to the root." }
+      recursive: { type: boolean, optional: true, doc: "Whether to descend; defaults to false." }
+      limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
+      cursor: { type: cursor, optional: true, doc: "Continuation token." }
+      wake: { type: ref, to: FileWakePolicy, optional: true, doc: "Whether a retained session may be woken." }
+      consistency: { type: ref, to: FileConsistency, optional: true, doc: "How coherent the read must be." }
+      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
+
+  LiveFileStatRequest:
+    doc: Stat one live workspace file.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The entry to stat." }
+      wake: { type: ref, to: FileWakePolicy, optional: true, doc: "Whether a retained session may be woken." }
+      consistency: { type: ref, to: FileConsistency, optional: true, doc: "How coherent the read must be." }
+      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
+
+  LiveFileDownloadRequest:
+    doc: Mint a download grant for one live workspace file.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The entry to download." }
+      range: { type: byte_range, optional: true, doc: "An explicit bounded range." }
+      wake: { type: ref, to: FileWakePolicy, optional: true, doc: "Whether a retained session may be woken." }
+      consistency: { type: ref, to: FileConsistency, optional: true, doc: "How coherent the read must be." }
+      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
+
+  BlobEncoding:
+    doc: How inline blob bytes are encoded.
+    type: enum
+    values:
+      - { value: utf8, doc: "The data member is the literal text." }
+      - { value: base64, doc: "The data member is standard base64." }
+
+  BlobInline:
+    doc: A small value carried in the request.
+    type: object
+    fields:
+      encoding: { type: ref, to: BlobEncoding, doc: "How the data is encoded." }
+      data: { type: string, min: 0, max: 1048576, doc: "The encoded bytes." }
+      sha256: { type: content_hash, doc: "Hash of the decoded bytes." }
+
+  BlobUpload:
+    doc: A large value staged through the upload surface.
+    type: object
+    fields:
+      uploadId: { type: id, of: upload, doc: "The ready staged upload." }
+      sha256: { type: content_hash, doc: "Hash of the staged bytes." }
+      sizeBytes: { type: decimal, doc: "Size of the staged bytes." }
+
+  BlobInput:
+    doc: Where a registered value's bytes come from.
+    type: union
+    tag: type
+    variants:
+      - { value: inline, payload: BlobInline, doc: "Carried in the request." }
+      - { value: upload, payload: BlobUpload, doc: "Staged through the upload surface." }
+
+  RegisteredState:
+    doc: The only state a registered entry has; there is no version history.
+    type: enum
+    values:
+      - { value: current, doc: "The current replacement." }
+
+  RegisteredFileMode:
+    doc: The two permitted registered-file modes.
+    type: enum
+    values:
+      - { value: "0644", doc: "Read-write for the owner, read for others." }
+      - { value: "0755", doc: "Executable." }
+
+  BundleFormat:
+    doc: The only accepted bundle format.
+    type: enum
+    values:
+      - { value: tar.gz, doc: "A gzipped tar of a normalized POSIX tree." }
+
+  McpTransport:
+    doc: The only accepted MCP transport.
+    type: enum
+    values:
+      - { value: streamable_http, doc: "Streamable HTTP." }
+
+  McpHeader:
+    doc: One MCP request header whose value comes from a workspace secret.
+    type: object
+    fields:
+      name: { type: string, min: 1, max: 128, doc: "The header name." }
+      secretName: { type: resource_name, doc: "The secret whose value is sent." }
+
+  RegisteredFileValue:
+    doc: A registered file.
+    type: object
+    fields:
+      mountPath: { type: file_path, doc: "Where it is mounted in the guest." }
+      content: { type: ref, to: BlobInput, doc: "The bytes." }
+      mediaType: { type: string, min: 1, max: 255, doc: "Declared media type." }
+      mode: { type: ref, to: RegisteredFileMode, doc: "POSIX mode." }
+
+  RegisteredSkillValue:
+    doc: A registered skill bundle containing `SKILL.md`.
+    type: object
+    fields:
+      description: { type: string, min: 1, max: 4096, doc: "What the skill is for." }
+      bundleFormat: { type: ref, to: BundleFormat, doc: "The bundle format." }
+      bundle: { type: ref, to: BlobInput, doc: "The bundle bytes." }
+
+  RegisteredToolValue:
+    doc: A registered custom tool.
+    type: object
+    fields:
+      description: { type: string, min: 1, max: 4096, doc: "What the tool does." }
+      inputSchema: { type: canonical_json, doc: "JSON Schema 2020-12 for the arguments." }
+      entry: { type: string, min: 1, max: 1024, doc: "Relative entry path inside the bundle." }
+      bundleFormat: { type: ref, to: BundleFormat, doc: "The bundle format." }
+      bundle: { type: ref, to: BlobInput, doc: "The bundle bytes." }
+
+  RegisteredInstructionValue:
+    doc: A registered instruction.
+    type: object
+    fields:
+      text: { type: string, min: 1, max: 262144, doc: "The instruction text." }
+
+  RegisteredMcpServerValue:
+    doc: A registered MCP server. Configuration never contains a secret value.
+    type: object
+    fields:
+      url: { type: https_url, doc: "The server endpoint." }
+      transport: { type: ref, to: McpTransport, doc: "The transport." }
+      headers: { type: array, max: 32, items: { type: ref, to: McpHeader }, doc: "Secret-backed headers." }
+
+  RegisteredFile:
+    doc: A registered file entry.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The public identity." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      state: { type: ref, to: RegisteredState, doc: "Always current." }
+      sha256: { type: content_hash, doc: "Hash of the stored value." }
+      sizeBytes: { type: decimal, doc: "Size of the stored value." }
+      value: { type: ref, to: RegisteredFileValue, optional: true, doc: "Omitted in collection rows." }
+      createdAt: { type: timestamp, doc: "When first written." }
+      updatedAt: { type: timestamp, doc: "When last replaced." }
+
+  RegisteredSkill:
+    doc: A registered skill entry.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The public identity." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      state: { type: ref, to: RegisteredState, doc: "Always current." }
+      sha256: { type: content_hash, doc: "Hash of the stored value." }
+      sizeBytes: { type: decimal, doc: "Size of the stored value." }
+      value: { type: ref, to: RegisteredSkillValue, optional: true, doc: "Omitted in collection rows." }
+      createdAt: { type: timestamp, doc: "When first written." }
+      updatedAt: { type: timestamp, doc: "When last replaced." }
+
+  RegisteredTool:
+    doc: A registered tool entry.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The public identity." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      state: { type: ref, to: RegisteredState, doc: "Always current." }
+      sha256: { type: content_hash, doc: "Hash of the stored value." }
+      sizeBytes: { type: decimal, doc: "Size of the stored value." }
+      value: { type: ref, to: RegisteredToolValue, optional: true, doc: "Omitted in collection rows." }
+      createdAt: { type: timestamp, doc: "When first written." }
+      updatedAt: { type: timestamp, doc: "When last replaced." }
+
+  RegisteredInstruction:
+    doc: A registered instruction entry.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The public identity." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      state: { type: ref, to: RegisteredState, doc: "Always current." }
+      sha256: { type: content_hash, doc: "Hash of the stored value." }
+      sizeBytes: { type: decimal, doc: "Size of the stored value." }
+      value: { type: ref, to: RegisteredInstructionValue, optional: true, doc: "Omitted in collection rows." }
+      createdAt: { type: timestamp, doc: "When first written." }
+      updatedAt: { type: timestamp, doc: "When last replaced." }
+
+  RegisteredMcpServer:
+    doc: A registered MCP server entry.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The public identity." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      state: { type: ref, to: RegisteredState, doc: "Always current." }
+      sha256: { type: content_hash, doc: "Hash of the stored value." }
+      sizeBytes: { type: decimal, doc: "Size of the stored value." }
+      value: { type: ref, to: RegisteredMcpServerValue, optional: true, doc: "Omitted in collection rows." }
+      createdAt: { type: timestamp, doc: "When first written." }
+      updatedAt: { type: timestamp, doc: "When last replaced." }
+
+  RegisteredFilePage:
+    doc: One page of registered files.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: RegisteredFile }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  RegisteredSkillPage:
+    doc: One page of registered skills.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: RegisteredSkill }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  RegisteredToolPage:
+    doc: One page of registered tools.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: RegisteredTool }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  RegisteredInstructionPage:
+    doc: One page of registered instructions.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: RegisteredInstruction }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  RegisteredMcpServerPage:
+    doc: One page of registered MCP servers.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: RegisteredMcpServer }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  RegistryDownloadRequest:
+    doc: Mint a download grant for a registered file.
+    type: object
+    fields:
+      range: { type: byte_range, optional: true, doc: "An explicit bounded range." }
+
+  UploadState:
+    doc: Where a staged upload is in its lifecycle.
+    type: enum
+    values:
+      - { value: staging, doc: "Parts may still be written." }
+      - { value: ready, doc: "Complete and pinnable by a registry PUT." }
+
+  Upload:
+    doc: One staged multipart upload. Uploads are transport plumbing, not assets.
+    type: object
+    fields:
+      id: { type: id, of: upload, doc: "Identity." }
+      state: { type: ref, to: UploadState, doc: "Lifecycle position." }
+      sizeBytes: { type: decimal, doc: "The declared object size." }
+      sha256: { type: content_hash, doc: "The declared whole-object hash." }
+      contentType: { type: string, min: 1, max: 255, doc: "The declared media type." }
+      partSizeBytes: { type: decimal, doc: "The required part size." }
+      partCount: { type: integer, min: 1, max: 10000, doc: "How many parts the object needs." }
+      createdAt: { type: timestamp, doc: "When staging began." }
+      expiresAt: { type: timestamp, doc: "When the orphan grace expires." }
+
+  UploadCreateRequest:
+    doc: Stage a large registered-resource value.
+    type: object
+    fields:
+      sizeBytes: { type: decimal, doc: "The exact object size." }
+      sha256: { type: content_hash, doc: "The exact whole-object hash." }
+      contentType: { type: string, min: 1, max: 255, doc: "The media type." }
+
+  UploadPartsRequest:
+    doc: Mint presigned PUT grants for the named parts.
+    type: object
+    fields:
+      partNumbers: { type: array, max: 1000, items: { type: integer, min: 1, max: 10000 }, doc: "The parts to grant." }
+
+  UploadPartGrant:
+    doc: One presigned PUT grant.
+    type: object
+    fields:
+      partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
+      url: { type: https_url, doc: "The signed URL." }
+      expiresAt: { type: timestamp, doc: "When the signature stops verifying." }
+
+  UploadPartGrants:
+    doc: The presigned grants for the requested parts.
+    type: object
+    fields:
+      uploadId: { type: id, of: upload, doc: "The staged upload." }
+      grants: { type: array, max: 1000, items: { type: ref, to: UploadPartGrant }, doc: "The grants." }
+
+  UploadPart:
+    doc: One written part and the entity tag the store returned.
+    type: object
+    fields:
+      partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
+      etag: { type: etag, doc: "The entity tag the store returned." }
+
+  UploadCompleteRequest:
+    doc: Complete a staged upload.
+    type: object
+    fields:
+      parts: { type: array, max: 10000, items: { type: ref, to: UploadPart }, doc: "Every written part." }
+
+  SecretState:
+    doc: Whether a secret may still be admitted into custody.
+    type: enum
+    values:
+      - { value: ready, doc: "Admissible." }
+      - { value: revoked, doc: "Revoked; current custody was cancelled too." }
+
+  SecretMetadata:
+    doc: Secret metadata. Values are write-only and never readable.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The public identity." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      state: { type: ref, to: SecretState, doc: "Whether it is admissible." }
+      createdAt: { type: timestamp, doc: "When first written." }
+      updatedAt: { type: timestamp, doc: "When last replaced." }
+      revokedAt: { type: timestamp, optional: true, doc: "When it was revoked." }
+
+  SecretMetadataPage:
+    doc: One page of secret metadata.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: SecretMetadata }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  SecretPutRequest:
+    doc: Set a secret value. The value is never returned by any read.
+    type: object
+    fields:
+      value: { type: string, min: 1, max: 65536, doc: "The secret value." }
+
+  SecretRevocation:
+    doc: The receipt of a secret revocation.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The revoked secret." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after revocation." }
+      revokedAt: { type: timestamp, doc: "When revocation committed." }
+
+  ProviderCredentialState:
+    doc: Whether a BYOK binding may still be selected.
+    type: enum
+    values:
+      - { value: ready, doc: "Selectable." }
+      - { value: revoked, doc: "Revoked; sessions holding it fail closed." }
+
+  ProviderCredential:
+    doc: A BYOK provider-credential binding. The key material never appears here.
+    type: object
+    fields:
+      id: { type: id, of: provider_credential, doc: "The stable binding identity." }
+      provider: { type: provider_id, doc: "Which provider the credential is for." }
+      name: { type: resource_name, doc: "A human label." }
+      state: { type: ref, to: ProviderCredentialState, doc: "Whether it is selectable." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      fingerprint: { type: content_hash, doc: "A one-way fingerprint of the key material." }
+      createdAt: { type: timestamp, doc: "When it was registered." }
+      updatedAt: { type: timestamp, doc: "When it last changed." }
+      revokedAt: { type: timestamp, optional: true, doc: "When it was revoked." }
+
+  ProviderCredentialPage:
+    doc: One page of provider-credential bindings.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: ProviderCredential }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  ProviderCredentialRegisterRequest:
+    doc: Register a BYOK provider credential. This request carries plaintext.
+    type: object
+    fields:
+      provider: { type: provider_id, doc: "Which provider the credential is for." }
+      name: { type: resource_name, doc: "A human label." }
+      apiKey: { type: string, min: 8, max: 8192, doc: "The provider key; write-only, never returned." }
+
+  ApprovalStatus:
+    doc: Where an approval is in its lifecycle.
+    type: enum
+    values:
+      - { value: pending, doc: "Waiting on a decision." }
+      - { value: approved, doc: "Approved; the bound call may run." }
+      - { value: denied, doc: "Denied; the bound call will not run." }
+      - { value: expired, doc: "The bound call is no longer runnable." }
+
+  ApprovalDecision:
+    doc: The two decisions a caller may make.
+    type: enum
+    values:
+      - { value: approve, doc: "Let the bound call run." }
+      - { value: deny, doc: "Refuse the bound call." }
+
+  ApprovalBoundCall:
+    doc: The exact call an approval is bound to. Nothing else may run under it.
+    type: object
+    fields:
+      runId: { type: id, of: run, doc: "The run." }
+      agentId: { type: id, of: agent, doc: "The agent inside the run." }
+      toolCallId: { type: id, of: tool_call, doc: "The tool call." }
+      toolName: { type: resource_name, doc: "The canonical tool name." }
+      argumentsDigest: { type: content_hash, doc: "Canonical digest of the arguments." }
+      implementationDigest: { type: content_hash, doc: "Digest of the tool implementation and config." }
+      expectedGenerationId: { type: id, of: generation, optional: true, doc: "The generation the call must run in." }
+
+  Approval:
+    doc: A pending or resolved tool approval.
+    type: object
+    fields:
+      id: { type: id, of: approval, doc: "Identity." }
+      sessionId: { type: id, of: session, doc: "The owning session." }
+      status: { type: ref, to: ApprovalStatus, doc: "Lifecycle position." }
+      boundCall: { type: ref, to: ApprovalBoundCall, doc: "Exactly what may run." }
+      decision: { type: ref, to: ApprovalDecision, optional: true, doc: "The recorded decision." }
+      createdAt: { type: timestamp, doc: "When it was raised." }
+      expiresAt: { type: timestamp, doc: "When it stops being decidable." }
+      resolvedAt: { type: timestamp, optional: true, doc: "When it was decided." }
+
+  ApprovalPage:
+    doc: One page of approvals.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Approval }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  ApprovalRespondRequest:
+    doc: Decide a pending approval. Exact replay returns the winner.
+    type: object
+    fields:
+      decision: { type: ref, to: ApprovalDecision, doc: "The decision." }
+
+  LimitSource:
+    doc: Where an effective limit value came from.
+    type: enum
+    values:
+      - { value: default, doc: "The platform default." }
+      - { value: workspace_override, doc: "An audited workspace override." }
+
+  LimitScalarValue:
+    doc: A single non-negative integer limit.
+    type: object
+    fields:
+      value: { type: decimal, doc: "The effective value." }
+
+  LimitMapValue:
+    doc: A limit whose effective value is a map of named dimensions.
+    type: object
+    fields:
+      values: { type: map, items: { type: decimal }, doc: "The effective value per dimension." }
+
+  LimitValue:
+    doc: The effective value of a limit, discriminated by shape.
+    type: union
+    tag: shape
+    variants:
+      - { value: scalar, payload: LimitScalarValue, doc: "One integer." }
+      - { value: map, payload: LimitMapValue, doc: "A map of named dimensions." }
+
+  EffectiveWorkspaceLimit:
+    doc: One effective workspace safety limit. There is no public mutation route.
+    type: object
+    fields:
+      id: { type: limit_id, doc: "Which limit." }
+      effectiveValue: { type: ref, to: LimitValue, doc: "The value in force." }
+      source: { type: ref, to: LimitSource, doc: "Where the value came from." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
+      changedAt: { type: timestamp, doc: "When the value last changed." }
+
+  EffectiveWorkspaceLimitPage:
+    doc: One page of effective workspace limits.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: EffectiveWorkspaceLimit }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }

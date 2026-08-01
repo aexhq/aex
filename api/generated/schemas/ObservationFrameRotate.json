@@ -1,0 +1,32 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationFrameRotate.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The terminal condition after a 200. A stream always ends with a reason.",
+  "properties": {
+    "cursor": {
+      "description": "The last resumable position.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-cursor": true
+    },
+    "error": {
+      "$ref": "aex:schema:ApiErrorBody",
+      "description": "The failure, when there was one."
+    },
+    "reason": {
+      "$ref": "aex:schema:RotateReason",
+      "description": "Why the stream ended."
+    },
+    "retryable": {
+      "description": "Whether reconnecting from the last cursor can succeed.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "reason",
+    "retryable"
+  ],
+  "title": "ObservationFrameRotate",
+  "type": "object"
+}

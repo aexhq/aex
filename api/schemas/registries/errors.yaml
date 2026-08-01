@@ -1,0 +1,69 @@
+# The closed v1 public error vocabulary.
+#
+# `stage` is the error-precedence stage of the accepted wire contract; the
+# middleware stack evaluates ascending, so a code's stage says exactly where in
+# the pipeline it may be emitted.
+errors:
+  - { code: unauthenticated, status: 401, retryable: false, class: auth, stage: authentication, message: "no valid credential was presented", remedy: "present a valid account token or workspace API key" }
+  - { code: forbidden, status: 403, retryable: false, class: auth, stage: authorization, message: "the principal may not act on this resource" }
+  - { code: insufficient_scope, status: 403, retryable: false, class: auth, stage: scope, message: "the credential lacks the required scope", remedy: "mint a key that carries the scope named in `details`" }
+  - { code: token_invalid, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential did not verify" }
+  - { code: token_revoked, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential has been revoked" }
+  - { code: token_expired, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential has expired" }
+  - { code: malformed_token, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential is not a well-formed AEX credential" }
+  - { code: authorization_pending, status: 400, retryable: true, class: state, stage: domain_state, message: "the device authorization has not been approved yet" }
+  - { code: slow_down, status: 429, retryable: true, class: quota, stage: domain_state, message: "poll less often" }
+  - { code: not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such resource" }
+  - { code: gone, status: 410, retryable: false, class: not_found, stage: tombstone_and_parent, message: "the resource was deleted" }
+  - { code: idempotency_conflict, status: 409, retryable: false, class: conflict, stage: idempotency_identity, message: "the idempotency key was reused with a different intent" }
+  - { code: operation_idempotency_conflict, status: 409, retryable: false, class: conflict, stage: operation_identity, message: "the operation id was reused with a different intent" }
+  - { code: invalid_request, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the request body failed strict validation" }
+  - { code: invalid_cursor, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the cursor is malformed, expired, or bound to a different query" }
+  - { code: invalid_file_selection, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the include or exclude selection is not a valid file selection" }
+  - { code: invalid_range, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the byte range is absent, empty, or larger than one grant may sign" }
+  - { code: payload_too_large, status: 413, retryable: false, class: validation, stage: transport_envelope, message: "the encoded body exceeded the effective limit" }
+  - { code: limit_exceeded, status: 429, retryable: true, class: quota, stage: domain_state, message: "an effective workspace limit was exceeded" }
+  - { code: session_not_idle, status: 409, retryable: true, class: state, stage: domain_state, message: "the session must be idle for this operation" }
+  - { code: workspace_activation_required, status: 409, retryable: true, class: state, stage: domain_state, message: "the regional workspace is not activated yet" }
+  - { code: workspace_not_live, status: 409, retryable: false, class: state, stage: domain_state, message: "the workspace is not live" }
+  - { code: session_deleting, status: 409, retryable: false, class: state, stage: tombstone_and_parent, message: "the session is being deleted" }
+  - { code: session_deleted, status: 410, retryable: false, class: not_found, stage: tombstone_and_parent, message: "the session was deleted" }
+  - { code: deletion_in_progress, status: 409, retryable: false, class: conflict, stage: tombstone_and_parent, message: "a deletion of this resource is already running" }
+  - { code: operation_not_cancelable, status: 409, retryable: false, class: state, stage: domain_state, message: "the operation has passed its cancellation point" }
+  - { code: approval_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such approval" }
+  - { code: approval_already_resolved, status: 409, retryable: false, class: conflict, stage: domain_state, message: "the approval already has a decision" }
+  - { code: file_not_found, status: 404, retryable: false, class: not_found, stage: domain_state, message: "no such file entry" }
+  - { code: content_missing, status: 409, retryable: false, class: state, stage: domain_state, message: "the referenced content is not present" }
+  - { code: export_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such export" }
+  - { code: export_not_ready, status: 409, retryable: true, class: state, stage: domain_state, message: "the export is still preparing" }
+  - { code: export_expired, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the export expired" }
+  - { code: export_revoked, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the export was revoked" }
+  - { code: download_grant_expired, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the download grant expired" }
+  - { code: telemetry_payload_too_large, status: 413, retryable: false, class: validation, stage: transport_envelope, message: "the OTLP payload exceeded its effective limit" }
+  - { code: invalid_telemetry, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the telemetry payload is not the pinned OTLP revision" }
+  - { code: telemetry_quota_exceeded, status: 429, retryable: true, class: quota, stage: domain_state, message: "the telemetry admission quota was exceeded" }
+  - { code: telemetry_incomplete, status: 409, retryable: true, class: state, stage: domain_state, message: "the requested range has recorded gaps and completeness was required" }
+  - { code: unsupported_export_signal, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "that signal cannot be exported in the requested format" }
+  - { code: invalid_query, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the observation query exceeded its structural bounds" }
+  - { code: invalid_metric_aggregation, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the metric aggregation is not computable over the selection" }
+  - { code: invalid_network_policy, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the requested network policy is not permitted" }
+  - { code: unsupported_package_ecosystem, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "that package ecosystem is not supported" }
+  - { code: package_resolution_failed, status: 409, retryable: false, class: state, stage: domain_state, message: "a requested package could not be resolved" }
+  - { code: package_artifact_unavailable, status: 409, retryable: true, class: state, stage: domain_state, message: "a resolved package artifact could not be fetched" }
+  - { code: package_integrity_mismatch, status: 409, retryable: false, class: state, stage: domain_state, message: "a package artifact failed its integrity check" }
+  - { code: unknown_provider, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "no such provider" }
+  - { code: unknown_model, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "no such model for that provider" }
+  - { code: unqualified_provider_model, status: 409, retryable: false, class: state, stage: domain_state, message: "the provider and model pair has no live conformance receipt" }
+  - { code: provider_credential_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such provider credential binding" }
+  - { code: provider_credential_revoked, status: 409, retryable: false, class: state, stage: domain_state, message: "the provider credential binding was revoked" }
+  - { code: invalid_auto_topup_policy, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the auto top-up policy is not internally consistent" }
+  - { code: payment_method_required, status: 402, retryable: false, class: state, stage: domain_state, message: "the organization has no usable saved payment method" }
+  - { code: authentication_unavailable, status: 503, retryable: true, class: unavailable, stage: authentication, message: "the authorization authority could not be reached" }
+  - { code: account_paused, status: 402, retryable: false, class: state, stage: account_state, message: "the account is paused and this route is not pause-exempt" }
+  - { code: account_state_unavailable, status: 503, retryable: true, class: unavailable, stage: account_state, message: "the account state could not be established" }
+  - { code: precondition_failed, status: 412, retryable: false, class: precondition, stage: precondition, message: "the `If-Match` or generation precondition did not hold" }
+  - { code: wrong_workspace_region, status: 409, retryable: false, class: conflict, stage: placement, message: "the workspace is placed in a different region", remedy: "reissue the request against the `apiUrl` in `details`" }
+  - { code: observability_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the observation authority could not be reached" }
+  - { code: rate_limited, status: 429, retryable: true, class: quota, stage: domain_state, message: "too many requests" }
+  - { code: upstream_error, status: 502, retryable: true, class: unavailable, stage: commit, message: "a dependency failed" }
+  - { code: internal_error, status: 500, retryable: false, class: internal, stage: commit, message: "an unexpected condition occurred" }

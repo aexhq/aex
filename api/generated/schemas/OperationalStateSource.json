@@ -1,0 +1,10 @@
+{
+  "$id": "https://schemas.aex.dev/v1/OperationalStateSource.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where a workspace operational state comes from.",
+  "enum": [
+    "account"
+  ],
+  "title": "OperationalStateSource",
+  "type": "string"
+}

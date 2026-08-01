@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Idle timeout, header casing and body framing parity are proven by the public-edge live suite of the service behind the load balancer."

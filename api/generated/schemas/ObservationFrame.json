@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationFrame.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One NDJSON frame. `stream` and `listen` emit nothing else.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:ObservationFrameRecords",
+      "x-aex-discriminator-value": "records"
+    },
+    {
+      "$ref": "aex:schema:ObservationFrameGap",
+      "x-aex-discriminator-value": "gap"
+    },
+    {
+      "$ref": "aex:schema:ObservationFrameCursor",
+      "x-aex-discriminator-value": "cursor"
+    },
+    {
+      "$ref": "aex:schema:ObservationFrameRotate",
+      "x-aex-discriminator-value": "rotate"
+    }
+  ],
+  "title": "ObservationFrame",
+  "x-aex-discriminator": "type"
+}

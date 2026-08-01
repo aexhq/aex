@@ -1,0 +1,163 @@
+# How long a receipt of each class remains evidence.
+#
+# A class that is not in this file is not permanently fresh — it is undeclared,
+# and `evidence require` refuses it. An ungated class is the one shape of
+# staleness nobody notices.
+#
+# `bound_to` is what the receipt must name:
+#   envelope  the exact artifact envelope digest; age is meaningless because
+#             the bytes cannot change underneath it
+#   commit    the exact source commit
+#   release   the exact releaseId
+#   none      nothing; only age bounds it
+
+schema = "aex.freshness-policy.v1"
+
+# --- bound to the artifact ----------------------------------------------------
+
+[class.unit]
+bound_to = "envelope"
+rationale = "bound to bytes that cannot change; there is nothing for age to invalidate"
+
+[class.property]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.contract]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.conformance]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.lint]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.deny]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class."package-integrity"]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.sbom]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.license]
+bound_to = "envelope"
+rationale = "as unit"
+
+[class.determinism]
+bound_to = "envelope"
+rationale = "a rebuild that produced the same digest is a fact about those bytes"
+
+[class.boundary]
+bound_to = "envelope"
+rationale = "as unit"
+
+# --- bound to the commit ------------------------------------------------------
+
+[class.integration]
+bound_to = "commit"
+rationale = "engine behaviour is a property of the source, not of one packaging"
+
+# --- advisory: bytes do not change, the world does -----------------------------
+
+[class.vulnerability]
+bound_to = "envelope"
+max_age_hours = 168
+rationale = "the artifact is fixed but the advisory database is not; a week bounds how stale the verdict can be"
+
+# --- bound to the deployed release ---------------------------------------------
+
+[class.smoke]
+bound_to = "release"
+max_age_hours = 24
+rationale = "a deployed result describes a plane that keeps changing"
+
+[class.e2e]
+bound_to = "release"
+max_age_hours = 24
+rationale = "as smoke"
+
+[class.user]
+bound_to = "release"
+max_age_hours = 24
+rationale = "as smoke"
+
+# --- expensive to earn ----------------------------------------------------------
+
+[class.capacity]
+bound_to = "none"
+max_age_hours = 168
+rationale = "expensive; a week bounds drift without re-running a full campaign every release"
+
+[class.load]
+bound_to = "none"
+max_age_hours = 168
+rationale = "as capacity"
+
+[class.soak]
+bound_to = "none"
+max_age_hours = 168
+rationale = "a twelve-hour soak cannot be a per-release gate; a week is the accepted window"
+
+[class.fuzz]
+bound_to = "none"
+max_age_hours = 168
+rationale = "campaigns run on a schedule against the affected crates"
+
+[class.mutation]
+bound_to = "none"
+max_age_hours = 168
+rationale = "as fuzz"
+
+[class.miri]
+bound_to = "none"
+max_age_hours = 168
+rationale = "as fuzz"
+
+[class.sanitizer]
+bound_to = "none"
+max_age_hours = 168
+rationale = "as fuzz"
+
+# --- operational --------------------------------------------------------------
+
+[class.drift]
+bound_to = "none"
+max_age_hours = 24
+rationale = "state observed yesterday is not state today"
+
+[class.quota]
+bound_to = "none"
+max_age_hours = 24
+rationale = "as drift"
+
+[class.cost]
+bound_to = "none"
+max_age_hours = 24
+rationale = "as drift"
+
+[class."backup-readiness"]
+bound_to = "none"
+max_age_hours = 720
+rationale = "a restore drill is expensive and its subject changes slowly"
+
+[class."arch-qualification"]
+bound_to = "envelope"
+rationale = "an architecture is qualified for exact bytes on a real host, or it is not qualified"
+
+# --- routing ---------------------------------------------------------------------
+
+[class.routing]
+bound_to = "commit"
+rationale = "a routing decision is about one diff"
+
+[class."no-affected-unit"]
+bound_to = "commit"
+rationale = "an empty selection is a real result and is recorded as one, never as a skipped required job"

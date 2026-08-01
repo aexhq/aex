@@ -1,0 +1,12 @@
+# The only place a compatibility relaxation may be declared.
+#
+# Anything undeclared classifies `Breaking`. `requestUnknownFields` is not
+# configurable; it is recorded so the classifier can assert it.
+openEnums:
+  - ErrorCodeValue
+  - ObservationFrame
+additiveResponseFields:
+  - schema: Session
+    fields: []
+unknownFramePolicy: surface
+requestUnknownFields: reject

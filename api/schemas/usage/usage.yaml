@@ -1,0 +1,107 @@
+# Rated usage.
+#
+# Four priced categories, never added into one raw quantity. Model tokens are a
+# separate zero-dollar observability fact and never appear here.
+module: usage
+schemas:
+  UsageCategory:
+    doc: The four priced categories.
+    type: enum
+    values:
+      - { value: storage, doc: "Retained bytes over time." }
+      - { value: compute, doc: "Millicpu-milliseconds." }
+      - { value: memory, doc: "Byte-milliseconds." }
+      - { value: data_transfer, doc: "Measured outbound bytes." }
+
+  UsageGrouping:
+    doc: The axes a usage query may group by.
+    type: enum
+    values:
+      - { value: category, doc: "Priced category." }
+      - { value: region, doc: "Region." }
+      - { value: workspace, doc: "Workspace." }
+      - { value: session, doc: "Session." }
+      - { value: run, doc: "Run." }
+      - { value: operation, doc: "Durable operation." }
+
+  UsageQuery:
+    doc: A bounded query over rated usage.
+    type: object
+    fields:
+      categories: { type: array, max: 4, optional: true, items: { type: ref, to: UsageCategory }, doc: "Restrict to these categories." }
+      timeRange: { type: ref, to: TimeRange, doc: "The service-time window." }
+      groupBy: { type: array, max: 6, optional: true, items: { type: ref, to: UsageGrouping }, doc: "Grouping axes." }
+      cursor: { type: cursor, optional: true, doc: "Continuation token." }
+      limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
+
+  UsageAttribution:
+    doc: What a rated aggregate is attributed to.
+    type: object
+    fields:
+      region: { type: region, doc: "Where the usage happened." }
+      workspaceId: { type: id, of: workspace, doc: "The workspace." }
+      sessionId: { type: id, of: session, optional: true, doc: "The session, when attributable." }
+      runId: { type: id, of: run, optional: true, doc: "The run, when attributable." }
+      operationId: { type: id, of: operation, optional: true, doc: "The operation, when attributable." }
+      source: { type: string, min: 1, max: 128, doc: "Which authority produced the facts." }
+      ratedCents: { type: cents, doc: "The rated amount." }
+      serviceTime: { type: ref, to: TimeRange, doc: "The service-time interval." }
+
+  UsageStorageAggregate:
+    doc: Retained bytes over time.
+    type: object
+    fields:
+      attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      byteMinutes: { type: decimal, doc: "Byte-minutes of retained storage." }
+
+  UsageComputeAggregate:
+    doc: Millicpu-milliseconds of guest compute.
+    type: object
+    fields:
+      attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      millicpuMilliseconds: { type: decimal, doc: "Millicpu-milliseconds." }
+
+  UsageMemoryAggregate:
+    doc: Byte-milliseconds of guest memory.
+    type: object
+    fields:
+      attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      byteMilliseconds: { type: decimal, doc: "Byte-milliseconds." }
+
+  UsageDataTransferAggregate:
+    doc: Measured outbound bytes.
+    type: object
+    fields:
+      attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      egressBytes: { type: decimal, doc: "Measured egress bytes." }
+
+  UsageAggregate:
+    doc: One rated aggregate, discriminated by priced category.
+    type: union
+    tag: category
+    variants:
+      - { value: storage, payload: UsageStorageAggregate, doc: "Storage." }
+      - { value: compute, payload: UsageComputeAggregate, doc: "Compute." }
+      - { value: memory, payload: UsageMemoryAggregate, doc: "Memory." }
+      - { value: data_transfer, payload: UsageDataTransferAggregate, doc: "Data transfer." }
+
+  UsageFrontier:
+    doc: How far the pipeline has advanced for one workspace and category.
+    type: object
+    fields:
+      region: { type: region, doc: "The region." }
+      workspaceId: { type: id, of: workspace, doc: "The workspace." }
+      category: { type: ref, to: UsageCategory, doc: "The priced category." }
+      acceptedSequence: { type: decimal, doc: "Facts accepted by the authority." }
+      ratedSequence: { type: decimal, doc: "Facts priced." }
+      aggregatedSequence: { type: decimal, doc: "Facts folded into the projection." }
+      settledSequence: { type: decimal, doc: "Facts settled centrally." }
+      serviceThrough: { type: timestamp, doc: "Service time the frontiers are complete through." }
+
+  UsagePage:
+    doc: One page of rated usage plus the frontiers that bound its completeness.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: UsageAggregate }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+      frontiers: { type: array, max: 100, items: { type: ref, to: UsageFrontier }, doc: "Pipeline frontiers." }

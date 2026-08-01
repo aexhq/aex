@@ -1,0 +1,65 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationCoverage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the answer is actually complete over. Never omitted.",
+  "properties": {
+    "accepted": {
+      "$ref": "aex:schema:ObservationWatermark",
+      "description": "Admission watermark."
+    },
+    "caughtUp": {
+      "description": "Whether indexing has reached admission.",
+      "type": "boolean"
+    },
+    "complete": {
+      "description": "Whether the window has no known holes.",
+      "type": "boolean"
+    },
+    "earliestReplay": {
+      "description": "Earliest replayable observation time.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "indexed": {
+      "$ref": "aex:schema:ObservationWatermark",
+      "description": "Indexing watermark."
+    },
+    "missingIntervals": {
+      "description": "Known holes.",
+      "items": {
+        "$ref": "aex:schema:MissingInterval"
+      },
+      "maxItems": 100,
+      "type": "array"
+    },
+    "snapshot": {
+      "description": "The pinned snapshot position.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "unboundedGaps": {
+      "description": "Gaps with no known bound.",
+      "items": {
+        "pattern": "^gap_[0-9a-hjkmnp-tv-z]{26}$",
+        "type": "string",
+        "x-aex-id": "telemetry_gap"
+      },
+      "maxItems": 100,
+      "type": "array"
+    }
+  },
+  "required": [
+    "accepted",
+    "caughtUp",
+    "complete",
+    "earliestReplay",
+    "indexed",
+    "missingIntervals",
+    "snapshot",
+    "unboundedGaps"
+  ],
+  "title": "ObservationCoverage",
+  "type": "object"
+}

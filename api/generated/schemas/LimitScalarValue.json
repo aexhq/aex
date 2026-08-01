@@ -1,0 +1,18 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LimitScalarValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A single non-negative integer limit.",
+  "properties": {
+    "value": {
+      "description": "The effective value.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "title": "LimitScalarValue",
+  "type": "object"
+}
