@@ -23,11 +23,16 @@ security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
 
+[package.metadata.aex.targets]
+expressions = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the brain-core stream; the cases land with the crate's own implementation"
+integration = "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
+
 
 [dependencies]
 async-trait.workspace = true
+blake3.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-s3.workspace = true
@@ -41,3 +46,10 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-brain-domain = { path = "../aex-brain-domain" }
+
+[dev-dependencies]
+aex-brain-test-support = { path = "../aex-brain-test-support" }
+
+[[test]]
+name = "expressions"
+path = "tests/expressions.rs"

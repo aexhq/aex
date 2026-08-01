@@ -101,12 +101,14 @@ name = "aex-brain-store-aws"
 version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
+ "aex-brain-test-support",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-s3",
  "aws-sdk-sqs",
  "aws-smithy-types",
+ "blake3",
  "bytes",
  "futures",
  "serde",

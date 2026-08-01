@@ -7,6 +7,8 @@
 //! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
 //! itself lives in the library crates this deployable composes.
 
+pub mod health;
+
 /// Validated start-up configuration for `brain-mux`.
 ///
 /// Nothing here has a default. A variable that identifies a resource must be
@@ -138,6 +140,8 @@ where
 /// Currently always returns [`RunError::NotImplemented`]: the owning
 /// implementation stream lands the body on top of this composition root.
 pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+    // Readiness starts false and is never defaulted true: a process that reported ready
+    // before validating its bindings would admit work it cannot serve.
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,

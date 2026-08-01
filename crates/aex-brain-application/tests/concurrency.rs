@@ -330,14 +330,14 @@ mod threaded {
     #[test]
     fn l5_the_cache_stays_inside_its_own_budget() {
         let cache = WarmCacheShard::new(256, 128);
-        for index in 0..8_u128 {
+        for index in 0..8_u64 {
             cache.insert(
-                key(100 + index),
+                key(100 + u128::from(index)),
                 WarmEntry {
                     revision: AgentRevision(1),
                     state: FoldState::empty(),
                     bytes: 100,
-                    last_used: index as u64,
+                    last_used: index,
                 },
             );
         }

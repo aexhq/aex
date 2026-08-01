@@ -23,7 +23,7 @@ risk = ["none"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "no [[test]] target; the crate's own cases live in its #[cfg(test)] modules"
+targets = "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
 live_suite = "test-only crate; must be absent from every production link graph"
 
 [dependencies]

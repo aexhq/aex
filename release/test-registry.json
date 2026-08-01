@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 128,
+    "awaiting_owner": 125,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -102,14 +102,16 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "concurrency": "unit",
+          "ports": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-domain": {
       "name": "aex-brain-domain",
@@ -130,14 +132,22 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "budget": "unit",
+          "decode": "unit",
+          "envelope": "unit",
+          "histories": "unit",
+          "mutation": "unit",
+          "planner": "unit",
+          "properties": "unit",
+          "recovery": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-hands": {
       "name": "aex-brain-hands",
@@ -309,13 +319,15 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "expressions": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "integration": "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-test-support": {
       "name": "aex-brain-test-support",
@@ -339,7 +351,7 @@
         "targets": {},
         "not_applicable": {
           "live_suite": "test-only crate; must be absent from every production link graph",
-          "targets": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+          "targets": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
         }
       },
       "unmapped_targets": [],
@@ -2255,7 +2267,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the brain-core stream; the cases land with the binary's own implementation"
+          "targets": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
         }
       },
       "unmapped_targets": [],
