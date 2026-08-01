@@ -1,22 +1,18 @@
 //! The invariants that make an internal envelope safe to deploy in stages.
 
+use aex_internal_contracts::SchemaVersion;
 use aex_internal_contracts::assertion::{
-    AssertionAudience, AssertionError, AuthorizationAssertion, MAX_LIFETIME_MS, signing_input,
+    AssertionAudience, AssertionError, AssertionRefusal, AssertionResponse, CredentialDigest,
+    IssuedAssertion, MAX_ASSERTION_TEXT_LEN, ResolveSessionForWorkspace, ResolveWorkspaceKey,
 };
 use aex_internal_contracts::journal::JournalEntryKind;
 use aex_internal_contracts::money::{MICROUSD_PER_CENT, Microusd, MicrousdDelta, MoneyError};
 use aex_internal_contracts::outbox::{OutboxEvent, RunStatus, SessionRevision, UsageClosureId};
 use aex_internal_contracts::usage::{AuthorityKind, FactAuthority, FactId, Meter, ServiceTime};
-use aex_internal_contracts::{Epoch, SchemaVersion};
 use aex_wire::Uuid7;
-use aex_wire::idempotency::{PrincipalKind, PrincipalScope};
-use aex_wire::ids::{OrganizationId, PrefixedId, RunId, SessionId, UserId};
-use aex_wire::scopes::{ScopeId, ScopeSet};
+use aex_wire::ids::{PrefixedId, RunId, SessionId, UserId};
 use aex_wire::types::{Cents, DecimalU128, Region, Timestamp};
-
-fn organization() -> OrganizationId {
-    OrganizationId::parse("org_01kyw2qa4pew48j2gb1g6gw3rg").expect("organization id")
-}
+use base64::Engine as _;
 
 fn user() -> UserId {
     UserId::parse("usr_01kyw2qa4ne00r40r40m30e209").expect("user id")
@@ -26,25 +22,11 @@ fn timestamp(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("timestamp")
 }
 
-fn assertion(lifetime_ms: i64) -> AuthorizationAssertion {
-    AuthorizationAssertion {
-        schema_version: SchemaVersion::V1,
-        principal: PrincipalScope::Account {
-            user: user(),
-            organization: Some(organization()),
-        },
-        principal_kind: PrincipalKind::Account,
-        workspace: None,
-        organization: organization(),
-        region: Region::EuWest1,
-        scopes: ScopeSet::new([ScopeId::AccountRead, ScopeId::SessionsRead]),
-        key_epoch: Epoch(1),
-        account_epoch: Epoch(2),
-        revocation_epoch: Epoch(3),
-        issued_at: timestamp(1_785_501_296_000),
-        expires_at: timestamp(1_785_501_296_000 + lifetime_ms),
-        audience: AssertionAudience::RegionalSession,
-    }
+/// A stand-in envelope. This crate deliberately cannot build a real one: the
+/// layout, the signature and the length belong to `aex-identity-domain`, and a
+/// second constructor here would be a second definition of the artifact.
+fn encoded_envelope() -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 323])
 }
 
 #[test]
@@ -81,30 +63,146 @@ fn a_balance_can_never_be_pushed_below_zero_silently() {
 }
 
 #[test]
-fn an_assertion_may_not_outlive_thirty_seconds() {
-    assert_eq!(MAX_LIFETIME_MS, 30_000);
-    assert!(assertion(30_000).validate().is_ok());
+fn an_issued_assertion_has_exactly_one_textual_spelling() {
+    let text = encoded_envelope();
+    let issued = IssuedAssertion::new(text.clone()).expect("a canonical envelope");
+    assert_eq!(issued.as_str(), text);
+
+    // Padded and standard-alphabet spellings of the same bytes are refused, so
+    // comparing two encoded envelopes is comparing their bytes.
+    let padded = base64::engine::general_purpose::URL_SAFE.encode([7_u8; 323]);
+    assert_eq!(IssuedAssertion::new(padded), Err(AssertionError::Encoding));
     assert_eq!(
-        assertion(30_001).validate(),
-        Err(AssertionError::LifetimeTooLong)
+        IssuedAssertion::new(base64::engine::general_purpose::STANDARD.encode([255_u8; 323])),
+        Err(AssertionError::Encoding)
     );
+
+    // A trailing character carrying non-zero unused bits is a second spelling
+    // of the same bytes and is refused rather than silently normalised.
+    let mut non_canonical = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0_u8; 4]);
+    non_canonical.pop();
+    non_canonical.push('B');
     assert_eq!(
-        assertion(0).validate(),
-        Err(AssertionError::NotForwardInTime)
+        IssuedAssertion::new(non_canonical),
+        Err(AssertionError::Encoding)
+    );
+
+    assert_eq!(IssuedAssertion::new(""), Err(AssertionError::Encoding));
+    assert_eq!(
+        IssuedAssertion::new("A".repeat(MAX_ASSERTION_TEXT_LEN + 1)),
+        Err(AssertionError::Encoding)
     );
 }
 
 #[test]
-fn the_signing_input_is_domain_separated_and_canonical() {
-    let bytes = signing_input(&assertion(30_000));
-    assert!(
-        bytes.starts_with(b"aex:authorization-assertion:v1\x1f"),
-        "the signing input must be domain separated"
+fn an_issued_assertion_never_renders_its_envelope() {
+    let issued = IssuedAssertion::new(encoded_envelope()).expect("a canonical envelope");
+    let rendered = format!("{issued:?}");
+    assert!(!rendered.contains(issued.as_str()), "{rendered}");
+    let digest = CredentialDigest::new([9_u8; 32]);
+    assert_eq!(
+        format!("{digest:?}"),
+        "CredentialDigest(<redacted:32 bytes>)"
     );
-    // Same value, same bytes: a signature is only meaningful if this holds.
-    assert_eq!(bytes, signing_input(&assertion(30_000)));
-    // A different value must not produce the same bytes.
-    assert_ne!(bytes, signing_input(&assertion(29_000)));
+}
+
+#[test]
+fn neither_request_can_carry_a_credential() {
+    // The stored verifier is a MAC over a digest precisely so the plaintext can
+    // stay regional. A member named for the token itself must not exist, and
+    // `deny_unknown_fields` makes one that is sent a decode failure.
+    for document in [
+        serde_json::to_string(&ResolveWorkspaceKey {
+            schema_version: SchemaVersion::V1,
+            key: aex_wire::ids::ApiKeyId::parse("key_01kyw2qa4ne00r40r40m30e209")
+                .expect("api key id"),
+            presented_digest: CredentialDigest::new([3_u8; 32]),
+            region: Region::EuWest1,
+            audience: AssertionAudience::RegionalSession,
+        })
+        .expect("a request encodes"),
+        serde_json::to_string(&ResolveSessionForWorkspace {
+            schema_version: SchemaVersion::V1,
+            browser_session: SessionId::parse("ses_01kyw2qa4ne00r40r40m30e209")
+                .expect("session id"),
+            user: user(),
+            workspace: aex_wire::ids::WorkspaceId::parse("wsp_01kyw2qa4ne00r40r40m30e209")
+                .expect("workspace id"),
+            presented_digest: CredentialDigest::new([3_u8; 32]),
+            region: Region::EuWest1,
+            audience: AssertionAudience::RegionalObservation,
+        })
+        .expect("a request encodes"),
+    ] {
+        assert!(!document.contains("credential\""), "{document}");
+        assert!(!document.contains("token"), "{document}");
+        assert!(document.contains("presentedDigest"), "{document}");
+    }
+
+    // An added member is refused rather than ignored: a caller that believed it
+    // was sending a token must not be told the request succeeded.
+    assert!(
+        serde_json::from_str::<ResolveWorkspaceKey>(
+            r#"{"schemaVersion":1,"key":"key_01kyw2qa4ne00r40r40m30e209","presentedDigest":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","region":"eu-west-1","audience":"regional_session","credential":"aex_wk_euw1_x_y"}"#,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn a_refusal_is_an_answer_and_carries_no_detail_a_caller_could_probe() {
+    let refused = AssertionResponse::Refused {
+        reason: AssertionRefusal::NotAuthorized,
+    };
+    let document = serde_json::to_string(&refused).expect("a refusal encodes");
+    assert_eq!(
+        document,
+        r#"{"outcome":"refused","reason":"not_authorized"}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<AssertionResponse>(&document).expect("a refusal decodes"),
+        refused
+    );
+
+    // Exactly two outcomes are distinguishable. "Unknown key", "wrong digest"
+    // and "revoked" all collapse into one, so an unauthenticated caller cannot
+    // learn which it was by asking.
+    let unavailable = AssertionResponse::Refused {
+        reason: AssertionRefusal::AccountStateUnavailable,
+    };
+    assert_ne!(refused, unavailable);
+
+    let issued = AssertionResponse::Issued {
+        assertion: IssuedAssertion::new(encoded_envelope()).expect("a canonical envelope"),
+    };
+    let document = serde_json::to_string(&issued).expect("an issue encodes");
+    assert!(
+        document.starts_with(r#"{"outcome":"issued","assertion":"#),
+        "{document}"
+    );
+    assert_eq!(
+        serde_json::from_str::<AssertionResponse>(&document).expect("an issue decodes"),
+        issued
+    );
+}
+
+#[test]
+fn every_audience_names_exactly_one_deployable() {
+    let mut seen: Vec<&str> = AssertionAudience::ALL
+        .iter()
+        .map(|audience| audience.deployable())
+        .collect();
+    assert_eq!(seen.len(), 5);
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), 5, "two audiences named the same deployable");
+    for audience in AssertionAudience::ALL {
+        let document = serde_json::to_string(&audience).expect("an audience encodes");
+        assert_eq!(
+            serde_json::from_str::<AssertionAudience>(&document).expect("decodes"),
+            audience
+        );
+    }
 }
 
 #[test]
