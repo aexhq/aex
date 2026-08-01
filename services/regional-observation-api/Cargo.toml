@@ -35,6 +35,7 @@ name = "regional-observation-api"
 path = "src/main.rs"
 
 [dependencies]
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-query = { path = "../../crates/aex-observation-query" }
@@ -42,11 +43,17 @@ aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
 aex-otlp-admission = { path = "../../crates/aex-otlp-admission" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
+    "authz-projection",
+] }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 async-trait.workspace = true
 aws-config.workspace = true
-aws-lc-rs.workspace = true
+# `central-authz` is IAM-invoked, so the assertion exchange is a direct invoke.
+aws-sdk-lambda.workspace = true
+# Parameter Store holds the assertion trust anchors, read once at cold start.
+aws-sdk-ssm.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-s3.workspace = true
 axum.workspace = true
@@ -55,7 +62,6 @@ bytes.workspace = true
 futures.workspace = true
 http.workspace = true
 lambda_http.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

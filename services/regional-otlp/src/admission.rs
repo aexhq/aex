@@ -27,7 +27,7 @@ use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::authority::{AdmissionAuthority, AdmissionRequest, AuthorityError, PreparedObservation};
-use crate::edge::Authorized;
+use aex_regional_http::context::RequestContext as EdgeContext;
 
 /// The header naming the session an in-guest collector is emitting for.
 pub const SESSION_HEADER: &str = "aex-session-id";
@@ -91,7 +91,7 @@ impl OtlpService {
 #[derive(Clone)]
 pub struct OtlpRequest {
     service: Arc<OtlpService>,
-    authorized: Authorized,
+    authorized: EdgeContext,
     session: Option<SessionId>,
     encoding: OtlpEncoding,
     coding: ContentCoding,
@@ -110,9 +110,9 @@ impl std::fmt::Debug for OtlpRequest {
 impl OtlpRequest {
     /// Binds one request to the shared service.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         service: Arc<OtlpService>,
-        authorized: Authorized,
+        authorized: EdgeContext,
         session: Option<SessionId>,
         encoding: OtlpEncoding,
         coding: ContentCoding,
@@ -130,7 +130,7 @@ impl OtlpRequest {
     #[must_use]
     pub fn scope(&self) -> ScopeKey {
         self.session.map_or(
-            ScopeKey::Workspace(self.authorized.workspace),
+            ScopeKey::Workspace(self.authorized.auth.workspace_id),
             ScopeKey::Session,
         )
     }
@@ -165,8 +165,8 @@ impl OtlpRequest {
         })
         .map_err(|error| otlp_error(&error))?;
         let scope = aex_otlp_admission::AuthenticatedScope {
-            organization_id: self.authorized.organization,
-            workspace_id: self.authorized.workspace,
+            organization_id: self.authorized.auth.organization_id,
+            workspace_id: self.authorized.auth.workspace_id,
             session_id: self.session,
             run_id: None,
             agent_id: None,
@@ -186,7 +186,7 @@ impl OtlpRequest {
         }
         let descriptor = route(cx.route);
         let scope_key = self.scope();
-        let workspace = self.authorized.workspace.to_string();
+        let workspace = self.authorized.auth.workspace_id.to_string();
         let scope_text = scope_key.to_key();
         let principal = principal_id(cx);
         let bodies: Vec<CanonicalValue> = observations
@@ -211,8 +211,8 @@ impl OtlpRequest {
             .map_err(|_| WireError::new(ErrorCode::InternalError))?;
         let request = AdmissionRequest {
             batch_id: mint_batch_id(),
-            organization: self.authorized.organization,
-            workspace: self.authorized.workspace,
+            organization: self.authorized.auth.organization_id,
+            workspace: self.authorized.auth.workspace_id,
             scope: scope_key,
             intent_digest: digest.to_string(),
             observations,

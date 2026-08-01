@@ -5756,6 +5756,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "regional-observation-api"
 version = "0.1.0"
 dependencies = [
+ "aex-identity-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-observation-query",
@@ -5763,20 +5764,21 @@ dependencies = [
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",
+ "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
- "aws-lc-rs",
  "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
  "aws-sdk-s3",
+ "aws-sdk-ssm",
  "axum",
  "base64 0.23.0",
  "bytes",
  "futures",
  "http 1.5.0",
  "lambda_http",
- "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5791,25 +5793,27 @@ dependencies = [
 name = "regional-otlp"
 version = "0.1.0"
 dependencies = [
+ "aex-identity-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-observation-store-aws",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",
+ "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
- "aws-lc-rs",
  "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
+ "aws-sdk-ssm",
  "axum",
  "base64 0.23.0",
  "http 1.5.0",
  "lambda_http",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror",
@@ -5823,6 +5827,7 @@ dependencies = [
 name = "regional-secret-api"
 version = "0.1.0"
 dependencies = [
+ "aex-identity-domain",
  "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-regional-http",
@@ -5870,6 +5875,7 @@ version = "0.1.0"
 dependencies = [
  "aex-content-domain",
  "aex-content-dynamodb",
+ "aex-identity-domain",
  "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-regional-http",
@@ -5905,6 +5911,7 @@ dependencies = [
 name = "regional-stream"
 version = "0.1.0"
 dependencies = [
+ "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-telemetry-schema",

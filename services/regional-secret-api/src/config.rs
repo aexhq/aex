@@ -93,7 +93,7 @@ pub const FORBIDDEN: [(&str, &str); 6] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Deployment plane.
-    pub plane: String,
+    pub plane: aex_identity_domain::assertion::Plane,
     /// Pinned region.
     pub region: Region,
     /// Release digest reported by readiness.
@@ -201,6 +201,6 @@ impl Config {
     /// `prd` value even if both ever reached the same process.
     #[must_use]
     pub fn crypto_partition(&self) -> String {
-        format!("{}:{}", self.plane, self.region.as_str())
+        format!("{}:{}", self.plane.as_str(), self.region.as_str())
     }
 }

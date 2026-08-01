@@ -18,7 +18,7 @@ use std::sync::Arc;
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::assertion::AuthFailure;
 use aex_regional_http::authz::{
-    Ed25519Anchors, LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
+    LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
 };
 use aex_regional_http::config::ConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
@@ -89,7 +89,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         )
         .with(
             aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
+            config.plane.as_str().to_owned(),
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
@@ -143,7 +143,6 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
 /// Builds the shared regional edge over its four resolved inputs.
 type Edge = RegionalEdge<
     LambdaAssertionSource,
-    Ed25519Anchors,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
@@ -152,7 +151,7 @@ fn build_edge(
     config: &Config,
     aws: &aws_config::SdkConfig,
     dynamodb: &aws_sdk_dynamodb::Client,
-    anchors: Ed25519Anchors,
+    anchors: aex_identity_domain::assertion::VerificationKeySet,
 ) -> Result<Edge, RunError> {
     RegionalEdge::new(
         LambdaAssertionSource::new(
@@ -171,6 +170,7 @@ fn build_edge(
         ),
         SystemClock,
         EdgeBinding {
+            plane: config.plane,
             audience: AUDIENCE,
             region: config.region,
             cache_budget_bytes: config.assertion_cache_bytes,

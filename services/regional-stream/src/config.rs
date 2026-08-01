@@ -136,7 +136,7 @@ pub const MAX_STREAM_READER_TASKS: u64 = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Deployment plane.
-    pub plane: String,
+    pub plane: aex_identity_domain::assertion::Plane,
     /// Pinned region.
     pub region: Region,
     /// Release digest reported by readiness.

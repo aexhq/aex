@@ -31,10 +31,10 @@ use aex_wire::server::{
 };
 use aex_wire::types::{DecimalU128, Region, Timestamp};
 
-use crate::edge::Authorized;
 use crate::ndjson::{self, FrameStream};
 use crate::query;
 use crate::reader::{ObservationReader, ReadError};
+use aex_regional_http::context::RequestContext as EdgeContext;
 
 /// How long a minted download grant lives.
 ///
@@ -99,14 +99,14 @@ impl ObservationService {
 #[derive(Clone)]
 pub struct ObservationRequest {
     service: Arc<ObservationService>,
-    authorized: Authorized,
+    authorized: EdgeContext,
 }
 
 impl std::fmt::Debug for ObservationRequest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ObservationRequest")
-            .field("workspace", &self.authorized.workspace)
+            .field("workspace", &self.authorized.auth.workspace_id)
             .finish_non_exhaustive()
     }
 }
@@ -114,7 +114,7 @@ impl std::fmt::Debug for ObservationRequest {
 impl ObservationRequest {
     /// Binds one request to the shared service.
     #[must_use]
-    pub const fn new(service: Arc<ObservationService>, authorized: Authorized) -> Self {
+    pub fn new(service: Arc<ObservationService>, authorized: EdgeContext) -> Self {
         Self {
             service,
             authorized,
@@ -124,7 +124,7 @@ impl ObservationRequest {
     /// The workspace this request is authorized for.
     #[must_use]
     pub const fn workspace(&self) -> WorkspaceId {
-        self.authorized.workspace
+        self.authorized.auth.workspace_id
     }
 
     /// The organization the authorized workspace belongs to.
@@ -133,7 +133,7 @@ impl ObservationRequest {
     /// row can be attributed without a second lookup.
     #[must_use]
     pub const fn organization(&self) -> aex_wire::ids::OrganizationId {
-        self.authorized.organization
+        self.authorized.auth.organization_id
     }
 
     /// The scope one route reads, which is a session when the route names one.

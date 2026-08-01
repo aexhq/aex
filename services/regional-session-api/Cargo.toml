@@ -55,6 +55,7 @@ aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-fea
 ] }
 async-trait.workspace = true
 aex-wire = { path = "../../crates/aex-wire" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }

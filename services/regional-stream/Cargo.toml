@@ -40,6 +40,7 @@ aws-sdk-dynamodb.workspace = true
 aws-sdk-s3.workspace = true
 axum.workspace = true
 tokio = { workspace = true, features = ["net"] }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
