@@ -38,8 +38,9 @@ api/generated/            openapi/ schemas/ registries/ bundle.json bundle.lock.
 - **144 public operations**: 27 central, 117 regional. Both counts are pinned in
   `routes-meta.yaml` and the generator refuses to emit if either drifts.
 - **22 identifier kinds**, **63 error codes**, **28 scopes**, **16 limits**.
-- **187 published JSON Schema 2020-12 documents** under
-  `api/generated/schemas/`, one per `SchemaId`.
+- **241 published JSON Schema 2020-12 documents** under
+  `api/generated/schemas/`, one per `SchemaId`, and **262 generated Rust types**
+  in `crates/aex-wire/src/generated/models.rs`.
 - Two self-contained OpenAPI 3.1 plane documents.
 - `bundle.json` plus `bundle.lock.json`, which records the contract digest, the
   generator identity, the pinned toolchain, and the SHA-256 of every input.
@@ -106,7 +107,7 @@ for a peer to start.
 | --- | --- |
 | **The 18 generated server traits and the 144 generated client methods.** `aex_wire::server` publishes the shapes (`RequestContext`, `Created<T>`, `Accepted`, `WithETag<T>`, `NoContent`, `NdjsonStream<F>`, `AcceptKind`, `SessionReadResult`, `ErrorResponse`) but not one trait per fragment. | This was the single largest emitter and the least load-bearing: `ROUTES` plus the generated models already give the HTTP crates everything they need to bind handlers, and a trait per fragment is mechanical once the table exists. Emitting them is a contained addition to `emit_routes.rs`. |
 | **`packages/sdk/src/generated/**` TypeScript emission** and the `parity` corpus category. | Depends on the SDK stream's tree existing. The Rust side of the parity property (canonical bytes, `intentDigest`) is implemented and tested; only the `TypeScript` half is absent. |
-| **`valid`/`invalid`/`golden` corpus categories per `SchemaId`.** | 187 schemas × 3 categories is ~560 authored files. The loader (`aex_wire::testing::corpus`) and the floor mechanism exist and are used by the id and error corpora; arming a new category is a new floor assertion plus the cases. |
+| **`valid`/`invalid`/`golden` corpus categories per `SchemaId`.** | 241 schemas x 3 categories is ~720 authored files. The loader (`aex_wire::testing::corpus`) and the floor mechanism exist and are used by the id and error corpora; arming a new category is a new floor assertion plus the cases. |
 | **`routes/<operationId>/<case>/{request,response,meta}.json`.** | Replaced for now by the generated `conformance/routes/bindings.jsonl` golden, which covers all 144 operations for path binding and matcher round-trip but not request/response bodies or `intentDigest` per route. |
 | **Fuzz targets** (`fuzz_targets/decode_public.rs`, `decode_agent_message`). | The hostile-input matrix is covered by explicit cases in `crates/aex-hands-protocol/tests/hostile_input.rs`; a `cargo-fuzz` target needs a nightly toolchain the workspace does not pin. |
 | **Deleting `aex/packages/contracts/`, `aex/scripts/openapi/`.** | Left in place: the TypeScript surfaces are still consumed by the retained `packages/sdk` and `apps/`, and deleting them belongs with the SDK stream's cut rather than ahead of it. |
@@ -157,7 +158,7 @@ use aex_wire::server::{
     SessionReadResult, ErrorResponse, NextPage,
 };
 use aex_wire::testing::corpus;
-use aex_wire::models::*;   // 187 generated request, response and query types
+use aex_wire::models::*;   // 262 generated request, response and query types
 ```
 
 `aex_wire::models` includes, among others: `Session`, `SessionListItem`,
