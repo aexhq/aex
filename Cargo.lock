@@ -977,12 +977,17 @@ dependencies = [
 name = "aex-usage-application"
 version = "0.1.0"
 dependencies = [
+ "aex-usage-application",
  "aex-usage-domain",
  "async-trait",
  "futures",
+ "pin-project-lite",
+ "proptest",
+ "rustix",
  "serde",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -1008,10 +1013,15 @@ dependencies = [
 name = "aex-usage-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-wire",
+ "blake3",
+ "hex",
+ "proptest",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
- "uuid",
 ]
 
 [[package]]

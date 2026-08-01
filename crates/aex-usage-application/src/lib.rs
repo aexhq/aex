@@ -14,4 +14,6 @@
 //! - rating arithmetic (`aex-usage-rating`)
 
 pub mod ports;
+#[cfg(feature = "probe")]
+pub mod probe;
 pub mod use_cases;
