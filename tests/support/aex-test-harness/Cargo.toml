@@ -28,13 +28,21 @@ properties = "unit"
 [package.metadata.aex.not_applicable]
 live_suite = "test-only crate; must be absent from every production link graph"
 
+[features]
+# Off by default: the ordinary unit lane must never link `testcontainers` nor
+# reach for a Docker socket. An integration target that starts a pinned engine
+# turns this on for itself.
+containers = ["dep:testcontainers", "dep:tokio"]
+
 [dependencies]
 blake3.workspace = true
 hex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+testcontainers = { workspace = true, optional = true, features = ["http_wait"] }
 thiserror.workspace = true
 time.workspace = true
+tokio = { workspace = true, optional = true }
 toml.workspace = true
 uuid.workspace = true
 

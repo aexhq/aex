@@ -18,19 +18,24 @@
 //!   the create call returns, so residue is detectable even when the test
 //!   process dies;
 //! - a container image is referenced by digest or not at all
-//!   ([`images::ImageError::Unpinned`]);
+//!   ([`images::ImageError::Unpinned`]), and a started engine is waited for by
+//!   a signal it emits itself, never by a sleep ([`containers::Readiness`]);
 //! - the run's [`canary::SecretCanary`] value is never printed, not even in the
 //!   failure message that reports a leak - only its location is.
 //!
 //! # Not this crate's job
 //!
 //! - product fixtures: those stay in the four `*-test-support` crates;
-//! - starting containers or talking to AWS: this crate is pure data plus
-//!   process-local state, so it links no SDK and no async runtime;
+//! - talking to AWS: this crate links no SDK, so an integration target builds
+//!   its own client against the endpoint a [`containers`] handle exposes;
+//! - starting a container on the unit lane: [`containers`] sits behind the
+//!   non-default `containers` feature, and with it off this crate is still pure
+//!   data plus process-local state with no async runtime;
 //! - deciding whether a lane passed: that is the release tool's receipt.
 
 pub mod budget;
 pub mod canary;
+pub mod containers;
 pub mod env;
 pub mod fault;
 pub mod images;
@@ -39,6 +44,11 @@ pub mod run;
 
 pub use budget::{Budget, BudgetError, Charge};
 pub use canary::{LeakFinding, LeakShape, SecretCanary, scan_for_leaks};
+pub use containers::{ContainerError, Engine, Readiness};
+#[cfg(feature = "containers")]
+pub use containers::{
+    DynamoDbLocalContainer, LocalStackContainer, MinioContainer, PostgresContainer,
+};
 pub use fault::{Clock, FaultError, Proxy, ScriptedClock, ScriptedPort, Toxic};
 pub use images::{ImageError, ImageRef, image};
 pub use ledger::{CleanupLedger, Entry, LedgerError, ResourceKind, Terminal, TestCaseId};

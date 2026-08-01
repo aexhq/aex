@@ -15,3 +15,9 @@
 
 pub mod composition;
 pub mod queue;
+
+pub use composition::{HoldReason, SUSPEND_LOCK_MS, SuspendDecision, evaluate_suspend, recount};
+pub use queue::{
+    BatchItem, BatchItemFailure, BatchResult, ItemOutcome, MAX_RECEIVE_COUNT, PartialBatchFailure,
+    Quarantined, fold_batch,
+};

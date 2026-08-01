@@ -15,3 +15,11 @@
 
 pub mod ports;
 pub mod use_cases;
+
+pub use ports::{
+    CommitReceipt, CommitRequest, EventPage, EventPageRequest, ObservationAuthority, PortError,
+    SecretManifestSource, SemanticEvent, SemanticEventSource,
+};
+pub use use_cases::{
+    AdmissionError, AdmitBatch, GapOnFailure, SemanticAdmission, SemanticAdmissionRequest,
+};
