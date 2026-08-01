@@ -27,15 +27,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/*
- * No page may scroll sideways. Long, unbreakable content — a table, a wide
- * code block — must scroll inside its own container instead of pushing the
- * document out.
- */
-body {
-  overflow-x: hidden;
-}
-
 h1,
 h2,
 h3,
