@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 103,
+    "awaiting_owner": 101,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -283,13 +283,14 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the providers stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "properties": "unit",
+          "protocol": "integration"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-store-aws": {
       "name": "aex-brain-store-aws",
@@ -1013,13 +1014,13 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the providers stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "properties": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-observation-application": {
       "name": "aex-observation-application",

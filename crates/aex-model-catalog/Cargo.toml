@@ -23,12 +23,26 @@ security_tier = "internal"
 risk = ["untrusted_input"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the providers stream; the cases land with the crate's own implementation"
+[package.metadata.aex.targets]
+properties = "unit"
 
 [dependencies]
+aex-wire = { path = "../aex-wire" }
+aws-lc-rs.workspace = true
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
