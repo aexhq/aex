@@ -350,6 +350,50 @@ impl UnaryDispatch for Routes {
     }
 }
 
+/// The mounted dispatcher: the shared adapters, plus a `Routes` per request.
+///
+/// [`Routes`] carries the request context because every authority read here is
+/// workspace-scoped, so it cannot be the value `mount_unary` holds for the life
+/// of the process. This is that value, and it costs one `Arc` clone per request.
+///
+/// It is published rather than written twice, once here and once in the `served`
+/// target: two spellings of the composition would let the tested router and the
+/// mounted router drift apart, which is the one thing the `served` target exists
+/// to rule out.
+#[derive(Debug)]
+pub struct Dispatcher(Arc<Shared>);
+
+impl Dispatcher {
+    /// Binds the dispatcher to the shared adapters.
+    #[must_use]
+    pub const fn new(shared: Arc<Shared>) -> Self {
+        Self(shared)
+    }
+}
+
+#[async_trait::async_trait]
+impl UnaryDispatch for Dispatcher {
+    fn owner(&self) -> RouteOwner {
+        RouteOwner::SessionApi
+    }
+
+    fn served(&self) -> Vec<RouteId> {
+        Routes::served()
+    }
+
+    async fn dispatch(
+        &self,
+        cx: &RequestContext,
+        accept: AcceptKind,
+        raw: RawRequest<'_>,
+        limits: RequestLimits,
+    ) -> WireResult<RawResponse> {
+        Routes::new(Arc::clone(&self.0), cx.clone())
+            .dispatch(cx, accept, raw, limits)
+            .await
+    }
+}
+
 /// The groups this deployable draws served routes from.
 #[must_use]
 pub fn served_groups() -> Vec<RouteGroup> {

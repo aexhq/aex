@@ -39,6 +39,8 @@ path = "src/main.rs"
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-kms.workspace = true
+aws-sdk-lambda.workspace = true
+aws-sdk-ssm.workspace = true
 lambda_http.workspace = true
 tokio.workspace = true
 aex-secret-aws = { path = "../../crates/aex-secret-aws" }
@@ -46,9 +48,12 @@ aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb
 aex-secret-keystore-dynamodb = { path = "../../crates/aex-secret-keystore-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
-aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
+    "authz-projection",
+] }
 async-trait.workspace = true
 aex-wire = { path = "../../crates/aex-wire" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 sha2.workspace = true

@@ -178,6 +178,23 @@ impl Config {
         })
     }
 
+    /// The effective limits this deployable's edge enforces.
+    ///
+    /// `regional-secret-api` owns four routes and none of them is a listing, so
+    /// the two page bounds are not configurable here and are zero. Zero is the
+    /// honest value: it is not a page size this deployable would ever use, so a
+    /// handler that started paginating would fail its own budget check rather
+    /// than silently inherit a number nobody chose.
+    /// `a_served_route_never_paginates` holds the premise.
+    #[must_use]
+    pub const fn limits(&self) -> aex_regional_http::context::EffectiveLimits {
+        aex_regional_http::context::EffectiveLimits {
+            json_body_bytes: self.max_json_body_bytes,
+            query_page_items: 0,
+            query_page_bytes: 0,
+        }
+    }
+
     /// The cache partition every sealed value is bound to.
     ///
     /// Plane and region are part of it so a `dev` branch key can never open a

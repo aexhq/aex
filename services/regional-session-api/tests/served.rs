@@ -43,7 +43,7 @@ use aex_wire::types::{Region, RequestId, Timestamp};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
-use regional_session_api::handlers::{Routes, Shared};
+use regional_session_api::handlers::{Dispatcher, Routes, Shared};
 use tower::ServiceExt as _;
 
 // --- fixtures -------------------------------------------------------------------
@@ -286,34 +286,6 @@ impl EdgeAdmission for Admit {
     }
 }
 
-/// The dispatcher is per request in production, so the mount holds the shared
-/// value and builds one `Routes` for the context it was admitted with. This
-/// double keeps the same shape.
-struct Dispatcher(Arc<Shared>);
-
-#[async_trait::async_trait]
-impl aex_regional_http::mount::UnaryDispatch for Dispatcher {
-    fn owner(&self) -> RouteOwner {
-        RouteOwner::SessionApi
-    }
-
-    fn served(&self) -> Vec<RouteId> {
-        Routes::served()
-    }
-
-    async fn dispatch(
-        &self,
-        cx: &RequestContext,
-        accept: aex_wire::server::AcceptKind,
-        raw: aex_wire::dispatch::RawRequest<'_>,
-        limits: aex_wire::dispatch::RequestLimits,
-    ) -> Result<aex_wire::dispatch::RawResponse, WireError> {
-        Routes::new(Arc::clone(&self.0), cx.clone())
-            .dispatch(cx, accept, raw, limits)
-            .await
-    }
-}
-
 fn cursor_keys() -> CursorKeyRing {
     CursorKeyRing::new(
         CursorKey::new("cur-1", vec![9u8; 32]).expect("a strong key"),
@@ -328,7 +300,7 @@ fn router(custody: FakeCustody) -> (axum::Router, Vec<RouteId>) {
         cursor_keys: Arc::new(cursor_keys()),
     });
     let mounted = mount_unary(
-        Arc::new(Dispatcher(shared)),
+        Arc::new(Dispatcher::new(shared)),
         Arc::new(Admit),
         aex_wire::dispatch::RequestLimits::DEFAULT,
     )

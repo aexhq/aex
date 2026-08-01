@@ -5807,6 +5807,7 @@ dependencies = [
 name = "regional-secret-api"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-secret-aws",
@@ -5820,6 +5821,8 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-kms",
+ "aws-sdk-lambda",
+ "aws-sdk-ssm",
  "axum",
  "http-body-util",
  "lambda_http",
@@ -5850,6 +5853,7 @@ name = "regional-session-api"
 version = "0.1.0"
 dependencies = [
  "aex-content-dynamodb",
+ "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-registry-dynamodb",
@@ -5863,7 +5867,9 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
  "aws-sdk-s3",
+ "aws-sdk-ssm",
  "axum",
  "hex",
  "http-body-util",

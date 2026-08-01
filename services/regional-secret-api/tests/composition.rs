@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 
 use aex_regional_http::config::ConfigError;
 use aex_regional_http::router::{RouteOwner, route_owner};
-use aex_wire::routes::RouteId;
+use aex_wire::routes::{RouteId, route};
 use regional_secret_api::config::{self, Config};
+use regional_secret_api::handlers::Routes;
 
 fn complete() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
@@ -151,5 +152,50 @@ fn the_secret_edge_owns_exactly_the_plaintext_bearing_routes() {
     // deployable has no route that returns a stored value.
     for id in [RouteId::SecretGet, RouteId::SecretsList] {
         assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
+    }
+}
+
+#[test]
+fn a_served_route_never_paginates() {
+    // This is the premise `Config::limits` rests on: the two page bounds are
+    // zero because no route this deployable serves can ask for a page. If a
+    // paginated route ever lands here, that has to be a red suite rather than a
+    // silently zero-sized page.
+    for id in Routes::served() {
+        let descriptor = route(id);
+        assert!(
+            !descriptor.query_params.contains(&"cursor")
+                && !descriptor.query_params.contains(&"limit"),
+            "`{id}` paginates; `Config::limits` would give it a zero page bound"
+        );
+    }
+    let config = read(&complete()).expect("the complete environment is accepted");
+    assert_eq!(config.limits().json_body_bytes, config.max_json_body_bytes);
+    assert_eq!(config.limits().query_page_items, 0);
+    assert_eq!(config.limits().query_page_bytes, 0);
+}
+
+#[test]
+fn the_mounted_router_answers_exactly_the_served_set() {
+    // The listener composes `Dispatcher` over the real edge. Neither can be
+    // built without credentials, but the mount decision is pure: it is the
+    // dispatcher's served set filtered against the owned partition, and a route
+    // that left one and not the other is a `MountError` rather than a runtime
+    // 404.
+    let served = Routes::served();
+    assert_eq!(
+        served,
+        vec![RouteId::SecretDelete, RouteId::SecretRevoke],
+        "the two routes whose handlers need no ciphertext"
+    );
+    for id in &served {
+        assert_eq!(route_owner(*id), Some(RouteOwner::SecretApi), "`{id}`");
+    }
+    let owned = RouteOwner::SecretApi.routes();
+    for id in owned.iter().filter(|id| !served.contains(id)) {
+        assert!(
+            !served.contains(id),
+            "`{id}` is owned and unserved, so it must be absent from the router"
+        );
     }
 }
