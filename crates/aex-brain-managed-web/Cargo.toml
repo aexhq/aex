@@ -23,6 +23,10 @@ security_tier = "public_edge"
 risk = ["untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+integration = "integration"
+
 [package.metadata.aex.not_applicable]
 
 [dependencies]
@@ -43,3 +47,11 @@ url.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

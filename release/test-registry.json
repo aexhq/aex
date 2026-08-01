@@ -210,7 +210,10 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "conformance": "unit",
+          "integration": "integration"
+        },
         "not_applicable": {}
       },
       "unmapped_targets": [],
@@ -242,7 +245,10 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "conformance": "unit",
+          "integration": "integration"
+        },
         "not_applicable": {}
       },
       "unmapped_targets": [],
@@ -373,7 +379,9 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
           "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }

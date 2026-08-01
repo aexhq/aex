@@ -22,6 +22,9 @@ security_tier = "internal"
 risk = ["untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+properties = "unit"
+
 [package.metadata.aex.not_applicable]
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
@@ -39,3 +42,7 @@ time.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
