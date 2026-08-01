@@ -27,6 +27,7 @@
 {"class":"state","code":"operation_not_cancelable","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"not_found","code":"approval_not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
 {"class":"conflict","code":"approval_already_resolved","precedenceStage":"domain_state","retryable":false,"status":409}
+{"class":"conflict","code":"approval_binding_changed","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"not_found","code":"file_not_found","precedenceStage":"domain_state","retryable":false,"status":404}
 {"class":"state","code":"content_missing","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"not_found","code":"export_not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}

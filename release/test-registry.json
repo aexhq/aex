@@ -880,7 +880,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "hostile_input": "unit"
+          "hostile_input": "unit",
+          "operation_surface": "unit"
         },
         "not_applicable": {
           "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"

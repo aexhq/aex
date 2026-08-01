@@ -43,11 +43,11 @@ macro_rules! counter {
     };
 }
 
-counter!(
-    /// The session head's optimistic concurrency token.
-    SessionRevision,
-    1
-);
+// The session revision travels on the terminal outbox event, so it is owned by
+// the contract crate both readers of that event depend on. Re-exported here so
+// every call site keeps its `aex_session_domain` path.
+pub use aex_internal_contracts::outbox::SessionRevision;
+
 counter!(
     /// One agent control record's optimistic concurrency token.
     AgentRevision,
@@ -115,12 +115,9 @@ impl fmt::Debug for EntryIdentity {
     }
 }
 
-/// The immutable identity of one run's usage closure.
-///
-/// Minted in the terminal barrier and never rewritten, so a replayed settlement
-/// is provably the same closure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct UsageClosureId(pub Uuid7);
+// The usage-closure identity travels on the terminal outbox event, so it too is
+// owned by the contract crate and re-exported here.
+pub use aex_internal_contracts::outbox::UsageClosureId;
 
 /// The identity of one spend reservation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

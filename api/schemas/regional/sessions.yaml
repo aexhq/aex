@@ -171,12 +171,12 @@ schemas:
       liveGenerationId: { type: id, of: generation, optional: true, doc: "The live generation, when one exists." }
 
   SessionLineage:
-    doc: Immutable provenance. A fork records its parent exactly once.
+    doc: Immutable provenance. A clone records its origin exactly once.
     type: object
     fields:
-      parentSessionId: { type: id, of: session, optional: true, doc: "The session this was forked from." }
-      forkedAtPersistRevision: { type: integer, min: 0, max: 9007199254740991, optional: true, doc: "The parent revision forked from." }
-      forkOperationId: { type: id, of: operation, optional: true, doc: "The operation that forked it." }
+      originSessionId: { type: id, of: session, optional: true, doc: "The session this was cloned from." }
+      clonedAtPersistRevision: { type: integer, min: 0, max: 9007199254740991, optional: true, doc: "The source revision cloned from." }
+      cloneOperationId: { type: id, of: operation, optional: true, doc: "The operation that cloned it." }
 
   Session:
     doc: A durable conversation and the workspace it owns.
@@ -331,27 +331,27 @@ schemas:
       include: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to include." }
       exclude: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to exclude." }
 
-  ForkFiles:
-    doc: Which file tree a fork starts from.
+  CloneFiles:
+    doc: Which file tree a clone starts from.
     type: enum
     values:
-      - { value: current, doc: "The parent's current persisted tree." }
-      - { value: initial, doc: "The parent's tree as first persisted." }
+      - { value: current, doc: "The source's current live tree, captured without advancing the source." }
+      - { value: initial, doc: "The source's tree as first persisted." }
       - { value: none, doc: "An empty tree." }
 
-  ForkCredentials:
-    doc: Whether a fork inherits credential custody.
+  CloneCredentials:
+    doc: Whether a clone inherits credential custody.
     type: enum
     values:
-      - { value: copy, doc: "Copy the parent's custody bindings." }
+      - { value: copy, doc: "Copy the source's custody bindings under a distinct key edge." }
       - { value: none, doc: "Start with no custody." }
 
-  SessionForkRequest:
-    doc: Admit the durable fork operation.
+  SessionCloneRequest:
+    doc: Admit the durable clone operation.
     type: object
     fields:
-      files: { type: ref, to: ForkFiles, doc: "Which tree to start from." }
-      credentials: { type: ref, to: ForkCredentials, doc: "Whether to inherit custody." }
+      files: { type: ref, to: CloneFiles, doc: "Which tree to start from." }
+      credentials: { type: ref, to: CloneCredentials, doc: "Whether to inherit custody." }
 
   SessionWorkspaceDiscardRequest:
     doc: Admit the durable workspace-discard operation.
@@ -365,11 +365,18 @@ schemas:
     fields:
       secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The new custody set." }
 
-  SessionDeleteRequest:
-    doc: Admit the durable session-deletion operation.
+  PurgeCascade:
+    doc: How a purge treats the session's clone descendants.
+    type: enum
+    values:
+      - { value: detach_descendants, doc: "Clear each descendant's origin link and leave it alive." }
+      - { value: purge_closure, doc: "Purge the whole clone-descendant closure." }
+
+  SessionPurgeRequest:
+    doc: Admit the durable purge operation. Purge is irreversible.
     type: object
     fields:
-      cascade: { type: boolean, doc: "Whether forked descendants are deleted too." }
+      cascade: { type: ref, to: PurgeCascade, doc: "How clone descendants are treated." }
 
   SessionStopResult:
     doc: The result of a stop operation.
@@ -393,11 +400,29 @@ schemas:
       deleted: { type: decimal, doc: "Entries removed." }
       bytesMoved: { type: decimal, doc: "Bytes written to durable content." }
 
-  SessionForkResult:
-    doc: The result of a fork operation.
+  SessionCloneResult:
+    doc: The result of a clone operation.
     type: object
     fields:
-      session: { type: ref, to: Session, doc: "The new session." }
+      session: { type: ref, to: Session, doc: "The new, independent session." }
+
+  SessionTrashResult:
+    doc: The result of a trash operation. Trash starts the recovery window.
+    type: object
+    fields:
+      sessionId: { type: id, of: session, doc: "The session." }
+      trashedAt: { type: timestamp, doc: "When the trash committed." }
+      recoveryDeadline: { type: timestamp, doc: "After this instant restore is refused." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the trash." }
+
+  SessionRestoreResult:
+    doc: The result of a restore operation.
+    type: object
+    fields:
+      sessionId: { type: id, of: session, doc: "The session." }
+      restoredAt: { type: timestamp, doc: "When the restore committed." }
+      status: { type: ref, to: SessionStatus, doc: "What the session is doing now." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the restore." }
 
   WorkspaceDiscardResult:
     doc: The result of a workspace-discard operation.

@@ -1,12 +1,12 @@
 {
-  "$id": "https://schemas.aex.dev/v1/ForkFiles.json",
+  "$id": "https://schemas.aex.dev/v1/CloneFiles.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Which file tree a fork starts from.",
+  "description": "Which file tree a clone starts from.",
   "enum": [
     "current",
     "initial",
     "none"
   ],
-  "title": "ForkFiles",
+  "title": "CloneFiles",
   "type": "string"
 }

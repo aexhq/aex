@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:fec7f531dec7025944bcb6ef8da610d99ce5a3b4efcbcb27ecc1d467e730c37d`.
+//! `sha256:59e34898162c64c1db62bddd64160849b2d637a95288fba02d3694ca98accc7d`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -961,12 +961,16 @@ pub enum OperationKind {
     SessionStop,
     /// Persist the live workspace.
     SessionPersist,
-    /// Fork the session.
-    SessionFork,
+    /// Clone the session into an independent one.
+    SessionClone,
     /// Discard the live workspace.
     WorkspaceDiscard,
-    /// Delete the session.
-    SessionDelete,
+    /// Move the session into the recovery window.
+    SessionTrash,
+    /// Bring the session back out of the recovery window.
+    SessionRestore,
+    /// Destroy the session irreversibly.
+    SessionPurge,
     /// Rebind session credentials.
     CredentialRebind,
     /// Produce a telemetry export artifact.
@@ -980,9 +984,11 @@ impl OperationKind {
     pub const ALL: &'static [OperationKind] = &[
         OperationKind::SessionStop,
         OperationKind::SessionPersist,
-        OperationKind::SessionFork,
+        OperationKind::SessionClone,
         OperationKind::WorkspaceDiscard,
-        OperationKind::SessionDelete,
+        OperationKind::SessionTrash,
+        OperationKind::SessionRestore,
+        OperationKind::SessionPurge,
         OperationKind::CredentialRebind,
         OperationKind::TelemetryExport,
         OperationKind::WorkspaceDelete,
@@ -994,9 +1000,11 @@ impl OperationKind {
         match self {
             Self::SessionStop => "session_stop",
             Self::SessionPersist => "session_persist",
-            Self::SessionFork => "session_fork",
+            Self::SessionClone => "session_clone",
             Self::WorkspaceDiscard => "workspace_discard",
-            Self::SessionDelete => "session_delete",
+            Self::SessionTrash => "session_trash",
+            Self::SessionRestore => "session_restore",
+            Self::SessionPurge => "session_purge",
             Self::CredentialRebind => "credential_rebind",
             Self::TelemetryExport => "telemetry_export",
             Self::WorkspaceDelete => "workspace_delete",
@@ -1037,12 +1045,16 @@ pub enum OperationResult {
     SessionStop(SessionStopResult),
     /// Persist result.
     SessionPersist(SessionPersistResult),
-    /// Fork result.
-    SessionFork(SessionForkResult),
+    /// Clone result.
+    SessionClone(SessionCloneResult),
     /// Discard result.
     WorkspaceDiscard(WorkspaceDiscardResult),
+    /// Trash result.
+    SessionTrash(SessionTrashResult),
+    /// Restore result.
+    SessionRestore(SessionRestoreResult),
     /// Session tombstone.
-    SessionDelete(SessionTombstone),
+    SessionPurge(SessionTombstone),
     /// Rebind result.
     CredentialRebind(CredentialRebindResult),
     /// Export result.
@@ -1363,23 +1375,24 @@ impl ObservationConsistency {
     }
 }
 
-/// What the answer is actually complete over. Never omitted.
+/// What the answer is actually complete over. Never omitted. All four watermarks are accepted-time
+/// positions in epoch milliseconds (O-04).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ObservationCoverage {
-    /// Admission watermark.
-    pub accepted: ObservationWatermark,
+    /// Admission watermark, in epoch milliseconds.
+    pub accepted: DecimalU128,
     /// Whether indexing has reached admission.
     pub caught_up: bool,
     /// Whether the window has no known holes.
     pub complete: bool,
-    /// Earliest replayable observation time.
-    pub earliest_replay: Timestamp,
-    /// Indexing watermark.
-    pub indexed: ObservationWatermark,
+    /// Earliest replayable position, in epoch milliseconds.
+    pub earliest_replay: DecimalU128,
+    /// Indexing watermark, in epoch milliseconds.
+    pub indexed: DecimalU128,
     /// Known holes.
     pub missing_intervals: Vec<MissingInterval>,
-    /// The pinned snapshot position.
+    /// The pinned snapshot position, in epoch milliseconds.
     pub snapshot: DecimalU128,
     /// Gaps with no known bound.
     pub unbounded_gaps: Vec<TelemetryGapId>,
@@ -1721,16 +1734,6 @@ pub struct ObservationStreamRequest {
     pub origin: ObservationOrigin,
     /// Which signal.
     pub signal: ObservationSignal,
-}
-
-/// How far one stage of the pipeline has advanced.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationWatermark {
-    /// The observation time at that position.
-    pub at: Timestamp,
-    /// The position.
-    pub sequence: DecimalU128,
 }
 
 /// Why a stream ended after its 200.
@@ -2284,6 +2287,58 @@ impl BundleFormat {
     }
 }
 
+/// Whether a clone inherits credential custody.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloneCredentials {
+    /// Copy the source's custody bindings under a distinct key edge.
+    Copy,
+    /// Start with no custody.
+    None,
+}
+
+impl CloneCredentials {
+    /// Every value, in declared order.
+    pub const ALL: &'static [CloneCredentials] = &[CloneCredentials::Copy, CloneCredentials::None];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Which file tree a clone starts from.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloneFiles {
+    /// The source's current live tree, captured without advancing the source.
+    Current,
+    /// The source's tree as first persisted.
+    Initial,
+    /// An empty tree.
+    None,
+}
+
+impl CloneFiles {
+    /// Every value, in declared order.
+    pub const ALL: &'static [CloneFiles] =
+        &[CloneFiles::Current, CloneFiles::Initial, CloneFiles::None];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Initial => "initial",
+            Self::None => "none",
+        }
+    }
+}
+
 /// One resolved compute dimension.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -2514,58 +2569,6 @@ impl FileWakePolicy {
         match self {
             Self::Retained => "retained",
             Self::Never => "never",
-        }
-    }
-}
-
-/// Whether a fork inherits credential custody.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ForkCredentials {
-    /// Copy the parent's custody bindings.
-    Copy,
-    /// Start with no custody.
-    None,
-}
-
-impl ForkCredentials {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ForkCredentials] = &[ForkCredentials::Copy, ForkCredentials::None];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Copy => "copy",
-            Self::None => "none",
-        }
-    }
-}
-
-/// Which file tree a fork starts from.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ForkFiles {
-    /// The parent's current persisted tree.
-    Current,
-    /// The parent's tree as first persisted.
-    Initial,
-    /// An empty tree.
-    None,
-}
-
-impl ForkFiles {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ForkFiles] =
-        &[ForkFiles::Current, ForkFiles::Initial, ForkFiles::None];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Current => "current",
-            Self::Initial => "initial",
-            Self::None => "none",
         }
     }
 }
@@ -3004,6 +3007,31 @@ impl ProviderCredentialState {
         match self {
             Self::Ready => "ready",
             Self::Revoked => "revoked",
+        }
+    }
+}
+
+/// How a purge treats the session's clone descendants.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PurgeCascade {
+    /// Clear each descendant's origin link and leave it alive.
+    DetachDescendants,
+    /// Purge the whole clone-descendant closure.
+    PurgeClosure,
+}
+
+impl PurgeCascade {
+    /// Every value, in declared order.
+    pub const ALL: &'static [PurgeCascade] =
+        &[PurgeCascade::DetachDescendants, PurgeCascade::PurgeClosure];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DetachDescendants => "detach_descendants",
+            Self::PurgeClosure => "purge_closure",
         }
     }
 }
@@ -3549,6 +3577,24 @@ pub struct Session {
     pub workspace_id: WorkspaceId,
 }
 
+/// Admit the durable clone operation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionCloneRequest {
+    /// Whether to inherit custody.
+    pub credentials: CloneCredentials,
+    /// Which tree to start from.
+    pub files: CloneFiles,
+}
+
+/// The result of a clone operation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionCloneResult {
+    /// The new, independent session.
+    pub session: Session,
+}
+
 /// The only customer compute selector.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -3608,45 +3654,19 @@ pub struct SessionCredentials {
     pub secrets: Vec<SecretRef>,
 }
 
-/// Admit the durable session-deletion operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionDeleteRequest {
-    /// Whether forked descendants are deleted too.
-    pub cascade: bool,
-}
-
-/// Admit the durable fork operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionForkRequest {
-    /// Whether to inherit custody.
-    pub credentials: ForkCredentials,
-    /// Which tree to start from.
-    pub files: ForkFiles,
-}
-
-/// The result of a fork operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionForkResult {
-    /// The new session.
-    pub session: Session,
-}
-
-/// Immutable provenance. A fork records its parent exactly once.
+/// Immutable provenance. A clone records its origin exactly once.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionLineage {
-    /// The operation that forked it.
+    /// The operation that cloned it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fork_operation_id: Option<OperationId>,
-    /// The parent revision forked from.
+    pub clone_operation_id: Option<OperationId>,
+    /// The source revision cloned from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub forked_at_persist_revision: Option<u64>,
-    /// The session this was forked from.
+    pub cloned_at_persist_revision: Option<u64>,
+    /// The session this was cloned from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_session_id: Option<SessionId>,
+    pub origin_session_id: Option<SessionId>,
 }
 
 /// The collection projection of a session; `resolvedConfig` is omitted.
@@ -3726,6 +3746,14 @@ pub struct SessionPersistResult {
     pub updated: DecimalU128,
 }
 
+/// Admit the durable purge operation. Purge is irreversible.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionPurgeRequest {
+    /// How clone descendants are treated.
+    pub cascade: PurgeCascade,
+}
+
 /// Which registered resources the session mounts.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -3745,6 +3773,20 @@ pub struct SessionRegisteredSelection {
     /// Registered tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ResourceName>>,
+}
+
+/// The result of a restore operation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionRestoreResult {
+    /// When the restore committed.
+    pub restored_at: Timestamp,
+    /// The session.
+    pub session_id: SessionId,
+    /// The revision after the restore.
+    pub session_revision: u64,
+    /// What the session is doing now.
+    pub status: SessionStatus,
 }
 
 /// What a session is doing right now.
@@ -3808,6 +3850,20 @@ pub struct SessionTombstone {
     pub operation_id: OperationId,
     /// The owning workspace.
     pub workspace_id: WorkspaceId,
+}
+
+/// The result of a trash operation. Trash starts the recovery window.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTrashResult {
+    /// After this instant restore is refused.
+    pub recovery_deadline: Timestamp,
+    /// The session.
+    pub session_id: SessionId,
+    /// The revision after the trash.
+    pub session_revision: u64,
+    /// When the trash committed.
+    pub trashed_at: Timestamp,
 }
 
 /// Admit the durable workspace-discard operation.
