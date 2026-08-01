@@ -12,17 +12,21 @@
 use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
-use aex_operation_domain::operation::OperationScope;
+use aex_operation_domain::operation::{OperationResult, OperationScope};
 use aex_operation_domain::{AdmissionOutcome, AdmitRequest, DeletionState, OperationKind};
+use aex_secret_domain::{CustodyRejection, OwnerKeyEdgeId, SecretName, admit_custody, rebind};
+use aex_secret_domain::{SessionCustody, WorkspaceSecret};
 use aex_session_domain::{
     CancelCause, CommandClass, DeletionRejection, Message, MessageRole, MessageState, PurgeCascade,
     QueueRun, Run, RunError, Session, SessionStatus, TerminalAttempt, WorkAdmission,
-    cancel_session_work, claim_terminal, pause_gate, purge, queue, restore,
+    acquire_mutation_guard, cancel_session_work, claim_terminal, pause_gate, purge, queue, restore,
     start as start_run_domain, trash,
 };
+use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{AgentId, MessageId, OperationId, RunId, SessionId, WorkspaceId};
+use aex_wire::models::{CredentialRebindResult, SecretRef};
 use aex_wire::types::Timestamp;
 use time::Duration;
 
@@ -102,6 +106,21 @@ pub struct Purge {
     pub cascade: PurgeCascade,
     /// The immutable closure the fence supplied.
     pub closure: Vec<SessionId>,
+}
+
+/// Replace the session's credential custody set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rebind {
+    /// The durable operation envelope.
+    pub command: SessionCommand,
+    /// The exact workspace secret names to bind.
+    pub secrets: Vec<SecretName>,
+}
+
+struct PreparedRebind {
+    custody: SessionCustody,
+    selected: Vec<WorkspaceSecret>,
+    destroy_key_edges: Vec<OwnerKeyEdgeId>,
 }
 
 async fn gate(
@@ -461,6 +480,219 @@ pub async fn stop_session(
         plan,
         projected: operation,
     })
+}
+
+/// Rebinds a true-idle session to the current generations of an exact secret set.
+///
+/// The prior owner-key edge is returned only as an after-commit hint. An exact
+/// operation replay returns the stored envelope without reading custody again,
+/// so it cannot advance the custody revision twice.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when the account is paused, the runtime is not truly
+/// idle, a selected secret is unavailable, or the domain refuses the rebind.
+pub async fn rebind_credentials(
+    context: &AppContext<'_>,
+    command: &Rebind,
+) -> Result<Planned<aex_operation_domain::Operation>, AppError> {
+    let snapshot = context
+        .sessions
+        .load_session(command.command.workspace, command.command.session)
+        .await?;
+    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+
+    let now = context.clock.now();
+    let existing = context
+        .sessions
+        .load_operation(command.command.workspace, command.command.operation)
+        .await?;
+    if existing.is_some() {
+        let operation = admitted(
+            existing.as_ref(),
+            Some(&snapshot.session.deletion),
+            &rebind_request(command, None),
+            now,
+        )?;
+        let plan = empty_rebind_plan();
+        plan.validate()?;
+        return Ok(Planned {
+            plan,
+            projected: operation,
+        });
+    }
+
+    let prepared = prepare_rebind(context, command, &snapshot.session, now).await?;
+    let public_result = CredentialRebindResult {
+        session_id: command.command.session,
+        custody_revision: prepared.custody.revision.0,
+        secrets: prepared
+            .custody
+            .entries
+            .iter()
+            .map(|entry| SecretRef {
+                name: entry.name.clone(),
+            })
+            .collect(),
+    };
+    let result_json = CanonicalJson::parse(&to_jcs_string(&public_result)?)?;
+    let operation = admitted(
+        None,
+        Some(&snapshot.session.deletion),
+        &rebind_request(
+            command,
+            Some(OperationResult {
+                measurement: None,
+                content: Some(result_json),
+            }),
+        ),
+        now,
+    )?;
+
+    let plan = build_rebind_plan(&snapshot.session, command, operation.clone(), prepared);
+    plan.validate()?;
+
+    Ok(Planned {
+        plan,
+        projected: operation,
+    })
+}
+
+const fn rebind_request(command: &Rebind, inline_result: Option<OperationResult>) -> AdmitRequest {
+    AdmitRequest {
+        id: command.command.operation,
+        workspace: command.command.workspace,
+        session: Some(command.command.session),
+        kind: OperationKind::CredentialRebind,
+        intent: command.command.intent,
+        scope: OperationScope::Session(command.command.session),
+        inline_result,
+    }
+}
+
+fn empty_rebind_plan() -> SessionTransaction {
+    SessionTransaction {
+        intent: TransactionIntent::RebindCredentials,
+        conditions: Vec::new(),
+        writes: Vec::new(),
+        after_commit: Vec::new(),
+    }
+}
+
+async fn prepare_rebind(
+    context: &AppContext<'_>,
+    command: &Rebind,
+    session: &Session,
+    now: Timestamp,
+) -> Result<PreparedRebind, AppError> {
+    acquire_mutation_guard(
+        session,
+        command.command.operation,
+        OperationKind::CredentialRebind,
+        now,
+    )?;
+    let idle = context
+        .continuity
+        .true_idle(command.command.session)
+        .await?;
+    if let Some(violation) = idle.violation {
+        return Err(CustodyRejection::NotTrueIdle(violation).into());
+    }
+
+    for (index, name) in command.secrets.iter().enumerate() {
+        if command.secrets[..index].contains(name) {
+            return Err(CustodyRejection::DuplicateName(name.clone()).into());
+        }
+    }
+    let selected = context
+        .secrets
+        .read_secrets(command.command.workspace, &command.secrets)
+        .await?;
+    if command
+        .secrets
+        .iter()
+        .any(|name| !selected.iter().any(|secret| secret.name == *name))
+    {
+        return Err(crate::ports::PortError::NotFound { kind: "secret" }.into());
+    }
+
+    let current = context
+        .secrets
+        .read_custody(command.command.session)
+        .await?;
+    let edge = OwnerKeyEdgeId(context.ids.next_uuid_v7());
+    let (custody, destroy_key_edges) = if let Some(current) = &current {
+        let commit = rebind(current, &selected, &idle, edge, now)?;
+        (commit.custody, commit.destroy_key_edges)
+    } else {
+        (
+            admit_custody(
+                command.command.session,
+                command.command.workspace,
+                None,
+                &selected,
+                edge,
+                now,
+            )?,
+            Vec::new(),
+        )
+    };
+    Ok(PreparedRebind {
+        custody,
+        selected,
+        destroy_key_edges,
+    })
+}
+
+fn build_rebind_plan(
+    session: &Session,
+    command: &Rebind,
+    operation: aex_operation_domain::Operation,
+    prepared: PreparedRebind,
+) -> SessionTransaction {
+    let mut head = session.clone();
+    head.revision = session.revision.next();
+    head.custody_revision = prepared.custody.revision;
+
+    let mut conditions = live_conditions(session);
+    conditions.extend([
+        Condition::SessionActiveRun {
+            session: command.command.session,
+            expected: None,
+        },
+        Condition::MutationGuardFree {
+            session: command.command.session,
+        },
+        Condition::CustodyRevision {
+            session: command.command.session,
+            expected: session.custody_revision,
+        },
+    ]);
+    conditions.extend(
+        prepared
+            .selected
+            .iter()
+            .map(|secret| Condition::SecretRevocationEpoch {
+                workspace: command.command.workspace,
+                name: secret.name.clone(),
+                expected: secret.revocation_epoch,
+            }),
+    );
+
+    SessionTransaction {
+        intent: TransactionIntent::RebindCredentials,
+        conditions,
+        writes: vec![
+            Write::PutOperation(Box::new(operation)),
+            Write::PutCustody(Box::new(prepared.custody)),
+            Write::PutSessionHead(Box::new(head)),
+        ],
+        after_commit: prepared
+            .destroy_key_edges
+            .into_iter()
+            .map(|edge| Hint::DestroyKeyEdge { edge })
+            .collect(),
+    }
 }
 
 /// Moves a session into the recovery window.

@@ -133,6 +133,9 @@ pub struct ScriptedPorts {
     operation: Option<Operation>,
     run: Option<Run>,
     receipt: Option<IdempotencyReceipt>,
+    custody: Option<SessionCustody>,
+    secrets: Vec<WorkspaceSecret>,
+    true_idle: TrueIdle,
     account: AccountProjection,
     limits: EffectiveLimits,
 }
@@ -165,6 +168,9 @@ impl ScriptedPorts {
             operation: None,
             run: None,
             receipt: None,
+            custody: None,
+            secrets: Vec::new(),
+            true_idle: TrueIdle::idle(moment(0)),
             limits: [
                 (LimitId::SessionSubagentConcurrency, 8),
                 (LimitId::SessionSubagentDepth, 4),
@@ -208,6 +214,27 @@ impl ScriptedPorts {
     #[must_use]
     pub fn with_receipt(mut self, receipt: IdempotencyReceipt) -> Self {
         self.receipt = Some(receipt);
+        self
+    }
+
+    /// Scripts the workspace secrets returned by the custody reader.
+    #[must_use]
+    pub fn with_secrets(mut self, secrets: Vec<WorkspaceSecret>) -> Self {
+        self.secrets = secrets;
+        self
+    }
+
+    /// Scripts the session custody row returned by the custody reader.
+    #[must_use]
+    pub fn with_custody(mut self, custody: SessionCustody) -> Self {
+        self.custody = Some(custody);
+        self
+    }
+
+    /// Scripts the runtime authority's true-idle verdict.
+    #[must_use]
+    pub fn with_true_idle(mut self, true_idle: TrueIdle) -> Self {
+        self.true_idle = true_idle;
         self
     }
 
@@ -377,15 +404,20 @@ impl SecretCustodyReader for ScriptedPorts {
     async fn read_secrets(
         &self,
         _workspace: WorkspaceId,
-        _names: &[SecretName],
+        names: &[SecretName],
     ) -> Result<Vec<WorkspaceSecret>, PortError> {
         self.log.record(PortCall::Read("read_secrets"));
-        Ok(Vec::new())
+        Ok(self
+            .secrets
+            .iter()
+            .filter(|secret| names.contains(&secret.name))
+            .cloned()
+            .collect())
     }
 
     async fn read_custody(&self, _session: SessionId) -> Result<Option<SessionCustody>, PortError> {
         self.log.record(PortCall::Read("read_custody"));
-        Ok(None)
+        Ok(self.custody.clone())
     }
 }
 
@@ -437,7 +469,7 @@ impl ContinuityReader for ScriptedPorts {
 
     async fn true_idle(&self, _session: SessionId) -> Result<TrueIdle, PortError> {
         self.log.record(PortCall::Read("true_idle"));
-        Ok(TrueIdle::idle(moment(0)))
+        Ok(self.true_idle)
     }
 }
 

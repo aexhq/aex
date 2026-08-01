@@ -6,17 +6,24 @@
 
 use std::collections::BTreeSet;
 
+use aex_secret_domain::context::Plane;
+use aex_secret_domain::{
+    CiphertextRef, CustodyRevision, EncryptionContext, OwnerKeyEdgeId, SecretName,
+    SourceGeneration, TrueIdle, TrueIdleViolation, admit_custody, set,
+};
 use aex_session_app::plan::{Condition, TransactionIntent, Write};
 use aex_session_app::testing::{CountingIds, FixedClock, PortCall, ScriptedPorts, fixture_spend};
 use aex_session_app::{
-    AppError, MAX_ACTIONS, Planned, SendMessage, SessionCommand, SessionTransaction, StartRun,
-    admit_message, purge_session, restore_session, start_run, stop_session, trash_session,
+    AppError, MAX_ACTIONS, Planned, Rebind, SendMessage, SessionCommand, SessionTransaction,
+    StartRun, admit_message, purge_session, rebind_credentials, restore_session, start_run,
+    stop_session, trash_session,
 };
 use aex_session_domain::testing::{id, moment, session_fixture};
 use aex_session_domain::{MessagePart, PurgeCascade, SessionStatus, WorkAdmission};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{MessageId, OperationId, RunId};
+use aex_wire::ids::{MessageId, OperationId, RunId, Uuid7};
+use aex_wire::types::Region;
 use proptest::prelude::*;
 
 fn clock() -> FixedClock {
@@ -49,6 +56,57 @@ fn session_command(tag: u8) -> SessionCommand {
     }
 }
 
+fn secret(name: &str, tag: u8) -> aex_secret_domain::WorkspaceSecret {
+    let session = session_fixture();
+    let name = SecretName::parse(name).expect("valid secret name");
+    set(
+        None,
+        session.workspace,
+        &name,
+        CiphertextRef {
+            key_generation: 1,
+            wrapped_key: vec![tag; 32],
+            nonce: vec![tag; 12],
+            ciphertext: vec![tag; 48],
+        },
+        EncryptionContext {
+            plane: Plane::Prd,
+            region: Region::ALL[0],
+            organization: session.organization,
+            workspace: session.workspace,
+            name: name.clone(),
+            generation: SourceGeneration::FIRST,
+            custody_revision: None,
+        },
+        moment(0),
+    )
+    .expect("creates secret")
+    .secret
+}
+
+fn rebind_fixture() -> (ScriptedPorts, Rebind) {
+    let session = session_fixture();
+    let old = secret("old-key", 1);
+    let next = secret("new-key", 2);
+    let custody = admit_custody(
+        session.id,
+        session.workspace,
+        None,
+        &[old],
+        OwnerKeyEdgeId(Uuid7::compose(1, [70; 10])),
+        moment(0),
+    )
+    .expect("admits custody");
+    let ports = ScriptedPorts::idle()
+        .with_custody(custody)
+        .with_secrets(vec![next.clone()]);
+    let command = Rebind {
+        command: session_command(71),
+        secrets: vec![next.name],
+    };
+    (ports, command)
+}
+
 /// Every command this crate implements, run against the same scripted ports.
 async fn every_plan(ports: &ScriptedPorts) -> Vec<(TransactionIntent, SessionTransaction)> {
     let clock = clock();
@@ -60,6 +118,17 @@ async fn every_plan(ports: &ScriptedPorts) -> Vec<(TransactionIntent, SessionTra
         plans.push((plan.intent, plan));
     }
     if let Ok(Planned { plan, .. }) = stop_session(&context, &session_command(30)).await {
+        plans.push((plan.intent, plan));
+    }
+    if let Ok(Planned { plan, .. }) = rebind_credentials(
+        &context,
+        &Rebind {
+            command: session_command(33),
+            secrets: Vec::new(),
+        },
+    )
+    .await
+    {
         plans.push((plan.intent, plan));
     }
     if let Ok(Planned { plan, .. }) = trash_session(&context, &session_command(31)).await {
@@ -156,6 +225,13 @@ fn required_conditions(intent: TransactionIntent) -> Vec<&'static str> {
         TransactionIntent::TrashSession
         | TransactionIntent::RestoreSession
         | TransactionIntent::PurgeSession => vec!["SessionRevision", "DeletionState"],
+        TransactionIntent::RebindCredentials => vec![
+            "SessionRevision",
+            "DeletionState",
+            "SessionActiveRun",
+            "MutationGuardFree",
+            "CustodyRevision",
+        ],
         TransactionIntent::StartRun => {
             vec![
                 "SessionRevision",
@@ -414,4 +490,112 @@ async fn restore_needs_a_trashed_session_and_start_needs_an_active_run() {
 
     // Neither failure wrote anything.
     assert!(!ports.recorded_a_write());
+}
+
+#[tokio::test]
+async fn rebind_is_one_idle_fenced_transaction_and_destroys_the_old_edge_after_commit() {
+    let (ports, command) = rebind_fixture();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+
+    let planned = rebind_credentials(&context, &command)
+        .await
+        .expect("rebinds");
+    assert_eq!(
+        planned.projected.kind,
+        aex_operation_domain::OperationKind::CredentialRebind
+    );
+
+    let custody = planned
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutCustody(custody) => Some(custody.as_ref()),
+            _ => None,
+        })
+        .expect("writes custody");
+    assert_eq!(custody.revision, CustodyRevision(2));
+    assert_eq!(custody.entries.len(), 1);
+    assert_eq!(custody.entries[0].name.as_str(), "new-key");
+
+    let head = planned
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutSessionHead(head) => Some(head.as_ref()),
+            _ => None,
+        })
+        .expect("updates the head");
+    assert_eq!(head.custody_revision, CustodyRevision(2));
+    assert!(planned.plan.conditions.iter().any(|condition| matches!(
+        condition,
+        Condition::MutationGuardFree { session } if *session == command.command.session
+    )));
+    assert!(planned.plan.conditions.iter().any(|condition| matches!(
+        condition,
+        Condition::CustodyRevision {
+            expected: CustodyRevision(1),
+            ..
+        }
+    )));
+    assert!(planned.plan.conditions.iter().any(|condition| matches!(
+        condition,
+        Condition::SecretRevocationEpoch { name, .. } if name.as_str() == "new-key"
+    )));
+    assert!(matches!(
+        planned.plan.after_commit.as_slice(),
+        [aex_session_app::Hint::DestroyKeyEdge { .. }]
+    ));
+    assert!(!ports.recorded_a_write());
+}
+
+#[tokio::test]
+async fn rebind_rejects_non_idle_runtime_evidence_before_reading_secrets() {
+    let (ports, command) = rebind_fixture();
+    let ports = ports.with_true_idle(TrueIdle {
+        observed_at: moment(999),
+        violation: Some(TrueIdleViolation::WorkQueued),
+    });
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+
+    let error = rebind_credentials(&context, &command)
+        .await
+        .expect_err("not true idle");
+    assert_eq!(error.code(), ErrorCode::SessionNotIdle);
+    assert!(!ports.calls().contains(&PortCall::Read("read_secrets")));
+    assert!(!ports.recorded_a_write());
+}
+
+#[tokio::test]
+async fn rebind_replay_does_not_advance_custody_or_repeat_any_custody_read() {
+    let (ports, command) = rebind_fixture();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let first = rebind_credentials(&ports.context(&clock, &ids), &command)
+        .await
+        .expect("first admission");
+
+    let replay_ports = ScriptedPorts::idle().with_operation(first.projected.clone());
+    let replay = rebind_credentials(&replay_ports.context(&clock, &ids), &command)
+        .await
+        .expect("exact replay");
+
+    assert_eq!(replay.projected, first.projected);
+    assert!(replay.plan.writes.is_empty());
+    assert!(!replay_ports.calls().contains(&PortCall::Read("true_idle")));
+    assert!(
+        !replay_ports
+            .calls()
+            .contains(&PortCall::Read("read_secrets"))
+    );
+    assert!(
+        !replay_ports
+            .calls()
+            .contains(&PortCall::Read("read_custody"))
+    );
 }
