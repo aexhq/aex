@@ -11,6 +11,12 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# The real-PostgreSQL suite. A marker feature: the engine crates are ordinary
+# dev-dependencies, and the feature exists so `required-features` can keep the
+# suite out of the unit lane while the integration lane arms it.
+integration-engines = []
+
 [package.metadata.aex]
 owner = "central-identity"
 role = "adapter"
@@ -23,11 +29,14 @@ security_tier = "authority"
 risk = ["sql"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the central-identity stream; the cases land with the crate's own implementation"
+[package.metadata.aex.targets]
+statements = "unit"
+migrations = "integration"
 
 [dependencies]
 async-trait.workspace = true
+aws-sdk-rdsdata.workspace = true
+aws-smithy-types.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -35,4 +44,21 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-control-app = { path = "../aex-control-app" }
+aex-control-domain = { path = "../aex-control-domain" }
 aex-rds-data = { path = "../aex-rds-data" }
+aex-wire = { path = "../aex-wire" }
+
+[dev-dependencies]
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+sqlx.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+uuid.workspace = true
+
+[[test]]
+name = "statements"
+path = "tests/statements.rs"
+
+[[test]]
+name = "migrations"
+path = "tests/migrations.rs"
+required-features = ["integration-engines"]

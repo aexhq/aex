@@ -272,6 +272,12 @@ num-bigint = { version = "0.4.8", features = ["serde"] }
 num-rational = { version = "0.4.2", default-features = false, features = ["std", "num-bigint", "serde"] }
 num-traits = "0.2.19"
 rand = { version = "0.10.2", features = ["std", "std_rng", "thread_rng"] }
+# Constant-time comparison for every credential verifier and MAC check.
+subtle = { version = "2.6.1", default-features = false, features = ["std"] }
+# Ed25519 signing and verification for the 30-second authorization assertion.
+# OD-21 keeps this to the one path where AEX holds the key material directly;
+# everything whose key lives in KMS uses `ECDSA_SHA_256` instead.
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["std", "zeroize", "fast"] }
 zeroize = { version = "1.9.0", features = ["derive", "alloc", "std"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 # Safe wrappers over the four syscall seams the usage probe needs
