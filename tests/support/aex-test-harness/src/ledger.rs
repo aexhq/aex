@@ -149,7 +149,13 @@ pub struct CleanupLedger {
     run_id: TestRunId,
     root: PathBuf,
     entries: Mutex<Vec<Entry>>,
-    flushed: Mutex<bool>,
+    /// How many entries the file already holds.
+    ///
+    /// A watermark rather than a `flushed` flag: the file is append-only, so a
+    /// flush must write the tail it has not written yet. A boolean cannot
+    /// express that, and made a mid-run flush both restate every earlier entry
+    /// and silently discard every later one.
+    written: Mutex<usize>,
 }
 
 impl CleanupLedger {
@@ -166,7 +172,7 @@ impl CleanupLedger {
             run_id,
             root,
             entries: Mutex::new(Vec::new()),
-            flushed: Mutex::new(false),
+            written: Mutex::new(0),
         }
     }
 
@@ -275,8 +281,15 @@ impl CleanupLedger {
                 path: path.display().to_string(),
                 source,
             })?;
-        for entry in self.entries() {
-            let line = serde_json::to_string(&entry).map_err(|source| LedgerError::Render {
+        // The watermark is held across the write so two threads flushing at once
+        // cannot both decide the same tail is theirs to append.
+        let mut written = self
+            .written
+            .lock()
+            .expect("the cleanup ledger mutex is not poisoned");
+        let entries = self.entries();
+        for entry in entries.iter().skip(*written) {
+            let line = serde_json::to_string(entry).map_err(|source| LedgerError::Render {
                 identity: entry.identity.clone(),
                 source,
             })?;
@@ -284,11 +297,8 @@ impl CleanupLedger {
                 path: path.display().to_string(),
                 source,
             })?;
+            *written += 1;
         }
-        *self
-            .flushed
-            .lock()
-            .expect("the cleanup ledger mutex is not poisoned") = true;
         Ok(LedgerPath(path))
     }
 }
@@ -297,22 +307,23 @@ impl Drop for CleanupLedger {
     /// The `finally`-equivalent half of the flush contract.
     ///
     /// An explicit end-of-run [`CleanupLedger::flush`] is the normal path; this
-    /// catches the run that panicked before reaching it. A failure here is
-    /// reported, never swallowed, because an unwritten ledger turns real
-    /// residue into an unexplained tagged resource.
+    /// catches the run that panicked before reaching it, and the run that
+    /// flushed mid-way and then created more. A failure here is reported, never
+    /// swallowed, because an unwritten ledger turns real residue into an
+    /// unexplained tagged resource.
     fn drop(&mut self) {
-        let already = *self
-            .flushed
+        let written = *self
+            .written
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if already {
-            return;
-        }
+        // The condition is the unwritten tail, not "was flush ever called": a
+        // ledger flushed at entry 3 and then given a fourth still owes one line.
         if self
             .entries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
+            .len()
+            <= written
         {
             return;
         }
@@ -389,6 +400,56 @@ mod tests {
             "only the TTL-expiring item is residue until released"
         );
         assert_eq!(residue[0].identity, "expiring");
+    }
+
+    /// A resource created after an explicit flush is exactly the resource a
+    /// janitor would later find with no ledger row to explain it.
+    #[test]
+    fn an_entry_recorded_after_an_explicit_flush_still_reaches_the_file() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let path = {
+            let ledger = ledger(root.path());
+            ledger.record(entry("before"));
+            let path = ledger.flush().expect("the ledger flushes").0;
+            ledger.record(entry("after"));
+            path
+        };
+        let text = std::fs::read_to_string(&path).expect("the ledger is readable");
+        let identities: Vec<String> = text
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<Entry>(line)
+                    .expect("each line is one entry")
+                    .identity
+            })
+            .collect();
+        assert_eq!(
+            identities,
+            vec!["before".to_owned(), "after".to_owned()],
+            "an entry recorded after a flush must still be written when the ledger drops"
+        );
+    }
+
+    /// The file is append-only, so a second flush that restated the first
+    /// flush's entries would make one resource look like two to the janitor.
+    #[test]
+    fn flushing_twice_does_not_restate_an_entry_the_first_flush_wrote() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let ledger = ledger(root.path());
+        ledger.record(entry("a"));
+        let path = ledger.flush().expect("the first flush").0;
+        ledger.record(entry("b"));
+        ledger.flush().expect("the second flush");
+        let text = std::fs::read_to_string(&path).expect("the ledger is readable");
+        let identities: Vec<String> = text
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<Entry>(line)
+                    .expect("each line is one entry")
+                    .identity
+            })
+            .collect();
+        assert_eq!(identities, vec!["a".to_owned(), "b".to_owned()]);
     }
 
     #[test]
