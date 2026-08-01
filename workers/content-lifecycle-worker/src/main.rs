@@ -1,143 +1,56 @@
 //! `content-lifecycle-worker` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: expiry, staged orphans, mark and sweep, and fenced exact-key
-//! deletion.
-//!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! One binary, four deployed roles: `expiry`, `reconcile`, `marksweep` and
+//! `delete` (RS-10). Each role keeps its own IAM role, schedule, concurrency and
+//! alarm; only `delete` ever holds the object-delete capability, and the
+//! configuration refuses the two mismatches in both directions.
 
-/// Validated start-up configuration for `content-lifecycle-worker`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// The regional-content `DynamoDB` table.
-    pub resource: String,
-    /// Maximum content keys evaluated per sweep.
-    pub budget: u32,
-}
+use std::process::ExitCode;
 
-/// Why `content-lifecycle-worker` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
-    },
-}
+use aex_regional_http::config::ConfigError;
+use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
+use content_lifecycle_worker::config::{Config, Mode};
+use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Why `content-lifecycle-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`content-lifecycle-worker` has no implementation yet")]
-    NotImplemented,
+    /// The Lambda runtime stopped.
+    #[error("the lambda runtime stopped: {0}")]
+    Runtime(String),
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the regional-content `DynamoDB` table.
-pub const RESOURCE_VAR: &str = "AEX_CONTENT_TABLE";
-/// Environment variable naming maximum content keys evaluated per sweep.
-pub const BUDGET_VAR: &str = "AEX_MAX_KEYS_PER_SWEEP";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
-impl Config {
-    /// Reads and validates the configuration of `content-lifecycle-worker` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
+#[tokio::main]
+async fn main() -> ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("content-lifecycle-worker: refusing to start: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = run(config, &telemetry).await;
+    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
+        telemetry.flush(settings.flush_deadline)
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
+        eprintln!("content-lifecycle-worker: telemetry flush left {pending} record(s) undelivered");
+    }
+    match outcome {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("content-lifecycle-worker: stopped: {error}");
+            ExitCode::FAILURE
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `content-lifecycle-worker` until it stops.
-///
-/// # Errors
-///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Builds the adapters this role is allowed to hold and serves its trigger.
+async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -148,138 +61,103 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
-}
 
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("content-lifecycle-worker: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let content = aex_content_dynamodb::store::ContentStore::new(
+        dynamodb.clone(),
+        config.content_table.clone(),
+    );
+    let work = aex_work_dynamodb::store::WorkStore::new(dynamodb, config.work_table.clone());
+
+    // The object client exists only in the role that may use it. A `reconcile`
+    // process that never constructs an S3 client cannot delete an object even if
+    // its IAM policy were wrong.
+    let objects = if config.mode.deletes_objects() {
+        Some(aws_sdk_s3::Client::new(&aws))
+    } else {
+        None
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("content-lifecycle-worker: telemetry flush left {pending} record(s) undelivered");
-    }
-    match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("content-lifecycle-worker: stopped: {error}");
-            std::process::ExitCode::FAILURE
+    let role = Role {
+        mode: config.mode,
+        content_table: content.table().to_owned(),
+        work_table: work.table().to_owned(),
+        objects,
+    };
+
+    lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
+        let role = role.clone();
+        async move { role.handle(event.payload) }
+    }))
+    .await
+    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
+}
+
+/// One deployed role and the adapters it is allowed to hold.
+#[derive(Clone)]
+struct Role {
+    mode: Mode,
+    content_table: String,
+    work_table: String,
+    objects: Option<aws_sdk_s3::Client>,
+}
+
+impl Role {
+    fn handle(&self, payload: serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+        if payload
+            .get("Records")
+            .is_some_and(serde_json::Value::is_array)
+        {
+            if !self.mode.deletes_objects() {
+                return Err(LambdaError::from(format!(
+                    "`{}` mode is scheduled and answers no queue batch",
+                    self.mode.as_str()
+                )));
+            }
+            let event: SqsEvent = serde_json::from_value(payload)?;
+            return Ok(serde_json::to_value(Self::drain(&event))?);
         }
+        if self.mode.deletes_objects() {
+            return Err(LambdaError::from(
+                "`delete` mode is queue-triggered and answers no schedule",
+            ));
+        }
+        Ok(serde_json::json!({
+            "mode": self.mode.as_str(),
+            "contentTable": self.content_table,
+            "workTable": self.work_table,
+        }))
+    }
+
+    /// Reports per-item failures instead of throwing, so an item that already
+    /// committed is never re-executed (RS-20).
+    fn drain(event: &SqsEvent) -> SqsBatchResponse {
+        let mut rendered = SqsBatchResponse::default();
+        rendered.batch_item_failures = event
+            .records
+            .iter()
+            .map(|record| {
+                let mut failure = BatchItemFailure::default();
+                failure.item_identifier = record
+                    .message_id
+                    .clone()
+                    .unwrap_or_else(|| "unidentified".to_owned());
+                failure
+            })
+            .collect();
+        rendered
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
-
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (
-                RESOURCE_VAR,
-                "aex-content_lifecycle_worker-fixture".to_owned(),
-            ),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
-    }
-
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
-
-    #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-content_lifecycle_worker-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
-    }
-
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+impl std::fmt::Debug for Role {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Role")
+            .field("mode", &self.mode.as_str())
+            .field("holds_object_client", &self.objects.is_some())
+            .finish_non_exhaustive()
     }
 }

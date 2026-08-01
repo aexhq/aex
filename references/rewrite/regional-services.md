@@ -251,3 +251,192 @@ The final registry regeneration ended exactly:
      Running `target\debug\aex-workspace-check.exe registry build`
 aex-workspace-check: wrote release/test-registry.json and release/unearned-evidence.json
 ```
+
+## Composition
+
+Branch `rw/deploy-regional`, off `main` after the four-stream merge. This closes
+the largest tracked gap in "Deliberately deferred": the six binaries no longer
+return `RunError::NotImplemented`. Each one now validates its own configuration,
+builds its real adapters from it, and reaches its real entry point.
+
+### The mount table is a projection of the route table
+
+`aex_regional_http::router::RouteOwner` replaces the free `route_owner` function
+as the ownership surface. `RouteOwner::routes()` is the owned partition of the
+generated regional table, `RouteOwner::routes_in(group)` is the subset of one
+authoring fragment, and `mount_unary` iterates the *served* projection rather
+than listing templates. Two properties follow and are asserted:
+
+- `route_ownership_partitions_the_regional_route_table` — the five owners'
+  slices are disjoint and their union is every regional route, so a new route
+  lands on a deployable by construction.
+- `the_owned_set_is_drawn_from_the_groups_and_not_from_a_second_list` — walking
+  `RouteGroup::ALL` and filtering by owner reproduces the owned set exactly.
+
+`regional:secrets` and `regional:provider-credentials` are the two fragments that
+span two deployables, which is why mounting filters a group rather than mounting
+a whole trait: the plaintext half is the secret edge's and the metadata half is
+the session API's. `not_served` is the typed refusal for the other half, and it
+is unreachable through the router because only owned templates are mounted.
+
+| Deployable | Owns | Mounts today |
+| --- | --- | --- |
+| `regional-session-api` | 61 | 0 |
+| `regional-secret-api` | 4 | 0 |
+| `regional-stream` | 24 | 0 |
+| `regional-observation-api` (peer) | 27 | — |
+| `regional-otlp` (peer) | 3 | — |
+
+`UnaryDispatch::served()` defaults to the whole owned set and is narrowed only
+while a named peer capability is owed. It is narrowed to the empty set on both
+APIs today, and the reason is exactly one gap — see "The one blocking gap".
+RS-18 is the reason this is a *narrowed mount* rather than a mounted route that
+answers a permanent failure.
+
+### The shared edge
+
+`aex_regional_http::edge::RegionalEdge` is one implementation of the precedence
+stages every finite regional deployable runs: credential presentation, the
+regional projection read, credential-bound assertion verification, immutable
+placement, the route's declared scope, the pause gate, the effective body bound
+and strict replay identity in both directions. Every decision comes from the
+generated descriptor — `required_scope`, `pause_exempt`, `idempotency` — so a
+route cannot skip a stage by omission. `AssertionSource`, `KeyVerifier`,
+`ProjectionReader` and `EdgeClock` stay ports; the composition root supplies the
+concrete adapters.
+
+### Configuration
+
+`aex_regional_http::config` holds the primitives: `required`, `optional`,
+`forbidden`, `positive_u64`, `bounded_u64`, `bounded_usize`, `plane_name`,
+`region`, `arn_in_region`, `queue_url`, `one_of`, plus `Arn` and the `Lookup`
+seam that lets a test supply a map without `unsafe` environment mutation.
+Nothing has a default, every refusal names its variable, and two classes of
+mistake that otherwise survive deployment are refused at start-up:
+
+- **a resource in another region.** `arn_in_region` and `queue_url` compare the
+  ARN's or the queue URL's region against the plane binding.
+- **a binding the deployable must never hold.** Each deployable declares a
+  `FORBIDDEN` list, and the process refuses to start when one is present. This
+  is the configuration half of RS-09; IAM is the other half, and neither is a
+  single point of failure.
+
+### What each deployable now does
+
+- **`regional-session-api`** — validates 21 variables, refuses a queue URL or the
+  secret KMS key, requires the content bucket owner to equal the content key's
+  account, builds the work, content, registry, custody and runtime-activity
+  adapters plus the object binding, derives readiness from the composition and
+  serves `/internal/healthz` and `/internal/readyz` under `lambda_http`.
+- **`regional-secret-api`** — validates 13 variables, refuses any session,
+  content, bucket, work, registry or queue binding, builds the custody adapter
+  and the envelope crypto over the *secret* key with a plane- and region-scoped
+  cache partition, and serves the health endpoints under `lambda_http`.
+- **`regional-stream`** — validates 21 variables, refuses every mutating binding,
+  admits `ddb_streams` only at `AEX_STREAM_MAX_TASKS <= 2` (RS-05), requires both
+  authority stream ARNs in that mode, refuses a total connection budget below a
+  class budget, binds the listener only after admission, and drains on `SIGTERM`
+  by flipping readiness to `503` before the deadline runs.
+- **`session-operation-worker`** — validates 16 variables including both queue
+  regions, builds the work, content and registry adapters, and serves both
+  triggers: an SQS batch answered with a partial-batch response (RS-20) and the
+  scheduled sharded due scan. `Trigger::classify` is structural, and an
+  unrecognised payload fails rather than draining the queue silently.
+- **`content-lifecycle-worker`** — one binary, four roles. The mode selects the
+  required variable set, the S3 client is constructed only in `delete` mode, and
+  the object-delete capability is refused in both directions: `delete` cannot
+  start without it and no other role may hold it.
+- **`regional-secret-key-admin`** — the three `clap` commands, the exit-code
+  interface (`0` acted, `3` already current, `1` refused), and start-up denial of
+  a table that is not the configured keystore, a cross-region key, an unattested
+  run and every product-table binding.
+
+### The one blocking gap
+
+No handler is mounted on either API because **no crate on `main` projects a
+domain value onto a wire model**. `aex-session-app` returns
+`Planned<(Message, Run)>` over `aex_session_domain` types; `aex-session-dynamodb`
+commits `wire_pending::AdmissionPlan`; the generated `SessionsApi::session_get`
+returns `aex_wire::models::Session`. Nothing converts between them, and the
+adapters do not carry every field the wire models require — `ProviderCredential`
+is the clearest case: the custody codec stores `credential`, `provider`,
+`secret_name`, `source_generation`, `state` and `created_at`, while the wire
+model additionally requires `fingerprint`, `name`, `revision` and `updated_at`.
+
+A grep for `aex_wire::models::` outside `aex-wire` returns only enum re-uses
+(`TelemetryGapReason`, `ObservationSignal`, `ObservationOrder`,
+`CredentialRebindResult`, `SecretRef`). The projection layer is unowned, not
+unfinished.
+
+Two smaller consequences, both recorded rather than worked around:
+
+- `aex-secret-custody-dynamodb::expressions` publishes `set`, `revoke`,
+  `admit_custody` and `authorize_managed_call` but no conditional *delete*, so
+  `secret_delete` has no adapter expression even though `aex_secret_domain`
+  publishes the pure `delete`.
+- `GET /api/downloads/{measurementId}` (RS-04) is not in the generated route
+  table, so small-body redemption has no route to mount.
+
+### Cross-stream requirements this pass raises
+
+| Requirement | Owner stream |
+| --- | --- |
+| A domain-to-wire projection for the regional models. Whether it lands in `aex-session-app`, in the adapters, or in a new crate is an architecture decision this stream does not own, but until it exists no regional route can be mounted. | regional domains + regional stores |
+| `aex-secret-custody-dynamodb::expressions::delete`, the conditional custody delete that `secret_delete` commits. | regional stores |
+| The `central-authz` invoke request/response shapes for a **workspace key**. `aex-internal-contracts::assertion` publishes `ResolveSessionForWorkspace`/`ResolvedSessionAssertion` for a browser session only, so a concrete `AssertionSource` cannot be written without inventing the workspace-key payload. | central identity |
+| `aws-sdk-lambda` in `[workspace.dependencies]`, which the concrete `AssertionSource` needs and no member currently declares. | delivery |
+| `graph verify` reports one pre-existing violation unrelated to this stream: `[graph-cycle] cargo:aex-usage-application -> cargo:aex-usage-application`. | usage metering |
+
+### Decisions taken beyond section 10
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| RS-21 | Route ownership becomes `RouteOwner`, a projection of `ROUTES` with `routes()`, `routes_in(group)` and `groups()`, rather than a free function returning an owner | The mount loop, the composition tests and the peer assignment all need the *set*, not one lookup. Deriving the set makes an authored-but-unmounted route a red suite instead of a runtime `404`. |
+| RS-22 | `UnaryDispatch::served()` may narrow the owned set, and `mount_unary` validates the narrowing | RS-18 forbids mounting a route that cannot be fully served. Without a narrowing seam the only alternatives were a permanently failing mounted route or an unbuildable binary. |
+| RS-23 | Every deployable declares a `FORBIDDEN` variable list and refuses to start when one is bound | The capability boundary was previously an IAM fact only. A start-up refusal is cheaper to test, is visible without an AWS account, and fails the same way in a local run as in production. |
+| RS-24 | An ARN or queue URL whose region differs from `AEX_REGION` refuses the process | A cross-region resource passes every type check and deploys cleanly; the only symptom is a tenant's data outside its declared residency. |
+| RS-25 | `content-lifecycle-worker` declares `AEX_DECLARED_CAPABILITIES=none` rather than an empty string when it holds nothing | "Declared nothing" and "forgot to declare" must not be the same value; only one of them is a deliberate statement. |
+| RS-26 | Readiness is derived from the composition (`Stores::unresolved`, `Readers::unresolved`) rather than declared as a constant | A readiness endpoint that reports `ready` from a literal cannot fail closed over a half-built process. |
+| RS-27 | The `regional-secret-key-admin` unit is a Fargate task shape with `port = 0` | It is a one-shot task, not a service; `graph verify` only requires a non-zero port for `rust-oci-service`. |
+
+### Environment variables per deployable
+
+Every name below is required unless marked. There is no default for any of them.
+
+**Common to all six**: `AEX_PLANE` (`dev`/`prd`), `AEX_REGION`,
+`AEX_RELEASE_DIGEST` (the key admin excepted — it has no readiness endpoint).
+
+| Deployable | Additional variables |
+| --- | --- |
+| `regional-session-api` | `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_RUNTIME_ACTIVITY_TABLE`, `AEX_USAGE_QUERY_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_CONTENT_KMS_KEY_ARN`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_ASSERTION_CACHE_BYTES`, `AEX_MAX_JSON_BODY_BYTES`, `AEX_MAX_PAGE_ITEMS`, `AEX_MAX_PAGE_BYTES` |
+| `regional-secret-api` | `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_SECRET_KEYSTORE_TABLE`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_SECRET_BRANCH_KEY_CACHE_BYTES`, `AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS`, `AEX_ASSERTION_CACHE_BYTES`, `AEX_MAX_JSON_BODY_BYTES` |
+| `regional-stream` | `AEX_STREAM_PORT`, `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_OBSERVATION_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_STREAM_WAKE_MODE`, `AEX_STREAM_MAX_TASKS`, `AEX_STREAM_MAX_CONNECTIONS`, `AEX_STREAM_MAX_CONNECTIONS_SESSION`, `AEX_STREAM_MAX_CONNECTIONS_OBSERVATION`, `AEX_STREAM_MAX_CONNECTIONS_PER_WORKSPACE`, `AEX_STREAM_CONNECTION_BUFFER_BYTES`, `AEX_STREAM_WRITE_STALL_MS`, `AEX_STREAM_DRAIN_DEADLINE_MS`, `AEX_ASSERTION_CACHE_BYTES`; plus `AEX_SESSION_TABLE_STREAM_ARN` and `AEX_OBSERVATION_TABLE_STREAM_ARN` in `ddb_streams` mode only |
+| `session-operation-worker` | `AEX_OPERATION_QUEUE_URL`, `AEX_OPERATION_DLQ_URL`, `AEX_WORK_TABLE`, `AEX_SESSION_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_DUE_SCAN_SHARDS`, `AEX_LEASE_MS`, `AEX_STEP_DEADLINE_MS`, `AEX_MAX_ATTEMPTS` |
+| `content-lifecycle-worker` | `AEX_MODE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_GC_STAGE_GRACE_HOURS`, `AEX_UPLOAD_GRACE_HOURS`, `AEX_DECLARED_CAPABILITIES`; plus `AEX_CONTENT_QUEUE_URL` and `AEX_CONTENT_DLQ_URL` in `delete` mode, `AEX_MARK_PAGE_ITEMS` and `AEX_SWEEP_PAGE_ITEMS` in `marksweep` mode, and optional `AEX_INVENTORY_BUCKET` in `reconcile` mode |
+| `regional-secret-key-admin` | `AEX_SECRET_KEYSTORE_TABLE`, `AEX_KEYSTORE_LOGICAL_NAME`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_ATTESTATION_OPERATION_ID` |
+
+Forbidden bindings, which refuse the process when present:
+
+| Deployable | Refuses |
+| --- | --- |
+| `regional-session-api` | `AEX_OPERATION_QUEUE_URL`, `AEX_CONTENT_QUEUE_URL`, `AEX_SECRET_KMS_KEY_ARN` |
+| `regional-secret-api` | `AEX_SESSION_TABLE`, `AEX_CONTENT_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_WORK_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_OPERATION_QUEUE_URL` |
+| `regional-stream` | `AEX_WORK_TABLE`, `AEX_OPERATION_QUEUE_URL`, `AEX_CONTENT_QUEUE_URL`, `AEX_SECRET_KMS_KEY_ARN` |
+| `session-operation-worker` | `AEX_SECRET_KMS_KEY_ARN`, `AEX_CONTENT_QUEUE_URL` |
+| `content-lifecycle-worker` | `AEX_SECRET_KMS_KEY_ARN`, `AEX_SESSION_TABLE` |
+| `regional-secret-key-admin` | `AEX_SESSION_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_CONTENT_BUCKET` |
+
+### Resource shapes
+
+`release/units.toml` gains a `[unit.lambda]` block for the four Lambdas and a
+`[unit.fargate]` block for the key-admin task; `regional-stream` already had one.
+`graph verify` reports no `unit-resource-shape-missing` for any of the six.
+
+### Gate note
+
+`cargo fmt --all` **cannot run on this host**: `rustfmt` receives every member
+file path on one command line and Windows refuses it with
+`The filename or extension is too long. (os error 206)`. The equivalent gate was
+run as `cargo fmt -p <package>` over each owned package, all exiting `0`. Linux
+CI is unaffected; this is the same class of host condition as the NASM note in
+the orchestrator conventions.

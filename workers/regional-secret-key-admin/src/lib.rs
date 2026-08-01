@@ -1,5 +1,9 @@
 //! Exclusive, idempotent regional branch-key administration kernel.
 
+pub mod config;
+
+pub use config::Config;
+
 use std::collections::BTreeMap;
 
 use aex_wire::ids::{OperationId, PrefixedId as _};

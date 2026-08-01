@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 rotation = "unit"
+composition = "unit"
 performance_contract = "e2e"
 
 [[bin]]
@@ -34,6 +35,9 @@ name = "regional-secret-key-admin"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+aex-regional-http = { path = "../../crates/aex-regional-http" }
+aex-secret-keystore-dynamodb = { path = "../../crates/aex-secret-keystore-dynamodb" }
 aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
@@ -42,6 +46,10 @@ thiserror.workspace = true
 [[test]]
 name = "rotation"
 path = "tests/rotation.rs"
+
+[[test]]
+name = "composition"
+path = "tests/composition.rs"
 
 [[test]]
 name = "performance_contract"

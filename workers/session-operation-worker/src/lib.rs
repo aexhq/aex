@@ -1,7 +1,67 @@
 //! Fenced, bounded continuation kernel for regional session operations.
 
+pub mod config;
+
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
+
+pub use config::Config;
+
+/// Which of the worker's two triggers an invocation carries.
+///
+/// The classification is structural rather than a configured mode: an SQS batch
+/// always carries `Records`, and the scheduled due scan always carries the
+/// `aex.due_scan` detail type. Anything else is a failure, because a worker that
+/// answers success to a payload it did not understand drains its queue without
+/// doing any work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    /// An SQS hint batch.
+    Queue,
+    /// The scheduled sharded due scan.
+    DueScan,
+    /// Neither.
+    Unknown,
+}
+
+impl Trigger {
+    /// Classifies one raw invocation payload.
+    #[must_use]
+    pub fn classify(payload: &serde_json::Value) -> Self {
+        if payload
+            .get("Records")
+            .is_some_and(serde_json::Value::is_array)
+        {
+            return Self::Queue;
+        }
+        if payload
+            .get("detail-type")
+            .and_then(serde_json::Value::as_str)
+            == Some(DUE_SCAN_DETAIL_TYPE)
+        {
+            return Self::DueScan;
+        }
+        Self::Unknown
+    }
+}
+
+/// The scheduled event this worker answers a due scan for.
+pub const DUE_SCAN_DETAIL_TYPE: &str = "aex.due_scan";
+
+/// Every deterministic shard the due scan sweeps, in order.
+///
+/// A literal single `due` partition key is forbidden: it would make the whole
+/// regional due index one hot partition.
+///
+/// # Errors
+///
+/// Returns [`WorkError::InvalidShardCount`] for a zero shard count.
+pub fn due_shards(shards: u64) -> Result<Vec<u64>, WorkError> {
+    if shards == 0 {
+        return Err(WorkError::InvalidShardCount);
+    }
+    Ok((0..shards).collect())
+}
 
 /// Poison-work ceiling.
 pub const MAX_ATTEMPTS: u32 = 8;
@@ -297,6 +357,20 @@ pub enum BatchItem {
 pub struct BatchResponse {
     /// Failed message ids only.
     pub batch_item_failures: Vec<String>,
+}
+
+impl BatchItem {
+    /// An item that committed and may be acknowledged.
+    #[must_use]
+    pub fn succeeded(id: impl Into<String>) -> Self {
+        Self::Succeeded(id.into())
+    }
+
+    /// An item that must be retried independently of the rest of its batch.
+    #[must_use]
+    pub fn failed(id: impl Into<String>) -> Self {
+        Self::Failed(id.into())
+    }
 }
 
 /// Builds a partial-batch response without throwing successful items away.

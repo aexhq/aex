@@ -1,6 +1,67 @@
 //! Plaintext admission boundary for secrets and provider credentials.
 
+pub mod config;
+
+use std::sync::Arc;
+
+use aex_regional_http::router::RouteOwner;
 use aex_wire::routes::RouteId;
+
+use crate::config::Config;
+
+/// The composed secret edge: the custody authority plus the envelope crypto over
+/// the secret `KMS` key, and nothing else.
+///
+/// The type is the capability statement. There is no field here that can reach
+/// the session authority, the content bucket, the work table or a queue, so the
+/// composition test that asserts the absence has something structural to assert
+/// rather than a comment to trust.
+pub struct SecretEdge<S, C> {
+    custody: Arc<S>,
+    crypto: Arc<C>,
+}
+
+impl<S, C> SecretEdge<S, C> {
+    /// Binds the edge to its two adapters.
+    #[must_use]
+    pub const fn new(custody: Arc<S>, crypto: Arc<C>) -> Self {
+        Self { custody, crypto }
+    }
+
+    /// The custody authority.
+    #[must_use]
+    pub fn custody(&self) -> &S {
+        &self.custody
+    }
+
+    /// The envelope crypto.
+    #[must_use]
+    pub fn crypto(&self) -> &C {
+        &self.crypto
+    }
+
+    /// The deployable this edge composes.
+    #[must_use]
+    pub const fn owner() -> RouteOwner {
+        RouteOwner::SecretApi
+    }
+
+    /// Dependencies of the served route set that are not yet resolved.
+    ///
+    /// Readiness is derived from the composition rather than declared: a name
+    /// appears here only while something the served routes need is unbound.
+    #[must_use]
+    pub fn unresolved(&self, config: &Config) -> Vec<String> {
+        let mut unresolved = Vec::new();
+        if config.secret_custody_table.is_empty() {
+            unresolved.push("regional-secret-custody".to_owned());
+        }
+        if config.secret_keystore_table.is_empty() {
+            unresolved.push("regional-secret-keystore".to_owned());
+        }
+        unresolved
+    }
+}
 use sha2::Digest as _;
 use zeroize::Zeroize as _;
 

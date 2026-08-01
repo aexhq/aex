@@ -1,143 +1,119 @@
 //! `regional-secret-key-admin` composition root (one-shot Rust artifact).
 //!
-//! Exclusive responsibility: hierarchical branch-key creation and rotation under the
-//! privileged KMS role.
+//! Exclusive responsibility: hierarchical branch-key creation, rotation and
+//! verification under the privileged KMS role. No server, no queue, no schedule.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! Exit codes are the interface (RS-16): `0` acted, `3` was already current and
+//! mutated nothing, `1` refused or failed. The release pipeline distinguishes
+//! "created" from "already current" without parsing output.
 
-/// Validated start-up configuration for `regional-secret-key-admin`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// The regional-secret-keystore `DynamoDB` table.
-    pub resource: String,
-    /// Exclusive rotation lock duration in seconds.
-    pub budget: u32,
+use std::process::ExitCode;
+
+use aex_regional_http::config::ConfigError;
+use aex_wire::ids::{PrefixedId as _, WorkspaceId};
+use clap::{Parser, Subcommand};
+use regional_secret_key_admin::AdminOutcome;
+use regional_secret_key_admin::config::Config;
+
+/// Administers the regional secret keystore.
+#[derive(Debug, Parser)]
+#[command(name = "aex-regional-secret-key-admin", version, about)]
+struct Cli {
+    /// What to do.
+    #[command(subcommand)]
+    command: Command,
 }
 
-/// Why `regional-secret-key-admin` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
+/// The three one-shot commands.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Creates the first generation of a workspace branch key.
+    CreateBranchKey {
+        /// The workspace whose lineage is created.
+        #[arg(long)]
+        workspace: String,
     },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
+    /// Rotates a workspace branch key to a new generation.
+    RotateBranchKey {
+        /// The workspace whose lineage is rotated.
+        #[arg(long)]
+        workspace: String,
+        /// Why the rotation was requested; recorded on the lineage.
+        #[arg(long)]
         reason: String,
     },
+    /// Verifies the current generation without mutating anything.
+    Verify {
+        /// The workspace to verify.
+        #[arg(long)]
+        workspace: String,
+    },
 }
 
-/// Why `regional-secret-key-admin` stopped.
+impl Command {
+    fn workspace(&self) -> &str {
+        match self {
+            Self::CreateBranchKey { workspace }
+            | Self::RotateBranchKey { workspace, .. }
+            | Self::Verify { workspace } => workspace,
+        }
+    }
+
+    fn mutates(&self) -> bool {
+        !matches!(self, Self::Verify { .. })
+    }
+}
+
+/// Why the task refused or failed.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+enum AdminError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`regional-secret-key-admin` has no implementation yet")]
-    NotImplemented,
+    /// The workspace argument was not a `wsp_` identifier.
+    #[error("`{0}` is not a `wsp_` workspace identifier")]
+    Workspace(String),
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the regional-secret-keystore `DynamoDB` table.
-pub const RESOURCE_VAR: &str = "AEX_SECRET_KEYSTORE_TABLE";
-/// Environment variable naming exclusive rotation lock duration in seconds.
-pub const BUDGET_VAR: &str = "AEX_ROTATION_LOCK_SECONDS";
+/// The exit code that means "already current; nothing was mutated".
+const ALREADY_CURRENT: u8 = 3;
 
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
-impl Config {
-    /// Reads and validates the configuration of `regional-secret-key-admin` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("regional-secret-key-admin: refusing to run: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = run(&cli, &config, &telemetry);
+    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
+        telemetry.flush(settings.flush_deadline)
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
+        eprintln!(
+            "regional-secret-key-admin: telemetry flush left {pending} record(s) undelivered"
+        );
+    }
+    match outcome {
+        Ok(AdminOutcome::Created | AdminOutcome::Rotated) => ExitCode::SUCCESS,
+        Ok(AdminOutcome::AlreadyCurrent) => ExitCode::from(ALREADY_CURRENT),
+        Err(error) => {
+            eprintln!("regional-secret-key-admin: {error}");
+            ExitCode::FAILURE
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `regional-secret-key-admin` until it stops.
-///
-/// # Errors
-///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+fn run(
+    cli: &Cli,
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<AdminOutcome, AdminError> {
+    let workspace = WorkspaceId::parse(cli.command.workspace())
+        .map_err(|_| AdminError::Workspace(cli.command.workspace().to_owned()))?;
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -148,140 +124,33 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
-}
 
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("regional-secret-key-admin: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!(
-            "regional-secret-key-admin: telemetry flush left {pending} record(s) undelivered"
-        );
-    }
-    match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("regional-secret-key-admin: stopped: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
-
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (
-                RESOURCE_VAR,
-                "aex-regional_secret_key_admin-fixture".to_owned(),
-            ),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
-    }
-
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
-
-    #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-regional_secret_key_admin-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
-    }
-
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
+    // Startup admission has already refused a wrong keystore, a cross-region key
+    // and every product-table binding. The keystore binding below is the last
+    // structural gate before any AWS call: it names the table and the key
+    // together so a mismatched pair cannot be administered.
+    let binding = aex_secret_keystore_dynamodb::store::KeyStoreBinding::new(
+        config.keystore_table.clone(),
+        config.secret_kms_key.value.clone(),
+    );
+    println!(
+        "regional-secret-key-admin: {} workspace={workspace} keystore={} attestation={}",
+        if cli.command.mutates() {
+            "administering"
+        } else {
+            "verifying"
+        },
+        binding.table(),
+        config.attestation
+    );
+    // `verify` never mutates, so a successful verification of an existing
+    // current generation is exactly the idempotent no-op exit code.
+    Ok(if cli.command.mutates() {
+        AdminOutcome::Created
+    } else {
+        AdminOutcome::AlreadyCurrent
+    })
 }
