@@ -62,16 +62,19 @@ pub enum CentralServiceId {
     FinanceApi,
     /// `finance-ingest`: queue-driven, no public route.
     FinanceIngest,
+    /// `central-control-worker`: queue- and schedule-driven, no public route.
+    ControlWorker,
 }
 
 impl CentralServiceId {
     /// Every central deployable.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::IdentityApi,
         Self::Authz,
         Self::ControlApi,
         Self::FinanceApi,
         Self::FinanceIngest,
+        Self::ControlWorker,
     ];
 
     /// The deployable id, matching `release/units.toml`.
@@ -83,6 +86,7 @@ impl CentralServiceId {
             Self::ControlApi => "central-control-api",
             Self::FinanceApi => "finance-api",
             Self::FinanceIngest => "finance-ingest",
+            Self::ControlWorker => "central-control-worker",
         }
     }
 
@@ -97,7 +101,7 @@ impl CentralServiceId {
     pub const fn groups(self) -> &'static [RouteGroup] {
         match self {
             Self::IdentityApi => &[RouteGroup::Auth],
-            Self::Authz | Self::FinanceIngest => &[],
+            Self::Authz | Self::FinanceIngest | Self::ControlWorker => &[],
             Self::ControlApi => &[
                 RouteGroup::ApiKeys,
                 RouteGroup::Bootstrap,
@@ -278,6 +282,7 @@ mod tests {
     fn a_service_with_no_public_route_owns_no_group() {
         assert!(CentralServiceId::Authz.groups().is_empty());
         assert!(CentralServiceId::FinanceIngest.groups().is_empty());
+        assert!(CentralServiceId::ControlWorker.groups().is_empty());
     }
 
     #[test]

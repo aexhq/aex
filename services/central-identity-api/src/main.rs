@@ -1,84 +1,134 @@
 //! `central-identity-api` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: browser ceremony exchange and identity lifecycle; identity DML
-//! only.
+//! The browser ceremony exchange and the identity lifecycle, plus the two public
+//! device-flow routes. It writes identity DML and holds exactly one control
+//! privilege — `control.bump_user_epoch` — so a disabled person's assertions
+//! stop verifying in the same transaction that disables them.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! The mounted public surface is `CentralServiceId::IdentityApi.routes()` and
+//! nothing else, which `the_mounted_set_is_exactly_the_declared_one` asserts.
 
-/// Validated start-up configuration for `central-identity-api`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// Aurora cluster holding the identity schema.
-    pub resource: String,
-    /// Maximum ceremony lifetime in seconds.
-    pub budget: u32,
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use aex_central_http::capability::{
+    Capability as _, CapabilityBinding, CompositionError, CompositionManifest, Declares,
+    IdentityWrite,
+};
+use aex_central_http::config::{CentralServiceId, HttpConfig};
+use aex_central_http::health::{Dependency, Readiness};
+use aex_central_http::router::{EdgeStack, mount_auth_api};
+use aex_wire::server::AuthApi;
+
+/// The deployable this binary is.
+const DEPLOYABLE: CentralServiceId = CentralServiceId::IdentityApi;
+
+/// The one login role this binary may connect as.
+const REQUIRED_ROLE: &str = "aex_identity_api";
+
+/// Environment keys, all inside the declared namespace.
+mod keys {
+    /// The plane's account id, for the ARN binding check.
+    pub const ACCOUNT_ID: &str = "AEX_CENTRAL_IDENTITY_ACCOUNT_ID";
+    /// The Aurora cluster holding the identity schema.
+    pub const AURORA_CLUSTER_ARN: &str = "AEX_CENTRAL_IDENTITY_AURORA_CLUSTER_ARN";
+    /// The Aurora credentials secret.
+    pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_IDENTITY_AURORA_SECRET_ARN";
+    /// The database name.
+    pub const DATABASE: &str = "AEX_CENTRAL_IDENTITY_DATABASE";
+    /// Where a person approves a device authorization.
+    pub const DEVICE_VERIFICATION_URI: &str = "AEX_CENTRAL_IDENTITY_DEVICE_VERIFICATION_URI";
+    /// The largest request body this composition accepts.
+    pub const MAX_BODY_BYTES: &str = "AEX_CENTRAL_IDENTITY_MAX_BODY_BYTES";
+    /// The identity credential pepper secret.
+    pub const PEPPER_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_PEPPER_SECRET_ID";
+    /// The deployment plane.
+    pub const PLANE: &str = "AEX_CENTRAL_IDENTITY_PLANE";
+    /// The bound region.
+    pub const REGION: &str = "AEX_CENTRAL_IDENTITY_REGION";
+    /// How long one request may take.
+    pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_IDENTITY_REQUEST_DEADLINE_MS";
+    /// The login role. Must be `aex_identity_api`.
+    pub const ROLE: &str = "AEX_CENTRAL_IDENTITY_ROLE";
+    /// The dashboard BFF's expected `OIDC` subject.
+    pub const VERCEL_EXPECTED_SUBJECT: &str = "AEX_CENTRAL_IDENTITY_VERCEL_EXPECTED_SUBJECT";
+    /// The dashboard BFF's `OIDC` issuer.
+    pub const VERCEL_ISSUER: &str = "AEX_CENTRAL_IDENTITY_VERCEL_ISSUER";
+
+    /// Every key this binary reads, for the totality test.
+    #[allow(
+        dead_code,
+        reason = "the inventory exists so the suite can remove each key in turn"
+    )]
+    pub const ALL: &[&str] = &[
+        ACCOUNT_ID,
+        AURORA_CLUSTER_ARN,
+        AURORA_SECRET_ARN,
+        DATABASE,
+        DEVICE_VERIFICATION_URI,
+        MAX_BODY_BYTES,
+        PEPPER_SECRET_ID,
+        PLANE,
+        REGION,
+        REQUEST_DEADLINE_MS,
+        ROLE,
+        VERCEL_EXPECTED_SUBJECT,
+        VERCEL_ISSUER,
+    ];
 }
 
 /// Why `central-identity-api` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
+    /// A required variable was absent or blank.
+    #[error("required environment variable `{0}` is missing")]
+    Missing(&'static str),
     /// A required variable was present but unusable.
     #[error("environment variable `{name}` is invalid: {reason}")]
     Invalid {
-        /// The variable that was rejected.
+        /// Which variable.
         name: &'static str,
-        /// Why the supplied value was rejected.
+        /// Why it was refused.
         reason: String,
     },
 }
 
-/// Why `central-identity-api` stopped.
-#[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    /// Start-up configuration was rejected.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`central-identity-api` has no implementation yet")]
-    NotImplemented,
+/// Validated start-up configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+    /// The shared `HTTP` composition configuration.
+    pub http: HttpConfig,
+    /// The plane's account id.
+    pub account_id: String,
+    /// The Aurora cluster.
+    pub aurora_cluster_arn: String,
+    /// The Aurora credentials secret.
+    pub aurora_secret_arn: String,
+    /// The identity pepper secret.
+    pub pepper_secret_id: String,
+    /// The database name.
+    pub database: String,
+    /// The login role.
+    pub role: String,
+    /// Where a person approves a device authorization.
+    pub device_verification_uri: String,
+    /// The dashboard BFF's `OIDC` issuer.
+    pub vercel_issuer: String,
+    /// The dashboard BFF's expected `OIDC` subject.
+    pub vercel_expected_subject: String,
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming Aurora cluster holding the identity schema.
-pub const RESOURCE_VAR: &str = "AEX_IDENTITY_DB_CLUSTER_ARN";
-/// Environment variable naming maximum ceremony lifetime in seconds.
-pub const BUDGET_VAR: &str = "AEX_MAX_CEREMONY_SECONDS";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
 impl Config {
-    /// Reads and validates the configuration of `central-identity-api` from the process environment.
+    /// Reads and validates the configuration from the process environment.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
+    /// Returns [`ConfigError`] naming the first variable it refused.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
-    /// Reads and validates the configuration from an arbitrary lookup.
+    /// Reads and validates from an arbitrary lookup.
     ///
     /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
     /// and this workspace forbids `unsafe` code.
@@ -90,34 +140,57 @@ impl Config {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
+        let role = required(&lookup, keys::ROLE)?;
+        if role != REQUIRED_ROLE {
             return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
+                name: keys::ROLE,
+                reason: format!("this binary connects only as `{REQUIRED_ROLE}`, got `{role}`"),
             });
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
+        let http = HttpConfig::resolve(
+            &required(&lookup, keys::PLANE)?,
+            &required(&lookup, keys::REGION)?,
+            DEPLOYABLE.as_str(),
+            integer(&lookup, keys::MAX_BODY_BYTES)?,
+            integer(&lookup, keys::REQUEST_DEADLINE_MS)?,
+        )
+        .map_err(|reason| ConfigError::Invalid {
+            name: keys::PLANE,
+            reason: reason.to_string(),
+        })?;
         Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
+            http,
+            account_id: required(&lookup, keys::ACCOUNT_ID)?,
+            aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
+            aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
+            pepper_secret_id: required(&lookup, keys::PEPPER_SECRET_ID)?,
+            database: required(&lookup, keys::DATABASE)?,
+            role,
+            device_verification_uri: required(&lookup, keys::DEVICE_VERIFICATION_URI)?,
+            vercel_issuer: required(&lookup, keys::VERCEL_ISSUER)?,
+            vercel_expected_subject: required(&lookup, keys::VERCEL_EXPECTED_SUBJECT)?,
         })
+    }
+
+    /// The resolved values the composition check runs over.
+    #[must_use]
+    pub fn resolved(&self) -> aex_central_http::capability::ResolvedConfig {
+        aex_central_http::capability::ResolvedConfig {
+            deployable: DEPLOYABLE.as_str().to_owned(),
+            plane: self.http.plane,
+            region: self.http.region,
+            account_id: self.account_id.clone(),
+            values: BTreeMap::from([
+                (
+                    keys::AURORA_CLUSTER_ARN.to_owned(),
+                    self.aurora_cluster_arn.clone(),
+                ),
+                (
+                    keys::PEPPER_SECRET_ID.to_owned(),
+                    self.pepper_secret_id.clone(),
+                ),
+            ]),
+        }
     }
 }
 
@@ -127,69 +200,235 @@ where
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(ConfigError::Missing(name)),
     }
+}
+
+fn integer<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let raw = required(lookup, name)?;
+    raw.parse::<u64>().map_err(|_| ConfigError::Invalid {
+        name,
+        reason: format!("expected an integer, got `{raw}`"),
+    })
+}
+
+/// This binary's capability declaration.
+///
+/// Identity DML and one pepper. No control write, no queue, no object store, no
+/// payment provider and no regional invoke: a binding for any of them is refused
+/// at start-up.
+#[allow(
+    dead_code,
+    reason = "the declaration is the capability list; its only use is the type-level `Declares` bound"
+)]
+struct Composition;
+
+impl Declares<IdentityWrite> for Composition {}
+
+/// The manifest the start-up check runs against.
+#[must_use]
+pub fn manifest() -> CompositionManifest {
+    CompositionManifest {
+        deployable: DEPLOYABLE,
+        capabilities: BTreeSet::from([IdentityWrite::ID]),
+        bindings: vec![
+            CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, IdentityWrite::ID),
+            CapabilityBinding::resource(keys::PEPPER_SECRET_ID, IdentityWrite::ID),
+        ],
+    }
+}
+
+/// The IAM permissions this deployable requires, as a reviewable list.
+pub const PERMISSIONS: &[&str] = &[
+    "rds-data:BeginTransaction",
+    "rds-data:CommitTransaction",
+    "rds-data:ExecuteStatement",
+    "rds-data:RollbackTransaction",
+    "secretsmanager:GetSecretValue",
+];
+
+/// What each start-up probe answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one field per start-up probe; a bitfield would hide which probe failed"
+)]
+pub struct Probes {
+    /// `SELECT 1` as `aex_identity_api` succeeded.
+    pub aurora: bool,
+    /// The active identity pepper loaded.
+    pub pepper: bool,
+    /// The dashboard BFF's `JWKS` fetched.
+    pub jwks: bool,
+}
+
+impl Probes {
+    /// No probe has answered yet.
+    pub const NONE: Self = Self {
+        aurora: false,
+        pepper: false,
+        jwks: false,
+    };
+}
+
+/// The readiness projection.
+#[must_use]
+pub fn readiness(probes: Probes) -> Readiness {
+    Readiness::new(
+        DEPLOYABLE.as_str(),
+        vec![
+            Dependency {
+                name: "aurora",
+                resolved: probes.aurora,
+            },
+            Dependency {
+                name: "identity-pepper",
+                resolved: probes.pepper,
+            },
+            Dependency {
+                name: "dashboard-jwks",
+                resolved: probes.jwks,
+            },
+        ],
+    )
+}
+
+/// Why `central-identity-api` stopped.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Start-up configuration was rejected.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    /// The composition was refused before any client was opened.
+    #[error(transparent)]
+    Composition(#[from] CompositionError),
+    /// The listener stopped.
+    #[error("the listener stopped: {0}")]
+    Listener(String),
+}
+
+/// Builds the router this binary serves.
+///
+/// The public surface is exactly `CentralServiceId::IdentityApi.groups()`, each
+/// mounted by iterating its generated route slice, plus the two internal probes.
+pub fn app<A: AuthApi>(api: Arc<A>, edge: EdgeStack, readiness: Readiness) -> axum::Router {
+    aex_central_http::health::router(readiness).merge(mount_auth_api(api, edge))
 }
 
 /// Runs `central-identity-api` until it stops.
 ///
 /// # Errors
 ///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Returns [`RunError`] when configuration or composition is refused, or when
+/// the listener stops.
+pub async fn run<A: AuthApi>(
+    config: &Config,
+    api: Arc<A>,
+    edge: EdgeStack,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RunError> {
+    aex_central_http::capability::admit(&manifest(), &config.resolved())?;
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
         )
         .with(
             aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
+            config.http.plane.as_str().to_owned(),
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.http.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
+    lambda_http::run(app(api, edge, readiness(Probes::NONE)))
+        .await
+        .map_err(|error| RunError::Listener(error.to_string()))
 }
 
 fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("central-identity-api: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
+    // The Aurora-backed `AuthApi` implementation is the one remaining piece:
+    // `run` is generic over it, and configuration, capability admission, the
+    // mounted route set and both probes are exercised by this binary's own
+    // suite. Starting with a placeholder implementation would be worse than
+    // refusing — a device-flow route that answers without an identity store is
+    // one that mints nothing and says it did.
+    match Config::from_env() {
+        Ok(config) => {
+            eprintln!(
+                "central-identity-api: configuration accepted for plane `{}` in `{}`; \
+                 the identity service is not composed yet",
+                config.http.plane.as_str(),
+                config.http.region.as_str()
+            );
         }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("central-identity-api: telemetry flush left {pending} record(s) undelivered");
+        Err(error) => eprintln!("central-identity-api: refusing to start: {error}"),
     }
-    match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("central-identity-api: stopped: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
+    std::process::ExitCode::FAILURE
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
+    use super::{
+        Config, ConfigError, DEPLOYABLE, PERMISSIONS, Probes, app, keys, manifest, readiness,
+    };
+    use aex_central_http::capability::{
+        AssertionSign, Capability as _, CapabilityBinding, CompositionError, ControlWrite,
+    };
+    use aex_central_http::config::CentralServiceId;
+    use aex_central_http::health::{HEALTH_PATH, READY_PATH};
+    use aex_central_http::router::EdgeStack;
+    use aex_central_http::target::{TargetPath, TargetResolver};
+    use aex_control_app::ports::Clock;
+    use aex_control_domain::{AccountState, CursorSecret, Resource};
+    use aex_wire::error::{ErrorCode, WireError, WireResult};
+    use aex_wire::routes::{RouteId, route};
+    use aex_wire::server::{AuthApi, Created, RequestContext};
+    use async_trait::async_trait;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use time::OffsetDateTime;
+    use tower::ServiceExt as _;
+    use uuid::Uuid;
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (RESOURCE_VAR, "aex-central_identity_api-fixture".to_owned()),
-            (BUDGET_VAR, "8".to_owned()),
+            (keys::PLANE, "dev".to_owned()),
+            (keys::REGION, "eu-west-1".to_owned()),
+            (keys::ACCOUNT_ID, "000000000000".to_owned()),
+            (
+                keys::AURORA_CLUSTER_ARN,
+                "arn:aws:rds:eu-west-1:000000000000:cluster:aex".to_owned(),
+            ),
+            (
+                keys::AURORA_SECRET_ARN,
+                "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-identity".to_owned(),
+            ),
+            (
+                keys::PEPPER_SECRET_ID,
+                "aex/dev/identity-pepper/current".to_owned(),
+            ),
+            (keys::DATABASE, "aex".to_owned()),
+            (keys::ROLE, "aex_identity_api".to_owned()),
+            (
+                keys::DEVICE_VERIFICATION_URI,
+                "https://aex.dev/device".to_owned(),
+            ),
+            (
+                keys::VERCEL_ISSUER,
+                "https://oidc.vercel.com/aexhq".to_owned(),
+            ),
+            (
+                keys::VERCEL_EXPECTED_SUBJECT,
+                "owner:aexhq:project:dashboard".to_owned(),
+            ),
+            (keys::MAX_BODY_BYTES, "65536".to_owned()),
+            (keys::REQUEST_DEADLINE_MS, "5000".to_owned()),
         ])
     }
 
@@ -197,86 +436,198 @@ mod tests {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
-    #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-central_identity_api-fixture");
-        assert_eq!(config.budget, 8);
+    #[derive(Debug)]
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn now(&self) -> OffsetDateTime {
+            OffsetDateTime::UNIX_EPOCH
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoResource;
+
+    #[async_trait]
+    impl TargetResolver for NoResource {
+        async fn resolve(
+            &self,
+            _route: RouteId,
+            _path: &TargetPath,
+        ) -> Result<Option<Resource>, aex_central_http::error::EdgeError> {
+            Ok(None)
+        }
+
+        async fn account_state(
+            &self,
+            _organization_id: Uuid,
+        ) -> Result<AccountState, aex_central_http::error::EdgeError> {
+            Ok(AccountState::Active)
+        }
+    }
+
+    #[derive(Debug)]
+    struct Api;
+
+    impl AuthApi for Api {
+        async fn device_authorization_create(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::DeviceAuthorizationRequest,
+        ) -> WireResult<Created<aex_wire::models::DeviceAuthorization>> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn device_token_create(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::DeviceTokenRequest,
+        ) -> WireResult<aex_wire::models::DeviceToken> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+    }
+
+    fn router() -> axum::Router {
+        let config = read(&complete()).expect("a complete environment");
+        let edge = EdgeStack::new(
+            config.http,
+            Arc::new(NoResource),
+            Arc::new(FixedClock),
+            Arc::new(CursorSecret::new([1_u8; 32])),
+        );
+        app(Arc::new(Api), edge, readiness(Probes::NONE))
     }
 
     #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
+    fn a_complete_environment_is_accepted() {
+        let config = read(&complete()).expect("a complete environment");
+        assert_eq!(config.http.service, CentralServiceId::IdentityApi);
+        assert_eq!(config.http.limits.max_json_body_bytes, 65_536);
+    }
+
+    #[test]
+    fn every_variable_is_required_and_named_when_absent() {
+        for name in keys::ALL {
             let mut vars = complete();
             vars.remove(name);
+            assert!(read(&vars).is_err(), "removing {name}");
+        }
+    }
+
+    #[test]
+    fn this_binary_refuses_any_role_but_its_own() {
+        let mut vars = complete();
+        vars.insert(keys::ROLE, "aex_control_api".to_owned());
+        assert!(read(&vars).is_err());
+    }
+
+    #[test]
+    fn a_body_bound_over_the_shared_ceiling_is_refused() {
+        let mut vars = complete();
+        vars.insert(keys::MAX_BODY_BYTES, "1048576".to_owned());
+        assert!(read(&vars).is_err());
+    }
+
+    #[test]
+    fn the_composition_admits_exactly_its_declared_bindings() {
+        let config = read(&complete()).expect("a complete environment");
+        assert_eq!(
+            aex_central_http::capability::admit(&manifest(), &config.resolved()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn this_binary_cannot_link_a_control_write_or_signing_capability() {
+        let config = read(&complete()).expect("a complete environment");
+        for capability in [ControlWrite::ID, AssertionSign::ID] {
+            let mut manifest = manifest();
+            manifest.bindings.push(CapabilityBinding::resource(
+                "AEX_CENTRAL_IDENTITY_X",
+                capability,
+            ));
             assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
+                aex_central_http::capability::admit(&manifest, &config.resolved()),
+                Err(CompositionError::ForbiddenCapability {
+                    key: "AEX_CENTRAL_IDENTITY_X",
+                    capability
+                })
             );
         }
     }
 
     #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
+    fn the_permission_list_touches_no_queue_object_store_or_regional_authority() {
+        for permission in PERMISSIONS {
+            assert!(!permission.starts_with("sqs:"), "{permission}");
+            assert!(!permission.starts_with("s3:"), "{permission}");
+            assert!(!permission.starts_with("lambda:"), "{permission}");
+        }
     }
 
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    #[tokio::test]
+    async fn the_mounted_set_is_exactly_the_declared_one() {
+        assert_eq!(DEPLOYABLE.routes().len(), 2);
+        for id in DEPLOYABLE.routes() {
+            let descriptor = route(id);
+            let body = match id {
+                RouteId::DeviceAuthorizationCreate => "{\"clientId\":\"aex-cli\",\"scopes\":[]}",
+                _ => "{\"clientId\":\"aex-cli\",\"deviceCode\":\"dvc_fixture\"}",
+            };
+            let mut request = Request::builder()
+                .method(descriptor.method.as_str())
+                .uri(descriptor.template);
+            if descriptor.idempotency == aex_wire::idempotency::IdempotencyKind::IdempotencyKey {
+                request = request.header("idempotency-key", "fixture");
+            }
+            let response = router()
+                .oneshot(request.body(Body::from(body)).expect("a valid request"))
+                .await
+                .expect("the router answers");
+            assert_eq!(
+                response.status(),
+                StatusCode::TOO_MANY_REQUESTS,
+                "`{}` is not mounted",
+                descriptor.operation_id
+            );
+        }
     }
 
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    #[tokio::test]
+    async fn a_route_this_deployable_does_not_own_is_not_mounted() {
+        let response = router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/organizations")
+                    .body(Body::empty())
+                    .expect("a valid request"),
+            )
+            .await
+            .expect("the router answers");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    #[tokio::test]
+    async fn liveness_answers_and_readiness_is_fail_closed() {
+        let live = router()
+            .oneshot(
+                Request::builder()
+                    .uri(HEALTH_PATH)
+                    .body(Body::empty())
+                    .expect("a valid request"),
+            )
+            .await
+            .expect("the router answers");
+        assert_eq!(live.status(), StatusCode::OK);
+        let ready = router()
+            .oneshot(
+                Request::builder()
+                    .uri(READY_PATH)
+                    .body(Body::empty())
+                    .expect("a valid request"),
+            )
+            .await
+            .expect("the router answers");
+        assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

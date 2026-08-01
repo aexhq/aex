@@ -1,84 +1,148 @@
 //! `central-control-worker` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: regional provisioning, deletion, email and outbox
-//! reconciliation.
+//! Queue- and schedule-driven reconciliation for the central control plane. It
+//! is the only role that reclaims expired rows, the only one that administers
+//! assertion signing keys, and the only one that sends mail.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! Two properties are structural rather than careful:
+//!
+//! * every duty is named in [`Handler::ALL`] and [`Handler::for_topic`] is total
+//!   over [`Topic`], so an outbox topic nobody wrote a duty for is a compile
+//!   error rather than a message that is quietly deleted;
+//! * a partial-batch response names only the items that did **not** commit, so
+//!   a failure inside one batch never re-runs an item that already landed.
 
-/// Validated start-up configuration for `central-control-worker`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// FIFO queue carrying control outbox work.
-    pub resource: String,
-    /// Maximum records claimed per invocation.
-    pub budget: u32,
+use std::collections::{BTreeMap, BTreeSet};
+
+use aex_central_http::capability::{
+    Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ControlQueueConsume,
+    ControlWrite, Declares, MailSend, RegionalControlInvoke, SigningKeyAdminister,
+};
+use aex_central_http::config::{CentralServiceId, DeploymentPlane};
+use aex_central_http::health::{Dependency, Readiness};
+use aex_control_domain::Topic;
+use aex_wire::types::Region;
+
+/// The deployable this binary is.
+const DEPLOYABLE: CentralServiceId = CentralServiceId::ControlWorker;
+
+/// The one login role this binary may connect as.
+const REQUIRED_ROLE: &str = "aex_control_worker";
+
+/// Environment keys, all inside the declared namespace.
+mod keys {
+    /// The plane's account id, for the ARN binding check.
+    pub const ACCOUNT_ID: &str = "AEX_CENTRAL_CONTROL_WORKER_ACCOUNT_ID";
+    /// The Aurora cluster.
+    pub const AURORA_CLUSTER_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_AURORA_CLUSTER_ARN";
+    /// The Aurora credentials secret.
+    pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_AURORA_SECRET_ARN";
+    /// How many messages one batch claims.
+    pub const BATCH_SIZE: &str = "AEX_CENTRAL_CONTROL_WORKER_BATCH_SIZE";
+    /// The control FIFO queue.
+    pub const CONTROL_QUEUE_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_CONTROL_QUEUE_ARN";
+    /// The database name.
+    pub const DATABASE: &str = "AEX_CENTRAL_CONTROL_WORKER_DATABASE";
+    /// How long a claim lease lasts.
+    pub const LEASE_MS: &str = "AEX_CENTRAL_CONTROL_WORKER_LEASE_MS";
+    /// The deployment plane.
+    pub const PLANE: &str = "AEX_CENTRAL_CONTROL_WORKER_PLANE";
+    /// The bound region.
+    pub const REGION: &str = "AEX_CENTRAL_CONTROL_WORKER_REGION";
+    /// The regional control authority endpoints, `region=url` comma-separated.
+    pub const REGIONAL_ENDPOINTS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_ENDPOINTS";
+    /// The login role. Must be `aex_control_worker`.
+    pub const ROLE: &str = "AEX_CENTRAL_CONTROL_WORKER_ROLE";
+    /// The verified sender identity.
+    pub const SES_IDENTITY_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_SES_IDENTITY_ARN";
+    /// The signing-key secret prefix this worker rotates.
+    pub const SIGNING_SECRET_PREFIX: &str = "AEX_CENTRAL_CONTROL_WORKER_SIGNING_SECRET_PREFIX";
+
+    /// Every key this binary reads, for the totality test.
+    #[allow(
+        dead_code,
+        reason = "the inventory exists so the suite can remove each key in turn"
+    )]
+    pub const ALL: &[&str] = &[
+        ACCOUNT_ID,
+        AURORA_CLUSTER_ARN,
+        AURORA_SECRET_ARN,
+        BATCH_SIZE,
+        CONTROL_QUEUE_ARN,
+        DATABASE,
+        LEASE_MS,
+        PLANE,
+        REGION,
+        REGIONAL_ENDPOINTS,
+        ROLE,
+        SES_IDENTITY_ARN,
+        SIGNING_SECRET_PREFIX,
+    ];
 }
+
+/// The largest batch one invocation may claim.
+const MAX_BATCH: u64 = 100;
+/// The longest a claim lease may last.
+const MAX_LEASE_MS: u64 = 900_000;
 
 /// Why `central-control-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
+    /// A required variable was absent or blank.
+    #[error("required environment variable `{0}` is missing")]
+    Missing(&'static str),
     /// A required variable was present but unusable.
     #[error("environment variable `{name}` is invalid: {reason}")]
     Invalid {
-        /// The variable that was rejected.
+        /// Which variable.
         name: &'static str,
-        /// Why the supplied value was rejected.
+        /// Why it was refused.
         reason: String,
     },
 }
 
-/// Why `central-control-worker` stopped.
-#[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    /// Start-up configuration was rejected.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`central-control-worker` has no implementation yet")]
-    NotImplemented,
+/// Validated start-up configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+    /// Which deployment plane.
+    pub plane: DeploymentPlane,
+    /// Which region.
+    pub region: Region,
+    /// The plane's account id.
+    pub account_id: String,
+    /// The Aurora cluster.
+    pub aurora_cluster_arn: String,
+    /// The Aurora credentials secret.
+    pub aurora_secret_arn: String,
+    /// The control FIFO queue.
+    pub control_queue_arn: String,
+    /// The verified sender identity.
+    pub ses_identity_arn: String,
+    /// The signing-key secret prefix.
+    pub signing_secret_prefix: String,
+    /// The database name.
+    pub database: String,
+    /// The login role.
+    pub role: String,
+    /// How many messages one batch claims.
+    pub batch_size: u32,
+    /// How long a claim lease lasts.
+    pub lease_ms: u64,
+    /// Every region this worker may dispatch to.
+    pub regional_endpoints: BTreeMap<Region, String>,
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming FIFO queue carrying control outbox work.
-pub const RESOURCE_VAR: &str = "AEX_CONTROL_OUTBOX_QUEUE_URL";
-/// Environment variable naming maximum records claimed per invocation.
-pub const BUDGET_VAR: &str = "AEX_MAX_BATCH_SIZE";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
 impl Config {
-    /// Reads and validates the configuration of `central-control-worker` from the process environment.
+    /// Reads and validates the configuration from the process environment.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
+    /// Returns [`ConfigError`] naming the first variable it refused.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
-    /// Reads and validates the configuration from an arbitrary lookup.
+    /// Reads and validates from an arbitrary lookup.
     ///
     /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
     /// and this workspace forbids `unsafe` code.
@@ -90,34 +154,78 @@ impl Config {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
+        let plane_raw = required(&lookup, keys::PLANE)?;
+        let plane = DeploymentPlane::parse(&plane_raw).ok_or_else(|| ConfigError::Invalid {
+            name: keys::PLANE,
+            reason: format!("expected `dev` or `prd`, got `{plane_raw}`"),
+        })?;
+        let region_raw = required(&lookup, keys::REGION)?;
+        let region = Region::from_name(&region_raw).ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGION,
+            reason: format!("expected a launch region, got `{region_raw}`"),
+        })?;
+        let role = required(&lookup, keys::ROLE)?;
+        if role != REQUIRED_ROLE {
             return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
+                name: keys::ROLE,
+                reason: format!("this binary connects only as `{REQUIRED_ROLE}`, got `{role}`"),
             });
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
+        let batch_size = bounded(&lookup, keys::BATCH_SIZE, 1, MAX_BATCH)?;
+        let lease_ms = bounded(&lookup, keys::LEASE_MS, 1, MAX_LEASE_MS)?;
+        let regional_endpoints = endpoints(&required(&lookup, keys::REGIONAL_ENDPOINTS)?)?;
         Ok(Self {
             plane,
             region,
-            resource,
-            budget,
+            account_id: required(&lookup, keys::ACCOUNT_ID)?,
+            aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
+            aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
+            control_queue_arn: required(&lookup, keys::CONTROL_QUEUE_ARN)?,
+            ses_identity_arn: required(&lookup, keys::SES_IDENTITY_ARN)?,
+            signing_secret_prefix: required(&lookup, keys::SIGNING_SECRET_PREFIX)?,
+            database: required(&lookup, keys::DATABASE)?,
+            role,
+            batch_size: u32::try_from(batch_size).unwrap_or(1),
+            lease_ms,
+            regional_endpoints,
         })
+    }
+
+    /// The resolved values the composition check runs over.
+    #[must_use]
+    pub fn resolved(&self) -> aex_central_http::capability::ResolvedConfig {
+        aex_central_http::capability::ResolvedConfig {
+            deployable: DEPLOYABLE.as_str().to_owned(),
+            plane: self.plane,
+            region: self.region,
+            account_id: self.account_id.clone(),
+            values: BTreeMap::from([
+                (
+                    keys::AURORA_CLUSTER_ARN.to_owned(),
+                    self.aurora_cluster_arn.clone(),
+                ),
+                (
+                    keys::CONTROL_QUEUE_ARN.to_owned(),
+                    self.control_queue_arn.clone(),
+                ),
+                (
+                    keys::SES_IDENTITY_ARN.to_owned(),
+                    self.ses_identity_arn.clone(),
+                ),
+                (
+                    keys::SIGNING_SECRET_PREFIX.to_owned(),
+                    self.signing_secret_prefix.clone(),
+                ),
+                (
+                    keys::REGIONAL_ENDPOINTS.to_owned(),
+                    self.regional_endpoints
+                        .iter()
+                        .map(|(region, url)| format!("{}={url}", region.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            ]),
+        }
     }
 }
 
@@ -127,34 +235,314 @@ where
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(ConfigError::Missing(name)),
     }
+}
+
+fn bounded<F>(lookup: &F, name: &'static str, min: u64, max: u64) -> Result<u64, ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let raw = required(lookup, name)?;
+    let value = raw.parse::<u64>().map_err(|_| ConfigError::Invalid {
+        name,
+        reason: format!("expected an integer, got `{raw}`"),
+    })?;
+    if value < min || value > max {
+        return Err(ConfigError::Invalid {
+            name,
+            reason: format!("expected {min}..={max}, got `{value}`"),
+        });
+    }
+    Ok(value)
+}
+
+/// Parses the `region=url` endpoint map.
+///
+/// Every launch region must be present. A worker that can dispatch to four of
+/// five regions is one that silently strands every workspace in the fifth.
+fn endpoints(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
+    let mut map = BTreeMap::new();
+    for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
+        let (region, url) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGIONAL_ENDPOINTS,
+            reason: "expected `region=url` entries".to_owned(),
+        })?;
+        let parsed = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGIONAL_ENDPOINTS,
+            reason: format!("`{region}` is not a launch region"),
+        })?;
+        if url.trim().is_empty() || map.insert(parsed, url.trim().to_owned()).is_some() {
+            return Err(ConfigError::Invalid {
+                name: keys::REGIONAL_ENDPOINTS,
+                reason: format!("`{}` is empty or repeated", parsed.as_str()),
+            });
+        }
+    }
+    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+        return Err(ConfigError::Invalid {
+            name: keys::REGIONAL_ENDPOINTS,
+            reason: format!("no endpoint for `{}`", missing.as_str()),
+        });
+    }
+    Ok(map)
+}
+
+/// Every scheduled or queue-driven duty this worker performs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Handler {
+    /// Finish a workspace whose regional half may already exist.
+    WorkspaceProvisionReconcile,
+    /// Ask a region to remove a workspace's regional half.
+    WorkspaceDeleteDispatch,
+    /// Send one invitation notification.
+    InvitationEmailDeliver,
+    /// Project an advanced revocation epoch to every region.
+    AuthorizationEpochProject,
+    /// Publish a rotated assertion signing key.
+    AuthorizationSigningKeyRotate,
+    /// Claim operations whose lease lapsed or which never ran.
+    OperationDueScan,
+    /// Sweep expired replay records.
+    IdempotencyGc,
+    /// Sweep dispatched outbox rows.
+    OutboxGc,
+    /// Check whether a pepper may retire.
+    PepperRetireCheck,
+}
+
+impl Handler {
+    /// Every duty.
+    pub const ALL: [Self; 9] = [
+        Self::WorkspaceProvisionReconcile,
+        Self::WorkspaceDeleteDispatch,
+        Self::InvitationEmailDeliver,
+        Self::AuthorizationEpochProject,
+        Self::AuthorizationSigningKeyRotate,
+        Self::OperationDueScan,
+        Self::IdempotencyGc,
+        Self::OutboxGc,
+        Self::PepperRetireCheck,
+    ];
+
+    /// The stable duty name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkspaceProvisionReconcile => "workspace.provision.reconcile",
+            Self::WorkspaceDeleteDispatch => "workspace.delete.dispatch",
+            Self::InvitationEmailDeliver => "invitation.email.deliver",
+            Self::AuthorizationEpochProject => "authorization.epoch.project",
+            Self::AuthorizationSigningKeyRotate => "authorization.signing_key.rotate",
+            Self::OperationDueScan => "operation.due.scan",
+            Self::IdempotencyGc => "idempotency.gc",
+            Self::OutboxGc => "outbox.gc",
+            Self::PepperRetireCheck => "pepper.retire.check",
+        }
+    }
+
+    /// The duty that consumes `topic`.
+    ///
+    /// Total over [`Topic`]: adding a topic without a duty is a compile error
+    /// here, which is the point.
+    #[must_use]
+    pub const fn for_topic(topic: Topic) -> Self {
+        match topic {
+            Topic::WorkspaceProvisionRequested => Self::WorkspaceProvisionReconcile,
+            Topic::WorkspaceDeleteRequested => Self::WorkspaceDeleteDispatch,
+            Topic::InvitationEmailRequested => Self::InvitationEmailDeliver,
+            Topic::AuthorizationEpochChanged => Self::AuthorizationEpochProject,
+            Topic::AuthorizationSigningKeyPublished => Self::AuthorizationSigningKeyRotate,
+        }
+    }
+}
+
+/// This binary's capability declaration.
+#[allow(
+    dead_code,
+    reason = "the declaration is the capability list; its only use is the type-level `Declares` bound"
+)]
+struct Composition;
+
+impl Declares<ControlWrite> for Composition {}
+impl Declares<ControlQueueConsume> for Composition {}
+impl Declares<RegionalControlInvoke> for Composition {}
+impl Declares<MailSend> for Composition {}
+impl Declares<SigningKeyAdminister> for Composition {}
+
+/// The manifest the start-up check runs against.
+#[must_use]
+pub fn manifest() -> CompositionManifest {
+    CompositionManifest {
+        deployable: DEPLOYABLE,
+        capabilities: BTreeSet::from([
+            ControlWrite::ID,
+            ControlQueueConsume::ID,
+            RegionalControlInvoke::ID,
+            MailSend::ID,
+            SigningKeyAdminister::ID,
+        ]),
+        bindings: vec![
+            CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, ControlWrite::ID),
+            CapabilityBinding::arn(keys::CONTROL_QUEUE_ARN, ControlQueueConsume::ID),
+            CapabilityBinding::arn(keys::SES_IDENTITY_ARN, MailSend::ID),
+            CapabilityBinding::resource(keys::SIGNING_SECRET_PREFIX, SigningKeyAdminister::ID),
+            CapabilityBinding::resource(keys::REGIONAL_ENDPOINTS, RegionalControlInvoke::ID),
+        ],
+    }
+}
+
+/// The IAM permissions this deployable requires, as a reviewable list.
+///
+/// No finance role, no object store, no payment provider. The worker repairs the
+/// control plane and nothing else.
+pub const PERMISSIONS: &[&str] = &[
+    "rds-data:BeginTransaction",
+    "rds-data:CommitTransaction",
+    "rds-data:ExecuteStatement",
+    "rds-data:RollbackTransaction",
+    "sqs:ChangeMessageVisibility",
+    "sqs:DeleteMessage",
+    "sqs:ReceiveMessage",
+    "secretsmanager:CreateSecret",
+    "secretsmanager:DeleteSecret",
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:PutSecretValue",
+    "kms:Decrypt",
+    "kms:GenerateDataKey",
+    "ses:SendEmail",
+    "lambda:InvokeFunction",
+];
+
+/// What each start-up probe answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one field per start-up probe; a bitfield would hide which probe failed"
+)]
+pub struct Probes {
+    /// `SELECT 1` as `aex_control_worker` succeeded.
+    pub aurora: bool,
+    /// The control queue is reachable.
+    pub queue: bool,
+    /// The endpoint map covers every launch region.
+    pub endpoints: bool,
+    /// The sender identity resolved.
+    pub mail_identity: bool,
+}
+
+impl Probes {
+    /// No probe has answered yet.
+    pub const NONE: Self = Self {
+        aurora: false,
+        queue: false,
+        endpoints: false,
+        mail_identity: false,
+    };
+}
+
+/// The readiness projection.
+#[must_use]
+pub fn readiness(probes: Probes) -> Readiness {
+    Readiness::new(
+        DEPLOYABLE.as_str(),
+        vec![
+            Dependency {
+                name: "aurora",
+                resolved: probes.aurora,
+            },
+            Dependency {
+                name: "control-queue",
+                resolved: probes.queue,
+            },
+            Dependency {
+                name: "regional-endpoint-map",
+                resolved: probes.endpoints,
+            },
+            Dependency {
+                name: "ses-identity",
+                resolved: probes.mail_identity,
+            },
+        ],
+    )
+}
+
+/// One batch item's outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemOutcome {
+    /// The queue message identifier.
+    pub message_id: String,
+    /// Whether the item committed.
+    pub committed: bool,
+}
+
+/// The partial-batch response the queue expects.
+///
+/// Only uncommitted items are named. Reporting a committed item would re-run
+/// work that already landed, which for a fenced regional effect means a second
+/// dispatch under a stale fence.
+#[must_use]
+pub fn partial_batch_failures(outcomes: &[ItemOutcome]) -> Vec<String> {
+    outcomes
+        .iter()
+        .filter(|outcome| !outcome.committed)
+        .map(|outcome| outcome.message_id.clone())
+        .collect()
+}
+
+/// Why `central-control-worker` stopped.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Start-up configuration was rejected.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    /// The composition was refused before any client was opened.
+    #[error(transparent)]
+    Composition(#[from] CompositionError),
+    /// The runtime stopped.
+    #[error("the runtime stopped: {0}")]
+    Runtime(String),
+}
+
+/// Builds the router this binary serves.
+///
+/// A queue worker has no public surface; the two internal probes are the whole
+/// mounted set, and they are what the deployment health check polls.
+pub fn app(readiness: Readiness) -> axum::Router {
+    aex_central_http::health::router(readiness)
 }
 
 /// Runs `central-control-worker` until it stops.
 ///
 /// # Errors
 ///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Returns [`RunError`] when configuration or composition is refused, or when
+/// the runtime stops.
+pub async fn run(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RunError> {
+    aex_central_http::capability::admit(&manifest(), &config.resolved())?;
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
         )
         .with(
             aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
+            config.plane.as_str().to_owned(),
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
+    lambda_http::run(app(readiness(Probes::NONE)))
+        .await
+        .map_err(|error| RunError::Runtime(error.to_string()))
 }
 
-fn main() -> std::process::ExitCode {
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
@@ -164,7 +552,7 @@ fn main() -> std::process::ExitCode {
     };
     let settings = aex_platform_telemetry::Settings::default();
     let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
+    let outcome = run(&config, &telemetry).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {
@@ -181,18 +569,65 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
+    use super::{
+        Config, ConfigError, Handler, ItemOutcome, PERMISSIONS, Probes, app, keys, manifest,
+        partial_batch_failures, readiness,
+    };
+    use aex_central_http::capability::{
+        AssertionSign, Capability as _, CapabilityBinding, CompositionError,
+    };
+    use aex_central_http::health::READY_PATH;
+    use aex_control_domain::Topic;
+    use aex_wire::types::Region;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use std::collections::{BTreeMap, BTreeSet};
+    use tower::ServiceExt as _;
+
+    fn every_region() -> String {
+        Region::ALL
+            .iter()
+            .map(|region| {
+                format!(
+                    "{}=https://control.{}.aex.dev",
+                    region.as_str(),
+                    region.as_str()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
+            (keys::PLANE, "prd".to_owned()),
+            (keys::REGION, "eu-west-1".to_owned()),
+            (keys::ACCOUNT_ID, "000000000000".to_owned()),
             (
-                RESOURCE_VAR,
-                "aex-central_control_worker-fixture".to_owned(),
+                keys::AURORA_CLUSTER_ARN,
+                "arn:aws:rds:eu-west-1:000000000000:cluster:aex".to_owned(),
             ),
-            (BUDGET_VAR, "8".to_owned()),
+            (
+                keys::AURORA_SECRET_ARN,
+                "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-worker".to_owned(),
+            ),
+            (
+                keys::CONTROL_QUEUE_ARN,
+                "arn:aws:sqs:eu-west-1:000000000000:aex-control.fifo".to_owned(),
+            ),
+            (
+                keys::SES_IDENTITY_ARN,
+                "arn:aws:ses:eu-west-1:000000000000:identity/aex.dev".to_owned(),
+            ),
+            (
+                keys::SIGNING_SECRET_PREFIX,
+                "aex/prd/authz-signing/".to_owned(),
+            ),
+            (keys::DATABASE, "aex".to_owned()),
+            (keys::ROLE, "aex_control_worker".to_owned()),
+            (keys::BATCH_SIZE, "10".to_owned()),
+            (keys::LEASE_MS, "60000".to_owned()),
+            (keys::REGIONAL_ENDPOINTS, every_region()),
         ])
     }
 
@@ -201,85 +636,166 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-central_control_worker-fixture");
-        assert_eq!(config.budget, 8);
+    fn a_complete_environment_is_accepted() {
+        let config = read(&complete()).expect("a complete environment");
+        assert_eq!(config.batch_size, 10);
+        assert_eq!(config.regional_endpoints.len(), Region::ALL.len());
     }
 
     #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
+    fn every_variable_is_required_and_named_when_absent() {
+        for name in keys::ALL {
             let mut vars = complete();
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(ConfigError::Missing(name)),
                 "removing {name}"
             );
         }
     }
 
     #[test]
-    fn rejects_a_blank_variable_as_missing() {
+    fn an_endpoint_map_missing_a_region_is_refused() {
         let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
+        vars.insert(
+            keys::REGIONAL_ENDPOINTS,
+            "eu-west-1=https://control.eu-west-1.aex.dev".to_owned(),
+        );
+        let error = read(&vars).expect_err("an incomplete map strands a region");
+        assert!(
+            matches!(error, ConfigError::Invalid { name, .. } if name == keys::REGIONAL_ENDPOINTS)
+        );
+    }
+
+    #[test]
+    fn a_repeated_or_unknown_region_is_refused() {
+        for raw in [
+            "mars-central-1=https://x",
+            "eu-west-1=https://a,eu-west-1=https://b",
+            "eu-west-1",
+        ] {
+            let mut vars = complete();
+            vars.insert(keys::REGIONAL_ENDPOINTS, raw.to_owned());
+            assert!(read(&vars).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_batch_or_lease_outside_its_bound_is_refused() {
+        for (name, value) in [
+            (keys::BATCH_SIZE, "0"),
+            (keys::BATCH_SIZE, "101"),
+            (keys::LEASE_MS, "0"),
+            (keys::LEASE_MS, "900001"),
+        ] {
+            let mut vars = complete();
+            vars.insert(name, value.to_owned());
+            assert!(read(&vars).is_err(), "{name}={value}");
+        }
+    }
+
+    #[test]
+    fn this_binary_refuses_any_role_but_the_worker_one() {
+        let mut vars = complete();
+        vars.insert(keys::ROLE, "aex_control_api".to_owned());
+        assert!(read(&vars).is_err());
+    }
+
+    #[test]
+    fn every_outbox_topic_has_a_duty_and_every_duty_has_a_name() {
+        let handled: BTreeSet<Handler> = Topic::ALL.into_iter().map(Handler::for_topic).collect();
+        assert_eq!(handled.len(), Topic::ALL.len(), "two topics share one duty");
+        let mut names: Vec<&str> = Handler::ALL.iter().map(|it| it.as_str()).collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "two duties share a name");
+        for handler in handled {
+            assert!(Handler::ALL.contains(&handler));
+        }
+    }
+
+    #[test]
+    fn the_composition_admits_exactly_its_declared_bindings() {
+        let config = read(&complete()).expect("a complete environment");
         assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
+            aex_central_http::capability::admit(&manifest(), &config.resolved()),
+            Ok(())
         );
     }
 
     #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
+    fn this_binary_cannot_link_the_assertion_signing_capability() {
+        let config = read(&complete()).expect("a complete environment");
+        let mut manifest = manifest();
+        manifest.bindings.push(CapabilityBinding::resource(
+            "AEX_CENTRAL_CONTROL_WORKER_ASSERTION_KEY",
+            AssertionSign::ID,
+        ));
+        assert_eq!(
+            aex_central_http::capability::admit(&manifest, &config.resolved()),
+            Err(CompositionError::ForbiddenCapability {
+                key: "AEX_CENTRAL_CONTROL_WORKER_ASSERTION_KEY",
+                capability: AssertionSign::ID
+            })
         );
     }
 
     #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    fn the_permission_list_holds_no_finance_or_object_store_right() {
+        for permission in PERMISSIONS {
+            assert!(!permission.starts_with("s3:"), "{permission}");
+            assert!(!permission.contains("stripe"), "{permission}");
+        }
+        assert!(PERMISSIONS.contains(&"sqs:ReceiveMessage"));
+        assert!(PERMISSIONS.contains(&"ses:SendEmail"));
     }
 
     #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
+    fn a_partial_batch_names_only_the_items_that_did_not_commit() {
+        let outcomes = vec![
+            ItemOutcome {
+                message_id: "a".to_owned(),
+                committed: true,
+            },
+            ItemOutcome {
+                message_id: "b".to_owned(),
+                committed: false,
+            },
+            ItemOutcome {
+                message_id: "c".to_owned(),
+                committed: true,
+            },
+        ];
+        assert_eq!(partial_batch_failures(&outcomes), vec!["b".to_owned()]);
+        assert!(partial_batch_failures(&[]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn readiness_is_fail_closed_until_every_probe_answers() {
+        let response = app(readiness(Probes::NONE))
+            .oneshot(
+                Request::builder()
+                    .uri(READY_PATH)
+                    .body(Body::empty())
+                    .expect("a valid request"),
+            )
+            .await
+            .expect("the router answers");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn a_worker_with_an_incomplete_endpoint_map_is_never_ready() {
         assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
+            !readiness(Probes {
+                aurora: true,
+                queue: true,
+                endpoints: false,
+                mail_identity: true
+            })
+            .is_ready()
         );
     }
 }
