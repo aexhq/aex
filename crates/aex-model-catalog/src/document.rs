@@ -199,6 +199,16 @@ pub enum EndpointPin {
 }
 
 impl EndpointPin {
+    /// Every pinned origin, for exhaustive tests.
+    pub const ALL: [Self; 6] = [
+        Self::OpenAiApi,
+        Self::AnthropicApi,
+        Self::DeepSeekApi,
+        Self::ZaiPaasV4,
+        Self::MoonshotIntlV1,
+        Self::GeminiV1Beta,
+    ];
+
     /// The compiled origin.
     #[must_use]
     pub const fn origin(self) -> &'static str {

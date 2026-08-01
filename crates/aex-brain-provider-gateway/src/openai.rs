@@ -1,2 +1,1 @@
-//! `openai` surface of `aex-brain-provider-gateway`. The owning implementation stream fills
-//! this module; the crate-level documentation states what may and may not live here.
+//! The `openai` dialect adapter. Implemented in the adapter wave.
