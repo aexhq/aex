@@ -1,0 +1,133 @@
+//! Failure-path cases for `regional-secret-custody`.
+
+mod support;
+
+use aex_secret_custody_dynamodb::codec::{
+    decode_manifest, decode_secret, encode_manifest, encode_secret,
+};
+use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER};
+use aex_secret_domain::revocation::RevocationEpoch;
+use aex_secret_domain::secret::SecretRevision;
+use aex_session_dynamodb::attr::CodecError;
+use aex_session_dynamodb::error::{StoreError, decode_cancellation};
+use aex_session_dynamodb::plan::Participant;
+use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
+use aws_sdk_dynamodb::types::CancellationReason;
+use aws_sdk_dynamodb::types::error::TransactionCanceledException;
+
+use support::{TABLE, authorization, manifest, metadata, now, secret_name, workspace};
+
+fn cancelled(codes: &[&str]) -> TransactWriteItemsError {
+    TransactWriteItemsError::TransactionCanceledException(
+        TransactionCanceledException::builder()
+            .set_cancellation_reasons(Some(
+                codes
+                    .iter()
+                    .map(|code| CancellationReason::builder().code(*code).build())
+                    .collect(),
+            ))
+            .build(),
+    )
+}
+
+#[test]
+fn a_revoked_record_names_the_metadata_participant_so_the_caller_never_decrypts() {
+    let plan = expressions::authorize_managed_call(TABLE, &authorization(), SecretRevision::FIRST)
+        .expect("compiles");
+    let error = decode_cancellation(
+        &cancelled(&["ConditionalCheckFailed", "None", "None"]),
+        plan.participants(),
+    );
+    assert!(
+        matches!(
+            error,
+            StoreError::PreconditionFailed {
+                participant: Participant::SECRET_METADATA,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(
+        !error.retryable(),
+        "`secret_revoked` is never retried into a decrypt"
+    );
+}
+
+#[test]
+fn a_concurrent_rebind_names_the_custody_head_participant() {
+    let plan = expressions::authorize_managed_call(TABLE, &authorization(), SecretRevision::FIRST)
+        .expect("compiles");
+    assert_eq!(plan.participants(), AUTHORIZE_ORDER);
+    let error = decode_cancellation(
+        &cancelled(&["None", "ConditionalCheckFailed", "None"]),
+        plan.participants(),
+    );
+    match error {
+        StoreError::PreconditionFailed { participant, .. } => {
+            assert_eq!(participant, Participant::CUSTODY_HEAD);
+        }
+        other => panic!("{other}"),
+    }
+}
+
+#[test]
+fn an_existing_authorization_is_an_idempotent_replay_rather_than_a_new_grant() {
+    let plan = expressions::authorize_managed_call(TABLE, &authorization(), SecretRevision::FIRST)
+        .expect("compiles");
+    let error = decode_cancellation(
+        &cancelled(&["None", "None", "ConditionalCheckFailed"]),
+        plan.participants(),
+    );
+    match error {
+        StoreError::PreconditionFailed { participant, .. } => {
+            assert_eq!(participant, Participant::CUSTODY_AUTHORIZATION);
+        }
+        other => panic!("{other}"),
+    }
+}
+
+#[test]
+fn a_metadata_row_that_grew_sealed_bytes_is_refused_rather_than_read() {
+    let mut encoded = encode_secret(&metadata()).expect("encodes");
+    encoded.insert(
+        "ciphertext".to_owned(),
+        aex_session_dynamodb::attr::b(vec![1, 2, 3]),
+    );
+    let error = decode_secret(&encoded, workspace()).expect_err("sealed bytes on metadata");
+    assert!(matches!(error, CodecError::Malformed { .. }), "{error}");
+}
+
+#[test]
+fn a_manifest_that_grew_sealed_bytes_is_refused_rather_than_read() {
+    let mut encoded = encode_manifest(&manifest());
+    encoded.insert(
+        "wrappedKey".to_owned(),
+        aex_session_dynamodb::attr::b(vec![9; 32]),
+    );
+    let error = decode_manifest(&encoded, workspace()).expect_err("sealed bytes on a manifest");
+    assert!(matches!(error, CodecError::Malformed { .. }), "{error}");
+}
+
+#[test]
+fn a_manifest_entry_that_is_not_a_digest_is_refused() {
+    let mut encoded = encode_manifest(&manifest());
+    encoded.insert(
+        "digests".to_owned(),
+        aex_session_dynamodb::attr::string_list(["a-real-looking-value".to_owned()]),
+    );
+    let error = decode_manifest(&encoded, workspace()).expect_err("not a digest");
+    assert!(
+        matches!(error, CodecError::Malformed { .. }),
+        "a manifest that can hold a raw value is a manifest that can leak one: {error}"
+    );
+}
+
+#[test]
+fn a_name_that_could_forge_a_key_stops_every_builder() {
+    assert!(
+        expressions::revoke(TABLE, workspace(), "a#b", RevocationEpoch::INITIAL, now()).is_err()
+    );
+    assert!(aex_secret_custody_dynamodb::keys::secret(workspace(), "a#b").is_err());
+    let _ = secret_name();
+}

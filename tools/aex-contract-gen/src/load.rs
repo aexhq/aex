@@ -1063,6 +1063,15 @@ fn build_operation(
     if entry.success.is_none() && success_status != 204 {
         return Err(bad("a bodyless success must be 204".to_owned()));
     }
+    if success_status == 204 && entry.success.is_some() {
+        return Err(bad("a 204 declares no success schema".to_owned()));
+    }
+    // Every admission renders the same durable operation record, and the
+    // generated `Accepted` response type has exactly one payload. A 202 carrying
+    // anything else would make that type a lie.
+    if success_status == 202 && entry.success.as_deref() != Some("Operation") {
+        return Err(bad("a 202 admission answers with `Operation`".to_owned()));
+    }
 
     let mut path_params = Vec::new();
     for segment in entry.path.split('/') {

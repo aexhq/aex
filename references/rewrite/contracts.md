@@ -566,3 +566,360 @@ Three peer crates, all mechanical. Re-run these suites:
 | C-51 | `DeletingSession`, `SessionTombstone` and the `session_deleting` / `session_deleted` / `deletion_in_progress` codes survive R-DELETE unrenamed | They name states, not verbs. R-DELETE renames the verbs; the regional-domains stream already maps its rejections onto these codes, and renaming them would be churn with no reader-visible gain. |
 | C-52 | The generator owns whole directories, not just the files it wrote last | Comparing file by file cannot see an output whose input was deleted. `ObservationWatermark.json` was that case, and it would have kept serving from `api/generated/schemas/` indefinitely. |
 | C-53 | `aex_internal_contracts::outbox::RunStatus` stays distinct from `aex_wire::models::RunStatus`, with a test pinning their spellings equal | Unifying them would put a customer-rendering type inside an internal envelope; leaving them unlinked would let a rename on one side silently break the materializer. The test is the cheap half of both. |
+## 8. Third pass — the server traits, the dispatch surface and the low-level client
+
+Branch `rw/contracts-3`, off `main` after the second pass landed. This closes the
+largest tracked gap in §2: the generated server traits and the 146 client
+methods. `aex-regional-http` and `aex-central-http` were both blocked on it, and
+both are unblocked by it.
+
+Nothing was hand-written per operation. The three surfaces below are one emitter
+each over the existing `ROUTES` table — there is still exactly one route table,
+and `RouteGroup` is a projection of it rather than a second copy.
+
+### 8.1 What is generated
+
+| Surface | Output | Arity |
+| --- | --- | --- |
+| Server traits | `crates/aex-wire/src/generated/server.rs` | 21 traits, **146** `async` methods |
+| Dispatchers | same file | 21 total dispatchers, **146** arms |
+| Client | `crates/aex-wire/src/generated/client.rs` | **146** methods, **146** request builders |
+| Surface corpus | `conformance/routes/surface.jsonl` | **146** rows |
+
+146 of 146 operations have a server-trait method, a dispatch arm, a client method
+and a request builder. `tools/aex-contract-gen/tests/surface.rs` asserts each of
+those four floors independently, so a route that is authored and never mounted is
+a red suite rather than a runtime `404`.
+
+### 8.2 Route groups
+
+A group is one authoring fragment on one plane. A stem that appears on both
+planes is disambiguated by plane, which today affects only `operations`:
+
+```text
+central   ApiKeysApi  AuthApi  BillingApi  BootstrapApi  CentralOperationsApi
+          IdentityApi  OrganizationsApi  WorkspacesApi
+regional  ApprovalsApi  FilesApi  ObservationsApi  OtlpApi
+          ProviderCredentialsApi  RegionalOperationsApi  RegistryApi
+          SecretsApi  SessionsApi  TelemetryLifecycleApi  UploadsApi
+          UsageApi  WorkspaceApi
+```
+
+```rust
+pub enum RouteGroup { /* 21 variants */ }
+impl RouteGroup {
+    pub const ALL: &'static [RouteGroup];
+    pub const fn as_str(self) -> &'static str;      // "regional:sessions"
+    pub const fn plane(self) -> Plane;
+    pub const fn trait_name(self) -> &'static str;  // "SessionsApi"
+    pub const fn routes(self) -> &'static [RouteId];
+}
+impl RouteId { pub const fn group(self) -> RouteGroup; }
+pub const SESSIONS_ROUTES: &[RouteId];              // one const per group
+```
+
+`route_groups_partition_the_route_table` asserts the 21 slices are a partition of
+`RouteId::ALL`, so mounting every group mounts every route exactly once.
+
+### 8.3 The server trait shape
+
+```rust
+pub trait SessionsApi: Send + Sync + 'static {
+    fn session_create(
+        &self,
+        cx: &RequestContext,
+        body: SessionCreateRequest,
+    ) -> impl Future<Output = WireResult<Created<Session>>> + Send;
+
+    fn session_get(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+    ) -> impl Future<Output = WireResult<WithETag<Session>>> + Send;
+
+    fn session_stop(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        body: EmptyRequest,
+    ) -> impl Future<Output = WireResult<Accepted>> + Send;
+    // … one method per operation in the fragment
+}
+```
+
+Arguments are always `&self`, `&RequestContext`, the path parameters in template
+order, the generated `<RouteId>Query` struct when the route declares query
+parameters, then the typed body. The return type is chosen from the route table
+and nothing else:
+
+| Table | Return |
+| --- | --- |
+| `successStatus: 204` | `NoContent` |
+| `successStatus: 202` | `Accepted` |
+| `successStatus: 201` | `Created<T>` |
+| `200` plus any `etag` policy | `WithETag<T>` |
+| `200` | `T` |
+| `transport: ndjson` | `NdjsonStream<Self::FrameStream>` |
+
+A method returns `impl Future<…> + Send` rather than `async fn` so an
+implementation is directly spawnable; an implementor still writes `async fn`.
+`type FrameStream: Send + 'static` appears only on `ObservationsApi`, the one
+group with NDJSON routes — `aex-wire` never names `Stream`, because it has no
+async dependency and must not gain one.
+
+**A handler cannot choose a status.** It never names one: the response type it
+returns is the status the route declares. **A handler cannot answer with an
+undeclared error code**: `dispatch::declared` compares the returned `ErrorCode`
+against `RouteDescriptor::errors` and replaces a code the route does not declare
+with `internal_error` naming the violation. That is a runtime boundary rather
+than a compile-time one — see C-58.
+
+### 8.4 The dispatch surface
+
+```rust
+pub struct RawRequest<'a> {
+    pub route: RouteId,
+    pub path: PathBinding<'a>,
+    pub query: &'a str,
+    pub body: &'a [u8],
+}
+pub struct RequestLimits { pub max_json_body_bytes: usize, pub max_otlp_body_bytes: usize }
+pub struct RawResponse {
+    pub status: u16,
+    pub content_type: Option<&'static str>,
+    pub etag: Option<ETag>,
+    pub location: Option<String>,
+    pub body: Vec<u8>,
+}
+pub enum DispatchOutcome<F> { Unary(RawResponse), Ndjson(NdjsonStream<F>) }
+pub enum NoStream {}                    // uninhabited
+
+pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
+    api: &A, cx: &RequestContext, raw: RawRequest<'_>, limits: RequestLimits,
+) -> WireResult<DispatchOutcome<NoStream>>;
+```
+
+Every dispatcher is total over `RouteId`: a route from another group is
+`internal_error` naming the mismatch, never a handler running against the wrong
+request. A group with no NDJSON route yields `DispatchOutcome<NoStream>`, so the
+type system — not a convention — proves it can never take the streaming arm.
+
+Strictness at the boundary, all generated from the table:
+
+- **Unknown request members rejected.** Every model is `deny_unknown_fields`, and
+  the refusal is `invalid_request` carrying `ErrorDetails::Validation` whose
+  `reason` names the offending member.
+- **Bounded bodies.** The length is compared before the parser runs, so an
+  oversize body costs one comparison rather than a full parse. `413
+  payload_too_large` for AEX JSON, `413 telemetry_payload_too_large` for OTLP.
+- **A route with no declared body refuses one.** Silently ignoring a body would
+  make the replay intent something other than what the caller sent.
+- **Strict query decoding.** `QueryReader` rejects an undeclared key, a repeated
+  key, a malformed percent escape, and a value outside its declared integer
+  bounds. It runs even for a route with no declared parameters.
+- **Typed path parameters.** `path_param::<T>` refuses a well-formed identifier
+  of the wrong kind, before the handler runs.
+
+### 8.5 Replay identity
+
+```rust
+pub enum RequestIdentity { None, Replay(ReplayIdentity), Operation(OperationIdentity) }
+pub fn canonical_intent(raw: &RawRequest<'_>) -> WireResult<IntentDigest>;
+pub fn request_identity(cx: &RequestContext, raw: &RawRequest<'_>) -> WireResult<RequestIdentity>;
+```
+
+The intent is `aex_wire::canonical::intent_digest` over RFC 8785 JCS bytes of the
+body, not over the bytes as they arrived, so two spellings of the same request
+replay as one intent. There is still exactly one canonicalizer.
+
+Strict in both directions: a route that declares `Idempotency-Key` refuses a
+request without one, and a route that declares none refuses a request that
+supplies one. A silently ignored `Idempotency-Key` is worse than a rejected
+request, because the caller believes it has a guarantee it does not have.
+
+### 8.6 The low-level client
+
+```rust
+pub trait Transport: Send + Sync {
+    fn execute(&self, request: WireRequest)
+        -> impl Future<Output = Result<WireResponse, TransportError>> + Send;
+}
+pub struct WireClient<T: Transport> { /* transport plus BaseUrl */ }
+
+// one per operation, usable without executing it
+pub fn session_message_send_request(
+    session_id: SessionId, body: &MessageSendRequest, idempotency_key: &IdempotencyKey,
+) -> Result<WireRequest, ClientError>;
+
+impl<T: Transport> WireClient<T> {
+    pub async fn session_message_send(
+        &self, session_id: SessionId, body: &MessageSendRequest, idempotency_key: &IdempotencyKey,
+    ) -> Result<MessageSendResult, ClientError>;
+}
+```
+
+`aex-wire` still has no HTTP client dependency and never will. `aex-cli`, the
+dashboard bootstrap and every internal caller share one implementation of the
+wire by implementing `Transport`.
+
+Client argument order mirrors the server: path parameters, `&<RouteId>Query`,
+`&Body`, then `&IdempotencyKey` or `OperationId` when the route declares one,
+then `Option<&ETag>` or `&ETag` when it accepts or requires `If-Match`. Header
+policy lives in one hand-written `request_headers`, not in 146 call sites:
+`Accept` follows the declared transport, `Content-Type` the declared body class.
+
+Invariants held: no client method retries, sleeps or reads a clock; a non-success
+status decodes into the published envelope (`ClientError::Api`) and never into
+the success type; a status the route does not declare is never a success. A
+streaming caller takes the `*_request` builder and runs its own transport, which
+is why the builders are public and separate.
+
+### 8.7 Worked example — mounting a route on `axum`
+
+For `aex-regional-http`. `A` is the generated trait; the mount is a loop over the
+group's route constant, so it is mechanical and total.
+
+```rust
+use std::sync::Arc;
+
+use aex_wire::dispatch::{DispatchOutcome, RawRequest, RawResponse, RequestLimits};
+use aex_wire::routes::{HttpMethod, Plane, RouteId, match_route, route};
+use aex_wire::server::{RequestContext, RouteGroup, SessionsApi, dispatch_sessions};
+use axum::body::Bytes;
+use axum::extract::{Extension, RawQuery, State};
+use axum::http::{StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{MethodFilter, on};
+
+pub fn mount_sessions_api<A>(api: Arc<A>, edge: EdgeStack) -> axum::Router
+where
+    A: SessionsApi,
+{
+    let mut router = axum::Router::new();
+    for id in RouteGroup::Sessions.routes() {
+        let descriptor = route(*id);
+        let filter = match descriptor.method {
+            HttpMethod::Get => MethodFilter::GET,
+            HttpMethod::Put => MethodFilter::PUT,
+            HttpMethod::Post => MethodFilter::POST,
+            HttpMethod::Delete => MethodFilter::DELETE,
+        };
+        // `/api/sessions/{sessionId}` is already axum 0.8 path syntax.
+        router = router.route(descriptor.template, on(filter, handle::<A>));
+    }
+    router.with_state(api).layer(edge.into_layers())
+}
+
+async fn handle<A: SessionsApi>(
+    State(api): State<Arc<A>>,
+    Extension(cx): Extension<RequestContext>,   // built by the edge stack
+    Extension(limits): Extension<RequestLimits>,
+    method: axum::http::Method,
+    uri: Uri,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> Response {
+    let query = query.unwrap_or_default();
+    let Some(method) = HttpMethod::parse(method.as_str()) else {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    };
+    // One matcher, one table: the composition crate never re-types a path.
+    let Some((id, binding)) = match_route(Plane::Regional, method, uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let raw = RawRequest { route: id, path: binding, query: &query, body: &body };
+
+    // Precedence stages 8 and 9, before the handler's own stages.
+    let identity = match aex_wire::dispatch::request_identity(&cx, &raw) {
+        Ok(identity) => identity,
+        Err(failure) => return render_error(&cx, failure),
+    };
+    if let Err(failure) = edge.admit(&identity).await {
+        return render_error(&cx, failure);
+    }
+
+    match dispatch_sessions(api.as_ref(), &cx, raw, limits).await {
+        Ok(DispatchOutcome::Unary(response)) => render(response),
+        // `SessionsApi` declares no NDJSON route, so `NoStream` is uninhabited
+        // and this arm is unreachable by construction.
+        Ok(DispatchOutcome::Ndjson(never)) => match never {},
+        Err(failure) => render_error(&cx, failure),
+    }
+}
+
+fn render(response: RawResponse) -> Response {
+    let mut rendered = Response::builder().status(response.status);
+    if let Some(content_type) = response.content_type {
+        rendered = rendered.header(header::CONTENT_TYPE, content_type);
+    }
+    if let Some(etag) = response.etag {
+        rendered = rendered.header(header::ETAG, etag.as_str());
+    }
+    if let Some(location) = response.location {
+        rendered = rendered.header(header::LOCATION, location);
+    }
+    rendered.body(response.body.into()).expect("a valid response")
+}
+
+fn render_error(cx: &RequestContext, failure: aex_wire::WireError) -> Response {
+    let (status, envelope, retry_after) =
+        failure.into_response_parts(&cx.request_id, cx.operation_id);
+    let mut rendered = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(after) = retry_after {
+        rendered = rendered.header(header::RETRY_AFTER, after.as_secs());
+    }
+    let body = serde_json::to_vec(&envelope).expect("the error envelope always encodes");
+    rendered.body(body.into()).expect("a valid response")
+}
+```
+
+Three properties the consuming streams should lean on:
+
+1. **A route present in the generated table but absent from the mount table is a
+   build failure, not a runtime 404.** Iterate `RouteGroup::Sessions.routes()`
+   rather than listing templates; a composition test that asserts the mounted set
+   equals that slice then cannot drift.
+2. **`descriptor.template` is already `axum` 0.8 path syntax** (`{sessionId}`),
+   so no rewriting is needed. Keep `match_route` as the resolver inside the
+   handler so `PathBinding` and `RouteId` come from the one table rather than
+   from `axum`'s extractor.
+3. **The middleware stack reads the table, not the handler.**
+   `RouteDescriptor::{required_scope, alt_principal, idempotency, body_class,
+   transport, etag, success_status, safe_retry, pause_exempt, errors}` drive
+   every precedence stage; `dispatch_*` runs stages 7 and 12–13 only.
+
+For `aex-central-http` the shape is identical with `Plane::Central` and
+`RouteGroup::{ApiKeys, Auth, Billing, Bootstrap, CentralOperations, Identity,
+Organizations, Workspaces}`. Plan 02 §8's `S: CentralControlApi<Ctx = RequestCtx>`
+is superseded: there are eight central traits rather than one, and the context is
+`aex_wire::server::RequestContext` carried in an extension. A composition crate
+that needs a richer per-request record keeps it in its own extension and builds
+`RequestContext` from it.
+
+### 8.8 What a peer still owes
+
+| `TODO(cross-stream)` | Owner |
+| --- | --- |
+| `session_get` returns `WithETag<Session>` because the route table says `success: Session, etag: returns`. `aex_wire::server::SessionReadResult` still exists for rendering the `410` tombstone body, but nothing wires the two together: the generated signature cannot express "200 `Session` or 410 `SessionTombstone`" while the response type is derived from one table row. The regional stream should answer `session_deleting` / `session_deleted` as ordinary `WireError`s for now. | contracts, next pass |
+| `ObservationsApi::FrameStream` is unconstrained (`Send + 'static`). `aex-regional-http` supplies the `futures::Stream` bound and the frame writer; `aex-wire` must not gain an async dependency to do it here. | regional services |
+| The three observation error codes (`unsupported_media_type`, `telemetry_query_budget_exhausted`, `export_capacity`) and a published `ExportManifest` / `ExportMember` schema are still owed from the second pass. | contracts, next pass |
+| `OperationFailure.reason` is still a free `String`; the closed code set is still owed from the second pass. | contracts, next pass |
+| `packages/sdk/src/generated/**` TypeScript emission and the `parity` corpus category remain unimplemented; the client emitter now gives the Rust half a shape the TypeScript half can mirror one for one. | contracts and clients |
+
+### 8.9 Decisions taken in this pass
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| C-54 | One trait per authoring fragment per plane — 21, not one per deployable | A deployable composes several fragments and two deployables can share one; a fragment is the only grouping the authored tree actually owns. `RouteGroup::routes()` lets a deployable mount any subset without a second table. |
+| C-55 | A server-trait method returns `impl Future<Output = …> + Send`, not `async fn` | Edition-2024 `async fn` in a trait has no `Send` bound, which `axum` requires. An implementor still writes `async fn`; only the declaration differs. |
+| C-56 | A group with no NDJSON route dispatches to `DispatchOutcome<NoStream>` over an uninhabited type, rather than to a bare `RawResponse` | The mount shape stays identical across all 21 groups, and the streaming arm of a non-streaming group is unconstructible rather than merely unreachable. |
+| C-57 | `RouteGroup` is a projection of `ROUTES`, generated as `RouteId::group()` plus one const slice per group | The alternative — a second table listing each group's routes — is exactly the drift the single route table exists to prevent. A partition test makes the projection total. |
+| C-58 | An undeclared error code is refused at the dispatch boundary and reported as `internal_error`, rather than made impossible by a per-route error enum | Compile-time exclusivity needs 146 generated error enums and forces every peer to map its domain errors per route. Both consuming streams asked for `WireResult<T>`. The observable guarantee — an undeclared code never reaches the wire — is identical; the compile-time half is real for *status*, which a handler cannot name at all. Recorded so a later pass can reverse it deliberately. |
+| C-59 | A validation refusal carries `JsonPointer::root()` plus a `reason` naming the offending member, rather than an exact pointer | An exact RFC 6901 pointer needs `serde_path_to_error`, a dependency §4 does not admit. `serde`'s own message already names the member, so the information is present; only its position is not machine-addressable. Revisit if the dependency list is reopened. |
+| C-60 | `RequestLimits` carries two bounds, not one | The OTLP routes accept a payload an order of magnitude larger than an AEX JSON body, and one shared number would have to be the larger of the two — which would silently raise the JSON bound on every other route. |
+| C-61 | Query and path values decode through a hand-written `FromParam` / `ToParam` pair with generated implementations, not `serde_urlencoded` | Keeps the dependency set unchanged, gives a per-parameter rejection reason, and makes the encoder and decoder provably symmetric — `every_parameter_type_round_trips_between_the_two_codecs` holds them together. There is deliberately no blanket implementation: coherence cannot prove one does not overlap the newtype implementations. |
+| C-62 | The generated request builders are public and separate from the client methods | A streaming caller cannot use `Transport`, which returns a buffered body. Giving it the built request means it shares the contract without a second URL, header and identity implementation. |
+| C-63 | `rustsrc` gained `imports`, `bind_call` and `macro_list`, and models `fn_call_width` alongside `array_width` | The three new emitters produce call and import shapes the previous renderer never emitted. Each new helper mirrors exactly one more `rustfmt` heuristic, so `cargo fmt --all` over committed generated source stays a no-op. |
+| C-64 | `load` now rejects a `202` whose success schema is not `Operation`, and a `204` that declares one | The generated `Accepted` type has exactly one payload. Making the authored tree refuse the disagreement keeps the response-shape derivation total instead of adding a per-route exception. |
