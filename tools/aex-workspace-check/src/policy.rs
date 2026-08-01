@@ -101,6 +101,85 @@ pub struct Seam {
     pub live_only: String,
 }
 
+/// One `[janitor.resource.<kind>]` row: how the janitor finds a resource of
+/// this kind and where it sits in the reclamation order.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JanitorResource {
+    /// Reclamation order, ascending. A kind is reclaimed only after everything
+    /// that could still reference it.
+    pub rank: u8,
+    /// How a janitor holding only a plane and a credential finds one:
+    /// `resource_tag`, `name_prefix`, `provider_metadata` or `none`.
+    pub discovery: String,
+    /// `aex_minted` when AEX minted the identity, so it must carry the run
+    /// prefix as well as the tag set; `provider_minted` when it did not.
+    pub naming: String,
+    /// Kinds that must be reclaimed before this one.
+    #[serde(default)]
+    pub requires_reclaim_first: Vec<String>,
+    /// What reclaiming one does, and why the order matters.
+    pub reclaim: String,
+}
+
+impl JanitorResource {
+    /// Whether the janitor can find and remove this kind from tags alone.
+    ///
+    /// This is the predicate `prd` eligibility is gated on: a scenario that
+    /// creates a kind for which this is false leaves residue no sweep can ever
+    /// remove.
+    #[must_use]
+    pub fn reclaimable_from_tags(&self) -> bool {
+        self.discovery != "none"
+    }
+}
+
+/// The `[janitor]` section: the tag vocabulary, the TTL grace and the
+/// reclaimable resource table.
+///
+/// `aex-test-harness` stamps these tags and `aex-release-tool` sweeps by them.
+/// Both read this one document, so the stamper and the sweeper cannot drift
+/// into disagreeing about what a synthetic test resource looks like.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Janitor {
+    /// The marker tag key. Nothing without it is ever touched.
+    pub synthetic_tag: String,
+    /// The marker tag's one legal value.
+    pub synthetic_value: String,
+    /// The run-id tag key.
+    pub run_id_tag: String,
+    /// The owner tag key.
+    pub owner_tag: String,
+    /// The lane tag key.
+    pub lane_tag: String,
+    /// The expiry tag key.
+    pub expires_at_tag: String,
+    /// Grace added to a run's expiry before a survivor counts as residue.
+    pub residue_grace_minutes: i64,
+    /// The name templates a run mints, with `{run_id}` unsubstituted.
+    pub minted_name_templates: Vec<String>,
+    /// The lanes permitted to run against `prd` at all.
+    pub prd_lanes: Vec<String>,
+    /// Reclaimable kinds by name.
+    #[serde(default, rename = "resource")]
+    pub resources: BTreeMap<String, JanitorResource>,
+}
+
+/// One `[prd_provisioning.rule.<id>]` row: a reason a scenario may provision in
+/// production.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrdRule {
+    /// `exactly_one` or `per_deployable`.
+    pub cardinality: String,
+    /// What the rule admits, for the failure message.
+    pub admits: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrdProvisioning {
+    #[serde(default)]
+    rule: BTreeMap<String, PrdRule>,
+}
+
 /// One blocking or diagnostic capacity gate and who owes it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkloadGate {
@@ -125,6 +204,8 @@ struct ProfilesDocument {
     concern: BTreeMap<String, ConcernRule>,
     #[serde(default)]
     evidence_class: BTreeMap<String, EvidenceClass>,
+    janitor: Janitor,
+    prd_provisioning: PrdProvisioning,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,6 +233,10 @@ pub struct Policy {
     pub seams: BTreeMap<String, Seam>,
     /// The declared capacity gates.
     pub gates: BTreeMap<String, WorkloadGate>,
+    /// The janitor's tag vocabulary and reclaimable resource table.
+    pub janitor: Janitor,
+    /// The closed set of reasons a scenario may provision in `prd`.
+    pub prd_rules: BTreeMap<String, PrdRule>,
 }
 
 impl Policy {
@@ -179,6 +264,8 @@ impl Policy {
                 evidence_classes: profiles.evidence_class,
                 seams: seams.seam,
                 gates: workloads.gate,
+                janitor: profiles.janitor,
+                prd_rules: profiles.prd_provisioning.rule,
             }
         })
     }

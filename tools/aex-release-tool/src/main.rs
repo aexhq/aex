@@ -14,12 +14,13 @@ use clap::{Parser, Subcommand};
 use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane};
 use aex_release_tool::artifact::{self, ArtifactEnvelope, Form};
 use aex_release_tool::canon;
-use aex_release_tool::error::{Exit, Result, ToolError, io, usage};
+use aex_release_tool::error::{Exit, Result, ToolError, Violation, io, usage};
 use aex_release_tool::evidence::{self, DeclaredJobs, FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::matrix::{self, MatrixKind};
 use aex_release_tool::graph::select::{self, Lane, Mode};
 use aex_release_tool::graph::{NodeId, verify};
+use aex_release_tool::janitor::{self, Inventory, SweepMode};
 use aex_release_tool::ledger::{self, JsonlLedger, LedgerEntry, LedgerStore, Readback};
 use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::migration;
@@ -88,6 +89,9 @@ enum Command {
     /// Source policies over checked-in files.
     #[command(subcommand)]
     Policy(PolicyCommand),
+    /// Reclaim synthetic test residue from a plane, by tag.
+    #[command(subcommand)]
+    Janitor(JanitorCommand),
     /// Print a release JSON Schema.
     Schema {
         /// Which schema.
@@ -467,6 +471,37 @@ enum PolicyCommand {
     },
 }
 
+/// The janitor: reclamation from tags alone (OD-36).
+#[derive(Debug, Subcommand)]
+enum JanitorCommand {
+    /// Classify, and optionally reclaim, everything a plane inventory holds.
+    ///
+    /// The inventory is produced by a credentialed discovery pass and is
+    /// deliberately unfiltered: the guard refuses what it must not touch, and a
+    /// guard only ever offered safe input is not a guard.
+    Sweep {
+        /// Which plane the inventory came from. Must match the document.
+        #[arg(long)]
+        plane: Plane,
+        /// The plane inventory, as `aex.janitor-inventory.v1` JSON.
+        #[arg(long)]
+        inventory: PathBuf,
+        /// Whether the sweep may delete. Defaults to reporting only.
+        #[arg(long, default_value = "report")]
+        mode: SweepMode,
+        /// Evaluation instant, RFC 3339. Defaults to now.
+        #[arg(long)]
+        now: Option<String>,
+        /// Write the sweep report here as well as to standard output.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Print the tag, TTL and reclamation-order scheme the sweep enforces.
+    Scheme,
+    /// Check the shipped janitor policy is internally consistent.
+    Verify,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(&cli) {
@@ -492,6 +527,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::PrivatePath(command) => run_private_path(command),
         Command::Migration(command) => run_migration(cli, &root, command),
         Command::Policy(command) => run_policy(cli, &root, command),
+        Command::Janitor(command) => run_janitor(cli, command),
         Command::Schema { name } => {
             println!("{}", schemas::text(*name).trim_end());
             Ok(())
@@ -956,6 +992,95 @@ fn run_policy(cli: &Cli, root: &Path, command: &PolicyCommand) -> Result<()> {
 }
 
 // --- shared helpers ----------------------------------------------------------
+
+/// The janitor.
+///
+/// `sweep` exits `0` only when nothing the run created is past its deadline and
+/// still there. Residue lands on `41`, the code the evidence hygiene rules
+/// already share, so a lane that leaves production residue fails its own gate
+/// rather than reporting a green sweep that removed nothing.
+fn run_janitor(cli: &Cli, command: &JanitorCommand) -> Result<()> {
+    match command {
+        JanitorCommand::Scheme => {
+            if !cli.quiet {
+                print!("{}", janitor::describe_scheme());
+            }
+            Ok(())
+        }
+        JanitorCommand::Verify => janitor::verify_policy(),
+        JanitorCommand::Sweep {
+            plane,
+            inventory,
+            mode,
+            now,
+            out,
+        } => {
+            let text = std::fs::read_to_string(inventory)
+                .map_err(|err| io(&inventory.display().to_string(), &err))?;
+            let document = Inventory::parse(&text)?;
+            if document.plane != *plane {
+                return Err(usage(
+                    "`--plane` names a plane the inventory does not: the document was taken \
+                     from a different plane. Refusing rather than sweeping the wrong one.",
+                ));
+            }
+            let instant = match now {
+                None => time::OffsetDateTime::now_utc(),
+                Some(text) => time::OffsetDateTime::parse(
+                    text,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .map_err(|err| usage(format!("`--now` is not RFC 3339: {err}")))?,
+            };
+            // A reclaiming sweep needs a credentialed adapter. None is compiled
+            // in (OD-07), so `--mode reclaim` refuses per resource with a
+            // stated reason rather than reporting a green no-op.
+            let reclaimer: Box<dyn janitor::Reclaimer> = match mode {
+                SweepMode::Report => Box::new(janitor::DryRun),
+                SweepMode::Reclaim => Box::new(janitor::UnavailableAdapter),
+            };
+            let report = janitor::sweep(&document, reclaimer.as_ref(), *mode, instant);
+            if let Some(path) = out {
+                std::fs::write(path, canon::to_string(&report)?)
+                    .map_err(|err| io(&path.display().to_string(), &err))?;
+            }
+            if !cli.quiet {
+                eprintln!("{}", report.summary());
+            }
+            emit(cli, &report)?;
+            let exit = report.exit();
+            if exit == Exit::Ok {
+                Ok(())
+            } else {
+                Err(ToolError::many(
+                    exit,
+                    report
+                        .failed
+                        .iter()
+                        .map(|failure| {
+                            Violation::new(
+                                "janitor-residue",
+                                format!(
+                                    "{} `{}` from run {} was not reclaimed: {}",
+                                    failure.kind, failure.identity, failure.run_id, failure.reason
+                                ),
+                            )
+                        })
+                        .chain(
+                            report
+                                .refused
+                                .iter()
+                                .filter(|entry| entry.is_residue)
+                                .map(|entry| {
+                                    Violation::new("janitor-residue", entry.detail.clone())
+                                }),
+                        )
+                        .collect(),
+                ))
+            }
+        }
+    }
+}
 
 fn emit<T: serde::Serialize>(cli: &Cli, value: &T) -> Result<()> {
     if cli.quiet {

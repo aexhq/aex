@@ -4309,6 +4309,7 @@
           "evidence": "unit",
           "failing_fixtures": "unit",
           "graph": "unit",
+          "janitor": "unit",
           "migration": "unit",
           "monotonicity": "unit",
           "policy": "unit",

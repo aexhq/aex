@@ -19,6 +19,7 @@ pub mod canon;
 pub mod error;
 pub mod evidence;
 pub mod graph;
+pub mod janitor;
 pub mod ledger;
 pub mod manifest;
 pub mod meta;
