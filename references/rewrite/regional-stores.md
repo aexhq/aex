@@ -252,7 +252,6 @@ Item 3 deserves naming separately: the codec checks `expiresAt` explicitly and a
 unit case proves the reader refuses an expired receipt, but "no fence anywhere
 reads TTL" is a whole-system property that only a live soak can establish.
 
-<<<<<<< HEAD
 Even the local DynamoDB Local layer is currently unreachable — see the harness
 gap in §4 — so the strongest evidence this stream has today is protocol-level:
 the exact bytes of the request, and the exact participant a cancellation decodes
@@ -438,7 +437,6 @@ What the emulators cannot reach, stated rather than assumed:
 6. Bucket-policy denial, `s3:signatureAge`, presigned-URL expiry behaviour, PITR
    and restore, real throttling shapes, and every IAM allow/deny matrix remain
    plan 05 §8.3 items with no local proxy.
-=======
 The secret-custody review in §8 now reaches DynamoDB Local through the shared
 harness. That closes local transaction and rollback evidence for the reviewed
 set/replay path; it does not reduce any of the real-AWS gaps above.
@@ -480,4 +478,3 @@ cargo nextest run -p aex-secret-custody-dynamodb \
 cargo check --workspace --all-targets                            clean
 cargo run -p aex-workspace-check                                 133 members / 139 packages clean
 ```
->>>>>>> rw/regional-stores-review
