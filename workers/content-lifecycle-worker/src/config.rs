@@ -141,7 +141,7 @@ pub struct Config {
     /// The deployed role.
     pub mode: Mode,
     /// Deployment plane.
-    pub plane: String,
+    pub plane: aex_identity_domain::assertion::Plane,
     /// Pinned region.
     pub region: Region,
     /// Release digest.

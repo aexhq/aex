@@ -2993,6 +2993,7 @@ name = "content-lifecycle-worker"
 version = "0.1.0"
 dependencies = [
  "aex-content-dynamodb",
+ "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-telemetry-schema",
@@ -5860,6 +5861,7 @@ dependencies = [
 name = "regional-secret-key-admin"
 version = "0.1.0"
 dependencies = [
+ "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-secret-keystore-dynamodb",
@@ -6506,6 +6508,7 @@ name = "session-operation-worker"
 version = "0.1.0"
 dependencies = [
  "aex-content-dynamodb",
+ "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-registry-dynamodb",

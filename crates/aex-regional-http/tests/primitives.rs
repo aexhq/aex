@@ -531,8 +531,15 @@ fn assertions_expire_to_the_millisecond_and_bind_every_authority_fact() {
             aex_identity_domain::assertion::VerifyError::Expired
         ))
     );
+}
 
-    // Every other authority fact the envelope binds, each refused on its own.
+#[test]
+fn every_authority_fact_the_envelope_binds_is_refused_on_its_own() {
+    let credential = fixture_credential(5);
+    let assertion = signed(&credential, ASSERTION_MAX_LIFETIME_MS);
+    let session = audience(AssertionAudience::RegionalSession);
+    let floor = floors(&credential, 4);
+
     for (inputs, expected) in [
         (
             (
