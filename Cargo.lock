@@ -1038,11 +1038,21 @@ dependencies = [
 name = "aex-usage-rating"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-wire",
+ "blake3",
+ "hex",
+ "insta",
  "num-bigint",
  "num-rational",
  "num-traits",
+ "proptest",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
 ]
 
 [[package]]

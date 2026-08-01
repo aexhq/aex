@@ -13,5 +13,15 @@
 //! - provider credentials, invoices or negotiated cost values
 //! - regional storage, queues or the usage authority tables
 
+pub mod allocation;
 pub mod exact;
 pub mod rate_card;
+pub mod rounding;
+
+pub use allocation::allocate_segment;
+pub use exact::{Contribution, RateBookId, RatedSegment, SegmentKey, accumulate, rate_quantity};
+pub use rate_card::{BookVerifier, PlaneBilling, Rate, RateContext, RatingError, RoundingRule};
+pub use rounding::settle_segment;
+
+#[cfg(test)]
+mod tests;
