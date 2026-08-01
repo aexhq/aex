@@ -463,20 +463,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "services/regional-stream",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
