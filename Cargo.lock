@@ -25,9 +25,13 @@ dependencies = [
 name = "aex-brain-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-test-support",
+ "blake3",
+ "hex",
+ "proptest",
  "serde",
+ "serde_json",
  "thiserror",
- "time",
  "uuid",
 ]
 
@@ -116,6 +120,9 @@ dependencies = [
 name = "aex-brain-test-support"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-domain",
+ "proptest",
+ "serde_json",
  "thiserror",
  "time",
  "uuid",
