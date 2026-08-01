@@ -1734,17 +1734,12 @@ mod tests {
     use aex_model_catalog::canonical::{
         CacheBreakpoint, CanonicalMessage, CanonicalToolDef, CorrelationId, SystemBlock,
     };
-    use aex_model_catalog::catalog::Catalog;
     use aex_model_catalog::document::{
         CacheMode, CachePolicy, CacheReadSemantics, CatalogDocument, ModelEntry, ReasoningEncoding,
         ReasoningPolicy, ReasoningReplay,
     };
     use aex_model_catalog::fixture;
-    use aex_model_catalog::signature::{
-        CatalogEnvelope, CatalogSignature, SigAlg, SigningKeyId, TrustedKey, TrustedKeys,
-    };
     use aex_wire::ContentHash;
-    use aex_wire::provider::ModelSelection;
     use reqwest::header::HeaderMap;
 
     use super::{
@@ -1915,61 +1910,13 @@ mod tests {
         )
     }
 
-    /// The public key the pinned signature was minted with.
-    const PINNED_PUBLIC_KEY: [u8; 65] = [
-        0x04, 0x76, 0xe1, 0xe8, 0x5f, 0xfa, 0x5c, 0x68, 0x24, 0xf5, 0xfd, 0x3a, 0xb5, 0x1a, 0x3d,
-        0x84, 0x52, 0x97, 0x3c, 0x31, 0xef, 0x88, 0x54, 0x29, 0xb9, 0xe4, 0x01, 0x55, 0xb5, 0x96,
-        0xc1, 0xd0, 0x7e, 0xae, 0x65, 0x28, 0xbc, 0x6d, 0x02, 0x31, 0xef, 0xb1, 0x6e, 0x26, 0x71,
-        0xa9, 0x3e, 0x7b, 0xab, 0x82, 0xf3, 0x22, 0x5c, 0x1a, 0xe0, 0xf6, 0x84, 0xcc, 0xb8, 0x7d,
-        0x52, 0x31, 0xe5, 0xce, 0x3d,
-    ];
-
-    /// The detached signature over `SIGNING_PREFIX` followed by the canonical
-    /// bytes of [`test_catalog_document`].
-    const PINNED_SIGNATURE: [u8; 71] = [
-        0x30, 0x45, 0x02, 0x20, 0x12, 0xb1, 0xaa, 0xdd, 0xc5, 0x13, 0x0f, 0x19, 0x70, 0x88, 0x8e,
-        0xe4, 0x2d, 0x19, 0xa1, 0xf4, 0x08, 0x7d, 0x82, 0x05, 0xfc, 0x6c, 0x19, 0x97, 0x20, 0xcc,
-        0xca, 0xc6, 0x94, 0x80, 0x65, 0xee, 0x02, 0x21, 0x00, 0x88, 0xe2, 0x8e, 0x23, 0xd4, 0x6f,
-        0xe6, 0xdb, 0x98, 0xae, 0x66, 0x82, 0x44, 0x61, 0x9e, 0xe8, 0xc1, 0x73, 0xd3, 0x52, 0x14,
-        0x87, 0xb8, 0x49, 0x61, 0x4f, 0xdb, 0x41, 0x5a, 0xda, 0xd1, 0xb2,
-    ];
-
-    static COMPILED_KEYS: [TrustedKey; 1] = [(PUBLISHER, PINNED_PUBLIC_KEY)];
-
-    fn catalog() -> &'static Catalog {
-        static LOADED: std::sync::OnceLock<Catalog> = std::sync::OnceLock::new();
-        LOADED.get_or_init(|| {
-            let envelope = CatalogEnvelope {
-                document: fixture::canonical_bytes(&test_catalog_document()),
-                signatures: vec![CatalogSignature {
-                    key_id: SigningKeyId(fixture::bounded(PUBLISHER)),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: bytes::Bytes::copy_from_slice(&PINNED_SIGNATURE),
-                }],
-            };
-            Catalog::load(
-                &envelope,
-                &TrustedKeys::new(&COMPILED_KEYS),
-                fixture::at(NOW_MS),
-                None,
-                fixture::adapter("fixture-adapter"),
-            )
-            .expect(
-                "the pinned signature covers exactly these canonical document bytes; \
-                 regenerate the key and signature when the document schema or the \
-                 fixture defaults change",
-            )
-        })
-    }
-
     fn pair(provider: ProviderId, model: &str) -> QualifiedModel {
-        catalog()
-            .qualified(&ModelSelection {
-                credential_id: None,
-                model: model.to_owned(),
-                provider,
-            })
-            .expect("the fixture entry resolves")
+        let entry = test_catalog_document()
+            .entries
+            .into_iter()
+            .find(|entry| entry.provider == provider && entry.model.as_str() == model)
+            .unwrap_or_else(|| panic!("the fixture carries no `{provider}` entry for `{model}`"));
+        fixture::qualified(entry)
     }
 
     fn openai(model: &str) -> QualifiedModel {
