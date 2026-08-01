@@ -1,0 +1,155 @@
+/*
+ * AEX shared component primitives. These are the pieces both the site and the
+ * dashboard need in the same shape: page width, buttons, cards, badges, notes,
+ * inline code, and a skip link. Anything only one app needs stays in that app's
+ * own stylesheet.
+ */
+
+/* Page gutter and maximum width. Padding uses the safe area on notched phones. */
+.aex-container {
+  width: 100%;
+  max-width: var(--aex-width-page);
+  margin-inline: auto;
+  padding-inline: max(var(--aex-space-4), env(safe-area-inset-left));
+}
+
+.aex-container--prose {
+  max-width: var(--aex-width-prose);
+}
+
+@media (min-width: 48rem) {
+  .aex-container {
+    padding-inline: var(--aex-space-6);
+  }
+}
+
+/* Section rhythm. */
+.aex-section {
+  padding-block: var(--aex-space-9);
+  border-top: var(--aex-border-width) solid var(--aex-color-border);
+}
+
+@media (min-width: 48rem) {
+  .aex-section {
+    padding-block: var(--aex-space-10);
+  }
+}
+
+/* A small uppercase label above a heading. */
+.aex-eyebrow {
+  margin: 0 0 var(--aex-space-3);
+  color: var(--aex-color-text-faint);
+  font-size: var(--aex-text-xs);
+  font-weight: var(--aex-weight-semibold);
+  letter-spacing: var(--aex-tracking-wide);
+  text-transform: uppercase;
+}
+
+/* Buttons. `a` and `button` share the class so either element can be used. */
+.aex-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--aex-space-2);
+  min-height: 2.75rem;
+  padding: var(--aex-space-2) var(--aex-space-5);
+  border: var(--aex-border-width) solid transparent;
+  border-radius: var(--aex-radius-md);
+  font-size: var(--aex-text-sm);
+  font-weight: var(--aex-weight-semibold);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--aex-duration-fast) var(--aex-ease),
+    border-color var(--aex-duration-fast) var(--aex-ease),
+    color var(--aex-duration-fast) var(--aex-ease);
+}
+
+.aex-button--primary {
+  background: var(--aex-color-accent);
+  border-color: var(--aex-color-accent);
+  color: var(--aex-color-accent-contrast);
+}
+
+.aex-button--primary:hover {
+  background: var(--aex-color-accent-hover);
+  border-color: var(--aex-color-accent-hover);
+  color: var(--aex-color-accent-contrast);
+}
+
+.aex-button--secondary {
+  background: var(--aex-color-surface);
+  border-color: var(--aex-color-border-strong);
+  color: var(--aex-color-text);
+}
+
+.aex-button--secondary:hover {
+  border-color: var(--aex-color-text-faint);
+  color: var(--aex-color-text);
+}
+
+/* Card. The border does the separating; the shadow only lifts it slightly. */
+.aex-card {
+  padding: var(--aex-space-5);
+  background: var(--aex-color-surface);
+  border: var(--aex-border-width) solid var(--aex-color-border);
+  border-radius: var(--aex-radius-lg);
+  box-shadow: var(--aex-shadow-sm);
+}
+
+/* A quiet, bordered aside for status and caveats. */
+.aex-note {
+  padding: var(--aex-space-4) var(--aex-space-5);
+  background: var(--aex-color-surface-sunken);
+  border: var(--aex-border-width) solid var(--aex-color-border);
+  border-radius: var(--aex-radius-md);
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-sm);
+}
+
+.aex-badge {
+  display: inline-block;
+  padding: var(--aex-space-1) var(--aex-space-3);
+  background: var(--aex-color-accent-surface);
+  border-radius: var(--aex-radius-full);
+  color: var(--aex-color-accent);
+  font-size: var(--aex-text-xs);
+  font-weight: var(--aex-weight-semibold);
+  letter-spacing: var(--aex-tracking-wide);
+  text-transform: uppercase;
+}
+
+/*
+ * Inline code. `overflow-wrap` matters more than it looks: an unbroken tool
+ * name such as `read_subagent_history` is wide enough to push a 320px viewport
+ * sideways on its own.
+ */
+.aex-code {
+  padding: 0.1em 0.35em;
+  background: var(--aex-color-surface-sunken);
+  border: var(--aex-border-width) solid var(--aex-color-border);
+  border-radius: var(--aex-radius-sm);
+  color: var(--aex-color-text);
+  overflow-wrap: anywhere;
+}
+
+/* Keyboard-only jump to the main landmark. */
+.aex-skip {
+  position: absolute;
+  left: var(--aex-space-4);
+  top: var(--aex-space-4);
+  z-index: 10;
+  padding: var(--aex-space-2) var(--aex-space-4);
+  background: var(--aex-color-surface);
+  border: var(--aex-border-width) solid var(--aex-color-border-strong);
+  border-radius: var(--aex-radius-md);
+  color: var(--aex-color-text);
+  font-size: var(--aex-text-sm);
+  font-weight: var(--aex-weight-semibold);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.aex-skip:focus-visible {
+  transform: translateY(0);
+}

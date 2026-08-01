@@ -26,8 +26,8 @@ related:
 | `services/`, `runtimes/`, `workers/` | Deployable composition roots. |
 | `tools/` | Repository tooling: `aex-cli`, `aex-contract-gen`, `aex-release-tool`, `aex-workspace-check`. |
 | `packages/sdk/` | Public TypeScript SDK, package changelog, and package tests. |
-| `apps/site/` | Public marketing and documentation website, and its deterministic generator. |
-| `apps/dashboard/` | Stateless dashboard and its BFF. |
+| `apps/site/` | Public marketing and documentation website, its deterministic generator, and the shared `apps/site/design/` token system. |
+| `apps/dashboard/` | Stateless dashboard and its BFF. It consumes `apps/site/design/index.css` rather than defining a second palette. |
 | `apps/user-tests/` | Blackbox public SDK/CLI and published-artifact behavior. |
 | `migrations/` | Central SQL migrations and the regional table generation definitions. |
 | `infra/` | Terraform modules and composition examples. |
@@ -42,6 +42,24 @@ related:
 `apps/site/content/docs/` is the canonical public prose source. Keep it
 generated from the contract rather than hand-maintaining a second behavioral
 truth.
+
+`apps/site/content/marketing/index.mdx` is the single source for every claim on
+the landing page. Components under `apps/site/app/` own layout and carry no
+copy, so changing a claim is a one-file edit. Every claim there must be
+traceable to an accepted design record; the page deliberately names the four
+usage meters without publishing a rate, because
+[rules.md](rules.md) keeps billing/rate policy out of public docs and the
+accepted Area 5 `U-COGS` decision keeps every real rate-book revision out of
+this repository.
+
+`apps/site/design/` is the shared design system: `tokens.css` (colour, type
+scale, spacing, radius, elevation, motion), `base.css` (bare-element styling),
+`components.css` (container, button, card, note, badge, code, skip link), and
+`index.css`, which is the only file a consumer imports. Both light and dark are
+defined, selected by `prefers-color-scheme` or an explicit `data-theme`
+attribute. `apps/site/test/design-tokens.test.ts` asserts AA contrast for every
+composed pair in both themes, so a colour change is checked rather than
+reviewed.
 
 Root `README.md` is the public product landing page. `CONTRIBUTING.md`,
 `SECURITY.md`, and `CODE_OF_CONDUCT.md` are conventional entry points, and
