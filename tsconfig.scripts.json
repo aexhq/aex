@@ -1,8 +1,4 @@
 {
   "extends": "./tsconfig.base.json",
-  // The generated declaration files are included so `tsc --noEmit -p
-  // tsconfig.scripts.json` — already in both root `lint` and `typecheck` —
-  // compiles them. A generator that emits TypeScript nobody compiles can emit
-  // broken TypeScript for a whole release cycle without anyone noticing.
-  "include": ["scripts/**/*.ts", "packages/contracts/openapi/*.d.ts"]
+  "include": ["scripts/**/*.ts"]
 }

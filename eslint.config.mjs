@@ -49,11 +49,6 @@ export default tseslint.config(
       "apps/site/.generated/**",
       // Skipped/sample / template files committed for offline tests.
       "**/test/fixtures/**",
-      // GENERATED artefacts that happen to live outside `dist/`: the OpenAPI
-      // document is emitted from the schemas and the declarations from the
-      // document. Nothing here is maintained by hand, so no lint verdict on it
-      // is actionable.
-      "packages/contracts/openapi/**",
       // Self-test fixture for the rules themselves — intentionally trips
       // every rule; verified through `bun run lint:tests:verify`. Ignored
       // from the normal lint so the main pipeline stays green.

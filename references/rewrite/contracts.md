@@ -11,12 +11,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
-  - references/rust-native-rewrite-2026-07-31/plans/01-contracts.md
-  - references/session-execution-persistence-telemetry-wire-contract-2026-07-30.md
+  - references/rewrite/README.md
+  - references/rewrite/clients.md
 ---
 
 # Contracts stream handoff
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/01-contracts.md` in the parent workspace.
 
 Branch `rw/contracts`. Everything below is on that branch and nothing is pushed.
 
@@ -54,7 +55,7 @@ compared.
 Determinism is structural, not incidental: `BTreeMap`/`BTreeSet`/`Vec` only, no
 clock, no RNG, no environment read, a sorted symlink-free walk for discovery, and
 workspace-relative `/` paths everywhere so a Windows run and a Linux run produce
-identical bytes. `tests/determinism.rs` asserts all of it, including that the
+identical bytes. `tools/aex-contract-gen/tests/determinism.rs` asserts all of it, including that the
 committed output equals a fresh generation.
 
 The Rust renderer is a **rustfmt fixed point** by construction, following the
@@ -110,7 +111,7 @@ for a peer to start.
 | **`valid`/`invalid`/`golden` corpus categories per `SchemaId`.** | 241 schemas x 3 categories is ~720 authored files. The loader (`aex_wire::testing::corpus`) and the floor mechanism exist and are used by the id and error corpora; arming a new category is a new floor assertion plus the cases. |
 | **`routes/<operationId>/<case>/{request,response,meta}.json`.** | Replaced for now by the generated `conformance/routes/bindings.jsonl` golden, which covers all 144 operations for path binding and matcher round-trip but not request/response bodies or `intentDigest` per route. |
 | **Fuzz targets** (`fuzz_targets/decode_public.rs`, `decode_agent_message`). | The hostile-input matrix is covered by explicit cases in `crates/aex-hands-protocol/tests/hostile_input.rs`; a `cargo-fuzz` target needs a nightly toolchain the workspace does not pin. |
-| **Deleting `aex/packages/contracts/`, `aex/scripts/openapi/`.** | Left in place: the TypeScript surfaces are still consumed by the retained `packages/sdk` and `apps/`, and deleting them belongs with the SDK stream's cut rather than ahead of it. |
+| **Deleting the retired TypeScript contracts package and OpenAPI pipeline.** | Left to the clients stream's cut rather than taken ahead of it. Both trees are now deleted. |
 | **`ObservationFilter` bound enforcement inside `Deserialize`.** | The bounds are declared in the schema (depth via `max` on each `filters` array, ≤ 100 `in` values, ≤ 1024-byte operands) and published in the JSON Schema, but the generated decoder enforces array `max` only through the schema, not through a hand-written `Deserialize`. `aex-observation-query` must still re-validate structure until this lands. |
 
 ## 3. Every cross-stream type I publish
@@ -278,7 +279,7 @@ rule and the same rationale for `*.rs`.
 | C-40 | `resolve_session_for_workspace` is an `aex-internal-contracts::assertion` envelope pair, not a public HTTP route. | `central-authz` is an internal service reachable only from the regional plane; putting its operation in the public bundle would advertise a route no customer can call. The types are published so the identity and control streams can implement it. |
 | C-41 | The conformance corpus uses JSON Lines files per category (`ids/valid.jsonl`, `errors/cases.jsonl`) rather than a file per case. | 63 error codes and 154 id cases as individual files is 217 files whose diffs nobody reads. One line per case keeps the review surface honest. |
 | C-42 | A route's declared error slice is sorted in **registry** order, not alphabetically. | The generated `ErrorCode` discriminant follows the registry, so a route slice sorted any other way cannot be binary-searched or compared against `ErrorCode::ALL` without a re-sort at every call site. |
-| C-43 | The generator's JCS normalizes an integral float to an integer, matching `aex-wire`. | `1.0` and `1` are the same `ECMAScript` number. `tests/canonical_agreement.rs` asserts the two implementations agree on every vector, which is the property that makes carrying two implementations safe. |
+| C-43 | The generator's JCS normalizes an integral float to an integer, matching `aex-wire`. | `1.0` and `1` are the same `ECMAScript` number. `tools/aex-contract-gen/tests/canonical_agreement.rs` asserts the two implementations agree on every vector, which is the property that makes carrying two implementations safe. |
 | C-44 | Four operations were added beyond the plan's 137: `device_authorization_create`, `device_token_create`, `dashboard_bootstrap_get`, and the four provider-credential routes — 144 total. Two error codes were added for the device flow (`authorization_pending`, `slow_down`). | All four gaps were named as binding in §8a. The counts are pinned in `routes-meta.yaml` so the addition is visible in a diff rather than absorbed. |
 | C-45 | `Timestamp` rejects a magnitude at or beyond `1e21` in JCS and rejects every RFC 3339 spelling except `YYYY-MM-DDThh:mm:ss.sssZ`. | `1e21` is exactly where `ECMAScript`'s `Number::toString` switches to exponential notation and a Rust shortest-round-trip printer does not, so it is the point past which two canonicalizers would silently disagree. |
 
@@ -514,7 +515,7 @@ from their original paths, so no call site changed.
 `aex_internal_contracts::outbox::RunStatus` and the public
 `aex_wire::models::RunStatus` remain two types — one internal envelope, one
 customer rendering — exactly as before the move. What must never drift is their
-spelling, so `tests/boundaries.rs` asserts the two agree value for value.
+spelling, so `crates/aex-internal-contracts/tests/boundaries.rs` asserts the two agree value for value.
 
 ### 7.7 `ObservationCoverage` watermarks are `DecimalU128`
 
@@ -527,8 +528,8 @@ are now `decimal`. `ObservationWatermark` has no remaining referent and is
 
 That deletion exposed a generator hole worth recording: `check` compared only the
 files the generator still produces, so
-`api/generated/schemas/ObservationWatermark.json` would have kept serving
-forever. `GeneratedTree` gained `stale_files`; a directory holding a generated
+the orphaned `ObservationWatermark.json` under `api/generated/schemas/` would
+have kept serving forever. `GeneratedTree` gained `stale_files`; a directory holding a generated
 file is owned by the generator, so `build` now removes and `check` now reports
 anything in it the generator no longer produces. `README.md` is the one permitted
 authored companion.

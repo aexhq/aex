@@ -40,16 +40,17 @@ surprises.
 - **Open an issue first** for anything non-trivial, so the design can be
   discussed before code exists. Obvious bug fixes do not need one.
 - **One concern per pull request.** No drive-by cleanup inside a fix.
-- **New behaviour needs a test** at the layer that owns it — SDK, CLI,
-  contracts, or the repository validation suite.
+- **New behaviour needs a test** at the layer that owns it — the owning crate,
+  the SDK, the CLI, or the repository validation suite.
 - **No skipped tests.** The release gate asserts zero skipped or disabled
   entries; a test that cannot run is one to fix or delete, never to skip.
 - **Public API changes need docs** under
   [`apps/site/content/docs/`](apps/site/content/docs/).
-- **Never hand-edit generated output.** `apps/docs/content/docs/` is written by
-  `scripts/docs/generate-all.mjs`, and the OpenAPI document and its types are
-  generated from the Zod schemas. Edit the source and rerun the generator; a
-  hand edit is reverted by the next `bun run lint`.
+- **Never hand-edit generated output.** `api/generated/` and `crates/aex-wire/src/generated/`
+  are written by `cargo run -p aex-contract-gen -- build` from the schemas under
+  `api/schemas/`, and the site reference tree is written by `apps/site/generate`.
+  Edit the source and rerun the generator; a hand edit is reported by
+  `cargo run -p aex-contract-gen -- check`.
 - **No credentials, `.env` values, or unredacted diagnostics** in a diff.
 - **No AI-attribution or AI co-author trailers** in commit messages.
 

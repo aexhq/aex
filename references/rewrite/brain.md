@@ -12,13 +12,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
 ---
 
 # Brain core
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md` in the parent workspace.
 
 Owned: `crates/aex-brain-domain`, `crates/aex-brain-application`,
 `crates/aex-brain-store-aws`, `runtimes/brain-mux`, the `journal_gen` and
@@ -258,7 +258,7 @@ Everything below is tracked rather than silently dropped. None of it is
 | S-8.x | the subagent scheduler, paged fanout, join ledger, mailbox, tenant fairness | the store adapter's transaction execution |
 | S-9.x | warm-cache lifecycle, pressure bands, admission, A11-MUX measurement | the Tokio composition root; `rustix` is **not** yet a workspace dependency, which the CPU-attribution work needs |
 | S-10.x | destructive lifecycle and the deterministic history checker | a real store boundary |
-| S-11 | `tests/load/brain/` workloads | the live companion and `aex-load-harness` |
+| S-11 | `tests/load/workloads/brain-core/` workloads | the live companion and `aex-load-harness` |
 | S-12 | the repository-boundary clean-cut tests | the TypeScript deletion pass |
 
 The kernel primitives S-9 and S-3 need — `PermitSet`, `DrainGate`,

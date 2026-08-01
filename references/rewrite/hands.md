@@ -12,15 +12,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
-  - references/rust-native-rewrite-2026-07-31/plans/10-hands-runtime.md
-  - references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md
-  - references/limits-and-ceilings-decision-2026-07-30.md
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
 ---
 
 # Hands stream handoff
+
+Plans of record: `references/rust-native-rewrite-2026-07-31/plans/10-hands-runtime.md` and `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md`, in the parent workspace.
 
 Branch `rw/hands`. Everything below is on that branch and nothing is pushed. This
 stream resumed an interrupted predecessor whose work was preserved as a
@@ -446,7 +444,7 @@ the clock.
 | Gap | Handling |
 | --- | --- |
 | No adapter binds any of the worker's five ports | `readyz` names each and the process refuses to start. Each is one line once the peer's adapter lands: `aex-runtime-activity-dynamodb` over `aex_runtime_control::store::RuntimeActivityStore` (the crate currently declares its own trait of the same name and carries the `TODO` saying so), the bounded open-Hands-effect query in `aex-session-dynamodb`, a `MicrovmControlApi` implementation, and the compute and storage usage ingresses. |
-| `Materialize`, `Persist`, `WriteFile` and `Exec` with stdin are refused by the guest | `ContentRef` is a digest and a length; the guest holds no credential and cannot resolve one. Presigned HTTPS would need a TLS client, and the workspace's pinned backend is `aws-lc-rs`, whose crate name the B6 closure scan rejects by prefix. `runtimes/hands-agent/tests/boundary.rs` asserts no TLS stack is linked, so the choice is checked rather than remembered. |
+| `Materialize`, `Persist`, `WriteFile` and `Exec` with stdin are refused by the guest | `ContentRef` is a digest and a length; the guest holds no credential and cannot resolve one. Presigned HTTPS would need a TLS client, and the workspace's pinned backend is `aws-lc-rs`, whose crate name the B6 closure scan rejects by prefix. the guest agent's own boundary test asserts no TLS stack is linked, so the choice is checked rather than remembered. |
 | `ReadFile` with a byte range is refused | The wire asks for a byte range; `aex-hands-tools` windows by line. Serving the whole file would answer a different question than the caller asked. |
 | Attached delivery is not served | `start`'s `Attached` mode is refused explicitly rather than left to hang, so a caller never waits on a body that will not arrive. |
 | Pressure release and the orphan sweep are not wired | `plan_release` and `ORPHAN_GRACE_MS` are implemented and tested as pure models. Pressure needs a regional memory-utilization source the provider does not expose, and the orphan sweep needs an "is this `MicroVM` known" lookup the activity port does not offer. Neither is in this wave's scope and both are named here rather than half-built. |

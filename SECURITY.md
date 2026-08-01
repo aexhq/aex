@@ -17,8 +17,9 @@ up a private channel.
 
 In scope:
 
-- The published `@aexhq/sdk` package (SDK + bundled CLI).
-- The published `@aexhq/cli` and `@aexhq/contracts` packages.
+- The published `@aexhq/sdk` package.
+- The published `aex` command-line binaries and their signed archives.
+- The published wire contract under `api/` and the crates generated from it.
 - The agent execution runtime published from this repository, including the
   builtin agent tools and the boundaries they rely on.
 - Hosted aex control-plane vulnerabilities that affect SDK, CLI, or runtime

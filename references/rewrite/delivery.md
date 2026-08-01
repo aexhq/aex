@@ -11,12 +11,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/14-delivery-ci-infra.md
-  - references/rust-native-rewrite-2026-07-31/plans/15-test-architecture.md
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
+  - references/rewrite/README.md
+  - references/rewrite/test-architecture.md
 ---
 
 # Delivery stream handoff
+
+Plans of record: `references/rust-native-rewrite-2026-07-31/plans/14-delivery-ci-infra.md` and `references/rust-native-rewrite-2026-07-31/plans/15-test-architecture.md`, in the parent workspace.
 
 Branch `rw/delivery`. Nothing is deployed, published, credentialed or applied.
 Every gate below was run locally and passes; the one intentional exception is
@@ -70,9 +71,9 @@ so there is no conflict to record.
 
 `units.toml` (29 deployables), `scenario-ownership.toml` (20 scenarios),
 `path-map.toml` (47 rules, zero orphans against the current tree),
-`policy/artifact-policy.toml`, `policy/freshness.toml`,
-`policy/terraform-policy.toml`, `policy/rollout-policy.toml`,
-`policy/private-path-policy.json`.
+`release/policy/artifact-policy.toml`, `release/policy/freshness.toml`,
+`release/policy/terraform-policy.toml`, `release/policy/rollout-policy.toml`,
+`release/policy/private-path-policy.json`.
 
 ### `.github/workflows/`
 
@@ -182,8 +183,8 @@ then the graph records the gap rather than hiding it.
 - **`tools/aex-workspace-check`**: `MEMBER_ROOTS` needs `tests/support` and
   `tests/load` once the test-architecture stream lands `aex-test-harness` and
   `aex-load-harness`.
-- **Plan 03 (finance)**: `release/schema-head.json` is defined by
-  `aex_release_tool::migration::SchemaHead`. Consume that shape rather than
+- **Plan 03 (finance)**: the `schema-head.json` the finance stream owes under
+  `release/` is defined by `aex_release_tool::migration::SchemaHead`. Consume that shape rather than
   defining a second head file. `adminImageDigest` is filled by the build lane
   after the `central-schema-admin` image is packaged.
 - **Plan 05 (regional stores)**: `regional-tables.json` must carry a
@@ -235,8 +236,8 @@ then the graph records the gap rather than hiding it.
 | --- | --- | --- |
 | D-1 | The workflow structural gate is a Rust subcommand (`policy workflows`), not `scripts/validate/ci-*.test.ts` | One tool, one parser, no Node prerequisite for a Rust-only change — the same reasoning as OD-01. The gate now runs in the same binary as `graph verify`, so a lane cannot pass one and skip the other. |
 | D-2 | `flate2` is added to `[workspace.dependencies]` | The only new dependency. `aex-release-tool` writes ZIP, tar and gzip itself because archive metadata must be byte-stable; borrowing just the DEFLATE stream is the smallest thing that achieves it. |
-| D-3 | The JSON Schemas are stricter than the serde types, and the asymmetry is tested rather than removed | The schemas narrow several string fields to closed value sets that serde carries as `String`. `tests/schemas.rs` asserts parity on structure — unknown members, missing members, wrong types — and asserts the narrowing separately. Making serde enums would force every unknown future value to be a parse failure at a layer that should report a violation instead. |
-| D-4 | The `correctness-test` deny globs are `**/tests/**`, `**/*.test.*`, `**/*_test.*`, `**/*.spec.*`, `**/*_spec.*`, `**/*.tftest.hcl` rather than plan 14's `**/*test*` | `**/*test*` denies `business-data/latest-prices.json`, because "latest" contains "test". The narrower set catches every correctness test without denying a data file for a substring. |
+| D-3 | The JSON Schemas are stricter than the serde types, and the asymmetry is tested rather than removed | The schemas narrow several string fields to closed value sets that serde carries as `String`. `tools/aex-release-tool/tests/schemas.rs` asserts parity on structure — unknown members, missing members, wrong types — and asserts the narrowing separately. Making serde enums would force every unknown future value to be a parse failure at a layer that should report a violation instead. |
+| D-4 | The `correctness-test` deny globs are `**/tests/**`, `**/*.test.*`, `**/*_test.*`, `**/*.spec.*`, `**/*_spec.*`, `**/*.tftest.hcl` rather than plan 14's `**/*test*` | `**/*test*` denies a data file such as a `latest-prices.json` under `business-data/`, because "latest" contains "test". The narrower set catches every correctness test without denying a data file for a substring. |
 | D-5 | `graph verify` runs the registry-reference checks before building the graph | A `units.toml` row naming a package that does not exist produces a dangling edge and stops construction. Checking first means the report names the row a human has to fix rather than only that some edge pointed at nothing. |
 | D-6 | An unowned path both widens the run to repo-wide and fails verification | Carried from D14-06. The tests assert both halves, because either alone is a failure mode: widening silently hides the gap, failing alone leaves a red build running a narrow selection. |
 | D-7 | Cycle detection is per edge class, not over the union | A Cargo dev-dependency that points back at its dependent is legal and common. Detecting over the union would reject the workspace's own test wiring. |

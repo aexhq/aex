@@ -2,14 +2,12 @@
 # their `:check` scripts. Without pinning, `core.autocrlf` rewrites them to CRLF
 # on Windows checkouts while the generator writes LF, and the check fails on a
 # clean tree — a gate that cries wolf is a gate people learn to skip.
-packages/contracts/openapi/*.json text eol=lf
-packages/contracts/openapi/*.d.ts text eol=lf
-
-# The docs pipeline writes `apps/docs/content/docs/**` with LF on every run, so
-# on Windows these show as modified with an EMPTY diff after any `docs:generate`
-# — which `lint` runs. That permanent phantom churn is worse than cosmetic: it
-# invites a blanket `git checkout -- apps/docs` that silently reverts real edits.
-apps/docs/content/docs/** text eol=lf
+#
+# The site content tree is written by `apps/site/generate` with LF on every run,
+# so on Windows these would otherwise show as modified with an EMPTY diff after
+# any generation. That permanent phantom churn is worse than cosmetic: it invites
+# a blanket `git checkout -- apps/site` that silently reverts real edits.
+apps/site/content/** text eol=lf
 
 # Rust source and manifests are generated and compared byte-for-byte in places
 # (`crates/aex-telemetry-schema/src/generated.rs`), and `core.autocrlf=true` on

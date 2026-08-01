@@ -6,7 +6,7 @@
 - [ ] Bug fix
 - [ ] Feature
 - [ ] Refactor / docs / chore
-- [ ] Public SDK, CLI, or contract surface change (requires docs in `packages/sdk/docs/`)
+- [ ] Public SDK, CLI, or contract surface change (requires docs in `apps/site/content/docs/`)
 
 ## Test plan
 <!-- Commands you ran and what they covered. `bun run lint`, `bun run typecheck`,

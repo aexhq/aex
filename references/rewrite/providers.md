@@ -12,14 +12,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/08-providers-byok.md
-  - references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
 ---
 
 # Providers and model catalog — what landed
+
+Plans of record: `references/rust-native-rewrite-2026-07-31/plans/08-providers-byok.md` and `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md`, in the parent workspace.
 
 Three packages: `crates/aex-model-catalog` (pure), `crates/aex-brain-provider-gateway`
 (the adapter), and `tests/live/aex-live-model-catalog` (the conformance harness).

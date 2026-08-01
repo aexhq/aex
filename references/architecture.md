@@ -18,12 +18,12 @@ related:
 # Public v1 architecture
 
 This page describes the supported public contract, not the hosted substrate.
-The strict schemas in
-[`api/schemas/`](../packages/contracts/src/v1-resources.ts),
-[`v1-content.ts`](../packages/contracts/src/v1-content.ts), and
-[`v1-telemetry.ts`](../packages/contracts/src/v1-telemetry.ts) are the wire
-authority. The SDK documentation under [`packages/sdk/docs/`](../packages/sdk/docs/)
-is the user-facing authority.
+The strict schemas under [`api/schemas/`](../api/schemas/) are the wire
+authority; [`api/generated/`](../api/generated/) and
+[`crates/aex-wire/`](../crates/aex-wire/) are generated from them and never
+edited by hand. The documentation under
+[`apps/site/content/docs/`](../apps/site/content/docs/) is the user-facing
+authority.
 
 ## Contract rules
 
@@ -188,21 +188,24 @@ execution contract.
 
 This Apache-2.0 repository owns:
 
-- strict public schemas, identifiers, routes, errors, and generated OpenAPI
-  artifacts in `packages/contracts`;
+- strict public schemas, identifiers, routes, errors, and scopes in
+  `api/schemas`, and the OpenAPI documents, JSON Schema and Rust contract
+  generated from them into `api/generated` and `crates/aex-wire`;
+- the service, runtime and tooling crates under `crates/`, `services/`,
+  `runtimes/`, `workers/` and `tools/`;
 - the TypeScript SDK in `packages/sdk`;
-- the standalone CLI in `packages/cli`;
+- the standalone native CLI in `tools/aex-cli`;
 - public documentation and blackbox user tests.
 
 Hosted authentication, scheduling, execution, persistence, billing,
-observability infrastructure, the dashboard, and deployment definitions are
-outside this repository. They may change without changing the public API when
-the strict wire behavior remains the same.
+observability, the dashboard, and the Terraform modules under `infra/` are also
+built here, but they are implementation. They may change without changing the
+public API when the strict wire behavior remains the same, and nothing in them
+is a public contract.
 
-The generation direction is one way: strict schemas produce OpenAPI artifacts
-and generated types, and freshness gates prevent those views from drifting.
-`scripts/cicd/check-public-boundary.mjs` separately prevents public docs and
-packages from leaking private hosted implementation.
+The generation direction is one way: strict schemas produce the OpenAPI
+documents, JSON Schema and Rust contract, and
+`cargo run -p aex-contract-gen -- check` prevents those views from drifting.
 
 ## Design rules
 

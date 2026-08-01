@@ -21,9 +21,9 @@ related:
 # Public repository references
 
 This directory owns durable repository-wide internal guidance. `AGENTS.md` is
-only the navigation entry point. Public user documentation remains in
-`packages/sdk/docs/` and `apps/docs/content/docs/`; commands and configuration
-remain in their executable sources.
+only the navigation entry point. Public user documentation lives in
+`apps/site/content/docs/`; commands and configuration remain in their
+executable sources.
 
 | Need | Source |
 | --- | --- |

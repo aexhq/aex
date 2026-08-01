@@ -20,19 +20,28 @@ related:
 
 | Path | Owns |
 | --- | --- |
-| `packages/sdk/` | Public TypeScript SDK, canonical SDK docs, package changelog, and package tests. |
-| `packages/cli/` | Public CLI commands, help, and CLI tests. |
-| `packages/contracts/` | Public wire/runtime contracts and stable errors. |
-| `apps/docs/` | Public documentation website and generated/reference presentation. |
+| `api/schemas/` | Authored strict wire schemas, identifiers, routes, errors, scopes, and limits. The contract source. |
+| `api/generated/`, `api/openapi/` | Generated bundle, OpenAPI documents, and per-schema JSON Schema. Never hand-edited. |
+| `crates/` | Domain, application, and adapter crates, including the generated `aex-wire` contract. |
+| `services/`, `runtimes/`, `workers/` | Deployable composition roots. |
+| `tools/` | Repository tooling: `aex-cli`, `aex-contract-gen`, `aex-release-tool`, `aex-workspace-check`. |
+| `packages/sdk/` | Public TypeScript SDK, package changelog, and package tests. |
+| `apps/site/` | Public marketing and documentation website, and its deterministic generator. |
+| `apps/dashboard/` | Stateless dashboard and its BFF. |
 | `apps/user-tests/` | Blackbox public SDK/CLI and published-artifact behavior. |
-| `scripts/cicd/` | Public CI, package, release, and candidate-integrity tooling. |
+| `migrations/` | Central SQL migrations and the regional table generation definitions. |
+| `infra/` | Terraform modules and composition examples. |
+| `release/` | Deployable units, path map, scenario ownership, policy, and derived evidence registries. |
+| `conformance/` | The generated conformance corpus. |
+| `tests/` | Cross-crate live companions, load workloads, and shared test support. |
+| `scripts/cicd/` | npm packaging, legal-file sync, and validation-suite plumbing. |
 | `scripts/validate/` | Repository and workflow policy checks. |
 | `references/` | Repository-wide internal rules, procedures, decisions, logs, and backlog. |
 | `.github/` | Workflows, issue and pull-request templates, `CODEOWNERS`, and dependency automation. |
 
-`packages/sdk/docs/` is the canonical SDK prose source. Keep the public docs
-site synchronized through its existing generator and validation rather than
-hand-maintaining a second behavioral truth.
+`apps/site/content/docs/` is the canonical public prose source. Keep it
+generated from the contract rather than hand-maintaining a second behavioral
+truth.
 
 Root `README.md` is the public product landing page. `CONTRIBUTING.md`,
 `SECURITY.md`, and `CODE_OF_CONDUCT.md` are conventional entry points, and

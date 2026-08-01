@@ -44,8 +44,9 @@ pack checks.
 2. Keep commits focused; do not bundle unrelated changes.
 3. Before pushing, run the relevant public-safe gates locally from
    `package.json`.
-4. Open a pull request against `main`. [CI](../.github/workflows/ci.yml) runs
-   lint, type, and unit checks on its configured triggers.
+4. Open a pull request against `main`. [`pr`](../.github/workflows/pr.yml) runs
+   the repository gates and the routed Rust, TypeScript, Terraform, and artifact
+   lanes; its `checks` job is the single required status.
 5. Do not force-push `main`. Force-pushing a topic branch is acceptable only
    when it does not disrupt another contributor.
 
@@ -58,30 +59,29 @@ pack checks.
 
 ## CI and release ownership
 
-| Workflow | Scope |
+There are four lane classes. Every other workflow file is a reusable lane one of
+them calls, and each lane ends in a receipts job that compares what the lane
+declared it would run against the receipts it actually produced.
+
+| Lane | Scope |
 | --- | --- |
-| [`CI`](../.github/workflows/ci.yml) | Lint, type, and unit checks; main pushes publish the canary. |
-| [`Live User Tests`](../.github/workflows/live-user-tests.yml) | Protected hosted API user tests and optional heavy canary. |
+| [`pr`](../.github/workflows/pr.yml) | Pull request and merge queue. Repository gates plus the routed Rust, TypeScript, Terraform, and artifact lanes. No cloud, registry, publish, or signing credential reaches it. |
+| [`main`](../.github/workflows/main.yml) | Protected `main` build and publication. Mints immutable bytes and a composition manifest; applies nothing to any plane. |
+| [`assurance`](../.github/workflows/assurance.yml) | Scheduled full-graph, supply-chain, deep-risk, cold-rebuild, and plane suites whose receipts a release admits against. |
+| [`release`](../.github/workflows/release.yml) | Explicit environment release, dispatched with an exact manifest digest. Never a branch, tag, run, or floating pointer. |
 
-The public repository is the sole npm publisher. A green push to `main` tags
-the tested source as `canary/<version>-canary`, binds the package to the exact
-40-character source SHA in `aexRelease.sourceSha`, and publishes
-`@aexhq/sdk@<version>-canary` to the `canary` dist-tag. The private platform
-pipeline consumes that version and exact SHA for dev/prd validation.
-
-The publish job runs only after lint, type, and unit checks pass. It uses npm
-trusted-publisher OIDC, verifies registry visibility and source provenance, and
-does not use a long-lived npm token. If the `<version>-canary` package version
-already exists, the push fails; fix forward by bumping the base package version.
-Workflow configuration is the exact source of truth and secret values must
-never enter docs.
+Publication is not deployment. `main` produces artifacts and a manifest;
+`release` is the only lane that touches a plane, and it is manual, per-plane
+serialized, and refuses anything but a pinned composition digest. Workflow
+configuration is the exact source of truth and secret values must never enter
+docs.
 
 ## Review criteria
 
 - One focused concern and no drive-by cleanup.
-- Tests for new behavior at the public SDK, CLI, contracts, docs,
-  or user-test layer that owns it.
-- Public API changes documented under [`packages/sdk/docs/`](../packages/sdk/docs/).
+- Tests for new behavior at the crate, SDK, CLI, site, or user-test layer that
+  owns it.
+- Public API changes documented under [`apps/site/content/docs/`](../apps/site/content/docs/).
 - No credentials, `.env*` values, private hosted detail, or unredacted
   diagnostics in the diff.
 

@@ -8,16 +8,16 @@ keywords:
   - aurora
   - assertion
 audience: implementation agents and maintainers
-status: partial
+status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/02-central-identity-control.md
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
 ---
 
 # Central identity, control and authorization — stream handoff
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/02-central-identity-control.md` in the parent workspace.
 
 Branch `rw/central-identity`. Nothing is pushed. The continuation starts from
 `main` at `54c2d572` and has four logical implementation commits, each green at
@@ -109,7 +109,7 @@ an unknown or unavailable region leaves the workspace hidden and the same
 `Idempotency-Key` retryable, a lost `T2` commit is pending rather than a false
 `201`, and a region answering about a *different* workspace is refused outright.
 
-### The DDL, `migrations/central/0001`–`0004`
+### The DDL, `migrations/central/20260801000000_bootstrap.sql` through `20260801000300_control_functions.sql`
 
 - `REVOKE ALL ON DATABASE` and `DROP SCHEMA public CASCADE`; no extensions.
 - Group roles are `NOLOGIN`; grants are an **allowlist with no denylist**, so
@@ -174,7 +174,7 @@ Each is a tracked gap with a named blocker, not an oversight.
 | **The four deployables' bodies.** Their config parsing, startup denial and unit tests are the scaffolds from `main`; their Lambda shapes are declared. | `central-identity-api`, `central-control-api`, `central-authz` and `central-control-worker` still return `NotImplemented`. The first three cannot mount the absent generated server surface, and composing only the worker while its public peers remain unmountable would not produce a runnable central plane. |
 | **Continuation cursors in `AuroraControlStore`.** First pages are bounded and work; a non-empty opaque cursor fails closed with `StoreError::Decode`. | `PageRequest` carries only the opaque string, while the adapter needs authenticated `(created_at, id)` claims and has no cursor secret. The HTTP/application boundary must decode the signed cursor and pass typed keyset fields; silently ignoring or locally decoding an unauthenticated string would be wrong. |
 | **The four live companions.** Untouched. | `OD-07`: nothing is deployed or credentialed in this run, so no live receipt is earnable. |
-| **`api/schemas/authorization-scopes.v1.json`.** Not created. | The contracts stream already landed the 28-scope registry at `api/schemas/registries/scopes.yaml`, generated into `aex_wire::ScopeId`. Creating a second scope file would be exactly the drift this stream exists to remove. Decision D-27 below. |
+| **A separate `authorization-scopes.v1.json` under `api/schemas/`.** Not created. | The contracts stream already landed the 28-scope registry at `api/schemas/registries/scopes.yaml`, generated into `aex_wire::ScopeId`. Creating a second scope file would be exactly the drift this stream exists to remove. Decision D-27 below. |
 
 ## 3. Exact types published
 
@@ -269,7 +269,7 @@ bounded only by the thirty-second expiry.
 | `aex-internal-contracts::assertion::AuthorizationAssertion` is a JSON claim set. The assertion on the wire is the 323-byte binary envelope this stream publishes (D-01). The internal contract should carry the envelope as a base64url string rather than re-describing its claims, or the two will drift. | contracts |
 | The regional stream must accept `SignedEpochFrame` and `SigningKeyPublication` on its internal control endpoint and apply only **monotone** epoch advances. | regional services |
 | The finance stream must supply `finance.account_state_v1(organization_id, status, reason, revision, changed_at)` with `GRANT SELECT TO aex_authz`, and `finance.ensure_account(uuid)` `SECURITY DEFINER` with `GRANT EXECUTE TO aex_control_api`. My migration suite carries a view-shaped stub for the join; production absence is `503 account_state_unavailable`, which is correct anyway. | finance |
-| `migrations/central/0005_finance.sql` and `0006_cross_schema_grants.sql` must not renumber `0001`–`0004`. | finance |
+| The finance migrations must sort after `migrations/central/20260801000300_control_functions.sql` and must not renumber the four DDL files before it. | finance |
 
 I touched **two files outside my declared ownership**: the root `Cargo.toml`, to
 add `subtle` and `ed25519-dalek` to `[workspace.dependencies]` (both required by
@@ -281,7 +281,7 @@ fill.
 
 | # | Decision | Rationale |
 | --- | --- | --- |
-| D-27 | The scope registry is **`aex_wire::ScopeId`**; `api/schemas/authorization-scopes.v1.json` is not created. `ScopeSet` is a bitset whose bit `n` is `ScopeId::ALL[n]`, asserted against the discriminants. | Plan §1 assigned me a scope registry file; the contracts stream had already landed the same 28 scopes in the same order and generated them. A second file would be the third scope vocabulary — precisely the defect this stream exists to remove. |
+| D-27 | The scope registry is **`aex_wire::ScopeId`**; no separate `authorization-scopes.v1.json` is created under `api/schemas/`. `ScopeSet` is a bitset whose bit `n` is `ScopeId::ALL[n]`, asserted against the discriminants. | Plan §1 assigned me a scope registry file; the contracts stream had already landed the same 28 scopes in the same order and generated them. A second file would be the third scope vocabulary — precisely the defect this stream exists to remove. |
 | D-28 | `requirement()` derives `scope`, `pause_exempt` and the admitted principal kinds from the **generated** `RouteDescriptor`; only the role floor and the resource class live in my table. | The wire contract is the executable authority for what a route requires. Re-declaring its fields would create two tables to keep in step, which is the drift the generated table exists to prevent. |
 | D-29 | A route that resolves no organization is pause-exempt **by construction**, whatever the descriptor says. | The `402` gate reads an organization's account state. On an org-less route there is nothing to read, so the gate is a no-op and calling it "enforced" would be false. A test asserts `!pause_exempt ⟹ resolves an organization` over all 27 central routes. |
 | D-30 | The wire contract's `account` and `user_session` principal kinds both map onto one `PrincipalKindTag::AccountActor`; the credential is recorded as `ActorCredential::{DashboardSession, AccountToken}`. | Same person, same scopes, same role, different credential. Distinguishing them at admission would be the second credential path the brief forbids; distinguishing them in audit and revocation is where the difference actually matters. |

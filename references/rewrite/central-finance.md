@@ -1,10 +1,23 @@
 ---
 title: Central-finance Rust-native rewrite handoff
 description: Implemented authority, exact rating, central finance schema, provider edges, evidence, peer requests, and explicit deferred work on rw/central-finance.
-status: implementation-handoff
+status: accepted
+keywords:
+  - finance
+  - ledger
+  - rating
+  - stripe
+  - schema administration
+audience: implementation agents and maintainers
+last_verified: 2026-08-01
+related:
+  - references/rewrite/contracts.md
+  - references/rewrite/usage.md
 ---
 
 # Central-finance rewrite handoff
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/03-central-finance-schema.md` in the parent workspace.
 
 Branch: `rw/central-finance`
 

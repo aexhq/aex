@@ -11,13 +11,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
-  - references/rust-native-rewrite-2026-07-31/plans/11-observations.md
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
 ---
 
 # Observations stream handoff
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/11-observations.md` in the parent workspace.
 
 Branch `rw/observations`. Everything below is on that branch and nothing is
 pushed.

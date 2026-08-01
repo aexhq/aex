@@ -10,13 +10,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/05-regional-stores.md
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
   - references/rewrite/test-architecture.md
   - references/rewrite/contracts.md
 ---
 
 # Regional stores — landed state
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/05-regional-stores.md` in the parent workspace.
 
 Branch `rw/regional-stores`. Nothing is deployed, published or credentialed.
 
@@ -29,14 +29,14 @@ bundle Terraform consumes through `jsondecode`:
 
 | File | Table |
 | --- | --- |
-| `tables/session-authority.json` | session heads, messages, runs, native events, approvals, agent control and journals, operations, receipts |
-| `tables/regional-work.json` | durable runnable work over one sharded due index |
-| `tables/regional-content.json` | body descriptors, inline ciphertext, Merkle pages, pins, grants, GC epoch and candidates |
-| `tables/regional-registry.json` | current `(workspace, kind, name)` pointer, upload staging, receipts |
-| `tables/regional-secret-custody.json` | secret metadata, hidden source generations, session custody, revocation epoch |
-| `tables/regional-secret-keystore.json` | the provider-mandated hierarchical branch-key schema |
-| `tables/runtime-activity.json` | Hands generation head, lifecycle intents and receipts, idle probes, due index |
-| `tables/regional-authz-projection.json` | read-only workspace placement, key revocation, signed feed frontier |
+| `migrations/regional/tables/session-authority.json` | session heads, messages, runs, native events, approvals, agent control and journals, operations, receipts |
+| `migrations/regional/tables/regional-work.json` | durable runnable work over one sharded due index |
+| `migrations/regional/tables/regional-content.json` | body descriptors, inline ciphertext, Merkle pages, pins, grants, GC epoch and candidates |
+| `migrations/regional/tables/regional-registry.json` | current `(workspace, kind, name)` pointer, upload staging, receipts |
+| `migrations/regional/tables/regional-secret-custody.json` | secret metadata, hidden source generations, session custody, revocation epoch |
+| `migrations/regional/tables/regional-secret-keystore.json` | the provider-mandated hierarchical branch-key schema |
+| `migrations/regional/tables/runtime-activity.json` | Hands generation head, lifecycle intents and receipts, idle probes, due index |
+| `migrations/regional/tables/regional-authz-projection.json` | read-only workspace placement, key revocation, signed feed frontier |
 
 `schema.json` enforces the properties that would otherwise be review
 conventions: `PAY_PER_REQUEST`, deletion protection, 35-day PITR, an
@@ -125,8 +125,8 @@ image comes exclusively from the harness's `images::reference` registry.
 | `aex-secret-keystore-dynamodb` | **not started.** §2.6 typed `KeyStoreConfig` and read-only introspection. |
 | `aex-secret-aws` | **not started.** See the `G-ESDK` outcome in §5 below: the arm is decided, the code is not written. |
 | `aex-runtime-activity-dynamodb` | **not started.** §2.7. |
-| `tests/live/aex-live-regional-stores/` | **not started.** §8.3 items 1–14. |
-| `tests/load/regional-stores/` | **not started.** §8.4. |
+| `aex-live-regional-stores` | **not started.** §8.3 items 1–14. |
+| `regional-stores` load workloads | **not started.** §8.4. |
 
 Their table definitions **are** landed and asserted, so the schema half of each
 is done and the adapter half is not.
@@ -234,7 +234,7 @@ No `#[ignore]`, no environment self-skip, no empty suite, no retry-to-green.
 
 Everything above is proved against the serialized request, the compiled plan,
 the row codec or the checked-in generation definition. None of it touches AWS.
-The following remain unproved and belong to `tests/live/aex-live-regional-stores/`
+The following remain unproved and belong to `aex-live-regional-stores`
 (plan 05 §8.3), which is not written:
 
 1. cross-table `TransactWriteItems` semantics, cancellation-reason ordering, and
@@ -320,8 +320,8 @@ each with a case pinning it:
 
 | Item | State |
 | --- | --- |
-| `tests/live/aex-live-regional-stores/` | **Not created.** It would be a new workspace member, which this stream was told not to add, and `aex-workspace-check` additionally requires a live companion to name a `deployable` that is a member — this package would name none. Each of the seven crates instead points its `live_suite` at the existing companion for the deployable that exercises it (`aex-live-content-lifecycle-worker`, `aex-live-regional-session-api`, `aex-live-regional-secret-api`, `aex-live-regional-secret-key-admin`, `aex-live-runtime-control-worker`). Plan 05 §8.3's fourteen concerns belong in those packages; none of them is written, and all of them are blocked by OD-07 regardless. |
-| `tests/load/regional-stores/` | Not written (plan 05 §8.4). |
+| `aex-live-regional-stores` | **Not created.** It would be a new workspace member, which this stream was told not to add, and `aex-workspace-check` additionally requires a live companion to name a `deployable` that is a member — this package would name none. Each of the seven crates instead points its `live_suite` at the existing companion for the deployable that exercises it (`aex-live-content-lifecycle-worker`, `aex-live-regional-session-api`, `aex-live-regional-secret-api`, `aex-live-regional-secret-key-admin`, `aex-live-runtime-control-worker`). Plan 05 §8.3's fourteen concerns belong in those packages; none of them is written, and all of them are blocked by OD-07 regardless. |
+| `regional-stores` load workloads | Not written (plan 05 §8.4). |
 | Merkle tree construction | The **rows** are here — tree pages, root descriptors, root pins, the GC scan index — but building, walking and copy-on-write persisting a tree is `aex-content-domain`'s, and plan 05 G-12's property burden lands there. |
 | Deep-verify sampling | The descriptor carries `verifiedAt` and both checksums; the sampled re-hash job itself is `content-lifecycle-worker`'s. |
 | `aex-content-aws` KMS client | The crate binds the encryption context through SSE-KMS headers and holds no KMS client. Application-layer AEAD for inline bodies and tree pages is `aex-secret-aws`'s envelope; there is exactly one crypto implementation. |
@@ -368,7 +368,7 @@ each with a case pinning it:
 | RS-27 | `aex-secret-keystore-dynamodb` decodes without the shared typed row reader. | The provider's schema has no `itemType`. Fabricating one would make the store unreadable by the provider's own tooling, which is the entire risk D-20 exists to avoid. |
 | RS-28 | The redaction manifest lives at `REDACT#{session}` / `MANIFEST`, in its own partition. | `regional-otlp` holds `dynamodb:GetItem` and nothing else on the custody table. A manifest inside `CUSTODY#{session}` would be one key-guess away from a custody row; in its own partition, one point read is all the grant can reach. |
 | RS-29 | A metadata row, a manifest and a credential binding all **refuse to decode** if they carry `ciphertext` or `wrappedKey`. | The types have nowhere to put sealed bytes, but a row written by hand or by an older revision could still have them. Refusing on read is what stops that becoming a leak on the list path. |
-| RS-30 | `tests/live/aex-live-regional-stores/` was not created. | It is a new workspace member, which this stream was told not to add, and the registry additionally requires a live companion to name a member deployable. The concerns are recorded against the existing companions instead. |
+| RS-30 | `aex-live-regional-stores` was not created. | It is a new workspace member, which this stream was told not to add, and the registry additionally requires a live companion to name a member deployable. The concerns are recorded against the existing companions instead. |
 
 ## 13. Gate output
 

@@ -1,16 +1,37 @@
 ---
 title: Clients stream handoff
 description: Implementation and merge handoff for the Rust-native clients, dashboard, site, and user-test stream.
-status: implemented-with-deferrals
+status: accepted
+keywords:
+  - sdk
+  - cli
+  - dashboard
+  - site
+  - user tests
+audience: implementation agents and maintainers
+last_verified: 2026-08-01
+related:
+  - references/rewrite/contracts.md
+  - references/rewrite/delivery.md
 ---
 
 # Clients stream handoff
 
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/13-clients-dashboard-site.md` in the parent workspace.
+
 ## Implemented
 
-- Removed the retired `packages/contracts`, `packages/cli`, `apps/docs`,
-  `packages/sdk/docs`, `scripts/docs`, and `scripts/openapi` trees without an
-  alias, compatibility surface, or replacement npm CLI.
+- Removed these retired trees without an alias, compatibility surface, or
+  replacement npm CLI:
+
+  ```
+  packages/contracts
+  packages/cli
+  apps/docs
+  packages/sdk/docs
+  scripts/docs
+  scripts/openapi
+  ```
 - Rebuilt `@aexhq/sdk` at `0.50.0` as ESM with zero runtime dependencies. The
   implemented core includes strict workspace/account credential parsing,
   UUIDv7 payload validation, five-region routing, an injectable transport,
@@ -80,8 +101,8 @@ items, each marked with the required cross-stream TODO:
 - `AexErrorCode`
 - `ERROR_METADATA`
 
-They must be replaced by exports from `packages/sdk/src/generated/index.ts` at
-merge, and every SDK route reference must then compile against that generated
+They must be replaced by exports from a generated `index.ts` under
+`packages/sdk/src/` at merge, and every SDK route reference must then compile against that generated
 source without retaining `wire_pending`.
 
 ## Required peer changes

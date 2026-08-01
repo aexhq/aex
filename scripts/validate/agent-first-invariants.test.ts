@@ -74,13 +74,12 @@ describe("agent-first invariants (workspace-wide)", () => {
   }, 30_000);
 
   it("does not read process.env.AEX_* from any user-facing parser surface", () => {
-    const userFacingRoots = ["packages/sdk/src", "packages/contracts/src"];
+    const userFacingRoots = ["packages/sdk/src"];
     const offenders: string[] = [];
     const pattern = /process\.env\.AEX_/g;
     for (const file of listSourceFiles()) {
       const rel = relPosix(repoRoot, file);
       if (!userFacingRoots.some((root) => rel.startsWith(`${root}/`))) continue;
-      if (rel.startsWith("packages/contracts/src/testing/")) continue;
       const source = readFileSync(file, "utf8");
       for (const match of source.matchAll(pattern)) offenders.push(`${rel}: ${match[0]}`);
     }

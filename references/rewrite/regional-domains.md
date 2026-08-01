@@ -12,12 +12,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/04-regional-domains.md
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
 ---
 
 # Regional pure domain and application crates — as landed
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/04-regional-domains.md` in the parent workspace.
 
 Six crates, all pure: no AWS SDK, no HTTP, no environment read, no wall clock, no
 globals, no `async` in the five domain crates. `Clock` and `IdFactory` exist only

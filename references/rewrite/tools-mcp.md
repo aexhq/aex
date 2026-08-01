@@ -1,10 +1,23 @@
 ---
 title: Tools, managed web, and MCP rewrite handoff
 description: Implemented surface, peer contracts, decisions, and remaining work for the tools-mcp stream.
-status: implemented-depth-first
+status: accepted
+keywords:
+  - tool catalog
+  - mcp
+  - managed web
+  - brain
+  - descriptors
+audience: implementation agents and maintainers
+last_verified: 2026-08-01
+related:
+  - references/rewrite/brain.md
+  - references/rewrite/hands.md
 ---
 
 # Tools, managed web, and MCP handoff
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/09-tools-mcp-web.md` in the parent workspace.
 
 ## Implemented
 
@@ -116,8 +129,8 @@ The merge consumed the now-landed peer types
 `aex_brain_domain::EffectClass` and `aex_brain_domain::DispatchProof`; the MCP
 temporary copy was deleted.
 
-The frozen workspace has no `tests/live/aex-live-managed-web` or
-`tests/live/aex-live-mcp` member. This stream did not add/rename members, per
+The frozen workspace has no `aex-live-managed-web` or `aex-live-mcp` member
+under `tests/live`. This stream did not add/rename members, per
 the orchestrator rule. The existing crate metadata points at
 `aex-live-brain-mux`; the orchestrator must either allocate the two named
 companions in a member-set wave or explicitly confirm the combined companion.

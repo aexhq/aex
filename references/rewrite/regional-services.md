@@ -1,11 +1,25 @@
 ---
 title: Regional services rewrite handoff
 description: Implementation and merge handoff for the regional-services stream.
-status: implemented-with-deferred-runtime-composition
+status: accepted
 owner: regional-services
+keywords:
+  - regional http
+  - stream
+  - lifecycle workers
+  - idempotency
+  - composition
+audience: implementation agents and maintainers
+last_verified: 2026-08-01
+related:
+  - references/rewrite/regional-domains.md
+  - references/rewrite/regional-stores.md
+  - references/rewrite/contracts.md
 ---
 
 # Regional services rewrite handoff
+
+Plan of record: `references/rust-native-rewrite-2026-07-31/plans/06-regional-services.md` in the parent workspace.
 
 ## Implemented
 

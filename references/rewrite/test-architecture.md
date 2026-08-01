@@ -9,15 +9,16 @@ keywords:
   - nextest
   - load harness
 audience: implementation agents and maintainers
-status: implemented
+status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/15-test-architecture.md
-  - references/rust-native-rewrite-2026-07-31/plans/14-delivery-ci-infra.md
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
+  - references/rewrite/README.md
+  - references/rewrite/delivery.md
 ---
 
 # Test architecture as landed
+
+Plans of record: `references/rust-native-rewrite-2026-07-31/plans/15-test-architecture.md` and `references/rust-native-rewrite-2026-07-31/plans/14-delivery-ci-infra.md`, in the parent workspace.
 
 Branch `rw/testarch`. Nothing here authors a product test; it defines how a
 package declares what it owes, turns those declarations into a checked registry,
@@ -97,8 +98,8 @@ targets = "awaiting the regional-stores stream; the cases land with the crate's 
 ```
 
 npm manifests carry the identical object under a top-level `"aex"` key
-(`packages/sdk`, `packages/cli`, `packages/contracts`, `apps/docs`,
-`apps/user-tests`, `tools/eslint-plugin-aex`).
+(`packages/sdk`, `apps/site`, `apps/dashboard`, `apps/user-tests`,
+`tools/eslint-plugin-aex`).
 
 ### 2.1 Closed value sets
 
@@ -467,7 +468,7 @@ phase, an unset spend ceiling.
 | T-10 | `scenarios` is declared empty everywhere until `release/scenario-ownership.toml` exists | Declaring scenario ids with no owner file would make every one of them an orphan. The requirement is recorded as a pending authority instead. |
 | T-11 | The closed value sets live in `release/policy/test-profiles.toml` and are embedded by both the checker and `aex-test-harness` | Two hand-maintained copies of a closed set is exactly the drift the schema exists to prevent. |
 | T-12 | `is_test_support_crate` now matches `*-test-support`, `aex-test-harness`, `aex-load-harness` and every `aex-live-*`; `test-support-is-dev-only` exempts test-only *dependents* | Test-only code composes with test-only code — the load harness takes the test harness as a normal dependency, as every companion will. What must never happen is a production package reaching any of them, and the registry additionally checks the whole normal-dependency **closure**, not only the direct edge. |
-| T-13 | `apps/docs` declares `deployable = "site"` and `live_suite = "aex-live-site"` | The docs application *is* the site the conventions name `apps/site`. Pointing the existing package at the companion resolves the back-reference today; the directory rename is the clients stream's (`P-PACKAGES`). |
+| T-13 | The site package declares `deployable = "site"` and `live_suite = "aex-live-site"` | The documentation application *is* the site. The clients stream has since retired the old docs directory in favour of `apps/site`, which is where the declaration now lives. |
 | T-14 | The four companions whose subject does not exist — dashboard, model catalog, the two Stripe edges — excuse `deployable` with the stream that lands it | Three of them would otherwise fail `aex-orphan-companion` for a true but not-yet-actionable reason. The excuse puts them in the ledger under the stream that can close it. |
 | T-15 | Container digests were resolved by anonymous registry manifest queries, not by pulling | The §8a amendment requires digest pinning; no credential is involved in an anonymous `HEAD /v2/<repo>/manifests/<tag>`, and nothing was pulled or run. |
 | T-16 | `tests/load/profiles` declares only `t2` and `t3` | They are the two tiers Area 10 rows name explicitly (100 peak active, 500 offered). Inventing further tiers would create thresholds nobody can defend when a campaign misses them. |
@@ -484,7 +485,7 @@ phase, an unset spend ceiling.
 | No live receipt of any kind can be earned (`OD-07`) | owner cut-readiness review, then dev credentials | 428 rows in `release/unearned-evidence.json` under `requires_deployment` and `requires_live_seam`, each naming its stream |
 | `aex-live-sdk` and `aex-live-aex-cli` (D-18) do not exist | orchestrator ruling on the member set | `packages/sdk` and `tools/aex-cli` excuse `live_suite`; their `npm.registry.publish` seam is an unearned row |
 | The dashboard application and the two TypeScript Stripe edges have no package yet | clients and central-finance streams | their companions excuse `deployable`; the derived live target set is 31 of the frozen 34 |
-| `release/artifact-metadata.toml` (non-package artifacts) is not authored | delivery stream owns `release/units.toml` and the artifact tree | the model catalog's companion excuses `deployable`; the file is a delivery input, not this stream's |
+| A non-package artifact metadata file under `release/` is not authored | delivery stream owns `release/units.toml` and the artifact tree | the model catalog's companion excuses `deployable`; the file is a delivery input, not this stream's |
 | Provider spend budgets have no numeric values | real BYOK credentials and a synthetic-account spend cap | `budget_micro_usd` is optional in `source_rewrite` and blocking in `candidate` |
 | Terraform module metadata (`infra/modules/*/aex.toml`) is unexercised | `infra/modules/` is empty | the schema is defined; the reader is added with the first module |
 | No workload descriptor exists yet | every load owner | 15 `pending_workload` rows, one per declared capacity gate |

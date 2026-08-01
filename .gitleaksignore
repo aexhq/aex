@@ -7,12 +7,7 @@
 # finding absent here, an entry with no stated reason, and an entry no finding
 # matches any more.
 #
-# Current strict-v1 scan measured 2026-07-30 (gitleaks 8.30.1). The remaining
-# findings are deliberate redaction-corpus inputs:
+# Current scan measured 2026-08-01 (gitleaks 8.30.1) after the Rust-native
+# rewrite: no finding remains. The two entries this file used to carry were
+# synthetic redaction-corpus fixtures in the deleted `packages/contracts` tree.
 
-# Synthetic fixture: a jwt.io-shaped HS256 token in the SDK secret-redaction
-# corpus. It carries no production signing material and validates nowhere.
-packages/contracts/test/sdk-secrets.test.ts:jwt:23
-
-# Synthetic fixture: a fake Slack bot token in the same redaction corpus.
-packages/contracts/test/sdk-secrets.test.ts:generic-api-key:26

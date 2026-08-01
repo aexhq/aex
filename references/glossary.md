@@ -16,9 +16,9 @@ related:
 
 # Public v1 glossary
 
-The strict schemas under `packages/contracts/src/` own public field names and
-enumerations. This page explains how the repository uses those terms without
-creating a second contract.
+The strict schemas under `api/schemas/` own public field names and enumerations,
+and `crates/aex-wire` is the contract generated from them. This page explains how
+the repository uses those terms without creating a second contract.
 
 ## Session and execution terms
 
@@ -68,7 +68,8 @@ sessions, operations, limits, and regional usage belong to one workspace.
 
 An API key scoped to one workspace. Its value encodes only a region code and an
 indexed key identity alongside the secret; it does not encode a plane or
-workspace ID. `packages/contracts/src/api-key.ts` owns the parser.
+workspace ID. `crates/aex-wire/src/ids.rs` owns the Rust parser and
+`packages/sdk/src/client/credentials.ts` the TypeScript one.
 
 ### region code
 

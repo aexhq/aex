@@ -42,7 +42,7 @@ Before changing code, config, tests, or docs, read
 | Contributor entry point and the maintainer asymmetry | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Community conduct | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
 | Canonical SDK documentation | [`apps/site/content/docs/`](apps/site/content/docs/) |
-| Public website source | [`apps/docs/content/docs/`](apps/docs/content/docs/) |
+| Public website source | [`apps/site/`](apps/site/) |
 | Security reporting | [`SECURITY.md`](SECURITY.md) |
 
 Commands live in `package.json`; user-visible contracts live with their owning

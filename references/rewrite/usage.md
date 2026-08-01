@@ -12,13 +12,13 @@ audience: implementation agents and maintainers
 status: accepted
 last_verified: 2026-08-01
 related:
-  - references/rust-native-rewrite-2026-07-31/plans/00-orchestrator-conventions.md
-  - references/rust-native-rewrite-2026-07-31/plans/12-usage-metering.md
-  - references/rust-native-rewrite-2026-07-31/plans/03-central-finance-schema.md
-  - references/limits-and-ceilings-decision-2026-07-30.md
+  - references/rewrite/README.md
+  - references/rewrite/central-finance.md
 ---
 
 # Usage metering stream handoff
+
+Plans of record: `references/rust-native-rewrite-2026-07-31/plans/12-usage-metering.md` and `references/rust-native-rewrite-2026-07-31/plans/03-central-finance-schema.md`, in the parent workspace.
 
 Branch `rw/usage`. Everything below is on that branch and nothing is pushed.
 
@@ -444,7 +444,7 @@ Load-bearing shapes, each asserted rather than documented:
 
 Three composition roots over one generic handler. Each names exactly one table
 and links exactly one adapter, proved by a manifest link check and a source scan
-in the binary itself, and again by each adapter's own `tests/isolation.rs`.
+in the binary itself, and again by each adapter's own `isolation.rs` integration test.
 
 - **Charging gate.** `AEX_USAGE_BILLING_MODE` is checked against the rating queue
   name: shadow pointed at the live queue, or active pointed at the shadow queue,

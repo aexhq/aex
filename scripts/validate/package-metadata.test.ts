@@ -1,22 +1,15 @@
 /**
  * The publishable-package metadata gate.
  *
- * WHY. Under the module release model every public package is independently
- * addressable on npm and publishes its own canary, so every public package —
- * not just `@aexhq/sdk` — needs a complete, correct manifest and its own copy of
- * the licence. Today that is untrue in ways nothing catches: `@aexhq/cli` is
- * `private: false` with no `license`, `bun pm pack` on any package produces a
- * tarball containing no licence text at all, and `packages/cli/dist/cli.mjs`
- * redistributes MIT-licensed `zod` and `fflate` with esbuild's
- * `legalComments: "none"` stripping their notices.
- *
- * The extraction adds 25 more packages in a single commit. A checklist would be
- * read once; this file is read on every push.
+ * WHY. Every public package is independently addressable on npm, so it needs a
+ * complete, correct manifest and its own copy of the licence — a tarball cannot
+ * reach up to a repository root that is not inside it. A checklist would be read
+ * once; this file is read on every push.
  *
  * Scope note: the registry is DERIVED (`private !== true`), so a package added
  * later is covered without editing this file. What is hard-coded here is only
- * what a derived rule cannot express — the known `aex` bin collision, and the
- * deliberate-violation fixture that proves the gate can fail.
+ * what a derived rule cannot express — the deliberate-violation fixture that
+ * proves the gate can fail.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
@@ -92,11 +85,7 @@ describe("publishable package metadata", () => {
   it("resolves a non-empty public module registry", () => {
     // A derived registry that silently resolves to nothing would make every
     // assertion below vacuously true.
-    expect(publishable.map((module) => module.manifest.name).sort()).toEqual([
-      "@aexhq/cli",
-      "@aexhq/contracts",
-      "@aexhq/sdk"
-    ]);
+    expect(publishable.map((module) => module.manifest.name).sort()).toEqual(["@aexhq/sdk"]);
   });
 
   it("holds every publishable package to the full metadata contract", () => {
@@ -160,10 +149,10 @@ describe("licence declaration", () => {
 
 describe("third-party attribution", () => {
   it("records every redistributed production dependency in NOTICE", () => {
-    // `packages/cli/scripts/finalize-bundle.mjs` bundles the CLI's production
-    // closure with `legalComments: "none"`, and `@aexhq/sdk` republishes that
-    // bundle as its `aex` bin. The upstream MIT headers do not survive, so
-    // NOTICE is the only place the attribution can live.
+    // A published bundle strips the upstream licence headers, so NOTICE is the
+    // only place the attribution those licences require can live. The check
+    // holds whether the dependency set is empty or not: an unattributed name is
+    // a failure, and an empty set is the claim NOTICE currently makes.
     const notice = readFileSync(resolve(repoRoot, "NOTICE"), "utf8");
     const dependencies = [
       ...new Set(
@@ -171,37 +160,19 @@ describe("third-party attribution", () => {
       )
     ].sort();
 
-    expect(dependencies.length).toBeGreaterThan(0);
     const unattributed = dependencies.filter((name) => !notice.includes(name));
     expect(unattributed).toEqual([]);
   });
 });
 
 describe("binary name ownership", () => {
-  const claimants = listWorkspaceModules(repoRoot).filter((module) =>
-    Object.keys((module.manifest as Manifest).bin ?? {}).includes("aex")
-  );
-
-  it("gives the standalone CLI sole ownership of the `aex` command", () => {
-    expect(claimants.map((module) => module.manifest.name)).toEqual(["@aexhq/cli"]);
-  });
-
-  it("keeps the claimant publishable", () => {
-    const publishableNames = new Set(publishable.map((module) => module.manifest.name));
-    for (const module of claimants) {
-      expect(publishableNames.has(module.manifest.name), `${module.manifest.name} claims \`aex\``).toBe(true);
-    }
-  });
-
-  it("points the command at the standalone bundle", () => {
-    const paths = new Set(claimants.map((module) => (module.manifest as Manifest).bin?.aex));
-    expect([...paths]).toEqual(["./dist/cli.mjs"]);
-  });
-
-  it("documents the SDK as a separate library package", () => {
-    const cliReadme = readFileSync(resolve(repoRoot, "packages/cli/README.md"), "utf8");
-    const sdkReadme = readFileSync(resolve(repoRoot, "packages/sdk/README.md"), "utf8");
-    expect(cliReadme).toContain("@aexhq/sdk");
-    expect(sdkReadme).toContain("published separately by `@aexhq/cli`");
+  it("leaves the `aex` command to the native CLI, unclaimed by any npm package", () => {
+    // `aex` is a Rust binary shipped as a signed archive from `tools/aex-cli`.
+    // An npm package claiming the same bin name would install a second `aex` on
+    // a developer's PATH and shadow it.
+    const claimants = listWorkspaceModules(repoRoot).filter((module) =>
+      Object.keys((module.manifest as Manifest).bin ?? {}).includes("aex")
+    );
+    expect(claimants.map((module) => module.manifest.name)).toEqual([]);
   });
 });

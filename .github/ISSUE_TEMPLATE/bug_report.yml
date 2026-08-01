@@ -24,7 +24,7 @@ body:
       options:
         - SDK (@aexhq/sdk)
         - CLI (aex bin)
-        - Contracts (@aexhq/contracts)
+        - Wire contract (api/schemas)
         - Agent runtime / tools
         - Hosted platform (api.aex.dev)
         - Docs

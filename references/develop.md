@@ -45,17 +45,19 @@ Never call the remote dev plane `local`. Keep real values in gitignored
 
 ## Live user tests
 
-Strict v1 has one execution path. The live workflow uses
-`apps/user-tests/scripts/shard-files.mjs` to discover every test file under
-`apps/user-tests/test/live/` and balance files by the durations in
-`apps/user-tests/shard-durations.json`; it does not build runtime-kind or
-capability matrices.
+Strict v1 has one execution path. `apps/user-tests/scenarios.ts` is the typed
+authority: one `USER_SCENARIOS` row per named scenario, each bound to one suite
+(`packed`, `local`, `live`, `browser`, `money`, `operator`), and each suite's
+`test/<suite>/registered.test.ts` runs exactly the rows registered to it. There
+are no runtime-kind or capability matrices.
 
-Named product coverage belongs in
-`apps/user-tests/test/_fixtures/live-scenario-ledger.ts`. Before adding a live
-scenario, check whether it needs a remote plane at all: behavior that can be
-proved against the packed SDK and a deterministic fixture belongs under
-`test/offline/`.
+`apps/user-tests/artifacts.ts` resolves what a run exercises. Selection accepts
+either an exact paired SDK/CLI version or a paired tarball/archive, never a
+mixture.
+
+Add a scenario by adding its row. Before making it a `live` row, check whether it
+needs a remote plane at all: behavior that can be proved against the packed SDK
+and a deterministic fixture belongs in the `packed` or `local` suite.
 
 Contributor branch, review, and CI procedure lives in
 [`contributing.md`](contributing.md). Repository-wide artifact cleanup follows

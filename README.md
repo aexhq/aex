@@ -27,22 +27,23 @@ Session creation, message admission, and run observation are separate
 operations. Long-running lifecycle mutations and telemetry exports return
 durable operation handles.
 
-The CLI is published separately:
+The CLI is a native binary published as a signed archive per target:
 
 ```bash
-bun add --global @aexhq/cli
 aex sessions create --request @session.json --api-key "$AEX_WORKSPACE_API_KEY"
 ```
 
-## Packages
+## Public surfaces
 
-| Package | Purpose |
+| Surface | Purpose |
 | --- | --- |
-| [`@aexhq/contracts`](packages/contracts) | Strict v1 wire schemas, identifiers, routes, and OpenAPI documents. |
-| [`@aexhq/sdk`](packages/sdk) | TypeScript client for bootstrap and regional resources. |
-| [`@aexhq/cli`](packages/cli) | Standalone resource-oriented `aex` command. |
+| [`api/schemas`](api/schemas) | Strict v1 wire schemas, identifiers, routes, errors, and scopes — the authoring source. |
+| [`api/generated`](api/generated) | The generated bundle, OpenAPI documents, and per-schema JSON Schema. |
+| [`crates/aex-wire`](crates/aex-wire) | The generated Rust wire contract: models, route table, errors, server and client shapes. |
+| [`packages/sdk`](packages/sdk) | TypeScript client for bootstrap and regional resources. |
+| [`tools/aex-cli`](tools/aex-cli) | Standalone resource-oriented `aex` command. |
 
-Each public module has its own prelaunch canary and immutable source identity.
+Each public surface has its own immutable source identity in the release graph.
 This workspace has not released `1.0.0`.
 
 ## Public v1 shape
