@@ -3,9 +3,41 @@ mock_provider "aws" {}
 variables {
   plane              = "dev"
   region             = "eu-west-1"
-  bucket_name_suffix = "0a1b2c3d"
+  purpose            = "content"
   kms_key_arn        = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
   lifecycle_role_arn = "arn:aws:iam::000000000000:role/aex-content-lifecycle"
+}
+
+run "the_name_is_plane_qualified_and_names_what_it_holds" {
+  command = plan
+
+  assert {
+    condition     = aws_s3_bucket.this.bucket == "aex-dev-eu-west-1-content"
+    error_message = "The bucket name must be aex-<plane>-<region>-<purpose>."
+  }
+}
+
+run "a_second_store_in_one_plane_carries_its_own_purpose" {
+  command = plan
+
+  variables {
+    purpose = "observations"
+  }
+
+  assert {
+    condition     = aws_s3_bucket.this.bucket == "aex-dev-eu-west-1-observations"
+    error_message = "A second store in the same plane must not inherit another store's name."
+  }
+}
+
+run "rejects_a_purpose_that_is_not_a_name_component" {
+  command = plan
+
+  variables {
+    purpose = "Observations/2026"
+  }
+
+  expect_failures = [var.purpose]
 }
 
 run "versioning_is_disabled" {

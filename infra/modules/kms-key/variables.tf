@@ -77,8 +77,25 @@ variable "policy_statements" {
     resources                    = list(string)
     data_plane                   = bool
     encryption_context_workspace = optional(string)
+    conditions = optional(list(object({
+      test     = string
+      variable = string
+      values   = list(string)
+    })), [])
   }))
-  description = "The complete key policy. The module invents no statement of its own: the root supplies every grant, including the account administration grant. `data_plane = true` marks a grant used by product code on customer data."
+  description = <<-EOT
+    The complete key policy. The module invents no statement of its own: the root
+    supplies every grant, including the account administration grant.
+
+    `data_plane = true` marks a grant used by product code on customer data, and
+    carries the tenant encryption context. `conditions` is how every other grant
+    is scoped, and a statement may carry as many as it needs: `kms:ViaService` on
+    an IAM delegation so the delegated actions only work through the services
+    that hold their own encryption context, `kms:EncryptionContext:aws:logs:arn`
+    or `aws:SourceArn` on a service principal that encrypts on behalf of a
+    publisher which never called KMS. Repeated `(test, variable)` pairs merge
+    their values; an operator block never silently replaces another.
+  EOT
 
   validation {
     condition     = length(var.policy_statements) > 0
@@ -118,6 +135,49 @@ variable "policy_statements" {
       !s.data_plane || try(length(s.encryption_context_workspace), 0) > 0
     ])
     error_message = "Every data-plane grant must carry a `kms:EncryptionContext:aex:workspace` condition; set `encryption_context_workspace`."
+  }
+
+  validation {
+    condition     = length(distinct([for s in var.policy_statements : s.sid])) == length(var.policy_statements)
+    error_message = "Two statements share a statement id; AWS rejects the policy and the duplicate would be invisible in a diff."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for s in var.policy_statements : [
+        for c in coalesce(s.conditions, []) :
+        contains(["StringEquals", "StringNotEquals", "StringLike", "ArnEquals", "ArnLike", "Bool"], c.test)
+      ]
+    ]))
+    error_message = "A condition operator must be one of `StringEquals`, `StringNotEquals`, `StringLike`, `ArnEquals`, `ArnLike` or `Bool`. The `IfExists` variants are excluded on purpose: a condition a caller can omit is not a condition."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for s in var.policy_statements : [
+        for c in coalesce(s.conditions, []) :
+        length(c.values) > 0 && !contains(c.values, "*")
+      ]
+    ]))
+    error_message = "A condition must name at least one value and none of them may be `*`; a wildcard value is the absence of a condition written to look like one."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for s in var.policy_statements : [
+        for c in coalesce(s.conditions, []) :
+        c.variable != "kms:EncryptionContext:aex:workspace"
+      ]
+    ]))
+    error_message = "The tenant encryption context is supplied through `data_plane` and `encryption_context_workspace`, so there is exactly one way to express it."
+  }
+
+  validation {
+    condition = alltrue([
+      for s in var.policy_statements :
+      s.principal_type != "Service" || s.effect != "Allow" || length(coalesce(s.conditions, [])) > 0
+    ])
+    error_message = "A service principal encrypts on behalf of a publisher that never called KMS, so an unconditioned service grant is a confused deputy. Scope it with `aws:SourceArn`, `kms:ViaService` or the service's own encryption-context key."
   }
 }
 

@@ -1,5 +1,5 @@
 locals {
-  bucket_name = "aex-content-${var.plane}-${var.region}-${var.bucket_name_suffix}"
+  bucket_name = "aex-${var.plane}-${var.region}-${var.purpose}"
   bucket_arn  = "arn:${var.partition}:s3:::${local.bucket_name}"
   object_arn  = "arn:${var.partition}:s3:::${local.bucket_name}/*"
 

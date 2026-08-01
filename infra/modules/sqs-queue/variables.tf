@@ -11,11 +11,21 @@ variable "name" {
 variable "fifo" {
   type        = bool
   default     = false
-  description = "Whether the queue is FIFO. The usage-rating queues must be FIFO because rating is order-sensitive per workspace."
+  description = "Whether the queue is FIFO. Ordering is a property of the queue's family, not of the environment that instantiates it, so the order-sensitive families are named here and checked rather than left to each root to remember."
 
   validation {
-    condition     = !startswith(var.name, "usage-rating") || var.fifo
-    error_message = "A usage-rating queue must be FIFO."
+    # The family is the tail of the name: an environment qualifies a queue with
+    # its plane and region, so `aex-dev-eu-west-1-usage-settlement` and
+    # `usage-settlement` are the same family and a prefix match would recognise
+    # neither. `usage-rating` and `usage-settlement` carry money facts that must
+    # arrive in the order the regional plane accepted them; `central-control`
+    # carries provisioning commands where two commands for one workspace cannot
+    # overtake each other.
+    condition = var.fifo || !anytrue([
+      for family in ["usage-rating", "usage-settlement", "central-control"] :
+      var.name == family || endswith(var.name, "-${family}")
+    ])
+    error_message = "This queue belongs to an order-sensitive family (`usage-rating`, `usage-settlement` or `central-control`) and must be FIFO."
   }
 }
 

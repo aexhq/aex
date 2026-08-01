@@ -39,6 +39,9 @@ The role name is `aex-<plane>-<deployable>`.
   which is capped at twelve entries and may not itself be a wildcard.
 - Every grant marked `scopable` must carry a plane or region condition; a
   scopable grant with no condition is rejected.
+- No two grants share a statement id. AWS rejects a policy document with a
+  duplicate `Sid`, so a generator that emits one — a table read and a stream read
+  on the same table, for instance — fails here rather than at apply.
 - The trust policy names explicit principals, never a wildcard, and grants only
   `sts:AssumeRole`.
 

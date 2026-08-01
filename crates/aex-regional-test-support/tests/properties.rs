@@ -25,10 +25,13 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
             table.table
         );
         for grant in &table.iam {
+            // `BatchWriteItem` deletes as well as writes, so it is checked
+            // against the same allow list; a delete vector nobody listed is a
+            // delete vector nobody reviewed.
             if grant
                 .actions
                 .iter()
-                .any(|action| action == "dynamodb:DeleteItem")
+                .any(|action| action == "dynamodb:DeleteItem" || action == "dynamodb:BatchWriteItem")
             {
                 assert!(
                     matches!(
@@ -43,8 +46,22 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                             | ("usage-storage-authority", "usage-storage-worker")
                             | ("usage-compute-authority", "usage-compute-worker")
                             | ("usage-transfer-authority", "usage-transfer-worker")
+                            // The reconciler deletes exactly two shapes: an idle
+                            // series claim, released against its cardinality
+                            // counter in one transaction, and OBS# revisions
+                            // under a pinned deletion epoch. The startup
+                            // capability assertion narrows the second to the
+                            // `deletion.execute` deployment alone.
+                            | ("observation-authority", "observation-reconciler")
+                            // Admission materializes OBS# revisions in batches:
+                            // the commit's action count is independent of the
+                            // record count only because the revisions land
+                            // outside the transaction (G7). It writes them and
+                            // deletes nothing; the immutability condition on
+                            // every OBS# write is what makes a replay converge.
+                            | ("observation-authority", "regional-otlp")
                     ),
-                    "`{}` grants DeleteItem to `{}`, which is not on the deletion allow list",
+                    "`{}` grants a delete vector to `{}`, which is not on the deletion allow list",
                     table.table,
                     grant.role
                 );

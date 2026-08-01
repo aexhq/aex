@@ -4,9 +4,8 @@ variables {
   plane                       = "dev"
   region                      = "eu-west-1"
   name_prefix                 = "aex-dev-euw1-"
-  keystore_physical_name      = "aex-keystore-v1"
-  table_definitions_digest    = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-  expected_definitions_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  table_definitions_digest    = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+  expected_definitions_digest = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
 
   kms_key_arn_by_authority = {
     session = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
@@ -42,6 +41,7 @@ variables {
     {
       logical_name                = "keystore"
       authority                   = "secret"
+      pinned_physical_name        = "aex-keystore-v1"
       hash_key                    = "pk"
       billing_mode                = "PAY_PER_REQUEST"
       point_in_time_recovery_days = 35
@@ -111,22 +111,89 @@ run "ttl_attribute_is_the_canonical_name" {
   }
 }
 
-run "keystore_uses_the_pinned_physical_name" {
+run "a_pinned_definition_keeps_its_own_physical_name" {
   command = plan
 
   assert {
-    condition     = aws_dynamodb_table.this["keystore"].name == var.keystore_physical_name
-    error_message = "The keystore table must be created under its pinned, immutable physical name."
+    condition     = aws_dynamodb_table.this["keystore"].name == "aex-keystore-v1"
+    error_message = "A table declaring a pinned physical name must be created under exactly that name."
   }
 
   assert {
     condition     = aws_dynamodb_table.this["session_journal"].name == "aex-dev-euw1-session-journal"
-    error_message = "Every other table must be created under the environment name prefix."
+    error_message = "Every table without a pinned name must be created under the environment name prefix."
   }
 
   assert {
-    condition     = output.table_names["keystore"] == var.keystore_physical_name
-    error_message = "The logical-to-physical map must report the pinned keystore name."
+    condition     = output.table_names["keystore"] == "aex-keystore-v1"
+    error_message = "The logical-to-physical map must report the pinned name."
+  }
+}
+
+run "a_pinned_name_is_keyed_on_the_definition_not_on_a_logical_name" {
+  command = plan
+
+  variables {
+    table_definitions = [
+      {
+        logical_name                = "regional_secret_keystore"
+        authority                   = "secret"
+        pinned_physical_name        = "aex-regional-branch-keystore"
+        hash_key                    = "pk"
+        billing_mode                = "PAY_PER_REQUEST"
+        point_in_time_recovery_days = 35
+        deletion_protection         = true
+        attributes                  = [{ name = "pk", type = "S" }]
+      },
+    ]
+  }
+
+  assert {
+    condition     = aws_dynamodb_table.this["regional_secret_keystore"].name == "aex-regional-branch-keystore"
+    error_message = "The pinned name must be honoured whatever the table is called; a special case on the literal logical name `keystore` never fires for a bundle that names the table something else."
+  }
+}
+
+run "a_keys_only_index_projects_no_attribute" {
+  command = plan
+
+  variables {
+    table_definitions = [
+      {
+        logical_name                = "observation_authority"
+        authority                   = "session"
+        hash_key                    = "pk"
+        range_key                   = "sk"
+        billing_mode                = "PAY_PER_REQUEST"
+        point_in_time_recovery_days = 35
+        deletion_protection         = true
+        attributes = [
+          { name = "pk", type = "S" },
+          { name = "sk", type = "S" },
+          { name = "cPk", type = "S" },
+          { name = "cSk", type = "S" },
+        ]
+        global_secondary_indexes = [
+          {
+            name               = "gsi_control"
+            hash_key           = "cPk"
+            range_key          = "cSk"
+            projection_type    = "KEYS_ONLY"
+            non_key_attributes = []
+          },
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = one(aws_dynamodb_table.this["observation_authority"].global_secondary_index).projection_type == "KEYS_ONLY"
+    error_message = "A KEYS_ONLY index must reach the resource as KEYS_ONLY."
+  }
+
+  assert {
+    condition     = length(coalesce(one(aws_dynamodb_table.this["observation_authority"].global_secondary_index).non_key_attributes, [])) == 0
+    error_message = "A KEYS_ONLY index must carry no projected attribute list; AWS rejects the create when one is present."
   }
 }
 
@@ -253,21 +320,104 @@ run "rejects_an_authority_with_no_customer_managed_key" {
   expect_failures = [var.kms_key_arn_by_authority]
 }
 
-run "rejects_a_keystore_name_derived_from_the_environment_prefix" {
+run "rejects_a_pinned_name_derived_from_the_environment_prefix" {
   command = plan
 
   variables {
-    keystore_physical_name = "aex-dev-euw1-keystore"
+    table_definitions = [
+      {
+        logical_name                = "keystore"
+        authority                   = "secret"
+        pinned_physical_name        = "aex-dev-euw1-keystore"
+        hash_key                    = "pk"
+        billing_mode                = "PAY_PER_REQUEST"
+        point_in_time_recovery_days = 35
+        deletion_protection         = true
+        attributes                  = [{ name = "pk", type = "S" }]
+      },
+    ]
   }
 
-  expect_failures = [var.keystore_physical_name]
+  expect_failures = [var.table_definitions]
+}
+
+run "rejects_an_include_projection_that_names_no_attribute" {
+  command = plan
+
+  variables {
+    table_definitions = [
+      {
+        logical_name                = "session_journal"
+        authority                   = "session"
+        hash_key                    = "pk"
+        billing_mode                = "PAY_PER_REQUEST"
+        point_in_time_recovery_days = 35
+        deletion_protection         = true
+        attributes = [
+          { name = "pk", type = "S" },
+          { name = "workspaceId", type = "S" },
+        ]
+        global_secondary_indexes = [
+          {
+            name               = "gsi_workspace_index"
+            hash_key           = "workspaceId"
+            projection_type    = "INCLUDE"
+            non_key_attributes = []
+          },
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.table_definitions]
+}
+
+run "rejects_a_keys_only_projection_that_names_attributes" {
+  command = plan
+
+  variables {
+    table_definitions = [
+      {
+        logical_name                = "session_journal"
+        authority                   = "session"
+        hash_key                    = "pk"
+        billing_mode                = "PAY_PER_REQUEST"
+        point_in_time_recovery_days = 35
+        deletion_protection         = true
+        attributes = [
+          { name = "pk", type = "S" },
+          { name = "workspaceId", type = "S" },
+        ]
+        global_secondary_indexes = [
+          {
+            name               = "gsi_workspace_index"
+            hash_key           = "workspaceId"
+            projection_type    = "KEYS_ONLY"
+            non_key_attributes = ["status"]
+          },
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.table_definitions]
 }
 
 run "rejects_a_definition_set_that_does_not_match_the_pinned_bundle" {
   command = plan
 
   variables {
-    table_definitions_digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    table_definitions_digest = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
+  }
+
+  expect_failures = [var.table_definitions_digest]
+}
+
+run "rejects_a_digest_in_another_domain" {
+  command = plan
+
+  variables {
+    table_definitions_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   }
 
   expect_failures = [var.table_definitions_digest]

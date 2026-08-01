@@ -109,11 +109,36 @@ run "rejects_a_usage_rating_queue_that_is_not_fifo" {
   command = plan
 
   variables {
-    name = "usage-rating-compute"
+    name = "aex-dev-eu-west-1-usage-settlement"
     fifo = false
   }
 
   expect_failures = [var.fifo]
+}
+
+run "rejects_a_plane_qualified_control_queue_that_is_not_fifo" {
+  command = plan
+
+  variables {
+    name = "aex-prd-eu-west-1-central-control"
+    fifo = false
+  }
+
+  expect_failures = [var.fifo]
+}
+
+run "an_unordered_family_may_stay_standard_however_it_is_qualified" {
+  command = plan
+
+  variables {
+    name = "aex-dev-eu-west-1-usage-compute-ingress"
+    fifo = false
+  }
+
+  assert {
+    condition     = aws_sqs_queue.this.name == "aex-dev-eu-west-1-usage-compute-ingress"
+    error_message = "A queue outside the order-sensitive families must not be forced to FIFO."
+  }
 }
 
 run "rejects_disabling_the_dead_letter_queue" {

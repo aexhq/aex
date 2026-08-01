@@ -57,6 +57,7 @@ variable "table_definitions" {
   type = list(object({
     logical_name                = string
     authority                   = string
+    pinned_physical_name        = optional(string)
     hash_key                    = string
     range_key                   = optional(string)
     billing_mode                = string
@@ -81,17 +82,17 @@ variable "table_definitions" {
 
 variable "table_definitions_digest" {
   type        = string
-  description = "Digest of the definition set passed in."
+  description = "The `blake3:` digest the decoded bundle carries for its own definition set."
 }
 
 variable "expected_definitions_digest" {
   type        = string
-  description = "Digest the release manifest pins for the bundle."
+  description = "The same digest, as the release manifest pins it."
 }
 
-variable "keystore_physical_name" {
+variable "content_bucket_purpose" {
   type        = string
-  description = "Pinned physical name of the keystore table."
+  description = "What the content store holds; the last component of `aex-<plane>-<region>-<purpose>`."
 }
 
 variable "content_authority" {

@@ -12,7 +12,7 @@ handled has to land somewhere an operator can look at it.
 | Name | Type | Description |
 | --- | --- | --- |
 | `name` | `string` | Base queue name; the `.fifo` suffix is appended by the module. |
-| `fifo` | `bool` | FIFO queue. Required when the name starts with `usage-rating`. |
+| `fifo` | `bool` | FIFO queue. Required for the order-sensitive families. |
 | `content_based_dedup` | `bool` | FIFO deduplication from the body instead of an explicit id. |
 | `visibility_timeout` | `number` | Visibility timeout in seconds, 1-43200. |
 | `max_receive_count` | `number` | Deliveries before redrive to the dead-letter queue. |
@@ -35,8 +35,10 @@ handled has to land somewhere an operator can look at it.
 
 ## Policy asserted
 
-- FIFO is required for any queue whose name starts with `usage-rating`; a
-  standard configuration is rejected by validation.
+- FIFO is required for any queue in an order-sensitive family — `usage-rating`,
+  `usage-settlement` and `central-control` — matched on the tail of the name, so
+  a plane-qualified `aex-dev-eu-west-1-usage-settlement` is recognised as its
+  family and a standard configuration is rejected by validation.
 - A dead-letter queue is mandatory. `dlq.enabled = false` is rejected, and the
   main queue always carries a redrive policy pointing at it.
 - Server-side encryption with a customer-managed key is mandatory; the ARN is
