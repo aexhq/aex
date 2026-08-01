@@ -31,7 +31,7 @@ pub const QUERY_READ_BYTES_VAR: &str = "AEX_OBS_QUERY_READ_BYTES";
 /// Environment variable naming the metric-aggregation scan budget.
 pub const METRIC_AGGREGATE_SCAN_VAR: &str = "AEX_OBS_METRIC_AGGREGATE_SCAN";
 /// Environment variable naming the export ECS cluster the admission records.
-pub const EXPORT_CLUSTER_VAR: &str = "AEX_EXPORT_TASK_CLUSTER";
+pub const EXPORT_CLUSTER_VAR: &str = "AEX_EXPORT_CLUSTER";
 /// Environment variable naming the cursor signing key.
 pub const CURSOR_KEY_VAR: &str = "AEX_OBS_CURSOR_KEY";
 /// Environment variable naming the central authorization endpoint.
