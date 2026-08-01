@@ -38,8 +38,8 @@ pub use lease::{
 };
 pub use operation::{
     CancelRejection, Execution, FailureClass, InlineBudget, Operation, OperationCommit,
-    OperationFailure, OperationKind, OperationResult, OperationStatus, PersistShape, Progress,
-    ProgressError, TransitionError, cancel, classify_persist, commit_point, fail, progress, start,
-    succeed,
+    OperationFailure, OperationKind, OperationResult, OperationScope, OperationStatus,
+    PersistShape, Progress, ProgressError, TransitionError, cancel, classify_persist, commit_point,
+    fail, progress, start, succeed,
 };
 pub use redact::redact_for_purge;

@@ -316,13 +316,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-session-app",
-    "owner": "regional-domains",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-domains stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-session-dynamodb",
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",

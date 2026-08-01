@@ -888,14 +888,18 @@ dependencies = [
 name = "aex-session-app"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
+ "aex-internal-contracts",
  "aex-operation-domain",
+ "aex-secret-domain",
  "aex-session-domain",
+ "aex-wire",
+ "aex-workspace-domain",
  "async-trait",
- "futures",
- "serde",
+ "proptest",
  "thiserror",
  "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
