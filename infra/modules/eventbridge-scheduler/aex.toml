@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Schedule firing is proven by the live suite of the deployable each schedule targets."

@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["iam"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Queue creation has no runtime behaviour of its own; FIFO deduplication and redrive timing belong to the aws.sqs.fifo seam owned by a consuming deployable's live suite."

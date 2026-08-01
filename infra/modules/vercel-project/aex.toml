@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Deployment identity and plane binding are proven by the dashboard and site live suites that deploy into the project."

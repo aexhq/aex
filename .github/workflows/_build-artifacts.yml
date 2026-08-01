@@ -1,0 +1,114 @@
+# Build, package, describe and (optionally) publish one artifact.
+#
+# Packaging is done by `aex-release-tool artifact package`, never by the
+# packager's own archive writer, because artifact identity is the archive
+# digest and those writers embed the wall clock and the host operating system.
+#
+# `publish: false` is the whole pull-request behaviour: the production-profile
+# compile and the deterministic packaging both happen, the digest is recorded,
+# and nothing reaches a registry.
+
+name: build-artifacts
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+      lane:
+        type: string
+        required: true
+      publish:
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: ${{ inputs.lane == 'main' }}
+          shared-key: artifacts
+
+      - name: Install the cross-compiler and packagers
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-lambda,cargo-zigbuild,cargo-cyclonedx,cargo-auditable
+
+      - name: Print the recipe
+        id: recipe
+        run: |
+          set -euo pipefail
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact plan --unit "${{ matrix.name }}" | tee recipe.json
+
+      - name: Build
+        env:
+          CARGO_INCREMENTAL: "0"
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          set -euo pipefail
+          # The recipe is the authority for the argv. Reading it here rather
+          # than restating the command keeps the envelope's `buildCommand` and
+          # what actually ran from drifting apart.
+          python3 -c "import json,subprocess,sys; argv=json.load(open('recipe.json'))['argv']; sys.exit(subprocess.call(argv))"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact package --unit "${{ matrix.name }}" \
+            --input "target/aarch64-unknown-linux-gnu/release/${{ matrix.name }}" \
+            --out "artifact.bin"
+
+      - name: Software bill of materials
+        run: cargo cyclonedx --locked --format json --spec-version 1.6
+
+      - name: Advisory and licence policy
+        run: cargo run --locked --release -p aex-release-tool -- policy terraform --quiet
+
+      - name: Attest the build provenance
+        if: inputs.publish
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a  # v3.0.0
+        with:
+          subject-path: artifact.bin
+
+      - name: Publish
+        if: inputs.publish
+        run: |
+          set -euo pipefail
+          echo "Publication needs the artifact bucket, the ECR repositories and"
+          echo "the publish OIDC role. The cut-readiness review has not created"
+          echo "them, so this step refuses rather than pretending to publish."
+          exit 1
+
+      - name: Upload the packaged bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: artifact-${{ matrix.name }}
+          path: artifact.bin
+          if-no-files-found: error

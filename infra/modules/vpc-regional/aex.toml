@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Reachability is proven by the net.public_egress seam and by each deployable's own live suite inside the network."

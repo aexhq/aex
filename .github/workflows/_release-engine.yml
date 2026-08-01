@@ -1,0 +1,139 @@
+# The single release engine. Four operations, one lane policy.
+#
+# Nothing here builds. No step invokes a compiler, a bundler, a code generator
+# or a packager, and a policy test asserts that. The engine deploys bytes
+# somebody else already built, recorded and attested; if the bytes it needs do
+# not exist, that is a missing build, not something to produce here.
+#
+# `execute: apply` requires the `aex-<plane>` GitHub Environment. That
+# environment does not exist, so every apply fails at environment resolution.
+# That is the intended state until the cut-readiness review creates it.
+
+name: release-engine
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        type: string
+        required: true
+      manifest_digest:
+        type: string
+        required: true
+      binding_ref:
+        type: string
+        required: true
+      plane:
+        type: string
+        required: true
+      regions:
+        type: string
+        required: true
+      execute:
+        description: plan-only | apply
+        type: string
+        required: true
+      reason:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Unprivileged by construction. No cloud credential, no registry token, no
+  # environment. It reads digests, provenance, receipts and freshness, and says
+  # yes or no.
+  admit:
+    name: Admit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Check the manifest digest shape
+        run: |
+          set -euo pipefail
+          case "${{ inputs.manifest_digest }}" in
+            sha256:*) ;;
+            *) echo "a release names a manifest digest, never a branch or a tag"; exit 31 ;;
+          esac
+
+      - name: Admit
+        run: |
+          set -euo pipefail
+          echo "Admission needs the release object store that holds the manifest,"
+          echo "the envelopes and the receipts for ${{ inputs.manifest_digest }}."
+          echo "It does not exist yet, so admission refuses rather than assuming."
+          exit 40
+
+  plan:
+    name: Plan
+    needs: admit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Plan
+        run: |
+          set -euo pipefail
+          echo "operation=${{ inputs.operation }} plane=${{ inputs.plane }}"
+          echo "regions=${{ inputs.regions }} binding=${{ inputs.binding_ref }}"
+          echo "reason=${{ inputs.reason }}"
+          echo "The narrow plan role does not exist yet."
+          exit 44
+
+  approve:
+    name: Approve
+    needs: plan
+    if: inputs.execute == 'apply'
+    runs-on: ubuntu-latest
+    environment: aex-${{ inputs.plane }}
+    permissions:
+      contents: read
+    steps:
+      - name: Record the approval
+        run: echo "approved ${{ inputs.manifest_digest }} for ${{ inputs.plane }}"
+
+  deploy:
+    name: Deploy
+    needs: approve
+    if: inputs.execute == 'apply'
+    runs-on: ubuntu-latest
+    environment: aex-${{ inputs.plane }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Apply the saved plan
+        run: |
+          set -euo pipefail
+          echo "This step applies the exact binary plan the plan job saved."
+          echo "No compiler, bundler, generator or packager runs here."
+          exit 44
+
+  ledger:
+    name: Ledger
+    needs: deploy
+    if: always() && inputs.execute == 'apply'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Record the outcome
+        run: |
+          set -euo pipefail
+          echo "The deployment ledger is a backbone table with a monotonic fence."
+          echo "It does not exist yet."
+          exit 50

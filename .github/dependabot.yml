@@ -16,8 +16,10 @@ version: 2
 
 updates:
   # GitHub Actions used by .github/workflows/*.yml. Every `uses:` is pinned to
-  # a full commit SHA (enforced by scripts/validate/action-pins.test.ts),
-  # because a version tag is a mutable pointer owned by the action's author:
+  # a full commit SHA (enforced by `aex-release-tool policy workflows`, which
+  # cross-checks a line scan against a YAML parse so the scanner cannot
+  # under-report), because a version tag is a mutable pointer owned by the
+  # action's author:
   # compromising that account rewrites what our CI runs, including the job
   # holding `id-token: write`, which can then publish `@aexhq/sdk` with a valid
   # provenance attestation. Pinning closes that window; this entry is what
@@ -61,3 +63,35 @@ updates:
         patterns:
           - "*"
         dependency-type: development
+
+  # The Cargo workspace. Every direct version lives once in
+  # `[workspace.dependencies]`, so a bump is a single-line change to the root
+  # manifest and the lockfile.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # The AWS SDK crates move together and share a behaviour version. Bumping
+      # one alone produces a graph with two behaviour versions in it.
+      aws-sdk:
+        patterns:
+          - "aws-*"
+      # Test-only crates carry no production bytes.
+      dev-dependencies:
+        patterns:
+          - "*"
+        dependency-type: development
+
+  # Terraform providers pinned by `infra/**/.terraform.lock.hcl`. A provider
+  # major is what decides whether a module's resource arguments still exist, so
+  # the bump is a reviewed change rather than a `terraform init -upgrade`
+  # somebody ran locally.
+  - package-ecosystem: terraform
+    directory: /infra
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

@@ -1,0 +1,87 @@
+{
+  "schema": "aex.private-path-policy.v1",
+  "version": 1,
+  "categories": [
+    {
+      "id": "environment-root",
+      "globs": [
+        "composition/roots/**/*.tf",
+        "composition/roots/**/*.tfvars.json",
+        "composition/roots/**/.terraform.lock.hcl"
+      ],
+      "assertions": [
+        "terraform-instantiation-only",
+        "no-resource-blocks-except-backend-and-module"
+      ]
+    },
+    {
+      "id": "composition",
+      "globs": [
+        "composition/{dev,prd}/**/binding.json",
+        "composition/{dev,prd}/**/binding.*.json",
+        "composition/{dev,prd}/**/config.*.json"
+      ],
+      "assertions": ["matches-schema:environment-binding", "no-plaintext-secret"]
+    },
+    {
+      "id": "secret-reference",
+      "globs": [
+        "composition/**/secrets.*.json",
+        "**/*.sops.json",
+        "**/*.age"
+      ],
+      "assertions": ["reference-shape-only", "no-plaintext-secret"]
+    },
+    {
+      "id": "business-data",
+      "globs": ["business-data/**/*.{json,csv,toml}"],
+      "assertions": ["data-only", "no-executable-extension"]
+    },
+    {
+      "id": "operations-record",
+      "globs": [
+        "operations/{runbooks,incidents,decisions,records,reviews}/**/*.{md,json}"
+      ],
+      "assertions": ["no-plaintext-secret"]
+    },
+    {
+      "id": "private-contact",
+      "globs": ["operations/contacts/**", "operations/escalation/**"],
+      "assertions": ["no-plaintext-secret"]
+    }
+  ],
+  "deny": [
+    {
+      "id": "service-implementation",
+      "globs": ["**/*.rs", "**/*.ts", "**/*.tsx", "**/*.mjs", "**/*.py"]
+    },
+    {
+      "id": "database-migration",
+      "globs": ["**/*.sql"]
+    },
+    {
+      "id": "product-terraform-module",
+      "predicate": "tf-file-declaring-resource-outside-roots"
+    },
+    {
+      "id": "private-contract",
+      "globs": ["**/openapi/**", "**/schemas/**", "**/*.proto"]
+    },
+    {
+      "id": "correctness-test",
+      "globs": [
+        "**/tests/**",
+        "**/test/**",
+        "**/*.test.*",
+        "**/*_test.*",
+        "**/*.spec.*",
+        "**/*_spec.*",
+        "**/*.tftest.hcl"
+      ]
+    },
+    {
+      "id": "authorization-or-billing-rule",
+      "predicate": "declares-policy-or-rate-logic"
+    }
+  ]
+}
