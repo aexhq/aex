@@ -155,13 +155,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-hands-agent",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-hands-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
@@ -292,13 +285,6 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-runtime-control",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the hands stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",

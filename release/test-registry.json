@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 128,
+    "awaiting_owner": 126,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -736,14 +736,20 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "hostile_frames": "unit",
+          "journal_ordering": "unit",
+          "no_cloud_authority": "unit",
+          "no_guest_billing": "unit",
+          "output_bounds": "unit",
+          "start_identity": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-hands-control-aws": {
       "name": "aex-hands-control-aws",
@@ -1496,14 +1502,20 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "fence_algebra": "unit",
+          "idle_boundary": "unit",
+          "lifetime_margins": "unit",
+          "pressure_ranking": "unit",
+          "shape_table": "unit",
+          "usage_facts": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the hands stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-runtime-control-aws": {
       "name": "aex-runtime-control-aws",
