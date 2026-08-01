@@ -53,7 +53,7 @@ pub use cpu::{
     ActivationKey, ActivationMeter, ActivationScope, ActivationScoped, CpuJob,
     MAX_ATTRIBUTED_POLL_US,
 };
-pub use drain::{CancelToken, FactDrain, Pacer, SleepPacer};
+pub use drain::{CancelToken, FactDrain, Pacer};
 pub use egress::{BoundaryReceipt, EgressCounter, egress_from_receipt};
 pub use memory::{MemoryBudget, MemoryReport, MemoryReservation};
 pub use reconciler::{CpuIntervalReport, CpuReconciler};

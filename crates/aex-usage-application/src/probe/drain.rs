@@ -29,24 +29,14 @@ use super::sink::{BoundedFactSink, DrainError, DrainPolicy, DrainReport, Overflo
 
 /// How the drain waits between empty polls.
 ///
-/// One seam, one implementation, so a test scripts the window instead of
-/// sleeping through it and a drain property is exact rather than timing
-/// dependent.
+/// The port is declared here and implemented by whichever composition root owns
+/// the runtime, because this crate is pure and may not link one. A test scripts
+/// the window instead of sleeping through it, so a drain property is exact
+/// rather than timing dependent.
 #[async_trait]
 pub trait Pacer: std::fmt::Debug + Send + Sync {
     /// Waits for at most `window`.
     async fn pace(&self, window: Duration);
-}
-
-/// The production pacer.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SleepPacer;
-
-#[async_trait]
-impl Pacer for SleepPacer {
-    async fn pace(&self, window: Duration) {
-        tokio::time::sleep(window).await;
-    }
 }
 
 /// A cooperative stop signal.
@@ -216,7 +206,7 @@ impl FactDrain {
 
 #[cfg(test)]
 mod tests {
-    use super::{CancelToken, FactDrain, Pacer, SleepPacer};
+    use super::{CancelToken, FactDrain, Pacer};
     use crate::ports::{Admission, PortError, RecordFactPort};
     use crate::probe::sink::{DrainError, DrainPolicy, FactSink};
     use crate::probe::testing::draft_fixture;
@@ -413,10 +403,12 @@ mod tests {
     }
 
     #[test]
-    fn the_production_pacer_exists_and_is_the_only_real_seam() {
-        // A trait with one real implementation, like the other four OS seams.
-        let pacer: Arc<dyn Pacer> = Arc::new(SleepPacer);
-        assert_eq!(format!("{pacer:?}"), "SleepPacer");
+    fn the_pacer_is_a_port_the_composition_root_supplies() {
+        // The application crate is pure and may not link a runtime, so the
+        // waiting half is a port like the other four OS seams rather than an
+        // implementation this crate ships.
+        let pacer: Arc<dyn Pacer> = Arc::new(ImmediatePacer::default());
+        assert_eq!(format!("{pacer:?}"), "ImmediatePacer(0)");
     }
 
     #[test]

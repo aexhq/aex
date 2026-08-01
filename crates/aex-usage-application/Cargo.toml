@@ -29,7 +29,7 @@ live_suite = "application crate; its ports are exercised through its deployable'
 # The METER-02 probe library. Non-default on purpose: it drags `rustix`, cgroup
 # reading and pin projection in, and the three usage workers never probe.
 default = []
-probe = ["dep:bytes", "dep:http-body", "dep:pin-project-lite", "dep:rustix", "dep:tokio"]
+probe = ["dep:bytes", "dep:http-body", "dep:pin-project-lite", "dep:rustix"]
 
 [package.metadata.aex.targets]
 probe_properties = "unit"
@@ -47,7 +47,6 @@ bytes = { workspace = true, optional = true }
 http-body = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }
 rustix = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 futures.workspace = true

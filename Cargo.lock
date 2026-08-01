@@ -6789,6 +6789,10 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-usage-application",
+ "aex-usage-compute-aws",
+ "aex-usage-domain",
+ "serde_json",
  "thiserror",
 ]
 
@@ -6807,6 +6811,10 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-usage-application",
+ "aex-usage-domain",
+ "aex-usage-storage-aws",
+ "serde_json",
  "thiserror",
 ]
 
@@ -6816,6 +6824,10 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-usage-application",
+ "aex-usage-domain",
+ "aex-usage-transfer-aws",
+ "serde_json",
  "thiserror",
 ]
 

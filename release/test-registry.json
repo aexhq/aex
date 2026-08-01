@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 94,
+    "awaiting_owner": 87,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -4742,7 +4742,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -4819,7 +4819,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -4857,7 +4857,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
