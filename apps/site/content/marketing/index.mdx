@@ -6,8 +6,8 @@ description: Durable infrastructure for AI agents that think and act.
 # Durable infrastructure for agents that think and act
 
 A model turn is the thinking. Real code in a real machine is the acting. AEX
-gives a session one MicroVM and one durable journal, suspends the machine when
-the work stops, and resumes the same one when the work starts again.
+gives a session its own MicroVM and a durable journal of every step, suspends
+the machine when the work stops, and resumes the same one when it starts again.
 
 - [Read the documentation](/docs)
 - [See the capability surface](#capability-surface)
@@ -47,9 +47,9 @@ admission.
 ### Waiting is not billed as work
 
 A parked agent holds no execution resources, and a machine that has been truly
-quiet for 180 seconds suspends. Suspension stops the compute and memory meters
-outright. Only the bytes the snapshot retains keep costing anything, and they
-are billed as storage.
+quiet for the 180-second default suspends. Suspension stops the compute and
+memory meters outright. Only the bytes the snapshot retains keep costing
+anything, and they are billed as storage.
 
 ### Four meters, and model tokens are not one of them
 
@@ -62,9 +62,9 @@ pauses when the balance cannot fund the next admitted unit.
 
 ### A turn does not pay a cold start
 
-A warm regional runtime keeps sessions resident between turns and multiplexes
-provider waits, instead of starting a process per turn. The MicroVM launches
-lazily, so a session that only calls a model never starts one at all.
+A warm regional runtime serves turns without starting a process for each one,
+and multiplexes provider waits rather than blocking on them. The MicroVM
+launches lazily, so a session that only calls a model never starts one at all.
 
 ### The catalog is yours to extend
 
@@ -105,10 +105,11 @@ agent and all of its children share it.
 
 ### Suspend and resume
 
-After 180 seconds of proved quiescence the machine suspends and its filesystem
-is held as a snapshot; work continues on the same generation afterwards.
-Running and suspended time together are capped at eight hours per MicroVM by the
-provider, and the remaining lifetime is reported on session status.
+The default suspend target is 180 seconds of proved quiescence. The machine
+suspends, its filesystem is held as a snapshot, and work continues on the same
+generation afterwards. Running and suspended time together are capped at eight
+hours per MicroVM by the provider, and the remaining lifetime is reported on
+session status.
 
 ### Filesystem
 
@@ -142,7 +143,7 @@ durable progress.
 
 `todo_read`, `todo_write`, `request_approval` and `submit_result` are
 journal-backed control state, not hidden file writes. `wait` and
-`wait_subagents` — for `any` child or `all` of them — neither poll nor hold an
+`wait_subagents`, for `any` child or `all` of them, neither poll nor hold an
 activation: they record idempotent waiter edges, park the parent and release its
 execution resources until a child's terminal transaction wakes it.
 
