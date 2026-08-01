@@ -476,6 +476,10 @@ mod tests {
         )
         .expect("compiles");
         assert_eq!(plan.participants(), SWEEP_ORDER);
-        assert_eq!(plan.len(), 4);
+        assert_eq!(
+            plan.len(),
+            3,
+            "a transaction may not carry two operations on one item, so the              descriptor is fenced by the delete that already conditions on the mark"
+        );
     }
 }

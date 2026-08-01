@@ -798,17 +798,20 @@ dependencies = [
 name = "aex-registry-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "aex-workspace-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "proptest",
  "serde_json",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]
