@@ -1,35 +1,46 @@
-//! `aex-cli` command-line entry point.
+//! Thin executable shell over `aex_cli`.
 
+use std::io::{self, Write};
+use std::process::ExitCode;
+
+use aex_cli::{Cli, Command, command_registry, render_completions};
 use clap::Parser;
 
-/// the native public CLI over the generated `aex-wire` client.
-#[derive(Debug, Parser)]
-#[command(
-    name = "aex-cli",
-    version,
-    about = "the native public CLI over the generated `aex-wire` client"
-)]
-struct Cli {
-    /// Print the resolved invocation instead of executing it.
-    #[arg(long)]
-    dry_run: bool,
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            let _ = writeln!(io::stderr(), "error: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
-fn main() -> anyhow::Result<()> {
+fn run() -> Result<(), String> {
     let cli = Cli::parse();
-    anyhow::bail!(
-        "`aex-cli` has no implementation yet (dry_run = {})",
-        cli.dry_run
-    );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Cli;
-    use clap::CommandFactory;
-
-    #[test]
-    fn command_definition_is_valid() {
-        Cli::command().debug_assert();
+    if cli.dump_command_registry {
+        serde_json::to_writer(io::stdout(), &command_registry())
+            .map_err(|error| error.to_string())?;
+        writeln!(io::stdout()).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    match cli.command {
+        Some(Command::Completions { shell }) => {
+            let name = format!("{shell:?}").to_ascii_lowercase();
+            io::stdout()
+                .write_all(&render_completions(&name)?)
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        }
+        Some(Command::Version) => {
+            println!(
+                "aex {} target={} contract=fec7f531dec7",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::ARCH
+            );
+            Ok(())
+        }
+        Some(_) => Err("network command execution is not composed in this build".to_owned()),
+        None => Err("a command is required".to_owned()),
     }
 }

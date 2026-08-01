@@ -1,0 +1,44 @@
+{
+  "name": "@aexhq/dashboard",
+  "version": "0.50.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "aex": {
+    "owner": "clients",
+    "role": "web_app",
+    "artifact": "vercel_build_output",
+    "deployable": "dashboard",
+    "live_suite": "aex-live-dashboard",
+    "layers": ["unit", "smoke", "e2e", "user"],
+    "concerns": ["security", "compatibility"],
+    "seams": ["aws.iam.denial", "vercel.build_output.deploy"],
+    "security_tier": "public_edge",
+    "risk": ["iam", "untrusted_input"],
+    "scenarios": ["local.dashboard-no-db", "local.dashboard-route-allowlist"],
+    "targets": {
+      "security": "unit",
+      "deployed_smoke": "smoke",
+      "browser_authz": "e2e",
+      "browser_user": "user"
+    }
+  },
+  "scripts": {
+    "build": "node node_modules/next/dist/bin/next build",
+    "lint": "tsc --noEmit && bun test --isolate test",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test --isolate test"
+  },
+  "dependencies": {
+    "@aexhq/sdk": "workspace:*",
+    "next": "16.2.6",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.8.3"
+  }
+}

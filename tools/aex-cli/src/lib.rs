@@ -1,5 +1,17 @@
-//! `aex-cli` — the native public CLI over the generated `aex-wire` client.
-//!
-//! The owning implementation stream lands the behaviour here. The binary is a thin
-//! argument-parsing shell over this library so the logic stays testable without spawning a
-//! process.
+//! Native `aex` command-line client.
+
+/// Closed clap command tree.
+pub mod cli;
+/// Local profile and precedence policy.
+pub mod config;
+/// Atomic part-file download planning.
+pub mod download;
+/// Stable process exit classification.
+pub mod error;
+/// Terminal and machine output policy.
+pub mod output;
+/// Declarative command-to-route registry.
+pub mod registry;
+
+pub use cli::{Cli, Command, CompletionShell};
+pub use registry::{CommandRegistryEntry, command_registry, render_completions};

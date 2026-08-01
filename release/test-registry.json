@@ -8,17 +8,60 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 81,
+    "awaiting_owner": 79,
     "capacity_gates": 15,
-    "live_targets": 33,
-    "packages": 141,
+    "live_targets": 32,
+    "packages": 138,
     "seams_claimed": 32,
     "seams_declared": 34,
     "workloads": 0
   },
   "packages": {
-    "apps/docs": {
-      "name": "@aexhq/docs",
+    "apps/dashboard": {
+      "name": "@aexhq/dashboard",
+      "kind": "npm",
+      "meta": {
+        "owner": "clients",
+        "role": "web_app",
+        "artifact": "vercel_build_output",
+        "deployable": "dashboard",
+        "live_suite": "aex-live-dashboard",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e",
+          "user"
+        ],
+        "concerns": [
+          "security",
+          "compatibility"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "vercel.build_output.deploy"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [
+          "local.dashboard-no-db",
+          "local.dashboard-route-allowlist"
+        ],
+        "targets": {
+          "browser_authz": "e2e",
+          "browser_user": "user",
+          "deployed_smoke": "smoke",
+          "security": "unit"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "apps/site": {
+      "name": "@aexhq/site",
       "kind": "npm",
       "meta": {
         "owner": "clients",
@@ -43,14 +86,20 @@
         "risk": [
           "generated_code"
         ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the clients stream; the directory is renamed to apps/site by P-PACKAGES"
-        }
+        "scenarios": [
+          "local.site-determinism",
+          "local.site-references"
+        ],
+        "targets": {
+          "deployed_references": "e2e",
+          "deployed_smoke": "smoke",
+          "generation": "unit",
+          "static_user": "user"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "apps/user-tests": {
       "name": "@aexhq/user-tests",
@@ -72,15 +121,21 @@
         "risk": [
           "generated_code"
         ],
-        "scenarios": [],
-        "targets": {},
+        "scenarios": [
+          "packed.sdk-install-node",
+          "local.site-determinism",
+          "live.session-round-trip"
+        ],
+        "targets": {
+          "public_user": "user",
+          "registry": "unit"
+        },
         "not_applicable": {
-          "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion",
-          "targets": "awaiting the clients stream; the black-box journeys land with the regenerated SDK"
+          "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-application": {
       "name": "aex-brain-application",
@@ -671,15 +726,14 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {
-          "faults": "unit"
-        },
+        "targets": {},
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion",
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-finance-aurora": {
       "name": "aex-finance-aurora",
@@ -708,14 +762,13 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "integration": "integration"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-finance-domain": {
       "name": "aex-finance-domain",
@@ -736,15 +789,14 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {
-          "properties": "unit"
-        },
+        "targets": {},
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-hands-agent": {
       "name": "aex-hands-agent",
@@ -2034,15 +2086,14 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {
-          "properties": "unit"
-        },
+        "targets": {},
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
+          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-usage-storage-aws": {
       "name": "aex-usage-storage-aws",
@@ -2222,66 +2273,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "packages/cli": {
-      "name": "@aexhq/cli",
-      "kind": "npm",
-      "meta": {
-        "owner": "clients",
-        "role": "client",
-        "artifact": "npm_package",
-        "layers": [
-          "unit",
-          "user"
-        ],
-        "concerns": [
-          "contract",
-          "compatibility"
-        ],
-        "seams": [],
-        "security_tier": "public_edge",
-        "risk": [
-          "generated_code"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "live_suite": "replaced by the native tools/aex-cli; no deployed endpoint of its own",
-          "targets": "awaiting the clients stream; OD-08 replaces this package with tools/aex-cli"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "packages/contracts": {
-      "name": "@aexhq/contracts",
-      "kind": "npm",
-      "meta": {
-        "owner": "contracts",
-        "role": "client",
-        "artifact": "npm_package",
-        "layers": [
-          "unit",
-          "user"
-        ],
-        "concerns": [
-          "contract",
-          "compatibility"
-        ],
-        "seams": [],
-        "security_tier": "public_edge",
-        "risk": [
-          "generated_code"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "live_suite": "generated contract package; no deployed endpoint of its own",
-          "targets": "awaiting the contracts stream; OD-08 deletes this package in favour of the generated bundle"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
     "packages/sdk": {
       "name": "@aexhq/sdk",
       "kind": "npm",
@@ -2295,7 +2286,9 @@
         ],
         "concerns": [
           "contract",
-          "compatibility"
+          "compatibility",
+          "property",
+          "security"
         ],
         "seams": [
           "npm.registry.publish"
@@ -2304,15 +2297,22 @@
         "risk": [
           "generated_code"
         ],
-        "scenarios": [],
-        "targets": {},
+        "scenarios": [
+          "packed.sdk-install-node",
+          "packed.sdk-install-bun"
+        ],
+        "targets": {
+          "compatibility": "unit",
+          "conformance": "unit",
+          "packed_user": "user",
+          "security": "unit"
+        },
         "not_applicable": {
-          "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint of its own, and D-18's aex-live-sdk is outside the frozen member set",
-          "targets": "awaiting the clients stream; the SDK is regenerated over the new wire (OD-08)"
+          "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "runtimes/brain-mux": {
       "name": "brain-mux",
@@ -2579,15 +2579,13 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "services/finance-ingest": {
       "name": "finance-ingest",
@@ -2822,86 +2820,6 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": true
-    },
-    "services/stripe-command-edge": {
-      "name": "@aexhq/stripe-command-edge",
-      "kind": "npm",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "stripe-command-edge",
-        "live_suite": "aex-live-stripe-command-edge",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "secret",
-        "risk": [
-          "untrusted_input",
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "edge": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "services/stripe-webhook-edge": {
-      "name": "@aexhq/stripe-webhook-edge",
-      "kind": "npm",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "stripe-webhook-edge",
-        "live_suite": "aex-live-stripe-webhook-edge",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "untrusted_input",
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "edge": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
     },
     "tests/live/aex-live-brain-mux": {
       "name": "aex-live-brain-mux",
@@ -3171,6 +3089,7 @@
         "owner": "clients",
         "role": "live_companion",
         "artifact": "none",
+        "deployable": "dashboard",
         "layers": [
           "smoke",
           "e2e"
@@ -3189,14 +3108,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "deployable": "the dashboard application lands with the clients stream (P-DASHBOARD); this companion is written and unselected until it does",
-          "targets": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "e2e": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-finance-api": {
       "name": "aex-live-finance-api",
@@ -3905,13 +3824,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "e2e": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-stripe-command-edge": {
       "name": "aex-live-stripe-command-edge",
@@ -3920,7 +3840,6 @@
         "owner": "central-finance",
         "role": "live_companion",
         "artifact": "none",
-        "deployable": "stripe-command-edge",
         "layers": [
           "smoke",
           "e2e"
@@ -3931,7 +3850,6 @@
           "performance"
         ],
         "seams": [
-          "aws.iam.denial",
           "stripe.test_mode.webhook"
         ],
         "security_tier": "money",
@@ -3941,6 +3859,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
+          "deployable": "the TypeScript Stripe command edge lands with the central-finance stream (P-AUTH-EDGE)",
           "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
@@ -3954,7 +3873,6 @@
         "owner": "central-finance",
         "role": "live_companion",
         "artifact": "none",
-        "deployable": "stripe-webhook-edge",
         "layers": [
           "smoke",
           "e2e"
@@ -3965,7 +3883,6 @@
           "performance"
         ],
         "seams": [
-          "aws.iam.denial",
           "stripe.test_mode.webhook"
         ],
         "security_tier": "money",
@@ -3975,6 +3892,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
+          "deployable": "the TypeScript Stripe webhook edge lands with the central-finance stream (P-AUTH-EDGE)",
           "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
@@ -4201,14 +4119,17 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "cli_contract": "unit",
+          "config_exit_output": "unit",
+          "download": "unit"
+        },
         "not_applicable": {
-          "live_suite": "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own",
-          "targets": "awaiting the clients stream; the cases land with the tool's own implementation"
+          "live_suite": "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tools/aex-contract-gen": {
       "name": "aex-contract-gen",
@@ -4411,15 +4332,13 @@
           "sql"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "workers/content-lifecycle-worker": {
       "name": "content-lifecycle-worker",
@@ -4962,6 +4881,7 @@
     "aex-live-central-identity-api",
     "aex-live-central-schema-admin",
     "aex-live-content-lifecycle-worker",
+    "aex-live-dashboard",
     "aex-live-finance-api",
     "aex-live-finance-ingest",
     "aex-live-finance-reconcile",
@@ -4982,8 +4902,6 @@
     "aex-live-runtime-control-worker",
     "aex-live-session-operation-worker",
     "aex-live-site",
-    "aex-live-stripe-command-edge",
-    "aex-live-stripe-webhook-edge",
     "aex-live-usage-compute-worker",
     "aex-live-usage-receipt-dispatcher",
     "aex-live-usage-storage-worker",
@@ -5077,8 +4995,6 @@
       "aex-live-regional-stream",
       "aex-live-runtime-control-worker",
       "aex-live-session-operation-worker",
-      "aex-live-stripe-command-edge",
-      "aex-live-stripe-webhook-edge",
       "aex-live-usage-compute-worker",
       "aex-live-usage-receipt-dispatcher",
       "aex-live-usage-storage-worker",

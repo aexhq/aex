@@ -1,4 +1,0 @@
-{
-  "$comment": "Relative live-test durations for deterministic sharding. Unknown files use the median.",
-  "test/live/v1-session.user.test.ts": 120
-}

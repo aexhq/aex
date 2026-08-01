@@ -1,7 +1,7 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.46.5",
-  "description": "TypeScript SDK for autonomous agent sessions with managed Vercel AI Gateway model access.",
+  "version": "0.50.0",
+  "description": "Zero-dependency TypeScript SDK for the AEX v1 public API.",
   "aex": {
     "owner": "clients",
     "role": "client",
@@ -12,7 +12,9 @@
     ],
     "concerns": [
       "contract",
-      "compatibility"
+      "compatibility",
+      "property",
+      "security"
     ],
     "seams": [
       "npm.registry.publish"
@@ -21,10 +23,15 @@
     "risk": [
       "generated_code"
     ],
-    "scenarios": [],
+    "scenarios": ["packed.sdk-install-node", "packed.sdk-install-bun"],
+    "targets": {
+      "conformance": "unit",
+      "security": "unit",
+      "compatibility": "unit",
+      "packed_user": "user"
+    },
     "not_applicable": {
-      "targets": "awaiting the clients stream; the SDK is regenerated over the new wire (OD-08)",
-      "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint of its own, and D-18's aex-live-sdk is outside the frozen member set"
+      "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint"
     }
   },
   "license": "Apache-2.0",
@@ -46,7 +53,8 @@
     "url": "https://github.com/aexhq/aex/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -55,37 +63,31 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "README.md",
-    "docs",
     "LICENSE",
     "NOTICE"
   ],
   "scripts": {
-    "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
-    "build:unlocked": "bun ./scripts/clean-dist.mjs && bun run --cwd ../.. --filter @aexhq/contracts build && tsc -p tsconfig.build.json && bun ./scripts/inline-contracts.mjs",
-    "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
-    "lint:unlocked": "tsc --noEmit",
-    "typecheck": "bun ../../scripts/with-generated-dist-lock.mjs bun run typecheck:unlocked",
-    "typecheck:unlocked": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "bun run test:unit",
-    "test:unit": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:unit:unlocked",
-    "test:unit:unlocked": "mkdir -p .tmp && bun test --isolate --reporter=junit --reporter-outfile=.tmp/junit-test-unit.xml test/unit && node ../../scripts/cicd/assert-no-skips.mjs .tmp/junit-test-unit.xml",
+    "test:unit": "bun test --isolate test/unit",
     "test:coverage": "bun test --isolate --coverage test/unit",
     "prepack": "bun run build",
-    "pack:dry-run": "bun ../../scripts/with-generated-dist-lock.mjs bun pm pack --dry-run --ignore-scripts"
+    "pack:dry-run": "bun pm pack --dry-run --ignore-scripts"
   },
-  "dependencies": {
-    "zod": "4.4.3"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@aexhq/contracts": "workspace:*",
     "@types/bun": "1.3.14"
   },
   "engines": {
+    "node": ">=22.0.0",
     "bun": ">=1.3.14"
   }
 }
