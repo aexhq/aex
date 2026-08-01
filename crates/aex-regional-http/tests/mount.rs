@@ -123,7 +123,7 @@ fn concrete_path(id: RouteId) -> String {
 /// A single valid `UUIDv7` suffix. Path parameters are decoded by the generated
 /// dispatcher, not by the router, so one well-formed suffix exercises every
 /// template.
-static SAMPLE_SUFFIX: &str = "0e5t8mmr8g0e5t8mmr8g0e5t8m";
+static SAMPLE_SUFFIX: &str = "01jxt21q00e40r2081040g2081";
 
 fn sample_for(name: &str) -> &'static str {
     match name {

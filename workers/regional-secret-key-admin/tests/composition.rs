@@ -29,7 +29,7 @@ fn complete() -> BTreeMap<&'static str, String> {
         ),
         (
             config::ATTESTATION_OPERATION_ID,
-            "op_0e5t8mmr8g0e5t8mmr8g0e5t8m".to_owned(),
+            "op_01jxt21q00e40r2081040g2081".to_owned(),
         ),
     ])
 }

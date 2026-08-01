@@ -1,5 +1,9 @@
 //! Read-only regional stream admission, quotas, authoritative wakes and drain.
 
+pub mod config;
+
+pub use config::Config;
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 

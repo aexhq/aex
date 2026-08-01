@@ -1483,6 +1483,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "mount": "unit",
           "primitives": "unit"
         },
         "not_applicable": {
@@ -2746,6 +2747,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "performance_contract": "e2e",
           "secrets": "unit"
         },
@@ -2789,6 +2791,7 @@
         "scenarios": [],
         "targets": {
           "admission": "unit",
+          "composition": "unit",
           "performance_contract": "e2e"
         },
         "not_applicable": {}
@@ -2828,6 +2831,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "performance_contract": "e2e",
           "streaming": "unit"
         },
@@ -4470,6 +4474,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "lifecycle": "unit",
           "performance_contract": "e2e"
         },
@@ -4734,6 +4739,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "performance_contract": "e2e",
           "rotation": "unit"
         },
@@ -4813,6 +4819,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "continuations": "unit",
           "performance_contract": "e2e"
         },

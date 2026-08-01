@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 streaming = "unit"
+composition = "unit"
 performance_contract = "e2e"
 
 [[bin]]
@@ -34,6 +35,11 @@ name = "regional-stream"
 path = "src/main.rs"
 
 [dependencies]
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-s3.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["net"] }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
@@ -43,6 +49,10 @@ thiserror.workspace = true
 [[test]]
 name = "streaming"
 path = "tests/streaming.rs"
+
+[[test]]
+name = "composition"
+path = "tests/composition.rs"
 
 [[test]]
 name = "performance_contract"

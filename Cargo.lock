@@ -5568,7 +5568,12 @@ dependencies = [
  "aex-regional-http",
  "aex-telemetry-schema",
  "aex-wire",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "axum",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

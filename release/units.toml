@@ -275,6 +275,15 @@ required_receipts = ["unit", "contract", "conformance", "lint", "deny", "sbom", 
 alarm_spec = "regional-session-api"
 live_suite = "aex-live-regional-session-api"
 
+# The finite regional API. 61 generated routes, one DynamoDB transaction per
+# mutation; memory is sized for the transaction compiler and the JSON codec, not
+# for concurrency, and the reserved concurrency keeps a session burst from
+# starving the secret and OTLP roles that share the account's pool.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 29
+reserved_concurrency = 200
+
 [[unit]]
 id = "regional-secret-api"
 kind = "rust-lambda"
@@ -292,6 +301,13 @@ ready_path = "/internal/readyz"
 required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-secret-api"
 live_suite = "aex-live-regional-secret-api"
+
+# Isolated reserved concurrency and memory: the only deployable that holds
+# plaintext must not share a burst pool with anything else.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 29
+reserved_concurrency = 40
 
 [[unit]]
 id = "regional-observation-api"
@@ -375,6 +391,13 @@ required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vul
 alarm_spec = "session-operation-worker"
 live_suite = "aex-live-session-operation-worker"
 
+# One bounded step per invocation plus the 60-second claim lease, so the timeout
+# is the step deadline with headroom rather than a whole operation.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 120
+reserved_concurrency = 50
+
 [[unit]]
 id = "runtime-control-worker"
 kind = "rust-lambda"
@@ -407,6 +430,14 @@ required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vul
 alarm_spec = "content-lifecycle-worker"
 live_suite = "aex-live-content-lifecycle-worker"
 
+# The scheduled roles page; the delete role handles one key per step. The
+# timeout covers a mark or sweep page, and reserved concurrency bounds how much
+# of the content authority the sweep can occupy at once.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 300
+reserved_concurrency = 20
+
 [[unit]]
 id = "regional-secret-key-admin"
 kind = "rust-oci-task"
@@ -421,6 +452,15 @@ config_schema_version = 1
 required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-secret-key-admin"
 live_suite = "aex-live-regional-secret-key-admin"
+
+# A one-shot task, not a service: no port, and the stop timeout only has to
+# cover the conditional rotation it is in the middle of.
+[unit.fargate]
+cpu = 512
+memory_mb = 1024
+desired_count = 1
+stop_timeout_s = 60
+port = 0
 
 [[unit]]
 id = "observation-reconciler"
