@@ -4,44 +4,86 @@
 //! Provider states are passed through verbatim with no normalization and no
 //! unknown-state fallback: an unmodelled string is a hard error, never guessed.
 
+use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 
+use aex_hands_protocol::lifecycle::ProviderRequestId;
+use aex_hands_protocol::rpc::Fence;
+use aex_wire::ids::GenerationId;
+use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::clock::{millis_between, plus_millis};
 use crate::generation::GenerationState;
-use crate::wire_pending::{
-    Fence, GenerationId, LifecycleIntentId, MicrovmId, ProviderQuotaId, ProviderRequestId,
-    Timestamp,
-};
 
 /// Provider-hard maximum retained compute lifetime, across running *and*
 /// suspended time.
 pub const PROVIDER_LIFETIME_MS: u64 = 28_800_000;
+
 /// At `expires_at - this`, stop admitting new operations.
 pub const LIFETIME_DRAIN_MARGIN_MS: u64 = 300_000;
+
 /// At `expires_at - this`, terminate and close receipts cleanly.
 pub const LIFETIME_TERMINATE_MARGIN_MS: u64 = 60_000;
+
 /// Attempts before an unresolved lifecycle intent is quarantined.
 pub const RECONCILE_ATTEMPTS: u32 = 8;
-/// How long an untracked provider MicroVM may live before the orphan sweep ends it.
+
+/// How long an untracked provider `MicroVM` may live before the orphan sweep ends it.
 pub const ORPHAN_GRACE_MS: u64 = 600_000;
 
-/// A verbatim provider MicroVM state.
+/// The provider's identifier for one `MicroVM`.
+///
+/// Provider-supplied and never normalized: AEX reconciles by exact identity, and
+/// a "helpfully" rewritten id reconciles against the wrong machine.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MicrovmId(pub String);
+
+impl fmt::Display for MicrovmId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// The provider quota a capacity failure named.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProviderQuotaId(pub String);
+
+impl fmt::Display for ProviderQuotaId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// One recorded lifecycle intent.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct LifecycleIntentId(pub String);
+
+impl fmt::Display for LifecycleIntentId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// A verbatim provider `MicroVM` state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProviderState {
-    /// The MicroVM is starting.
+    /// The `MicroVM` is starting.
     Pending,
-    /// The MicroVM is running.
+    /// The `MicroVM` is running.
     Running,
-    /// The MicroVM is snapshotted and stopped.
+    /// The `MicroVM` is snapshotted and stopped.
     Suspended,
-    /// The MicroVM is taking a snapshot.
+    /// The `MicroVM` is taking a snapshot.
     Suspending,
-    /// The MicroVM is gone.
+    /// The `MicroVM` is gone.
     Terminated,
-    /// The MicroVM is being torn down.
+    /// The `MicroVM` is being torn down.
     Terminating,
 }
 
@@ -56,6 +98,16 @@ pub struct UnmodelledProviderState {
 }
 
 impl ProviderState {
+    /// Every modelled provider state.
+    pub const ALL: [Self; 6] = [
+        Self::Pending,
+        Self::Running,
+        Self::Suspended,
+        Self::Suspending,
+        Self::Terminated,
+        Self::Terminating,
+    ];
+
     /// The provider's own spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -68,16 +120,6 @@ impl ProviderState {
             Self::Terminating => "TERMINATING",
         }
     }
-
-    /// Every modelled provider state.
-    pub const ALL: [Self; 6] = [
-        Self::Pending,
-        Self::Running,
-        Self::Suspended,
-        Self::Suspending,
-        Self::Terminated,
-        Self::Terminating,
-    ];
 
     /// The AEX generation state this provider state maps onto.
     ///
@@ -120,9 +162,10 @@ impl FromStr for ProviderState {
 
 /// A lifecycle action AEX asks the provider to perform.
 ///
-/// Named `LifecycleAction`, not `LifecycleIntent`: [`LifecycleIntent`] is the
-/// durable *record*, and two types of that name in one call graph is a review
-/// hazard (plan 10 section 3.7 item 4).
+/// Named `LifecycleAction`, not `LifecycleIntent`: the contract's
+/// `aex_hands_protocol::lifecycle::LifecycleIntent` already names the transported
+/// intent union, and [`IntentRecord`] is the durable record. Three same-named
+/// types in one call graph is a review hazard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleAction {
@@ -137,6 +180,9 @@ pub enum LifecycleAction {
 }
 
 impl LifecycleAction {
+    /// Every modelled action.
+    pub const ALL: [Self; 4] = [Self::Launch, Self::Suspend, Self::Resume, Self::Terminate];
+
     /// The receipt-identity component this action contributes.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -146,6 +192,46 @@ impl LifecycleAction {
             Self::Resume => "resume",
             Self::Terminate => "terminate",
         }
+    }
+}
+
+/// Which transient failure class was observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransientClass {
+    /// `InternalServerException`.
+    InternalServer,
+    /// `ServiceUnavailableException`.
+    ServiceUnavailable,
+    /// A 5xx status with no modelled exception.
+    ServerStatus,
+    /// A connection-level failure with `$fault = server`.
+    ServerFault,
+}
+
+/// Provider detail carried into diagnostics with every value elided.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RedactedDetail(Box<str>);
+
+impl RedactedDetail {
+    /// Wraps a provider message that has already been proven free of customer and
+    /// credential material.
+    #[must_use]
+    pub fn new(text: impl Into<Box<str>>) -> Self {
+        Self(text.into())
+    }
+
+    /// The redacted text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RedactedDetail {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
     }
 }
 
@@ -193,39 +279,6 @@ pub enum ProviderCall {
         /// The provider's error code.
         code: Box<str>,
     },
-}
-
-/// Which transient failure class was observed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TransientClass {
-    /// `InternalServerException`.
-    InternalServer,
-    /// `ServiceUnavailableException`.
-    ServiceUnavailable,
-    /// A 5xx status with no modelled exception.
-    ServerStatus,
-    /// A connection-level failure with `$fault = server`.
-    ServerFault,
-}
-
-/// Provider detail carried into diagnostics with every value elided.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RedactedDetail(Box<str>);
-
-impl RedactedDetail {
-    /// Wraps a provider message that has already been proven free of customer and
-    /// credential material.
-    #[must_use]
-    pub fn new(text: impl Into<Box<str>>) -> Self {
-        Self(text.into())
-    }
-
-    /// The redacted text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 /// The retry policy for one provider outcome.
@@ -313,6 +366,7 @@ pub enum LifetimeVerdict {
 
 /// The eight-hour lifetime, actively enforced rather than passively observed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Lifetime {
     /// When the provider started counting.
     pub launched_at: Timestamp,
@@ -322,13 +376,13 @@ impl Lifetime {
     /// When the provider hard-stops this generation.
     #[must_use]
     pub fn expires_at(self) -> Timestamp {
-        self.launched_at.saturating_add_millis(PROVIDER_LIFETIME_MS)
+        plus_millis(self.launched_at, PROVIDER_LIFETIME_MS)
     }
 
     /// Milliseconds of provider lifetime left at `now`.
     #[must_use]
     pub fn remaining_ms(self, now: Timestamp) -> u64 {
-        self.expires_at().saturating_millis_since(now)
+        millis_between(now, self.expires_at())
     }
 
     /// The drain/terminate decision at `now`.
@@ -370,15 +424,30 @@ pub struct ResumeRefused {
     pub remaining_ms: u64,
 }
 
+/// Where a lifecycle intent stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntentState {
+    /// Written, call dispatched or about to be. Blocks any second effect.
+    Dispatched,
+    /// The provider outcome was ambiguous; reconciliation owns it.
+    Unknown,
+    /// Settled with a receipt.
+    Settled,
+    /// Exhausted reconciliation; an operator record and an alarm exist.
+    Quarantined,
+}
+
 /// The durable record written **before** a lifecycle call, in the same conditional
 /// write that takes the fence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LifecycleIntent {
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct IntentRecord {
     /// Identity of this intent.
     pub intent_id: LifecycleIntentId,
     /// The generation it acts on.
     pub generation: GenerationId,
-    /// The provider MicroVM, absent for a launch that has not produced one yet.
+    /// The provider `MicroVM`, absent for a launch that has not produced one yet.
     pub microvm: Option<MicrovmId>,
     /// What is being attempted.
     pub action: LifecycleAction,
@@ -394,41 +463,15 @@ pub struct LifecycleIntent {
     pub dispatched_at: Timestamp,
 }
 
-/// Where a lifecycle intent stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IntentState {
-    /// Written, call dispatched or about to be. Blocks any second effect.
-    Dispatched,
-    /// The provider outcome was ambiguous; reconciliation owns it.
-    Unknown,
-    /// Settled with a receipt.
-    Settled,
-    /// Exhausted reconciliation; an operator record and an alarm exist.
-    Quarantined,
-}
-
-/// The settled outcome of a lifecycle intent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleOutcome {
-    /// The effect happened.
-    Succeeded,
-    /// The effect provably did not happen.
-    Failed,
-    /// Reconciliation could not decide.
-    Unknown,
-}
-
 /// What reconciliation should do next for an ambiguous intent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReconcileStep {
-    /// Probe the provider by exact MicroVM identity.
+    /// Probe the provider by exact `MicroVM` identity.
     Probe {
-        /// The MicroVM to probe.
+        /// The `MicroVM` to probe.
         microvm: MicrovmId,
     },
-    /// The launch never produced a MicroVM id, so re-issue the identical
+    /// The launch never produced a `MicroVM` id, so re-issue the identical
     /// `RunMicrovm` with the same client token. That is the only idempotent path
     /// available and it also covers the pre-`vmId` window.
     ReissueLaunch {
@@ -443,7 +486,7 @@ pub enum ReconcileStep {
     },
 }
 
-impl LifecycleIntent {
+impl IntentRecord {
     /// The receipt identity for a settled intent.
     ///
     /// A missing provider request id is a hard error rather than an invented
@@ -452,7 +495,7 @@ impl LifecycleIntent {
     ///
     /// # Errors
     ///
-    /// Returns [`MissingProviderEvidence`] when either the MicroVM id or the
+    /// Returns [`MissingProviderEvidence`] when either the `MicroVM` id or the
     /// provider request id is absent.
     pub fn receipt_id(&self) -> Result<String, MissingProviderEvidence> {
         let microvm = self
@@ -464,8 +507,9 @@ impl LifecycleIntent {
             .as_ref()
             .ok_or(MissingProviderEvidence::RequestId)?;
         Ok(format!(
-            "lambda-microvm:{microvm}:{}:{request}",
-            self.action.as_str()
+            "lambda-microvm:{microvm}:{}:{}",
+            self.action.as_str(),
+            request.0
         ))
     }
 
@@ -499,7 +543,7 @@ impl LifecycleIntent {
 /// Provider evidence AEX refuses to invent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MissingProviderEvidence {
-    /// No MicroVM id.
+    /// No `MicroVM` id.
     #[error("the intent carries no MicroVM id; a receipt identity is never invented")]
     Microvm,
     /// No provider request id.
@@ -510,7 +554,7 @@ pub enum MissingProviderEvidence {
 /// The deterministic launch replay identity.
 ///
 /// Derived from the generation alone — not from an agent, session or epoch — so a
-/// repeated `RunMicrovm` returns the same MicroVM and a lost response, a mux crash
+/// repeated `RunMicrovm` returns the same `MicroVM` and a lost response, a mux crash
 /// between dispatch and commit and a cross-process race all converge on one VM.
 #[must_use]
 pub fn client_token(generation: GenerationId) -> String {
@@ -530,29 +574,34 @@ pub fn snapshot_lifecycle_id(microvm: &MicrovmId, ordinal: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        IntentState, LIFETIME_DRAIN_MARGIN_MS, LIFETIME_TERMINATE_MARGIN_MS, LifecycleAction,
-        LifecycleIntent, Lifetime, LifetimeVerdict, MissingProviderEvidence, PROVIDER_LIFETIME_MS,
-        ProviderCall, ProviderState, RECONCILE_ATTEMPTS, ReconcileStep, RedactedDetail,
-        ResumeRefused, RetryPolicy, TransientClass, client_token, snapshot_lifecycle_id,
+        IntentRecord, IntentState, LIFETIME_DRAIN_MARGIN_MS, LIFETIME_TERMINATE_MARGIN_MS,
+        LifecycleAction, LifecycleIntentId, Lifetime, LifetimeVerdict, MicrovmId,
+        MissingProviderEvidence, PROVIDER_LIFETIME_MS, ProviderCall, ProviderQuotaId,
+        ProviderState, RECONCILE_ATTEMPTS, ReconcileStep, RedactedDetail, ResumeRefused,
+        RetryPolicy, TransientClass, client_token, snapshot_lifecycle_id,
     };
+    use crate::clock::{minus_millis, plus_millis};
     use crate::generation::GenerationState;
-    use crate::wire_pending::{
-        Fence, GenerationId, LifecycleIntentId, MicrovmId, ProviderQuotaId, ProviderRequestId,
-        Timestamp,
-    };
+    use aex_hands_protocol::lifecycle::ProviderRequestId;
+    use aex_hands_protocol::rpc::Fence;
+    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+    use aex_wire::types::Timestamp;
     use core::time::Duration;
-    use uuid::Uuid;
 
     const LAUNCHED_AT: i64 = 10_000_000;
 
     fn lifetime() -> Lifetime {
         Lifetime {
-            launched_at: Timestamp::from_millis(LAUNCHED_AT),
+            launched_at: Timestamp::from_unix_millis(LAUNCHED_AT).expect("a bounded instant"),
         }
     }
 
     fn at(remaining_ms: u64) -> Timestamp {
-        lifetime().expires_at().saturating_sub_millis(remaining_ms)
+        minus_millis(lifetime().expires_at(), remaining_ms)
+    }
+
+    fn generation() -> GenerationId {
+        GenerationId::from_uuid7(Uuid7::compose(6, [6; 10]))
     }
 
     #[test]
@@ -597,7 +646,7 @@ mod tests {
     #[test]
     fn capacity_never_retries_in_adapter() {
         let capacity = ProviderCall::Capacity {
-            quota: ProviderQuotaId::new("microvm-memory-gib"),
+            quota: ProviderQuotaId("microvm-memory-gib".to_owned()),
         };
         assert_eq!(
             capacity.retry_policy(),
@@ -668,7 +717,7 @@ mod tests {
     fn the_lifetime_margins_are_exact() {
         assert_eq!(
             lifetime().expires_at(),
-            Timestamp::from_millis(LAUNCHED_AT + 28_800_000)
+            Timestamp::from_unix_millis(LAUNCHED_AT + 28_800_000).expect("a bounded instant")
         );
         let cases = [
             (PROVIDER_LIFETIME_MS, false, false),
@@ -699,7 +748,7 @@ mod tests {
 
     #[test]
     fn remaining_lifetime_floors_at_zero_after_expiry() {
-        let past_expiry = lifetime().expires_at().saturating_add_millis(1_000);
+        let past_expiry = plus_millis(lifetime().expires_at(), 1_000);
         assert_eq!(lifetime().remaining_ms(past_expiry), 0);
         assert_eq!(
             lifetime().verdict(past_expiry),
@@ -725,17 +774,17 @@ mod tests {
         );
     }
 
-    fn intent(state: IntentState, microvm: Option<&str>, attempts: u32) -> LifecycleIntent {
-        LifecycleIntent {
-            intent_id: LifecycleIntentId::from_uuid(Uuid::from_bytes([5; 16])),
-            generation: GenerationId::from_bytes([6; 16]),
-            microvm: microvm.map(MicrovmId::new),
+    fn intent(state: IntentState, microvm: Option<&str>, attempts: u32) -> IntentRecord {
+        IntentRecord {
+            intent_id: LifecycleIntentId("lci_5".to_owned()),
+            generation: generation(),
+            microvm: microvm.map(|id| MicrovmId(id.to_owned())),
             action: LifecycleAction::Suspend,
-            fence: Fence::new(2),
+            fence: Fence(2),
             state,
-            provider_request_id: Some(ProviderRequestId::new("req-123")),
+            provider_request_id: Some(ProviderRequestId("req-123".to_owned())),
             attempts,
-            dispatched_at: Timestamp::from_millis(1),
+            dispatched_at: Timestamp::from_unix_millis(1).expect("a bounded instant"),
         }
     }
 
@@ -749,11 +798,11 @@ mod tests {
 
     #[test]
     fn reconciliation_probes_by_identity_reissues_before_a_vm_id_and_quarantines_after_eight() {
-        let token = client_token(GenerationId::from_bytes([6; 16]));
+        let token = client_token(generation());
         assert_eq!(
             intent(IntentState::Unknown, Some("mvm-1"), 0).next_reconcile_step(&token),
             ReconcileStep::Probe {
-                microvm: MicrovmId::new("mvm-1")
+                microvm: MicrovmId("mvm-1".to_owned())
             }
         );
         assert_eq!(
@@ -804,22 +853,29 @@ mod tests {
 
     #[test]
     fn the_replay_identity_is_derived_from_the_generation_alone() {
-        let generation = GenerationId::from_uuid(
-            Uuid::parse_str("019823d5-0000-7000-8000-000000000001").expect("a valid uuid"),
-        );
+        let generation = generation();
         let token = client_token(generation);
-        assert_eq!(token, "aexgen-019823d5-0000-7000-8000-000000000001");
-        assert_eq!(token.len(), 43);
+        assert_eq!(token, format!("aexgen-{generation}"));
+        assert!(token.starts_with("aexgen-gen_"));
+        assert_eq!(
+            token.len(),
+            37,
+            "`aexgen-` plus the 30-character generation id spelling"
+        );
         assert_eq!(
             token,
             client_token(generation),
             "the token is deterministic, so a replay is safe"
         );
+        // A different generation is a different token, so replay cannot collapse
+        // two generations onto one MicroVM.
+        let other = GenerationId::from_uuid7(Uuid7::compose(7, [7; 10]));
+        assert_ne!(client_token(other), token);
     }
 
     #[test]
     fn the_snapshot_identity_is_an_aex_construct_and_names_no_aws_snapshot() {
-        let id = snapshot_lifecycle_id(&MicrovmId::new("mvm-7"), 0);
+        let id = snapshot_lifecycle_id(&MicrovmId("mvm-7".to_owned()), 0);
         assert_eq!(id, "snapshot-lifecycle:mvm-7:0");
         assert!(
             id.starts_with("snapshot-lifecycle:"),
@@ -830,7 +886,7 @@ mod tests {
             "an AWS snapshot id shape must never appear here"
         );
         assert_eq!(
-            snapshot_lifecycle_id(&MicrovmId::new("mvm-7"), 3),
+            snapshot_lifecycle_id(&MicrovmId("mvm-7".to_owned()), 3),
             "snapshot-lifecycle:mvm-7:3"
         );
     }

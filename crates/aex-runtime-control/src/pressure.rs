@@ -6,19 +6,22 @@
 //! true-idle generations in rank order until utilization is below the low-water
 //! mark. A running or keepalive-leased generation is never terminated for pressure.
 
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::generation::GenerationState;
 use crate::idle::TRUE_IDLE_THRESHOLD_MS;
-use crate::wire_pending::{GenerationId, Timestamp};
 
-/// Utilization at which pressure release starts.
+/// Utilization, in per-mille, at which pressure release starts.
 pub const PRESSURE_HIGH_WATER: u32 = 850;
-/// Utilization at which pressure release stops.
+
+/// Utilization, in per-mille, at which pressure release stops.
 pub const PRESSURE_LOW_WATER: u32 = 750;
 
 /// One candidate for pressure release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PressureCandidate {
     /// The generation.
     pub generation: GenerationId,
@@ -48,12 +51,12 @@ impl PressureCandidate {
     /// `(idle_ms desc, snapshot_bytes desc, session_last_active asc)`, with the
     /// generation id as the final tie-break so the order is total rather than
     /// merely deterministic-per-run.
-    fn rank_key(&self) -> (core::cmp::Reverse<u64>, core::cmp::Reverse<u64>, i64, uuid::Uuid) {
+    fn rank_key(&self) -> (core::cmp::Reverse<u64>, core::cmp::Reverse<u64>, i64, Uuid7) {
         (
             core::cmp::Reverse(self.idle_ms),
             core::cmp::Reverse(self.snapshot_bytes),
-            self.session_last_active.millis(),
-            self.generation.uuid(),
+            self.session_last_active.unix_millis(),
+            self.generation.uuid7(),
         )
     }
 }
@@ -110,6 +113,7 @@ pub fn plan_release(
     }
 }
 
+/// Utilization in per-mille, reporting a full pool rather than dividing by zero.
 fn per_mille(used: u64, pool: u64) -> u32 {
     if pool == 0 {
         return 1_000;
@@ -122,7 +126,12 @@ fn per_mille(used: u64, pool: u64) -> u32 {
 mod tests {
     use super::{PRESSURE_HIGH_WATER, PressureCandidate, plan_release};
     use crate::generation::GenerationState;
-    use crate::wire_pending::{GenerationId, Timestamp};
+    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+    use aex_wire::types::Timestamp;
+
+    fn generation(tag: u8) -> GenerationId {
+        GenerationId::from_uuid7(Uuid7::compose(u64::from(tag), [tag; 10]))
+    }
 
     fn candidate(
         tag: u8,
@@ -133,11 +142,12 @@ mod tests {
         keepalive_held: bool,
     ) -> PressureCandidate {
         PressureCandidate {
-            generation: GenerationId::from_bytes([tag; 16]),
+            generation: generation(tag),
             state,
             idle_ms,
             snapshot_bytes,
-            session_last_active: Timestamp::from_millis(last_active),
+            session_last_active: Timestamp::from_unix_millis(last_active)
+                .expect("a bounded instant"),
             keepalive_held,
         }
     }
@@ -195,12 +205,7 @@ mod tests {
         let plan = plan_release(&candidates, 10_000, 10_000);
         assert_eq!(
             plan.terminate,
-            vec![
-                GenerationId::from_bytes([4; 16]),
-                GenerationId::from_bytes([3; 16]),
-                GenerationId::from_bytes([2; 16]),
-                GenerationId::from_bytes([1; 16]),
-            ]
+            vec![generation(4), generation(3), generation(2), generation(1),]
         );
     }
 
@@ -218,11 +223,8 @@ mod tests {
         assert_eq!(first, second, "ranking must not depend on input order");
         assert_eq!(
             first,
-            vec![
-                GenerationId::from_bytes([1; 16]),
-                GenerationId::from_bytes([5; 16]),
-                GenerationId::from_bytes([9; 16]),
-            ]
+            vec![generation(1), generation(5), generation(9)],
+            "the generation id is the final tie-break"
         );
     }
 
@@ -236,13 +238,7 @@ mod tests {
         ];
         // 860/1000 used. Releasing 100 -> 760 (still >= 750), releasing 200 -> 660.
         let plan = plan_release(&candidates, 860, 1_000);
-        assert_eq!(
-            plan.terminate,
-            vec![
-                GenerationId::from_bytes([1; 16]),
-                GenerationId::from_bytes([2; 16])
-            ]
-        );
+        assert_eq!(plan.terminate, vec![generation(1), generation(2)]);
         assert_eq!(plan.released_bytes, 200);
         assert_eq!(plan.projected_utilization, 660);
     }

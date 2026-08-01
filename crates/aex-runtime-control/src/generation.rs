@@ -6,48 +6,85 @@
 //! **different** generation; a model, tool or catalog release never alters a
 //! running one.
 
+use aex_hands_protocol::lifecycle::KeepaliveLease;
+use aex_hands_protocol::operation::GuestRoot;
+use aex_hands_protocol::rpc::Fence;
+use aex_internal_contracts::SchemaVersion;
+use aex_wire::ids::{
+    ContentHash, GenerationId, OrganizationId, PrefixedId as _, SessionId, WorkspaceId,
+};
+use aex_wire::types::{ComputeSize, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::idle::KeepaliveLease;
-use crate::shape::ComputeSize;
-use crate::wire_pending::{
-    ContentHash, Fence, GenerationId, ImageIdentifier, ImageVersion, LimitsRevision,
-    OrganizationId, Revision, SchemaVersion, SessionId, Timestamp, WorkspaceId,
-};
+use crate::shape::ShapeCapacity as _;
 
 /// The guest filesystem root every structured tool is confined to.
 pub const GUEST_ROOT: &str = "/workspace";
 
-/// The guest root, as a value so it can be carried in the run-hook payload.
+/// The canonical guest root value.
+#[must_use]
+pub fn guest_root() -> GuestRoot {
+    GuestRoot(GUEST_ROOT.to_owned())
+}
+
+/// Whether a root is the one and only guest root.
+///
+/// A generation whose root is anything else is not a Hands generation: every
+/// structured tool's containment check, every persist manifest and every
+/// materialize plan is expressed relative to `/workspace`.
+#[must_use]
+pub fn is_canonical_root(root: &GuestRoot) -> bool {
+    root.0 == GUEST_ROOT
+}
+
+/// The next fence, saturating so a fence can never wrap back into the past.
+#[must_use]
+pub const fn next_fence(fence: Fence) -> Fence {
+    Fence(fence.0.saturating_add(1))
+}
+
+/// An optimistic-concurrency revision on the generation head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct GuestRoot;
+#[serde(transparent)]
+pub struct Revision(u64);
 
-impl GuestRoot {
-    /// The root path text.
+impl Revision {
+    /// The revision a freshly written head starts at.
+    pub const ZERO: Self = Self(0);
+
+    /// A revision at `value`.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        GUEST_ROOT
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// The raw revision value.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    /// The next revision, saturating.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
-impl From<GuestRoot> for String {
-    fn from(_: GuestRoot) -> Self {
-        GUEST_ROOT.to_owned()
-    }
-}
+/// A published `MicroVM` image identifier.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ImageIdentifier(pub String);
 
-impl TryFrom<String> for GuestRoot {
-    type Error = String;
+/// A published `MicroVM` image version.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ImageVersion(pub String);
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value == GUEST_ROOT {
-            Ok(Self)
-        } else {
-            Err(format!("the guest root is `{GUEST_ROOT}`, not `{value}`"))
-        }
-    }
-}
+/// The revision of the resolved H-BOUNDARY effective limits policy a generation pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct LimitsRevision(pub u64);
 
 /// An optional capability an image variant carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -59,6 +96,7 @@ pub enum ImageCapability {
 
 /// The exact image a generation is pinned to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ImagePin {
     /// Published image identifier.
     pub identifier: ImageIdentifier,
@@ -90,6 +128,7 @@ pub enum NetworkPolicy {
 
 /// One immutable Hands generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HandsGeneration {
     /// Allocated once at session create, time-ordered.
     pub generation: GenerationId,
@@ -130,7 +169,7 @@ pub enum TransportMode {
 impl TransportMode {
     /// The pool size this mode uses for `size`.
     #[must_use]
-    pub const fn pool_size(self, size: ComputeSize) -> u32 {
+    pub fn pool_size(self, size: ComputeSize) -> u32 {
         match self {
             Self::Multiplexed => 1,
             Self::PerRequest => size.per_request_pool_size(),
@@ -139,7 +178,7 @@ impl TransportMode {
 
     /// The in-flight request ceiling this mode allows for `size`.
     #[must_use]
-    pub const fn max_in_flight(self, size: ComputeSize) -> u32 {
+    pub fn max_in_flight(self, size: ComputeSize) -> u32 {
         match self {
             Self::Multiplexed => size.max_concurrent_operations(),
             Self::PerRequest => size.per_request_pool_size(),
@@ -169,7 +208,7 @@ pub enum GenerationState {
     Terminating,
     /// Absorbing. The generation is gone and every receipt is closed.
     Terminated,
-    /// Absorbing. Provider `NotFound`, `TERMINATED` out of band, or an unmodeled
+    /// Absorbing. Provider `NotFound`, `TERMINATED` out of band, or an unmodelled
     /// provider state.
     Lost,
     /// A lifecycle effect returned [`crate::lifecycle::ProviderCall::Unknown`] and
@@ -233,10 +272,13 @@ impl GenerationState {
 
     /// The states reachable in one step.
     #[must_use]
-    pub fn successors(self) -> &'static [Self] {
+    pub const fn successors(self) -> &'static [Self] {
         match self {
             Self::Requested => &[Self::Launching, Self::Terminated, Self::Lost, Self::Unknown],
-            Self::Launching => &[Self::Running, Self::Lost, Self::Unknown, Self::Terminating],
+            // A launch and a resume both await `RUNNING` and fail the same ways.
+            Self::Launching | Self::Resuming => {
+                &[Self::Running, Self::Lost, Self::Unknown, Self::Terminating]
+            }
             Self::Running => &[
                 Self::Suspending,
                 Self::LifetimeDraining,
@@ -252,7 +294,6 @@ impl GenerationState {
                 Self::Terminating,
             ],
             Self::Suspended => &[Self::Resuming, Self::Terminating, Self::Lost, Self::Unknown],
-            Self::Resuming => &[Self::Running, Self::Lost, Self::Unknown, Self::Terminating],
             Self::LifetimeDraining => &[Self::Terminating, Self::Lost, Self::Unknown],
             Self::Terminating => &[Self::Terminated, Self::Lost, Self::Unknown],
             Self::Terminated | Self::Lost => &[],
@@ -294,6 +335,7 @@ impl GenerationState {
 
 /// The durable head of one generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GenerationHead {
     /// The generation this head describes.
     pub generation: GenerationId,
@@ -344,7 +386,7 @@ pub enum AdmissionRefused {
         state: GenerationState,
     },
     /// The caller's fence no longer matches the head.
-    #[error("fence {presented} is stale; the generation is at {current}")]
+    #[error("fence {} is stale; the generation is at {}", .presented.0, .current.0)]
     Fenced {
         /// The fence the caller presented.
         presented: Fence,
@@ -352,13 +394,13 @@ pub enum AdmissionRefused {
         current: Fence,
     },
     /// A lifecycle transition holds the suspend lock.
-    #[error("the suspend lock is held until {}", .until.millis())]
+    #[error("the suspend lock is held until {}", .until.unix_millis())]
     SuspendLocked {
         /// When the lock lapses.
         until: Timestamp,
     },
     /// The head moved between read and write.
-    #[error("revision {presented:?} is stale; the head is at {current:?}")]
+    #[error("revision {} is stale; the head is at {}", .presented.value(), .current.value())]
     StaleRevision {
         /// The revision the caller read.
         presented: Revision,
@@ -498,31 +540,39 @@ pub fn may_incorporate_result(current_fence: Fence, result_fence: Fence) -> bool
 /// generation starts at `fence = 0` but a strictly greater time-ordered id.
 #[must_use]
 pub fn supersedes(candidate: GenerationId, incumbent: GenerationId) -> bool {
-    candidate.uuid() > incumbent.uuid()
+    candidate.uuid7() > incumbent.uuid7()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Admitted, AdmissionRefused, GenerationHead, GenerationState, GuestRoot, FenceVerdict,
-        ImageCapability, ImagePin, TransportMode, evaluate_request_binding,
-        may_incorporate_result, supersedes,
+        AdmissionRefused, Admitted, FenceVerdict, GenerationHead, GenerationState, ImageCapability,
+        ImageIdentifier, ImagePin, ImageVersion, Revision, TransportMode, evaluate_request_binding,
+        guest_root, is_canonical_root, may_incorporate_result, next_fence, supersedes,
     };
-    use crate::shape::ComputeSize;
-    use crate::wire_pending::{
-        ContentHash, Fence, GenerationId, ImageIdentifier, ImageVersion, Revision, Timestamp,
-    };
-    use uuid::Uuid;
+    use crate::shape::ShapeCapacity as _;
+    use aex_hands_protocol::operation::GuestRoot;
+    use aex_hands_protocol::rpc::Fence;
+    use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, Uuid7};
+    use aex_wire::types::{ComputeSize, Timestamp};
+
+    fn at(millis: i64) -> Timestamp {
+        Timestamp::from_unix_millis(millis).expect("a bounded instant")
+    }
+
+    fn generation(millis: u64) -> GenerationId {
+        GenerationId::from_uuid7(Uuid7::compose(millis, [3; 10]))
+    }
 
     fn head(state: GenerationState, open: u32) -> GenerationHead {
         GenerationHead {
-            generation: GenerationId::from_bytes([9; 16]),
+            generation: generation(9),
             size: ComputeSize::Gb1,
             state,
-            fence: Fence::new(3),
+            fence: Fence(3),
             revision: Revision::new(11),
             open_operations: open,
-            last_busy_at: Timestamp::from_millis(1_000),
+            last_busy_at: at(1_000),
             idle_since: None,
             suspend_lock_expires_at: None,
             keepalive_lease: None,
@@ -615,21 +665,21 @@ mod tests {
     fn admission_requires_running_a_matching_fence_and_revision() {
         let running = head(GenerationState::Running, 0);
         assert_eq!(
-            running.admit(Fence::new(3), Revision::new(11), Timestamp::from_millis(2_000)),
+            running.admit(Fence(3), Revision::new(11), at(2_000)),
             Ok(Admitted {
                 open_operations: 1,
                 revision: Revision::new(12)
             })
         );
         assert_eq!(
-            running.admit(Fence::new(2), Revision::new(11), Timestamp::from_millis(2_000)),
+            running.admit(Fence(2), Revision::new(11), at(2_000)),
             Err(AdmissionRefused::Fenced {
-                presented: Fence::new(2),
-                current: Fence::new(3)
+                presented: Fence(2),
+                current: Fence(3)
             })
         );
         assert_eq!(
-            running.admit(Fence::new(3), Revision::new(10), Timestamp::from_millis(2_000)),
+            running.admit(Fence(3), Revision::new(10), at(2_000)),
             Err(AdmissionRefused::StaleRevision {
                 presented: Revision::new(10),
                 current: Revision::new(11)
@@ -644,7 +694,7 @@ mod tests {
                 continue;
             }
             let refused = head(state, 0)
-                .admit(Fence::new(3), Revision::new(11), Timestamp::from_millis(0))
+                .admit(Fence(3), Revision::new(11), at(0))
                 .expect_err("only running admits");
             match refused {
                 AdmissionRefused::NotRunning { state: observed } => assert_eq!(observed, state),
@@ -660,17 +710,13 @@ mod tests {
     #[test]
     fn a_held_suspend_lock_blocks_admission_until_it_lapses() {
         let mut locked = head(GenerationState::Running, 0);
-        locked.suspend_lock_expires_at = Some(Timestamp::from_millis(5_000));
+        locked.suspend_lock_expires_at = Some(at(5_000));
         assert_eq!(
-            locked.admit(Fence::new(3), Revision::new(11), Timestamp::from_millis(4_999)),
-            Err(AdmissionRefused::SuspendLocked {
-                until: Timestamp::from_millis(5_000)
-            })
+            locked.admit(Fence(3), Revision::new(11), at(4_999)),
+            Err(AdmissionRefused::SuspendLocked { until: at(5_000) })
         );
         assert!(
-            locked
-                .admit(Fence::new(3), Revision::new(11), Timestamp::from_millis(5_000))
-                .is_ok(),
+            locked.admit(Fence(3), Revision::new(11), at(5_000)).is_ok(),
             "a lapsed lock stops blocking at exactly its expiry"
         );
     }
@@ -680,7 +726,7 @@ mod tests {
         let limit = ComputeSize::Gb1.max_concurrent_operations();
         let full = head(GenerationState::Running, limit);
         assert_eq!(
-            full.admit(Fence::new(3), Revision::new(11), Timestamp::from_millis(0)),
+            full.admit(Fence(3), Revision::new(11), at(0)),
             Err(AdmissionRefused::ConcurrencyExhausted { open: limit, limit })
         );
     }
@@ -688,7 +734,7 @@ mod tests {
     #[test]
     fn settlement_saturates_so_a_double_settle_cannot_pin_a_generation_alive() {
         let empty = head(GenerationState::Running, 0);
-        let (open, revision, _) = empty.settle(Timestamp::from_millis(9));
+        let (open, revision, _) = empty.settle(at(9));
         assert_eq!(open, 0);
         assert_eq!(revision, Revision::new(12));
     }
@@ -722,57 +768,59 @@ mod tests {
 
     #[test]
     fn the_guest_rejects_a_foreign_generation_and_a_lower_fence() {
-        let bound = GenerationId::from_bytes([1; 16]);
-        let other = GenerationId::from_bytes([2; 16]);
+        let bound = generation(1);
+        let other = generation(2);
         assert_eq!(
-            evaluate_request_binding(bound, Fence::new(4), other, Fence::new(4)),
+            evaluate_request_binding(bound, Fence(4), other, Fence(4)),
             FenceVerdict::WrongGeneration
         );
         assert_eq!(
-            evaluate_request_binding(bound, Fence::new(4), bound, Fence::new(3)),
+            evaluate_request_binding(bound, Fence(4), bound, Fence(3)),
             FenceVerdict::StaleFence {
-                presented: Fence::new(3),
-                floor: Fence::new(4)
+                presented: Fence(3),
+                floor: Fence(4)
             }
         );
         assert_eq!(
-            evaluate_request_binding(bound, Fence::new(4), bound, Fence::new(4)),
-            FenceVerdict::Accept {
-                adopted: Fence::new(4)
-            }
+            evaluate_request_binding(bound, Fence(4), bound, Fence(4)),
+            FenceVerdict::Accept { adopted: Fence(4) }
         );
         assert_eq!(
-            evaluate_request_binding(bound, Fence::new(4), bound, Fence::new(9)),
-            FenceVerdict::Accept {
-                adopted: Fence::new(9)
-            },
+            evaluate_request_binding(bound, Fence(4), bound, Fence(9)),
+            FenceVerdict::Accept { adopted: Fence(9) },
             "a higher fence is accepted and adopted"
         );
     }
 
     #[test]
     fn a_stale_result_is_refused_incorporation() {
-        assert!(!may_incorporate_result(Fence::new(5), Fence::new(4)));
-        assert!(may_incorporate_result(Fence::new(5), Fence::new(5)));
-        assert!(may_incorporate_result(Fence::new(5), Fence::new(6)));
+        assert!(!may_incorporate_result(Fence(5), Fence(4)));
+        assert!(may_incorporate_result(Fence(5), Fence(5)));
+        assert!(may_incorporate_result(Fence(5), Fence(6)));
+    }
+
+    #[test]
+    fn a_fence_never_wraps() {
+        assert_eq!(next_fence(Fence(u64::MAX)), Fence(u64::MAX));
+        assert_eq!(next_fence(Fence(0)), Fence(1));
     }
 
     #[test]
     fn generation_identity_not_fence_decides_cross_generation_ordering() {
-        let older = GenerationId::from_uuid(Uuid::now_v7());
-        let newer = GenerationId::from_uuid(Uuid::now_v7());
+        let older = generation(1_000);
+        let newer = generation(2_000);
         assert!(supersedes(newer, older));
         assert!(!supersedes(older, newer));
         // Both start at fence zero; the fence says nothing about which is newer.
-        assert_eq!(Fence::ZERO, Fence::ZERO);
+        assert_eq!(Fence(0), Fence(0));
     }
 
     #[test]
     fn the_guest_root_is_a_constant_and_rejects_anything_else() {
-        assert_eq!(GuestRoot.as_str(), "/workspace");
-        assert!(GuestRoot::try_from("/workspace".to_owned()).is_ok());
-        assert!(GuestRoot::try_from("/".to_owned()).is_err());
-        assert!(GuestRoot::try_from("/workspace/".to_owned()).is_err());
+        assert_eq!(guest_root().0, "/workspace");
+        assert!(is_canonical_root(&guest_root()));
+        assert!(!is_canonical_root(&GuestRoot("/".to_owned())));
+        assert!(!is_canonical_root(&GuestRoot("/workspace/".to_owned())));
     }
 
     #[test]
@@ -788,8 +836,8 @@ mod tests {
     #[test]
     fn an_image_pin_answers_capability_questions_before_any_process_starts() {
         let pin = ImagePin {
-            identifier: ImageIdentifier::new("aex-hands-2gb-browser"),
-            version: ImageVersion::new("7"),
+            identifier: ImageIdentifier("aex-hands-2gb-browser".to_owned()),
+            version: ImageVersion("7".to_owned()),
             artifact_digest: ContentHash::from_bytes([4; 32]),
             capabilities: vec![ImageCapability::Browser],
         };
