@@ -17,6 +17,7 @@ pub mod allocation;
 pub mod exact;
 pub mod rate_card;
 pub mod rounding;
+pub mod storage_close;
 
 pub use allocation::allocate_segment;
 pub use exact::{Contribution, RateBookId, RatedSegment, SegmentKey, accumulate, rate_quantity};
