@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:fec7f531dec7025944bcb6ef8da610d99ce5a3b4efcbcb27ecc1d467e730c37d",
+  "contractDigest": "sha256:3eb54399c04aa475a13215ca9cce27ce25555fc5a7d9aa2e0dc158c23f8e806f",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -17,7 +17,7 @@
     "api/openapi/central/workspaces.yaml": "sha256:912a3ebffb40b79b9093f91772df3af0fa73f1279abd597f851170e3b145448e",
     "api/openapi/plane.central.yaml": "sha256:775e81fb6830790a757fca049bdeef76f6c07a372c0ab6fb84a8f99231ea2c51",
     "api/openapi/plane.regional.yaml": "sha256:7a8b8d2ea049bdba1fc279e629ab12d76291f978cb2eaab736ea890140ce3a53",
-    "api/openapi/regional/approvals.yaml": "sha256:3024e7b1726ab7290a4eb6360baeb0e6b9437141b68085ce80831d64923c5508",
+    "api/openapi/regional/approvals.yaml": "sha256:304cbb7402c7ab6a02bee1556698a91abed5d1db36a5a5553a258459c76fc965",
     "api/openapi/regional/files.yaml": "sha256:5801d15cfe730c4a8928e441cb0260322baedb1ab4342ffca4769ee254242ceb",
     "api/openapi/regional/observations.yaml": "sha256:34a5998982c2f3525ac58dd6ea4d8a285635b743f69a5a49184660149118723c",
     "api/openapi/regional/operations.yaml": "sha256:7447a6ab351f10a93eabf185172c06ff5bfca4616c54b1fb76e51aa7e8298602",
@@ -37,7 +37,7 @@
     "api/schemas/provider/provider.yaml": "sha256:f6c97911fb900957e2c188f2c1225cc573ffcb86dbe4f8686d70ff2caeb5ecd9",
     "api/schemas/regional/content.yaml": "sha256:594b9994e8011ae8dc55dede63815746d8e6063170c557c5aaa47ee8fbcbec2d",
     "api/schemas/regional/sessions.yaml": "sha256:04c8b0920a6ff74d5ce912c606b40f0d54cd2dbcb8c4f03d9ddef5528e730ce4",
-    "api/schemas/registries/errors.yaml": "sha256:443823d62a5b752040b2914eb72804d6c43ac6a092a92c79c9fc04ac8a37ec88",
+    "api/schemas/registries/errors.yaml": "sha256:e31fcc68c7d0a944b10a5ddbd4eebecd7893b28b8d8416c8805874d341669529",
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",
     "api/schemas/registries/ids.yaml": "sha256:c1a62bd2a71d7cc81e65450c5816e71a3fc1535256e9492c49d6cce8e7d054e2",
     "api/schemas/registries/limits.yaml": "sha256:f7090618ccef5b4ec1edda480a8349c4675855be522b81238116b6e7d4ea955f",

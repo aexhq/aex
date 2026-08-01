@@ -2597,6 +2597,7 @@
             "session_deleted",
             "approval_not_found",
             "approval_already_resolved",
+            "approval_binding_changed",
             "account_paused",
             "wrong_workspace_region"
           ],
@@ -4897,6 +4898,15 @@
           "message": "the approval already has a decision",
           "precedenceStage": "domain_state",
           "remedy": null,
+          "retryable": false,
+          "status": 409
+        },
+        {
+          "class": "conflict",
+          "code": "approval_binding_changed",
+          "message": "the bound call drifted between the request and the decision, so the approval was cancelled",
+          "precedenceStage": "domain_state",
+          "remedy": "re-read the approval and decide against its current bound call",
           "retryable": false,
           "status": 409
         },

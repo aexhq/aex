@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:fec7f531dec7025944bcb6ef8da610d99ce5a3b4efcbcb27ecc1d467e730c37d`.
+//! `sha256:3eb54399c04aa475a13215ca9cce27ce25555fc5a7d9aa2e0dc158c23f8e806f`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -75,6 +75,9 @@ pub enum ErrorCode {
     ApprovalNotFound,
     /// `approval_already_resolved` — the approval already has a decision
     ApprovalAlreadyResolved,
+    /// `approval_binding_changed` — the bound call drifted between the request and the decision, so
+    /// the approval was cancelled
+    ApprovalBindingChanged,
     /// `file_not_found` — no such file entry
     FileNotFound,
     /// `content_missing` — the referenced content is not present
@@ -178,6 +181,7 @@ impl ErrorCode {
         ErrorCode::OperationNotCancelable,
         ErrorCode::ApprovalNotFound,
         ErrorCode::ApprovalAlreadyResolved,
+        ErrorCode::ApprovalBindingChanged,
         ErrorCode::FileNotFound,
         ErrorCode::ContentMissing,
         ErrorCode::ExportNotFound,
@@ -247,6 +251,7 @@ impl ErrorCode {
             Self::OperationNotCancelable => "operation_not_cancelable",
             Self::ApprovalNotFound => "approval_not_found",
             Self::ApprovalAlreadyResolved => "approval_already_resolved",
+            Self::ApprovalBindingChanged => "approval_binding_changed",
             Self::FileNotFound => "file_not_found",
             Self::ContentMissing => "content_missing",
             Self::ExportNotFound => "export_not_found",
@@ -317,6 +322,7 @@ impl ErrorCode {
             Self::OperationNotCancelable => 409,
             Self::ApprovalNotFound => 404,
             Self::ApprovalAlreadyResolved => 409,
+            Self::ApprovalBindingChanged => 409,
             Self::FileNotFound => 404,
             Self::ContentMissing => 409,
             Self::ExportNotFound => 404,
@@ -387,6 +393,7 @@ impl ErrorCode {
             Self::OperationNotCancelable => false,
             Self::ApprovalNotFound => false,
             Self::ApprovalAlreadyResolved => false,
+            Self::ApprovalBindingChanged => false,
             Self::FileNotFound => false,
             Self::ContentMissing => false,
             Self::ExportNotFound => false,
@@ -457,6 +464,7 @@ impl ErrorCode {
             Self::OperationNotCancelable => ErrorClass::State,
             Self::ApprovalNotFound => ErrorClass::NotFound,
             Self::ApprovalAlreadyResolved => ErrorClass::Conflict,
+            Self::ApprovalBindingChanged => ErrorClass::Conflict,
             Self::FileNotFound => ErrorClass::NotFound,
             Self::ContentMissing => ErrorClass::State,
             Self::ExportNotFound => ErrorClass::NotFound,
@@ -527,6 +535,7 @@ impl ErrorCode {
             Self::OperationNotCancelable => PrecedenceStage::DomainState,
             Self::ApprovalNotFound => PrecedenceStage::TombstoneAndParent,
             Self::ApprovalAlreadyResolved => PrecedenceStage::DomainState,
+            Self::ApprovalBindingChanged => PrecedenceStage::DomainState,
             Self::FileNotFound => PrecedenceStage::DomainState,
             Self::ContentMissing => PrecedenceStage::DomainState,
             Self::ExportNotFound => PrecedenceStage::TombstoneAndParent,
@@ -605,6 +614,9 @@ impl ErrorCode {
             Self::OperationNotCancelable => "the operation has passed its cancellation point",
             Self::ApprovalNotFound => "no such approval",
             Self::ApprovalAlreadyResolved => "the approval already has a decision",
+            Self::ApprovalBindingChanged => {
+                "the bound call drifted between the request and the decision, so the approval was cancelled"
+            }
             Self::FileNotFound => "no such file entry",
             Self::ContentMissing => "the referenced content is not present",
             Self::ExportNotFound => "no such export",
@@ -683,6 +695,9 @@ impl ErrorCode {
             Self::OperationNotCancelable => None,
             Self::ApprovalNotFound => None,
             Self::ApprovalAlreadyResolved => None,
+            Self::ApprovalBindingChanged => {
+                Some("re-read the approval and decide against its current bound call")
+            }
             Self::FileNotFound => None,
             Self::ContentMissing => None,
             Self::ExportNotFound => None,
