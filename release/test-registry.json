@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 126,
+    "awaiting_owner": 125,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -2090,13 +2090,18 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "properties": "unit",
+          "security": "unit"
+        },
         "not_applicable": {
-          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
+          "integration": "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-workspace-domain": {
       "name": "aex-workspace-domain",
