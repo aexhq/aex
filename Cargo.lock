@@ -2781,10 +2781,21 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "content-lifecycle-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-content-dynamodb",
  "aex-platform-telemetry",
+ "aex-regional-http",
  "aex-telemetry-schema",
+ "aex-wire",
+ "aex-work-dynamodb",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "aws_lambda_events",
+ "lambda_runtime",
  "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

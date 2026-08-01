@@ -1,5 +1,9 @@
 //! Conservative content lifecycle decisions and exact fenced deletes.
 
+pub mod config;
+
+pub use config::{Config, Mode as DeployedMode};
+
 /// Twenty-four-hour staged-object grace.
 pub const GRACE_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 
