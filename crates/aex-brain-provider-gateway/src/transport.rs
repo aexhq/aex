@@ -302,8 +302,8 @@ pub async fn execute(
     );
     for (name, value) in &request.headers {
         let name = reqwest::header::HeaderName::from_static(name);
-        let value =
-            reqwest::header::HeaderValue::from_str(value.as_str()).map_err(|_| ExecuteError::Header)?;
+        let value = reqwest::header::HeaderValue::from_str(value.as_str())
+            .map_err(|_| ExecuteError::Header)?;
         headers.insert(name, value);
     }
     if let AuthScheme::AnthropicApiKey { version } = request.auth {
@@ -315,10 +315,7 @@ pub async fn execute(
     let (name, value) = key.sensitive_header(request.auth)?;
     headers.insert(name, value);
 
-    let built = client
-        .post(url)
-        .headers(headers)
-        .body(request.body.clone());
+    let built = client.post(url).headers(headers).body(request.body.clone());
 
     // ---- the gate. Nothing above this line reached a socket. ----
     let _dispatched = state.send()?;

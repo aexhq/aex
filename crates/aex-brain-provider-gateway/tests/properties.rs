@@ -179,10 +179,8 @@ fn leak_error_bodies_every_provider_key_shape_is_redacted() {
         let body = format!(
             "{{\"type\":\"error\",\"error\":{{\"message\":\"invalid credential {key} supplied\"}}}}"
         );
-        let detail = RedactedDetail::new(
-            ProviderFailureKind::Authentication,
-            redact(&body, &[key]),
-        );
+        let detail =
+            RedactedDetail::new(ProviderFailureKind::Authentication, redact(&body, &[key]));
         assert!(
             !detail.message.as_str().contains(key),
             "`{key}` survived redaction"

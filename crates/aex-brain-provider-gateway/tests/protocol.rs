@@ -161,7 +161,7 @@ async fn a_post_gate_transport_failure_is_possibly_sent_not_not_sent() {
         .body(built.body.clone())
         .send()
         .await;
-    let failure = outcome.err().expect("the connection must actually fail");
+    let failure = outcome.expect_err("the connection must actually fail");
 
     // The same failure, expressed through the type the gate produces.
     state.send().expect("the gate opens");
