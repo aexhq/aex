@@ -262,6 +262,10 @@ impl Receipt {
     /// not, when the collected inventory does not match the declared one, when
     /// nothing was declared at all, when a rerun discarded its first failure,
     /// or when residue is unexplained.
+    // One function on purpose: every counter, inventory and hygiene rule for
+    // one receipt, in the order a reader would check them. Splitting it would
+    // scatter the no-skip contract across five call sites.
+    #[allow(clippy::too_many_lines)]
     pub fn verify(&self) -> Result<()> {
         let mut violations = Vec::new();
         if self.schema != "aex.evidence-receipt.v1" {

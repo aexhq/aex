@@ -87,6 +87,13 @@ pub struct PackageMeta {
     /// Declared dependency edges.
     #[serde(default)]
     pub dependencies: Vec<DependencyMeta>,
+    /// The `[package.metadata]` table, verbatim. `[package.metadata.aex]` lives
+    /// inside it and is parsed by [`crate::testmeta`].
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// Declared Cargo features and what each enables.
+    #[serde(default)]
+    pub features: BTreeMap<String, Vec<String>>,
 }
 
 impl PackageMeta {
@@ -110,6 +117,30 @@ impl PackageMeta {
         self.targets
             .iter()
             .any(|target| target.kind.iter().any(|kind| kind == "bin"))
+    }
+
+    /// The names of the package's integration-test and bench targets.
+    ///
+    /// The library's own `#[cfg(test)]` module is deliberately absent: it is
+    /// always layer `unit` and needs no `[package.metadata.aex.targets]` row.
+    #[must_use]
+    pub fn test_target_names(&self) -> Vec<&str> {
+        self.targets
+            .iter()
+            .filter(|target| {
+                target
+                    .kind
+                    .iter()
+                    .any(|kind| kind == "test" || kind == "bench")
+            })
+            .map(|target| target.name.as_str())
+            .collect()
+    }
+
+    /// The `[package.metadata.aex]` table, if the manifest declares one.
+    #[must_use]
+    pub fn aex_metadata(&self) -> Option<&serde_json::Value> {
+        self.metadata.as_ref()?.get("aex")
     }
 }
 

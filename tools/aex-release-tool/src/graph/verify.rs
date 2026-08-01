@@ -292,6 +292,27 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         }
     }
 
+    // The delivery graph and the derived test registry both derive the live
+    // target set from `live_suite` declarations, by different routes. If they
+    // disagree, one of them is reading metadata the other is not.
+    if inputs
+        .root
+        .join(crate::test_registry::REGISTRY_PATH)
+        .is_file()
+    {
+        match crate::test_registry::load_document(&inputs.root) {
+            Ok(registry) => {
+                if let Err(err) = crate::test_registry::check_live_target_agreement(
+                    &built.live_targets,
+                    &registry,
+                ) {
+                    violations.extend(err.violations);
+                }
+            }
+            Err(err) => violations.extend(err.violations),
+        }
+    }
+
     // 6. Declared migrations are covered by their bundle.
     violations.extend(verify_migration_coverage(inputs));
 

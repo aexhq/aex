@@ -95,6 +95,7 @@ fn run_admit(
     let required = required();
     let freshness = freshness();
     let builders = vec![BUILDER.to_owned()];
+    let unearned = aex_release_tool::test_registry::UnearnedIndex::default();
     admit(&AdmissionInputs {
         manifest,
         envelopes: &envelopes(),
@@ -112,6 +113,7 @@ fn run_admit(
         builder_allowlist: &builders,
         applied_central_head: Some("20260801000100".to_owned()),
         applied_regional_generation: Some(1),
+        unearned: &unearned,
         now: now(),
     })
 }

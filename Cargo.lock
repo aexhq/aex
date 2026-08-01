@@ -540,6 +540,20 @@ name = "aex-live-usage-transfer-worker"
 version = "0.1.0"
 
 [[package]]
+name = "aex-load-harness"
+version = "0.1.0"
+dependencies = [
+ "aex-test-harness",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "aex-model-catalog"
 version = "0.1.0"
 dependencies = [
@@ -732,6 +746,7 @@ dependencies = [
 name = "aex-release-tool"
 version = "0.1.0"
 dependencies = [
+ "aex-workspace-check",
  "anyhow",
  "clap",
  "flate2",
@@ -912,6 +927,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-test-harness"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "toml",
+ "uuid",
+]
+
+[[package]]
 name = "aex-usage-application"
 version = "0.1.0"
 dependencies = [
@@ -1048,9 +1079,13 @@ dependencies = [
 name = "aex-workspace-check"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
+ "clap",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

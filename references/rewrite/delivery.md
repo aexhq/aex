@@ -27,14 +27,14 @@ first item under "What every stream owes me".
 
 ### `tools/aex-release-tool/`
 
-One library plus a thin binary shell. 253 tests, all passing, no `#[ignore]`,
+One library plus a thin binary shell. 259 tests, all passing, no `#[ignore]`,
 no self-skip, no empty suite.
 
 | Module | What it owns |
 | --- | --- |
 | `canon` | RFC 8785 JCS, the one workspace canonicalizer. Rejects floating-point numbers outright rather than serializing them. UTF-16 member ordering, so an astral-plane key sorts where the spec says. |
 | `error` | The 21-value exit-code contract and the `[rule] detail` violation shape. Checks accumulate; nothing exits `0` on a warning; there is no `--force`. |
-| `meta` | The single `AexMeta` parser: thirteen closed keys, eight closed value sets, shared by `graph verify` and (when it lands) `test-registry verify`. |
+| `meta` | The delivery-side `AexMeta` parser: thirteen closed keys, eight closed value sets. `aex-workspace-check` owns the registry rules over the same block; `test_registry` below asserts the two authorities agree. |
 | `graph` | Namespaced `NodeId`, CSR forward and reverse adjacency, per-class cycle detection, four merged authorities, prefix-safe path classification, selection with recorded reasons, shadow mode, LPT matrix partitioning. |
 | `pack` | Byte-stable ZIP, tar and gzip writers. Every header field is written explicitly; only the DEFLATE stream is borrowed. |
 | `artifact` | Recipes, deterministic packaging, the `aex.artifact-envelope.v1` type, envelope verification, publication destinations. |
@@ -48,6 +48,7 @@ no self-skip, no empty suite.
 | `policy` | Terraform source policy, Dockerfile COPY-only policy, workflow structural gates, Terraform plan policy. |
 | `schemas` | The five release JSON Schemas, embedded. |
 | `selftest` | Determinism and monotonicity probed against the real graph. |
+| `test_registry` | Reads `release/test-registry.json` and `release/unearned-evidence.json` through `aex-workspace-check`'s own types. Derives nothing; asserts the delivery graph and the registry agree on the live set. |
 
 Subcommands landed: `graph build|verify|select|explain|diff|matrix`,
 `artifact recipes|plan|package|verify|publish-plan`,
@@ -68,7 +69,7 @@ so there is no conflict to record.
 ### `release/`
 
 `units.toml` (29 deployables), `scenario-ownership.toml` (20 scenarios),
-`path-map.toml` (48 rules, zero orphans against the current tree),
+`path-map.toml` (47 rules, zero orphans against the current tree),
 `policy/artifact-policy.toml`, `policy/freshness.toml`,
 `policy/terraform-policy.toml`, `policy/rollout-policy.toml`,
 `policy/private-path-policy.json`.
@@ -95,45 +96,30 @@ appears in any `.tf`.
 ```
 cargo fmt --all                                              clean
 cargo clippy -p aex-release-tool --all-targets -- -D warnings clean
-cargo nextest run -p aex-release-tool                         253 passed, 0 skipped
+cargo nextest run -p aex-release-tool                         259 passed, 0 skipped
 cargo check --workspace --all-targets                         clean
-cargo run -p aex-workspace-check                              131 members satisfy every rule
+cargo run -p aex-workspace-check                              133 members, 139 packages, every rule
 terraform fmt -check -recursive infra/                        clean
 terraform init -backend=false && validate && test             29/29 directories pass
 ```
 
-`graph verify` against the real repository exits `10` with 165 violations. That
-is the designed state, not a regression; see §3.
+`graph verify` against the real repository exits `10` with 32 violations, all
+of them work another stream owes. That is the designed state, not a regression;
+see §3.
 
 ## 3. What every stream owes me
 
 `graph verify` is the gate. It is red today and names exactly who owes what.
 
-### 3.1 `[package.metadata.aex]` on every member — 135 violations
+### 3.1 `[package.metadata.aex]` — landed
 
-Nobody has declared ownership metadata yet. Add one table per Cargo manifest,
-one `"aex"` object per `package.json`, using the closed key and value sets in
-`tools/aex-release-tool/src/meta.rs`. An unknown key is rejected; a value
-outside a closed set is rejected; a `not_applicable` reason that says "not yet
-written" is rejected because the reason must be structural.
-
-```toml
-[package.metadata.aex]
-owner          = "regional-stores"
-role           = "adapter"
-artifact       = "none"
-live_suite     = "aex-live-regional-stores"
-layers         = ["unit", "integration"]
-concerns       = ["contract", "property", "fault", "security"]
-seams          = ["aws.s3.conditional_put"]
-security_tier  = "authority"
-risk           = ["concurrency", "untrusted_input"]
-scenarios      = ["SC-SESSION-ADMIT"]
-
-[package.metadata.aex.targets]
-requests    = "unit"
-integration = "integration"
-```
+All 139 manifests carry ownership metadata after the test-architecture stream
+merged. `graph verify` reads real data and no longer reports
+`aex-metadata-missing`. Four live companions still omit the `deployable`
+back-reference their role requires: `aex-live-dashboard`,
+`aex-live-model-catalog`, `aex-live-stripe-command-edge` and
+`aex-live-stripe-webhook-edge`. They resolve once the clients and finance
+streams land the packages those companions are about.
 
 ### 3.2 Lambda and Fargate resource shapes — 25 violations
 
@@ -153,15 +139,13 @@ missing decision into a shipped one. Each owning stream fills its own rows:
 rejected as a placeholder. `brain-mux` and `regional-stream` already carry the
 two shapes the accepted design pins.
 
-### 3.3 Five live companions nobody claims — 5 violations
+### 3.3 Three live companions nobody claims — 3 violations
 
-`aex-live-dashboard`, `aex-live-site`, `aex-live-model-catalog`,
-`aex-live-stripe-command-edge` and `aex-live-stripe-webhook-edge` exist as
-workspace members and no package or unit names them as a `live_suite`. They
-resolve once the clients stream lands `apps/dashboard` and `apps/site`, the
-providers stream declares the model catalogue, and the finance stream lands the
-two TypeScript edges. Until then the graph records the gap rather than hiding
-it.
+`aex-live-dashboard`, `aex-live-stripe-command-edge` and
+`aex-live-stripe-webhook-edge` exist as workspace members and no package or
+unit names them as a `live_suite`. They resolve once the clients stream lands
+`apps/dashboard` and the finance stream lands the two TypeScript edges. Until
+then the graph records the gap rather than hiding it.
 
 ### 3.4 Registries and interfaces
 
@@ -178,10 +162,11 @@ it.
    produced by `aex-release-tool migration bundle`. A `GRANT` inside a
    migration body is rejected; a non-transactional migration without a
    `.repair.sql` sibling is rejected.
-5. **`release/policy/seams.toml`**, **`test-profiles.toml`** and
-   **`test-images.toml`** are the test-architecture stream's content in my
-   directory. I did not author them; `seams` values are therefore unvalidated
-   against a registry today.
+5. **`release/policy/seams.toml`**, **`test-profiles.toml`**,
+   **`test-images.toml`** and **`workload-registry.toml`** are the
+   test-architecture stream's content inside my directory. I do not author or
+   duplicate them; `aex-workspace-check` validates against them, and the
+   release tool consumes their outputs.
 
 ### 3.5 `TODO(cross-stream)` raised by this stream
 
@@ -231,10 +216,14 @@ it.
 5. **`manifest new`/`diff` and `plan bind`.** `with_unit` and `order_for` carry
    the logic; the subcommands need a release object store to read the previous
    manifest from.
-6. **`test-registry`, `flake scan`, `janitor` and `workload verify`.** Plan 15
-   assigns these to `aex-release-tool` (D-02). They are not implemented; the
-   test-architecture stream owns their semantics and its policy files do not
-   exist yet.
+6. **`test-registry`, `flake scan`, `janitor` and `workload verify`.** By
+   orchestrator ruling these live in `aex-workspace-check`, not here.
+   `aex-release-tool` depends on that crate and consumes
+   `release/test-registry.json` and `release/unearned-evidence.json` through
+   its own types (`src/test_registry.rs`). Nothing is re-implemented; the rule
+   ids and messages in `aex-workspace-check` are the authority. `janitor sweep`
+   remains unimplemented in either crate — it needs a deployed plane and a
+   dedicated identity.
 7. **Live publication.** Every publish step in `main.yml` and every apply step
    in `_release-engine.yml` refuses with a stated reason and a classified exit
    code rather than pretending. The lanes are wired end to end; the buckets,
@@ -258,6 +247,8 @@ it.
 | D-12 | The `assurance` and `release` lanes exit with a classified code rather than a green no-op where their subject does not exist | A scheduled suite that reports success having checked nothing is worse than one that is red for a stated reason. `admit` then refuses on a missing receipt (exit 40) instead of accepting silence as evidence. |
 | D-13 | `github-oidc-role` pins the workflow path through `job_workflow_ref`, not `sub` | GitHub carries the workflow path in `job_workflow_ref` unless subject customization is configured. Plan 14 §8.1 says `sub`; the module pins repo and ref via `sub` and the exact workflow path via `job_workflow_ref`, with no wildcard in either. Documented in that module's README. |
 | D-14 | Example roots carry an `aex.toml` with `role = "composition"` | Fail-closed rule 1 requires every Terraform root to be classified. Without the sidecar `graph verify` would exit `10` on the examples this stream shipped. |
+| D-15 | `aex-release-tool` depends on `aex-workspace-check` and consumes the derived registry rather than deriving a second one | Orchestrator ruling. Two parsers for one metadata block is exactly the drift both crates exist to prevent. `graph verify` adds one check neither authority can do alone: the live-target set the delivery graph derives must equal the one the registry derives, so a disagreement is a failure rather than a silent divergence. |
+| D-16 | A missing required receipt that appears in `release/unearned-evidence.json` is refused with the owning stream named | Admission refuses either way, but a recorded, owned gap and a hole nobody noticed are different facts, and an operator reading exit 40 should not have to work out which one they have. |
 
 ## 6. Known gaps
 

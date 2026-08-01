@@ -486,7 +486,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Manifest(command) => run_manifest(cli, command),
         Command::Evidence(command) => run_evidence(cli, command),
         Command::Verification(command) => run_verification(command),
-        Command::Admit(args) => run_admit(cli, args),
+        Command::Admit(args) => run_admit(cli, &root, args),
         Command::Plan(command) => run_plan(cli, command),
         Command::Ledger(command) => run_ledger(cli, command),
         Command::PrivatePath(command) => run_private_path(command),
@@ -781,7 +781,7 @@ fn run_verification(command: &VerificationCommand) -> Result<()> {
     }
 }
 
-fn run_admit(cli: &Cli, args: &AdmitArgs) -> Result<()> {
+fn run_admit(cli: &Cli, root: &Path, args: &AdmitArgs) -> Result<()> {
     let manifest: CompositionManifest = read_json(&args.manifest)?;
     let envelopes: BTreeMap<String, ArtifactEnvelope> = read_json(&args.envelopes)?;
     let receipts: Vec<Receipt> = args
@@ -795,6 +795,10 @@ fn run_admit(cli: &Cli, args: &AdmitArgs) -> Result<()> {
     };
     let freshness: FreshnessPolicy = read_toml(&args.freshness)?;
     let required = required_receipts_by_kind(&manifest);
+    // The ledger of evidence that cannot be earned yet is a repository fact,
+    // not an argument: admission reads it so a refusal can name the stream
+    // that owes the missing receipt.
+    let unearned = aex_release_tool::test_registry::UnearnedIndex::load(root)?;
     let admission = aex_release_tool::admit::admit(&AdmissionInputs {
         manifest: &manifest,
         envelopes: &envelopes,
@@ -810,6 +814,7 @@ fn run_admit(cli: &Cli, args: &AdmitArgs) -> Result<()> {
         builder_allowlist: &args.builders,
         applied_central_head: args.applied_central_head.clone(),
         applied_regional_generation: args.applied_regional_generation,
+        unearned: &unearned,
         now: parse_now(args.now.as_deref())?,
     })?;
     emit(cli, &admission)

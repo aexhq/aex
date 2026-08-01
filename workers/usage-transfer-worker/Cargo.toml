@@ -11,6 +11,22 @@ publish = false
 [lints]
 workspace = true
 
+[package.metadata.aex]
+owner = "observations-usage"
+role = "deployable"
+artifact = "lambda_zip"
+deployable = "usage-transfer-worker"
+live_suite = "aex-live-usage-transfer-worker"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = ["aws.dynamodb.condition", "aws.dynamodb.streams", "aws.iam.denial"]
+security_tier = "internal"
+risk = ["iam"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+
 [[bin]]
 name = "usage-transfer-worker"
 path = "src/main.rs"

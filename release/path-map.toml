@@ -116,6 +116,16 @@ prefix = "tests/live/"
 kind = "derive-cargo"
 
 [[rule]]
+id = "cargo-test-support"
+prefix = "tests/support/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "cargo-load-harness"
+prefix = "tests/load/"
+kind = "derive-cargo"
+
+[[rule]]
 id = "cargo-tools"
 prefix = "tools/"
 kind = "derive-cargo"
@@ -183,16 +193,6 @@ node = "bundle:migration"
 # --- classified, owning nothing ---------------------------------------------
 # These paths cannot reach an artifact and cannot break a test. They are
 # classified rather than ignored by accident, so adding one is a decision.
-
-[[rule]]
-id = "load-workloads"
-prefix = "tests/load/"
-kind = "ignored"
-
-[[rule]]
-id = "test-support"
-prefix = "tests/support/"
-kind = "ignored"
 
 [[rule]]
 id = "scripts"

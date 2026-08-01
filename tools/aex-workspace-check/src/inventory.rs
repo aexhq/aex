@@ -15,16 +15,24 @@ pub const MEMBER_ROOTS: &[&str] = &[
     "runtimes",
     "tools",
     "tests/live",
+    "tests/support",
+    "tests/load",
 ];
 
 /// Directories inside [`MEMBER_ROOTS`] that are deliberately not Cargo members.
 ///
 /// The two Stripe edges are `TypeScript` Lambdas retained by `P-AUTH-EDGE`, and
-/// `eslint-plugin-aex` is a retained `TypeScript` package.
+/// `eslint-plugin-aex` is a retained `TypeScript` package. The three `tests/load`
+/// directories hold workload descriptors, tier profiles and the descriptor
+/// schema: `D-11` puts load *executors* in the owning live companion, so
+/// `aex-load-harness` is the only package that root will ever contain.
 pub const NON_CARGO_DIRECTORIES: &[&str] = &[
     "services/stripe-command-edge",
     "services/stripe-webhook-edge",
     "tools/eslint-plugin-aex",
+    "tests/load/profiles",
+    "tests/load/schema",
+    "tests/load/workloads",
 ];
 
 /// The 64 library crates under `crates/`.
@@ -181,6 +189,20 @@ pub const LIVE_TARGETS: &[&str] = &[
     "usage-transfer-worker",
 ];
 
+/// The shared test-infrastructure packages, as `(root, package name)`.
+///
+/// Both live outside `crates/` so the frozen 64-crate inventory stays exactly
+/// Area 9's, and both are `publish = false` dev-dependency-only packages that
+/// must never appear in a production link graph. `aex-test-harness` owns run
+/// identity, prefixes, budget, TTL, the cleanup ledger, the secret canary, the
+/// fault ports and the pinned image registry; `aex-load-harness` owns the load
+/// driver, arrival process, recorder and sampler. They are split so load code
+/// is not built by the unit lane.
+pub const HARNESSES: &[(&str, &str)] = &[
+    ("tests/support", "aex-test-harness"),
+    ("tests/load", "aex-load-harness"),
+];
+
 /// Every expected member as `(root, package name)`.
 #[must_use]
 pub fn expected_members() -> Vec<(&'static str, String)> {
@@ -195,12 +217,20 @@ pub fn expected_members() -> Vec<(&'static str, String)> {
             .iter()
             .map(|name| ("tests/live", format!("aex-live-{name}"))),
     );
+    members.extend(
+        HARNESSES
+            .iter()
+            .map(|(root, name)| (*root, (*name).to_owned())),
+    );
     members
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CRATES, LIVE_TARGETS, RUNTIMES, SERVICES, TOOLS, WORKERS, expected_members};
+    use super::{
+        CRATES, HARNESSES, LIVE_TARGETS, MEMBER_ROOTS, NON_CARGO_DIRECTORIES, RUNTIMES, SERVICES,
+        TOOLS, WORKERS, expected_members,
+    };
 
     fn is_sorted_and_unique(names: &[&str]) -> bool {
         names.windows(2).all(|pair| pair[0] < pair[1])
@@ -228,7 +258,27 @@ mod tests {
         assert_eq!(RUNTIMES.len(), 3);
         assert_eq!(TOOLS.len(), 4);
         assert_eq!(LIVE_TARGETS.len(), 34);
-        assert_eq!(expected_members().len(), 131);
+        assert_eq!(HARNESSES.len(), 2);
+        assert_eq!(expected_members().len(), 133);
+    }
+
+    #[test]
+    fn each_harness_lives_under_a_declared_member_root() {
+        for (root, name) in HARNESSES {
+            assert!(MEMBER_ROOTS.contains(root), "{root}");
+            assert!(!CRATES.contains(name), "`{name}` must stay out of crates/");
+        }
+    }
+
+    #[test]
+    fn every_non_cargo_directory_sits_inside_a_member_root() {
+        for path in NON_CARGO_DIRECTORIES {
+            let root = path
+                .rsplit_once('/')
+                .map(|(root, _)| root)
+                .expect("a non-Cargo directory is always `<root>/<name>`");
+            assert!(MEMBER_ROOTS.contains(&root), "{path}");
+        }
     }
 
     #[test]

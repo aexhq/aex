@@ -42,6 +42,10 @@ pub struct AdmissionInputs<'a> {
     pub applied_central_head: Option<String>,
     /// The applied regional generation recorded in the ledger.
     pub applied_regional_generation: Option<u32>,
+    /// Evidence the workspace has already recorded as impossible to earn.
+    /// A missing receipt that appears here is an owned gap; one that does not
+    /// is a hole nobody noticed. Admission refuses either way and says which.
+    pub unearned: &'a crate::test_registry::UnearnedIndex,
     /// Evaluation time.
     pub now: time::OffsetDateTime,
 }
@@ -251,10 +255,16 @@ pub fn admit(inputs: &AdmissionInputs<'_>) -> Result<Admission> {
                 })
             });
             if !satisfied {
-                missing.push(Violation::new(
-                    "admit-receipt-missing",
-                    format!("unit `{id}` requires a passing `{class}` receipt and has none"),
-                ));
+                let detail = inputs.unearned.reason_for(id).map_or_else(
+                    || format!("unit `{id}` requires a passing `{class}` receipt and has none"),
+                    |row| {
+                        format!(
+                            "unit `{id}` requires a passing `{class}` receipt and has none;                              release/unearned-evidence.json records this as owed by the                              `{}` stream ({})",
+                            row.owner, row.detail
+                        )
+                    },
+                );
+                missing.push(Violation::new("admit-receipt-missing", detail));
             }
         }
     }

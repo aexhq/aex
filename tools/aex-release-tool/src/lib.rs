@@ -28,4 +28,5 @@ pub mod policy;
 pub mod private_path;
 pub mod schemas;
 pub mod selftest;
+pub mod test_registry;
 pub mod verification;

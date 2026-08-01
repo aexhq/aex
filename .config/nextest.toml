@@ -1,23 +1,26 @@
-# cargo-nextest profiles.
+# cargo-nextest profiles for the AEX Rust workspace.
 #
-# Three rules are encoded here rather than repeated in workflow YAML, because a
-# rule that lives in six `-E` strings is a rule five of them will eventually
-# disagree with:
+# Rules these profiles encode (Q-FLAKE / no-silent-skips):
+#   * `retries = 0` in every profile without exception - a lane that retries to
+#     green hides a real defect, and `flake-retry-configured` parses this file
+#     to prove it;
+#   * `fail-fast = false` everywhere, so one failure never masks the rest of the
+#     evidence;
+#   * every profile archives JUnit, because the receipt's collected inventory is
+#     produced from that report rather than self-reported by the lane.
 #
-#   * `retries = 0` in every profile, without exception. A retry-to-green lane
-#     hides a real defect and reports coverage it did not earn.
-#   * `fail-fast = false` everywhere, so one failure never masks the rest of
-#     the evidence.
-#   * a `default-filter` that excludes the live and load packages, so "not
-#     selected" is one declared config fact rather than a filter string
-#     repeated across every lane.
+# The unit lane's exclusion of live and load evidence is one declared config
+# fact (`default-filter`) rather than a filter string repeated across workflows.
+# It is `package(/^aex-live-/)`, not the `package(/^aex-load-/)` the delivery
+# plan proposed: `aex-load-harness` is a package, so that pattern would exclude
+# the harness's own unit tests from every default run - an invisible skip, which
+# is exactly what this file exists to prevent. Every load and soak executor is a
+# `[[test]] name = "load"` target inside a live companion (D-11), so excluding
+# the live packages already excludes all of them; `aex-load-target-misplaced`
+# fails any package that declares one anywhere else.
 #
-# Live suites are separate `tests/live/aex-live-*` packages selected explicitly
-# with `--profile live`. They must fail loudly on an absent target descriptor,
-# never self-skip.
-#
-# Every lane passes `--no-tests=fail`: a filter that matched nothing is an
-# error, not a pass.
+# Every lane passes `--no-tests=fail`, so a filter that matches nothing is an
+# error rather than a green run of zero cases.
 
 [profile.default]
 retries = 0
@@ -26,7 +29,7 @@ failure-output = "immediate"
 status-level = "pass"
 final-status-level = "flaky"
 slow-timeout = { period = "30s", terminate-after = 4 }
-default-filter = 'not package(/^aex-(live|load)-/)'
+default-filter = 'not package(/^aex-live-/)'
 
 [profile.default.junit]
 path = "junit.xml"
@@ -39,15 +42,16 @@ failure-output = "immediate-final"
 status-level = "retry"
 final-status-level = "flaky"
 slow-timeout = { period = "60s", terminate-after = 4 }
-default-filter = 'not package(/^aex-(live|load)-/)'
+default-filter = 'not package(/^aex-live-/)'
 
 [profile.ci.junit]
 path = "junit.xml"
 report-name = "aex-ci"
 
-# Real engines behind testcontainers. The targets that need them declare
-# `required-features = ["integration-engines"]`, so the unit lane does not even
-# build them and stays runnable without a container runtime.
+# Real local engines from `release/policy/test-images.toml`. Targets that need
+# one declare `required-features = ["integration-engines"]`, so the unit lane
+# does not even build them and a machine with no container runtime can still run
+# the per-stream gate.
 [profile.integration]
 retries = 0
 fail-fast = false
@@ -60,9 +64,8 @@ slow-timeout = { period = "120s", terminate-after = 4 }
 path = "junit.xml"
 report-name = "aex-integration"
 
-# Deployed smoke and end-to-end lanes. No default-filter: this profile is
-# always selected together with an explicit package or filterset, and quietly
-# widening it would run live cases nobody asked for.
+# Smoke and e2e against a deployed plane, selected explicitly by package and
+# filterset. A missing descriptor is a failure, never a skip.
 [profile.live]
 retries = 0
 fail-fast = false

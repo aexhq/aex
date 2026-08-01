@@ -129,6 +129,7 @@ impl Case {
         let required = required();
         let freshness = freshness();
         let builders = vec![BUILDER.to_owned()];
+        let unearned = aex_release_tool::test_registry::UnearnedIndex::default();
         admit(&AdmissionInputs {
             manifest: &self.manifest,
             envelopes: &self.envelopes,
@@ -141,6 +142,7 @@ impl Case {
             builder_allowlist: &builders,
             applied_central_head: self.applied_head.clone(),
             applied_regional_generation: self.applied_generation,
+            unearned: &unearned,
             now: now(),
         })
     }

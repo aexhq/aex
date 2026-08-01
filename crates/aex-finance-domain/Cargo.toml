@@ -11,6 +11,21 @@ publish = false
 [lints]
 workspace = true
 
+[package.metadata.aex]
+owner = "central-finance"
+role = "domain"
+artifact = "none"
+layers = ["unit"]
+concerns = ["property"]
+seams = []
+security_tier = "money"
+risk = ["money"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the central-finance stream; the cases land with the crate's own implementation"
+live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
+
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true

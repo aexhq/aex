@@ -11,6 +11,21 @@ publish = false
 [lints]
 workspace = true
 
+[package.metadata.aex]
+owner = "clients"
+role = "tool"
+artifact = "native_binary"
+layers = ["unit"]
+concerns = ["contract", "property"]
+seams = []
+security_tier = "public_edge"
+risk = ["untrusted_input"]
+scenarios = []
+
+[package.metadata.aex.not_applicable]
+targets = "awaiting the clients stream; the cases land with the tool's own implementation"
+live_suite = "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own"
+
 [[bin]]
 name = "aex-cli"
 path = "src/main.rs"

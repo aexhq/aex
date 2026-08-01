@@ -1,0 +1,82 @@
+# The pinned local test substrate.
+#
+# This file is the single source of truth for every container image the test
+# lanes may start. No image name, tag or digest may appear anywhere else in the
+# workspace outside `tests/support/aex-test-harness` (rule `data-image-literal`);
+# a target asks the harness for an image by key and receives a digest-pinned
+# reference or a typed error.
+#
+# Every image is pinned **by digest**, not by tag. The tag is recorded for human
+# reading and for the pin-refresh command; the digest is what runs. An entry
+# whose `digest` is empty makes `aex_test_harness::images::<key>()` return
+# `ImageError::Unpinned`, so an unpinned image cannot silently become "whatever
+# the registry serves today".
+#
+# `cannot_prove` is not decoration: it is the reason the matching seam in
+# `release/policy/seams.toml` carries `requires_live = true`.
+#
+# Deliberately absent: any emulator claiming DynamoDB Streams, ECS lifecycle,
+# Firecracker/MicroVM lifecycle or provider inference, and ClickHouse - Area 11
+# removes it, so the `Q-DEPENDENCY` "real pinned ClickHouse" clause is void.
+
+schema = "aex.test-images.v1"
+
+[image.postgres]
+registry = "registry-1.docker.io"
+repository = "library/postgres"
+tag = "17.5-bookworm"
+digest = "sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4"
+purpose = "full PostgreSQL semantics for the central schema and finance authority"
+proves = "DDL, constraints, deferrable triggers, SERIALIZABLE, advisory locks, 40001/40P01, role grants and denials, keyset paging, migration apply and re-entry, concurrent transaction races"
+cannot_prove = "Aurora Serverless v2 ACU scaling and cold resume, failover, the Data API transport, Aurora IAM auth, Performance Insights, PITR and restore"
+seams = ["aws.rds_data.transaction", "aws.aurora.serverless_v2"]
+
+[image.dynamodb_local]
+registry = "registry-1.docker.io"
+repository = "amazon/dynamodb-local"
+tag = "2.6.1"
+digest = "sha256:1856c05cc66a0e49dc1099e483ad2851477eeebe2135250ac11a1d1227db54b1"
+purpose = "expression and transaction semantics for every regional authority table"
+proves = "expression syntax, ConditionExpression and UpdateExpression semantics, the TransactWriteItems 100-action/4 MiB envelope and cancellation-reason vectors, GSI projection contents, sparse-index behaviour, pagination, competing single-item writers"
+cannot_prove = "Streams shard behaviour, ordering and iterator age, TTL actually firing, adaptive capacity and hot-partition throttling, TransactionConflict under real contention, on-demand scaling, PITR, IAM and dynamodb:LeadingKeys"
+seams = ["aws.dynamodb.transact_write", "aws.dynamodb.condition", "aws.dynamodb.streams", "aws.dynamodb.ttl", "aws.dynamodb.throughput", "aws.dynamodb.pitr_restore"]
+
+[image.minio]
+registry = "registry-1.docker.io"
+repository = "minio/minio"
+tag = "RELEASE.2025-04-22T22-12-26Z"
+digest = "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+purpose = "S3 API shape for content, checkpoint and export objects"
+proves = "the S3 API shape, byte ranges, multipart create/upload/list/complete/abort and resume, If-None-Match conditional create"
+cannot_prove = "bucket-policy denial of an unconditional put or of a delete, s3:signatureAge, SSE-KMS and Bucket Keys, AWS checksum semantics, lifecycle rules, presigned-URL expiry, Inventory, replication"
+seams = ["aws.s3.conditional_put", "aws.s3.multipart", "aws.s3.unversioned_delete", "aws.s3.presigned_expiry", "aws.s3.sse_kms"]
+
+[image.localstack]
+registry = "registry-1.docker.io"
+repository = "localstack/localstack"
+tag = "4.6"
+digest = "sha256:5a97e0f9917a3f0d9630bb13b9d8ccf10cbe52f33252807d3b4e21418cc21348"
+purpose = "SQS, KMS and Secrets Manager protocol shape only"
+proves = "the SQS queue and message protocol shape, the FIFO group ordering shape, the partial-batch response shape, the KMS and Secrets Manager request/response shape"
+cannot_prove = "the FIFO deduplication window, real visibility-timeout and redrive timing, DLQ at scale, KMS key policies, grants and EncryptionContext conditions, real key material, IAM evaluation"
+seams = ["aws.sqs.fifo", "aws.sqs.redrive", "aws.kms.encryption_context", "aws.kms.branch_key_rotation"]
+
+[image.toxiproxy]
+registry = "ghcr.io"
+repository = "shopify/toxiproxy"
+tag = "2.12.0"
+digest = "sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e"
+purpose = "network fault injection in front of any other substrate image"
+proves = "injected latency, bandwidth limits, connection reset, byte slicing and timeouts"
+cannot_prove = "anything about AWS behaviour itself"
+seams = []
+
+[image.stripe_mock]
+registry = "registry-1.docker.io"
+repository = "stripe/stripe-mock"
+tag = "v0.194.0"
+digest = "sha256:b535ce5548783b44ca0df7ecbe7f4773aee9f1b9caa6b012f0e0bc92844774b5"
+purpose = "Stripe protocol shape for the payment edges"
+proves = "the Stripe request/response protocol shape and API-version pinning"
+cannot_prove = "webhook signature verification against a real secret, idempotency-key replay semantics, test-mode disputes and refunds, redelivery, API-version agreement at the call site"
+seams = ["stripe.test_mode.webhook"]
