@@ -33,6 +33,18 @@ path = "src/main.rs"
 targets = "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
+aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-runtime-control = { path = "../../crates/aex-runtime-control" }
+aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+aws_lambda_events.workspace = true
+axum.workspace = true
+lambda_runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
