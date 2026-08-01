@@ -1486,6 +1486,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "authz": "unit",
           "mount": "unit",
           "primitives": "unit",
           "projection": "unit"

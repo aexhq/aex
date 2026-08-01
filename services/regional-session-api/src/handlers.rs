@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use aex_content_domain::identity::RegistryKind;
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::cursor::{CursorBinding, CursorKeyRing, Order, SnapshotToken, SortTuple};
 use aex_regional_http::mount::{UnaryDispatch, not_served};
@@ -23,6 +24,7 @@ use aex_regional_http::projection::{
     self, ProjectionError, authority_failure, entity_tag, position_tuple, tuple_position,
 };
 use aex_regional_http::router::RouteOwner;
+use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_wire::cursor::Cursor;
@@ -32,8 +34,9 @@ use aex_wire::ids::{ProviderCredentialId, ResourceName};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, NoContent, ProviderCredentialsApi, RequestContext as WireContext, RouteGroup,
-    SecretsApi, WithETag, dispatch_provider_credentials, dispatch_secrets,
+    AcceptKind, Created, NoContent, ProviderCredentialsApi, RegistryApi,
+    RequestContext as WireContext, RouteGroup, SecretsApi, WithETag, dispatch_provider_credentials,
+    dispatch_registry, dispatch_secrets,
 };
 use aex_wire::types::Timestamp;
 
@@ -45,6 +48,8 @@ use aex_wire::types::Timestamp;
 pub struct Shared {
     /// The ciphertext-metadata authority. Reads only on this deployable.
     pub custody: Arc<dyn SecretCustodyStore>,
+    /// The named-registry authority.
+    pub registry: Arc<dyn RegistryStore>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
 }
@@ -94,6 +99,11 @@ impl Routes {
 const SERVED: &[RouteId] = &[
     RouteId::ProviderCredentialGet,
     RouteId::ProviderCredentialsList,
+    RouteId::RegistryFilesList,
+    RouteId::RegistryInstructionsList,
+    RouteId::RegistryMcpServersList,
+    RouteId::RegistrySkillsList,
+    RouteId::RegistryToolsList,
     RouteId::SecretGet,
     RouteId::SecretsList,
 ];
@@ -266,7 +276,7 @@ impl ProviderCredentialsApi for Routes {
         &self,
         _cx: &WireContext,
         _body: models::ProviderCredentialRegisterRequest,
-    ) -> WireResult<aex_wire::server::Created<models::ProviderCredential>> {
+    ) -> WireResult<Created<models::ProviderCredential>> {
         Err(not_served(RouteId::ProviderCredentialRegister))
     }
 
@@ -314,6 +324,283 @@ impl ProviderCredentialsApi for Routes {
     }
 }
 
+impl Routes {
+    /// Reads one registry listing and mints its continuation.
+    ///
+    /// Every listing this deployable serves is the same read: one
+    /// `(workspace, kind)` partition in name order, resumed from a signed cursor
+    /// and continued by one. The five public methods differ only in the kind
+    /// they name and the model they project onto, so the read is written once.
+    ///
+    /// The snapshot token is the registry's own name, which is what stops a
+    /// cursor minted over `skills` from resuming a read over `tools`: the
+    /// binding is authenticated, so a re-pointed cursor fails its MAC rather
+    /// than paging the wrong collection.
+    async fn registry_page(
+        &self,
+        route: RouteId,
+        kind: RegistryKind,
+        cursor: Option<&Cursor>,
+        limit: Option<u32>,
+    ) -> WireResult<(PointerPage, Option<Cursor>)> {
+        let binding = self.cursor_binding(route, registry_snapshot(kind))?;
+        let after = self.resume(cursor, &binding)?;
+        let page = self
+            .shared
+            .registry
+            .list_pointers(
+                self.cx.auth.workspace_id,
+                kind,
+                budget(limit)?,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?;
+        let next = self.continuation(page.next.as_ref(), &binding)?;
+        Ok((page, next))
+    }
+}
+
+/// The snapshot token a registry listing's cursor is bound to.
+///
+/// One token per registry, so a continuation cannot cross from one collection
+/// into another even though all five share a table and a key template.
+const fn registry_snapshot(kind: RegistryKind) -> &'static str {
+    match kind {
+        RegistryKind::File => "registry:files",
+        RegistryKind::Skill => "registry:skills",
+        RegistryKind::Tool => "registry:tools",
+        RegistryKind::Instruction => "registry:instructions",
+        RegistryKind::McpServer => "registry:mcp-servers",
+    }
+}
+
+/// The named registry: five listings served, sixteen routes absent.
+///
+/// The five `*_get` and five `*_put` routes are not servable from this
+/// deployable's adapters, and for the same reason: a registry pointer stores a
+/// `sha256` and a size, while the item form of every registry model carries the
+/// `value` itself. That value is a sealed body in content storage, so returning
+/// it needs the content data key. A listing is complete without it, because the
+/// wire model marks `value` "omitted in collection rows"; an item read is not.
+/// RS-18 is why the other sixteen are absent rather than mounted and answering
+/// half a resource.
+impl RegistryApi for Routes {
+    async fn registry_files_delete(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<NoContent> {
+        Err(not_served(RouteId::RegistryFilesDelete))
+    }
+
+    async fn registry_files_get(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<WithETag<models::RegisteredFile>> {
+        Err(not_served(RouteId::RegistryFilesGet))
+    }
+
+    async fn registry_files_list(
+        &self,
+        _cx: &WireContext,
+        query: models::RegistryFilesListQuery,
+    ) -> WireResult<models::RegisteredFilePage> {
+        let (page, next) = self
+            .registry_page(
+                RouteId::RegistryFilesList,
+                RegistryKind::File,
+                query.cursor.as_ref(),
+                query.limit,
+            )
+            .await?;
+        projection::registered_file_page(&page.pointers, next).map_err(WireError::from)
+    }
+
+    async fn registry_files_put(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::RegisteredFileValue,
+    ) -> WireResult<WithETag<models::RegisteredFile>> {
+        Err(not_served(RouteId::RegistryFilesPut))
+    }
+
+    async fn registry_instructions_delete(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<NoContent> {
+        Err(not_served(RouteId::RegistryInstructionsDelete))
+    }
+
+    async fn registry_instructions_get(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<WithETag<models::RegisteredInstruction>> {
+        Err(not_served(RouteId::RegistryInstructionsGet))
+    }
+
+    async fn registry_instructions_list(
+        &self,
+        _cx: &WireContext,
+        query: models::RegistryInstructionsListQuery,
+    ) -> WireResult<models::RegisteredInstructionPage> {
+        let (page, next) = self
+            .registry_page(
+                RouteId::RegistryInstructionsList,
+                RegistryKind::Instruction,
+                query.cursor.as_ref(),
+                query.limit,
+            )
+            .await?;
+        projection::registered_instruction_page(&page.pointers, next).map_err(WireError::from)
+    }
+
+    async fn registry_instructions_put(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::RegisteredInstructionValue,
+    ) -> WireResult<WithETag<models::RegisteredInstruction>> {
+        Err(not_served(RouteId::RegistryInstructionsPut))
+    }
+
+    async fn registry_mcp_servers_delete(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<NoContent> {
+        Err(not_served(RouteId::RegistryMcpServersDelete))
+    }
+
+    async fn registry_mcp_servers_get(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
+        Err(not_served(RouteId::RegistryMcpServersGet))
+    }
+
+    async fn registry_mcp_servers_list(
+        &self,
+        _cx: &WireContext,
+        query: models::RegistryMcpServersListQuery,
+    ) -> WireResult<models::RegisteredMcpServerPage> {
+        let (page, next) = self
+            .registry_page(
+                RouteId::RegistryMcpServersList,
+                RegistryKind::McpServer,
+                query.cursor.as_ref(),
+                query.limit,
+            )
+            .await?;
+        projection::registered_mcp_server_page(&page.pointers, next).map_err(WireError::from)
+    }
+
+    async fn registry_mcp_servers_put(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::RegisteredMcpServerValue,
+    ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
+        Err(not_served(RouteId::RegistryMcpServersPut))
+    }
+
+    async fn registry_skills_delete(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<NoContent> {
+        Err(not_served(RouteId::RegistrySkillsDelete))
+    }
+
+    async fn registry_skills_get(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<WithETag<models::RegisteredSkill>> {
+        Err(not_served(RouteId::RegistrySkillsGet))
+    }
+
+    async fn registry_skills_list(
+        &self,
+        _cx: &WireContext,
+        query: models::RegistrySkillsListQuery,
+    ) -> WireResult<models::RegisteredSkillPage> {
+        let (page, next) = self
+            .registry_page(
+                RouteId::RegistrySkillsList,
+                RegistryKind::Skill,
+                query.cursor.as_ref(),
+                query.limit,
+            )
+            .await?;
+        projection::registered_skill_page(&page.pointers, next).map_err(WireError::from)
+    }
+
+    async fn registry_skills_put(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::RegisteredSkillValue,
+    ) -> WireResult<WithETag<models::RegisteredSkill>> {
+        Err(not_served(RouteId::RegistrySkillsPut))
+    }
+
+    async fn registry_tools_delete(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<NoContent> {
+        Err(not_served(RouteId::RegistryToolsDelete))
+    }
+
+    async fn registry_tools_get(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+    ) -> WireResult<WithETag<models::RegisteredTool>> {
+        Err(not_served(RouteId::RegistryToolsGet))
+    }
+
+    async fn registry_tools_list(
+        &self,
+        _cx: &WireContext,
+        query: models::RegistryToolsListQuery,
+    ) -> WireResult<models::RegisteredToolPage> {
+        let (page, next) = self
+            .registry_page(
+                RouteId::RegistryToolsList,
+                RegistryKind::Tool,
+                query.cursor.as_ref(),
+                query.limit,
+            )
+            .await?;
+        projection::registered_tool_page(&page.pointers, next).map_err(WireError::from)
+    }
+
+    async fn registry_tools_put(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::RegisteredToolValue,
+    ) -> WireResult<WithETag<models::RegisteredTool>> {
+        Err(not_served(RouteId::RegistryToolsPut))
+    }
+
+    async fn registry_files_download_create(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::RegistryDownloadRequest,
+    ) -> WireResult<Created<models::DownloadGrant>> {
+        Err(not_served(RouteId::RegistryFilesDownloadCreate))
+    }
+}
+
 #[async_trait::async_trait]
 impl UnaryDispatch for Routes {
     fn owner(&self) -> RouteOwner {
@@ -339,6 +626,7 @@ impl UnaryDispatch for Routes {
             "provider-credentials" => {
                 dispatch_provider_credentials(self, &wire, raw, limits).await?
             }
+            "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };
         match outcome {

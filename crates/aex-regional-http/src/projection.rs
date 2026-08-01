@@ -24,6 +24,7 @@
 //! * an entity tag is derived from the projected representation itself, so
 //!   "the tag changed" and "the body changed" cannot disagree.
 
+use aex_content_domain::identity::RegistryKind;
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
 };
@@ -33,7 +34,8 @@ use aex_session_dynamodb::paging::PagePosition;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::models;
-use aex_wire::types::ETag;
+use aex_wire::types::{DecimalU128, ETag};
+use aex_workspace_domain::registry::RegistryPointer;
 use serde::Serialize;
 
 use crate::cursor::{CursorError, SortTuple};
@@ -51,6 +53,18 @@ pub enum ProjectionError {
     SecretDeleted {
         /// Which name.
         name: SecretName,
+    },
+    /// A registry pointer was projected onto the model of another registry.
+    ///
+    /// A pointer is keyed by `(workspace, kind, name)`, so the kind is the only
+    /// thing that distinguishes two identically named rows. Projecting one into
+    /// the wrong model would publish a skill as a tool.
+    #[error("expected a `{expected}` registry pointer, found a `{found}` one")]
+    WrongRegistryKind {
+        /// Which registry the route reads.
+        expected: &'static str,
+        /// Which registry the row belongs to.
+        found: &'static str,
     },
     /// A revocation receipt was asked for from a record that carries no
     /// revocation instant.
@@ -80,10 +94,14 @@ impl ProjectionError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::SecretDeleted { .. } => ErrorCode::NotFound,
-            // A revocation receipt over an unrevoked record, and a
-            // non-canonicalizable model, are both invariant failures of this
-            // process rather than anything the caller did.
-            Self::NotRevoked { .. } | Self::NotCanonicalizable => ErrorCode::InternalError,
+            // A revocation receipt over an unrevoked record, a
+            // non-canonicalizable model and a pointer read out of the wrong
+            // registry are all invariant failures of this process. The last one
+            // in particular means the key template and the query disagreed,
+            // which a caller can neither cause nor fix.
+            Self::NotRevoked { .. } | Self::NotCanonicalizable | Self::WrongRegistryKind { .. } => {
+                ErrorCode::InternalError
+            }
             Self::Plaintext(_) => ErrorCode::InvalidRequest,
             Self::Cursor(_) => ErrorCode::InvalidCursor,
         }
@@ -282,6 +300,133 @@ pub fn provider_credential_page(
         items: stored.iter().map(provider_credential).collect(),
         next_cursor,
     }
+}
+
+// --- registry ---------------------------------------------------------------------
+
+/// Projects one registry pointer onto its **collection row**.
+///
+/// The five registry models carry an identical field set and differ only in the
+/// type of the `value` they may carry, so this produces the shared part once and
+/// the five wrappers below place it. Writing five copies of the same seven
+/// assignments is how two of them eventually disagree.
+///
+/// # Why the row never carries a value
+///
+/// A registry pointer stores a `sha256` and a size; the value itself lives in
+/// content storage as a **sealed** body. Reading it needs the content data key,
+/// which the deployable that serves these listings deliberately does not hold.
+/// The wire model marks `value` "omitted in collection rows", which is exactly
+/// what a listing publishes — so a listing is complete, and an item read that
+/// must carry the value is not servable from this projection alone.
+///
+/// # Errors
+///
+/// [`ProjectionError::WrongRegistryKind`] when the pointer belongs to another
+/// registry. A pointer is keyed by `(workspace, kind, name)` and the kind is the
+/// only thing distinguishing two identically named rows, so projecting one into
+/// the wrong model would publish a skill as a tool.
+fn registry_row(
+    pointer: &RegistryPointer,
+    expected: RegistryKind,
+) -> Result<RegistryRow, ProjectionError> {
+    if pointer.kind != expected {
+        return Err(ProjectionError::WrongRegistryKind {
+            expected: kind_name(expected),
+            found: kind_name(pointer.kind),
+        });
+    }
+    Ok(RegistryRow {
+        created_at: pointer.created_at,
+        name: pointer.name.clone(),
+        revision: pointer.revision.0,
+        sha256: pointer.sha256,
+        size_bytes: DecimalU128::new(u128::from(pointer.size_bytes)),
+        state: models::RegisteredState::Current,
+        updated_at: pointer.updated_at,
+    })
+}
+
+/// The field set every registry collection row shares.
+struct RegistryRow {
+    created_at: aex_wire::types::Timestamp,
+    name: aex_wire::ids::ResourceName,
+    revision: u64,
+    sha256: aex_wire::ids::ContentHash,
+    size_bytes: DecimalU128,
+    state: models::RegisteredState,
+    updated_at: aex_wire::types::Timestamp,
+}
+
+/// The registry's own spelling of a kind, for a diagnostic.
+const fn kind_name(kind: RegistryKind) -> &'static str {
+    match kind {
+        RegistryKind::File => "file",
+        RegistryKind::Skill => "skill",
+        RegistryKind::Tool => "tool",
+        RegistryKind::Instruction => "instruction",
+        RegistryKind::McpServer => "mcp_server",
+    }
+}
+
+/// Emits the five per-kind projections and their page forms.
+///
+/// A macro rather than five hand-written pairs: the five wire types are distinct
+/// structs with identical fields, so the only thing that varies is the type
+/// name, and hand-writing the variation is hand-writing the drift.
+macro_rules! registry_projections {
+    ($($item:ident, $page:ident, $kind:ident, $row:ident, $rows:ident;)+) => {
+        $(
+            #[doc = concat!("Projects one stored `", stringify!($kind), "` pointer onto its collection row.")]
+            ///
+            /// # Errors
+            ///
+            /// [`ProjectionError::WrongRegistryKind`] for a pointer from another
+            /// registry.
+            pub fn $row(pointer: &RegistryPointer) -> Result<models::$item, ProjectionError> {
+                let row = registry_row(pointer, RegistryKind::$kind)?;
+                Ok(models::$item {
+                    created_at: row.created_at,
+                    name: row.name,
+                    revision: row.revision,
+                    sha256: row.sha256,
+                    size_bytes: row.size_bytes,
+                    state: row.state,
+                    updated_at: row.updated_at,
+                    // Omitted in a collection row, and this projection produces
+                    // only collection rows.
+                    value: None,
+                })
+            }
+
+            #[doc = concat!("Projects one page of stored `", stringify!($kind), "` pointers.")]
+            ///
+            /// # Errors
+            ///
+            /// As the row projection. A page fails whole rather than skipping a
+            /// row: unlike a tombstone, a pointer from the wrong registry is a
+            /// corrupt read, not an absent resource.
+            pub fn $rows(
+                pointers: &[RegistryPointer],
+                next_cursor: Option<Cursor>,
+            ) -> Result<models::$page, ProjectionError> {
+                Ok(models::$page {
+                    items: pointers.iter().map($row).collect::<Result<Vec<_>, _>>()?,
+                    next_cursor,
+                })
+            }
+        )+
+    };
+}
+
+registry_projections! {
+    RegisteredFile, RegisteredFilePage, File, registered_file, registered_file_page;
+    RegisteredSkill, RegisteredSkillPage, Skill, registered_skill, registered_skill_page;
+    RegisteredTool, RegisteredToolPage, Tool, registered_tool, registered_tool_page;
+    RegisteredInstruction, RegisteredInstructionPage, Instruction,
+        registered_instruction, registered_instruction_page;
+    RegisteredMcpServer, RegisteredMcpServerPage, McpServer,
+        registered_mcp_server, registered_mcp_server_page;
 }
 
 // --- continuations ---------------------------------------------------------------

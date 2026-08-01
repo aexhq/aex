@@ -43,6 +43,7 @@ aws-sdk-s3.workspace = true
 aws-sdk-ssm.workspace = true
 lambda_http.workspace = true
 tokio.workspace = true
+aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
 aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
@@ -65,6 +66,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 axum.workspace = true
 http-body-util.workspace = true
 time.workspace = true

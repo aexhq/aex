@@ -67,6 +67,9 @@ aex-internal-contracts = { path = "../aex-internal-contracts" }
 # The projection module's inputs: the decoded authority rows. The alternative to
 # depending on the adapters is a third view type per model, which is exactly the
 # drift a single projection exists to prevent (RS-28).
+aex-content-domain = { path = "../aex-content-domain" }
+aex-workspace-domain = { path = "../aex-workspace-domain" }
+aex-registry-dynamodb = { path = "../aex-registry-dynamodb" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
 aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false, features = [

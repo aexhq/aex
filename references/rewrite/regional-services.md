@@ -625,3 +625,186 @@ listener keeps serving health until an edge can be built.
 | RS-31 | `secret_revoke` and `provider_credential_revoke` honour their `Idempotency-Key` by terminal state rather than by a durable receipt | Their scope subject is the resource and their body is empty, so one scope plus one key carries exactly one intent. A receipt would add a row and a failure mode to make an unreachable conflict detectable. |
 | RS-32 | `secret_delete` answers `204` without a write for an absent or already-tombstoned name | The route declares no `not_found`. A repeated delete that advanced the revision would break a concurrent editor's precondition for no reason. |
 | RS-33 | The provider-credential fingerprint is salted by `(workspace, credential)` and minted once at registration | A bare digest of the key would let one precomputed table cover the fleet and would tell two customers they hold the same key. Per-binding salting removes both without making the value non-deterministic for its own binding. |
+
+## Seams
+
+Branch `rw/seams`, off `main`. This closes the section above: `mount_unary`'s
+missing `EdgeAdmission` now has every input it needs, so **both finite APIs mount
+routes on their real listeners**. The three blockers named in "The listener is
+still health-only" are closed; a fourth — the projection reader — was
+structurally required and is closed with them.
+
+### What is served
+
+| Deployable | Owns | Mounted before | Mounted now |
+| --- | --- | --- | --- |
+| `regional-session-api` | 61 | 0 (4 handler-complete, unmounted) | **9** |
+| `regional-secret-api` | 4 | 0 (2 handler-complete, unmounted) | **2** |
+
+`regional-session-api` adds the five registry listings — `registry_files_list`,
+`registry_skills_list`, `registry_tools_list`, `registry_instructions_list` and
+`registry_mcp_servers_list` — to the four custody reads it already answered.
+RS-18 is unchanged: the other 52 owned routes are **absent from the router**, not
+mounted answering a permanent failure.
+
+### The workspace-key assertion exchange
+
+`aex_internal_contracts::assertion` gains the pair `central-authz` had only for a
+browser session:
+
+```rust
+pub struct CredentialDigest([u8; 32]);          // canonical unpadded base64url
+pub struct AssertionSignature(Vec<u8>);         // 1..=512 bytes, base64url
+pub const MAX_SIGNATURE_BYTES: usize = 512;
+pub const MAX_KEY_ID_BYTES: usize = 128;
+
+pub fn credential_bound_signing_input(
+    assertion: &AuthorizationAssertion, credential_binding: &CredentialDigest,
+) -> Vec<u8>;
+
+pub struct ResolveWorkspaceKey {
+    pub schema_version: SchemaVersion,
+    pub key: ApiKeyId,
+    pub presented_digest: CredentialDigest,
+    pub region: Region,
+    pub audience: AssertionAudience,
+}
+
+pub struct SignedAssertionEnvelope {
+    pub schema_version: SchemaVersion,
+    pub assertion: AuthorizationAssertion,
+    pub key_id: String,
+    pub credential_binding: CredentialDigest,
+    pub signature: AssertionSignature,
+}
+```
+
+**The key is named, never sent.** `aex_identity_domain::credential` stores
+`HMAC-SHA256(pepper, SHA-256(token))` — a MAC over a *digest* rather than over the
+token — and says in as many words that this exists so a regional edge can send
+`{keyId, presentedDigest}` and keep the customer's plaintext regional. The request
+is that design written down. A request carrying the token would authenticate
+identically and would additionally place every customer key in the central plane's
+logs, traces and memory.
+
+The digest is `SHA-256` over the complete token, which is also exactly what
+`PresentedCredential::binding` already computes. That is what makes the response's
+`credentialBinding` comparable against the credential actually presented, and it
+is compared twice: in `authz::signed_assertion` before the answer may enter the
+cache, and again inside `assertion::verify`.
+
+`credential_bound_signing_input` is the one definition of the covered bytes.
+`SignedAssertion::verification_input` was a private second copy inside
+`aex-regional-http`; it now delegates, so the issuer and every verifier cannot
+disagree about what was signed.
+
+### The four adapters
+
+`aex_regional_http::authz`, one module, shared by every regional deployable:
+
+| Type | Port it fills | Input |
+| --- | --- | --- |
+| `LambdaAssertionSource` | `AssertionSource` | a direct `lambda:Invoke` of `AEX_AUTHZ_FUNCTION_ARN` |
+| `Ed25519Anchors` | `KeyVerifier` | the trust-anchor document at `AEX_AUTHZ_VERIFY_KEYS_PARAM` |
+| `RegionalProjection<P>` | `ProjectionReader` | `aex_session_dynamodb::projection::AuthorizationProjection` |
+| `ParameterStore` | — | resolves both documents, plus `AEX_CURSOR_SIGNING_KEY_REF` |
+
+`central-authz` is IAM-invoked rather than routed, so the exchange is a direct
+invoke: the caller's execution role *is* the authentication, and a role without
+`lambda:InvokeFunction` on that one function ARN cannot resolve an assertion at
+all. That is why `aws-sdk-lambda` and not an HTTP client.
+
+Verification uses `ed25519-dalek`'s `verify_strict`, which rejects small-order
+public keys and non-canonical signature encodings. The issuer signs with the same
+library, so nothing legitimate is lost and the permissive-verifier class of bug is
+unreachable rather than merely avoided.
+
+Two documents, both read **once at cold start**, both `SecureString`-capable, and
+neither with a fallback:
+
+```json
+{ "schemaVersion": 1,
+  "keys": [ { "keyId": "2026-08-a", "publicKey": "<43 chars base64url>" } ] }
+
+{ "schemaVersion": 1,
+  "current": { "keyId": "2026-08", "material": "<32+ bytes base64url>" },
+  "overlap": [ { "keyId": "2026-07", "material": "..." } ] }
+```
+
+Both parsers refuse an oversized, unversioned, unknown-membered, empty, over-long
+or ambiguous document, and every refusal stops the process. A regional edge that
+cannot verify an assertion must not start: the alternatives are a listener that
+accepts nothing while reporting ready, or one that accepts everything.
+
+### The edge gained a placement stage
+
+A credential names its own API key and nothing else — the workspace it belongs to
+is a fact only the assertion carries — and the `regional-authz-projection` is
+keyed the way its writer keys it: revocation by `KEY#`, placement by `WS#`. The
+two facts therefore become available at two different points, and
+`ProjectionReader` has two methods rather than one:
+
+```rust
+async fn project(&self, credential: &PresentedCredential) -> Result<ProjectedEpochs, ProjectionError>;
+async fn placement(&self, workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError>;
+```
+
+`ProjectedState` gains `region`. The admission order is now: credential, the key
+revocation floor, assertion verification against that floor, the workspace the
+assertion names, the placement, the region and epoch and account-state gates, the
+declared scope, the pause gate, the effective body bound, and replay identity.
+
+Both projection reads happen on **every** request and neither is cached, which is
+the only thing that makes a 30-second assertion cache safe.
+`the_placement_is_read_on_every_request_even_when_the_assertion_is_cached` asserts
+it directly.
+
+### Decisions taken beyond the sections above
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| SD-01 | The `central-authz` request names the key by `(keyId, presentedDigest)` and never carries the token | The stored verifier is a MAC over the digest precisely so the plaintext can stay regional. Sending the token authenticates identically and additionally puts every customer key in the central plane. |
+| SD-02 | `AEX_CURSOR_SIGNING_KEY_REF` resolves to a Parameter Store name holding a `SecureString` ring document | The variable was a "storage reference" with no resolver at all. Parameter Store is already the plane's answer for the trust anchors, so this adds a document rather than a mechanism, and `with_decryption` is asked for unconditionally so there is one code path rather than two. |
+| SD-03 | `ProjectionReader` splits into `project` (credential) and `placement` (workspace) | Nothing writes a credential-to-workspace index, and inventing one would be inventing a projection row. Splitting the trait reads what the table actually holds, at the two points each fact becomes available. |
+| SD-04 | A `deleting` placement projects to `paused` rather than to a refusal | The pause-exempt set is exactly what a deleting workspace still needs, trash and purge, and every route that starts new paid work is outside it. |
+| SD-05 | `Dispatcher` moves out of each `served` target and into each deployable's library | It was written once per test and would have been written again in each `main`. Two spellings of the composition is how a tested router and a mounted router drift apart. |
+| SD-06 | The registry projection is one macro over five identical field sets, discriminated by `RegistryKind` | The five wire models are distinct structs with identical fields; the only variation is the type name, and hand-writing that variation is hand-writing the drift. `WrongRegistryKind` makes projecting a skill as a tool a typed refusal rather than a published lie. |
+| SD-07 | A registry listing binds its cursor to a per-registry snapshot token | All five share one table and one key template, so nothing else stops a `skills` cursor resuming a `tools` read. The binding is authenticated, so a re-pointed cursor fails its MAC. |
+| SD-08 | `regional-secret-api::Config::limits` carries zero page bounds | It owns no listing. Zero is not a page size it would ever use, so a handler that started paginating fails its own budget check rather than inheriting a number nobody chose; `a_served_route_never_paginates` holds the premise. |
+
+### Fixed on the way
+
+`aex-session-dynamodb` gated `wire_pending` on `session-authority` alone, so
+`default-features = false, features = ["authz-projection"]` — the exact
+composition D-21 exists to permit — did not compile. Nothing noticed, because the
+default feature set turns both on. The module now follows either feature.
+
+### What the remaining 52 routes are waiting for
+
+This corrects the previous pass, which recorded the registry, files, uploads,
+approvals, operations, usage and workspace routes as "mechanically the same shape
+and unblocked". They are not. Only `aex-secret-custody-dynamodb`,
+`aex-registry-dynamodb`, `aex-content-dynamodb` and `aex-work-dynamodb` publish a
+store trait at all, and of those only the first two publish a read a listing can
+use; `aex-usage-query-aws` publishes expression builders and no store type.
+
+| Route(s) | Precise next blocker | Owner |
+| --- | --- | --- |
+| the 5 registry `*_get` and 5 `*_put` | A registry pointer stores `sha256` and a size; the item form of every registry model carries the `value` itself, which is a **sealed** body in content storage. Serving one needs the content data key and a decrypt path, neither of which `regional-session-api` composes. A listing is complete without it — the wire model marks `value` "omitted in collection rows" — which is exactly why the 5 listings are served and these 10 are not. | regional services + regional stores |
+| `registry_files_download_create` | Nothing presigns. `aex-content-dynamodb::encode_grant` exists; no composed path mints a grant. | regional stores |
+| the 3 `operations` | `aex_work_dynamodb::WorkAuthority` publishes `load` and `scan_due` and **no workspace-scoped listing**, so `regional_operations_list` has no query to run. `WorkRecord` additionally carries no operation result and no `ApiErrorBody`, and its `kind` is a free `String` rather than `OperationKind`, so `Operation.result`, `.error` and `.kind` have no source. | regional stores |
+| the 3 `approvals` | `aex_session_dynamodb::wire_pending::Approval` carries neither `session_id` nor `expires_at`, both of which `models::Approval` requires, and no store method reads one. | regional stores |
+| the 6 `files` | Every template is `/api/sessions/{sessionId}/files/...`, so each needs the session's persisted root — the `SessionHead`-cannot-decode blocker already recorded above. A `TreePage` is additionally a **sealed** body, so listing entries needs the content data key too. | regional domains + regional stores |
+| the 4 `uploads` | `RegistryStore::load_upload` reads one, but `models::Upload` publishes the presigned target and nothing presigns. | regional stores |
+| the 1 `usage` | `aex-usage-query-aws` publishes `expressions::aggregate_page` and no store type at all — there is nothing holding a client to call it. | usage metering |
+| the 3 `workspace` | `models::Workspace` requires `apiUrl`, `name`, `slug`, `createdAt` and `operationalState`; the `regional-authz-projection` placement row carries none of them. `EffectiveWorkspaceLimit` has no regional source at all. | central identity/control, the projection's only writer |
+| the 15 `sessions`, `session_message_send`, `session_messages_list`, `secret_put`, `provider_credential_register` | Unchanged from the previous pass. | as recorded above |
+
+### Peer work this pass raises
+
+| Requirement | Owner |
+| --- | --- |
+| `central-authz` must serve `ResolveWorkspaceKey` on an invoke handler. `run()` mounts only the health router today, and its `issue_for_key` returns `aex_identity_domain::assertion::Assertion` — a 323-byte binary envelope — rather than the `SignedAssertionEnvelope` that `aex-regional-http`, `regional-observation-api` and `regional-otlp` all verify. **Two assertion vocabularies exist and neither is served.** One has to go. This pass deliberately did not pick for the identity stream: it implemented against the one three regional deployables already verify, and records the divergence here. | central identity |
+| `ResolvedSessionAssertion` carries a claim set and nothing that authenticates it, so no regional edge can verify a browser-session assertion. It should answer with `SignedAssertionEnvelope`. | contracts + central identity |
+| `regional-observation-api::edge` and `regional-otlp::edge` each hold a private `Ed25519Anchors`, an `AssertionResponse` and an `HttpAssertionSource` that posts to `/internal/authz/assertions` — a third spelling of this exchange, over a transport `central-authz` does not expose, and one that sends the credential verbatim. Both should adopt `aex_regional_http::authz`. | regional services, next pass |
+| `central-control-worker` must confirm the `regional-authz-projection` item shapes, and must publish whatever `models::Workspace` needs before the three regional `workspace` routes can be served. | central identity/control |

@@ -123,6 +123,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let edge = build_edge(config, &aws, &dynamodb, anchors)?;
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         custody: Arc::new(stores.custody.clone()),
+        registry: Arc::new(stores.registry.clone()),
         cursor_keys: Arc::new(cursor_keys),
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(edge), limits(config))?;

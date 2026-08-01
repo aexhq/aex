@@ -867,11 +867,14 @@ dependencies = [
 name = "aex-regional-http"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
  "aex-internal-contracts",
+ "aex-registry-dynamodb",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
  "aex-session-dynamodb",
  "aex-wire",
+ "aex-workspace-domain",
  "async-trait",
  "aws-sdk-lambda",
  "aws-sdk-ssm",
@@ -5852,6 +5855,7 @@ dependencies = [
 name = "regional-session-api"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
  "aex-content-dynamodb",
  "aex-internal-contracts",
  "aex-platform-telemetry",
@@ -5864,6 +5868,7 @@ dependencies = [
  "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
+ "aex-workspace-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",

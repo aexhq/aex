@@ -10,10 +10,13 @@
 //! The refusals are asserted separately, because "what the projection refuses to
 //! say" is the half a round trip cannot see.
 
+use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_regional_http::cursor::{CursorError, SortTuple};
 use aex_regional_http::projection::{
     ProjectionError, entity_tag, position_tuple, provider_credential, provider_credential_page,
-    secret_metadata, secret_metadata_page, secret_plaintext, secret_revocation, tuple_position,
+    registered_file, registered_instruction, registered_mcp_server, registered_skill,
+    registered_skill_page, registered_tool, secret_metadata, secret_metadata_page,
+    secret_plaintext, secret_revocation, tuple_position,
 };
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
@@ -23,9 +26,12 @@ use aex_secret_domain::revocation::RevocationEpoch;
 use aex_secret_domain::secret::{SecretRevision, SecretState, SourceGeneration};
 use aex_session_dynamodb::paging::PagePosition;
 use aex_wire::error::ErrorCode;
-use aex_wire::ids::{PrefixedId as _, ProviderCredentialId, ResourceName, Uuid7, WorkspaceId};
+use aex_wire::ids::{
+    ContentHash, PrefixedId as _, ProviderCredentialId, ResourceName, Uuid7, WorkspaceId,
+};
 use aex_wire::models;
-use aex_wire::types::Timestamp;
+use aex_wire::types::{ETag, Timestamp};
+use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer};
 
 // --- fixtures ---------------------------------------------------------------------
 
@@ -335,5 +341,138 @@ fn an_entity_tag_is_a_quoted_strong_validator() {
     assert!(
         !rendered.starts_with("W/"),
         "a weak validator would make If-Match unusable"
+    );
+}
+
+// --- the registry ------------------------------------------------------------------
+
+fn registry_pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
+    RegistryPointer {
+        workspace: workspace(),
+        kind,
+        name: ResourceName::parse(name).expect("a resource name"),
+        revision: Revision(7),
+        etag: ETag::parse("\"registry-7\"").expect("a strong validator"),
+        value: RegisteredValueRef::Content {
+            digest: ContentHash::of(b"body"),
+        },
+        sha256: ContentHash::of(b"body"),
+        size_bytes: 4_096,
+        created_at: moment("2026-08-01T12:34:56.789Z"),
+        updated_at: moment("2026-08-01T13:00:00.000Z"),
+    }
+}
+
+#[test]
+fn a_projected_registry_row_survives_the_wire_unchanged() {
+    let projected =
+        registered_skill(&registry_pointer(RegistryKind::Skill, "review")).expect("it projects");
+    let encoded = serde_json::to_vec(&projected).expect("it encodes");
+    let decoded: models::RegisteredSkill =
+        serde_json::from_slice(&encoded).expect("it decodes through deny_unknown_fields");
+    assert_eq!(decoded, projected);
+    assert_eq!(projected.revision, 7);
+    assert_eq!(projected.size_bytes.get(), 4_096);
+    assert_eq!(projected.state, models::RegisteredState::Current);
+}
+
+#[test]
+fn a_collection_row_never_publishes_a_value_the_projection_cannot_read() {
+    // The value is a sealed body in content storage. A row that carried one
+    // would be publishing something this projection never read.
+    for pointer in [
+        registry_pointer(RegistryKind::File, "notes.md"),
+        registry_pointer(RegistryKind::Instruction, "house-style"),
+        registry_pointer(RegistryKind::McpServer, "docs"),
+    ] {
+        let encoded = match pointer.kind {
+            RegistryKind::File => {
+                serde_json::to_value(registered_file(&pointer).expect("it projects"))
+            }
+            RegistryKind::Instruction => {
+                serde_json::to_value(registered_instruction(&pointer).expect("it projects"))
+            }
+            _ => serde_json::to_value(registered_mcp_server(&pointer).expect("it projects")),
+        }
+        .expect("it encodes");
+        assert!(
+            encoded.get("value").is_none(),
+            "a collection row omits the value"
+        );
+    }
+}
+
+#[test]
+fn a_pointer_from_another_registry_is_refused_rather_than_republished() {
+    // All five registries share one table and one key template, so the kind is
+    // the only thing separating two identically named rows. Publishing a skill
+    // as a tool is the failure this refusal exists to prevent.
+    let skill = registry_pointer(RegistryKind::Skill, "review");
+    let error = registered_tool(&skill).expect_err("a skill is not a tool");
+    assert_eq!(
+        error,
+        ProjectionError::WrongRegistryKind {
+            expected: "tool",
+            found: "skill"
+        }
+    );
+    assert_eq!(error.code(), ErrorCode::InternalError);
+}
+
+#[test]
+fn every_registry_projection_refuses_every_other_kind() {
+    let kinds = [
+        RegistryKind::File,
+        RegistryKind::Skill,
+        RegistryKind::Tool,
+        RegistryKind::Instruction,
+        RegistryKind::McpServer,
+    ];
+    for kind in kinds {
+        let pointer = registry_pointer(kind, "name");
+        assert_eq!(
+            registered_file(&pointer).is_ok(),
+            kind == RegistryKind::File,
+            "file over {kind:?}"
+        );
+        assert_eq!(
+            registered_skill(&pointer).is_ok(),
+            kind == RegistryKind::Skill,
+            "skill over {kind:?}"
+        );
+        assert_eq!(
+            registered_tool(&pointer).is_ok(),
+            kind == RegistryKind::Tool,
+            "tool over {kind:?}"
+        );
+        assert_eq!(
+            registered_instruction(&pointer).is_ok(),
+            kind == RegistryKind::Instruction,
+            "instruction over {kind:?}"
+        );
+        assert_eq!(
+            registered_mcp_server(&pointer).is_ok(),
+            kind == RegistryKind::McpServer,
+            "mcp server over {kind:?}"
+        );
+    }
+}
+
+#[test]
+fn a_registry_page_fails_whole_rather_than_dropping_a_row_it_cannot_project() {
+    // Unlike a tombstone, which is genuinely absent, a row from the wrong
+    // registry means the query and the key template disagreed. Skipping it would
+    // publish a short page as a complete one.
+    let mixed = [
+        registry_pointer(RegistryKind::Skill, "review"),
+        registry_pointer(RegistryKind::Tool, "search"),
+    ];
+    assert!(registered_skill_page(&mixed, None).is_err());
+    assert_eq!(
+        registered_skill_page(&mixed[..1], None)
+            .expect("a homogeneous page")
+            .items
+            .len(),
+        1
     );
 }
