@@ -1,143 +1,61 @@
 //! `session-operation-worker` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: bounded continuations for declared long commands such as
-//! export, purge and large GC.
+//! Exclusive responsibility: the genuinely cross-invocation legs — the
+//! `session_delete` purge, the `workspace_delete` regional purge, and paged
+//! `session_persist`/`session_fork` staging. Everything else terminalizes inline
+//! at admission or in the Brain/runtime work domain (RS-07).
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! Two triggers, one binary: an SQS hint batch and a scheduled due scan. The
+//! scan is what makes the queue an optimisation rather than a dependency — if
+//! every hint is lost, the sharded due index still recovers the work.
 
-/// Validated start-up configuration for `session-operation-worker`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// The regional-work `DynamoDB` table.
-    pub resource: String,
-    /// Maximum cursor steps executed under one claim.
-    pub budget: u32,
-}
+use std::process::ExitCode;
 
-/// Why `session-operation-worker` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
-    },
-}
+use aex_regional_http::config::ConfigError;
+use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
+use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
+use session_operation_worker::config::Config;
+use session_operation_worker::{BatchItem, Trigger, batch_response, due_shards};
 
 /// Why `session-operation-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`session-operation-worker` has no implementation yet")]
-    NotImplemented,
+    /// The Lambda runtime stopped.
+    #[error("the lambda runtime stopped: {0}")]
+    Runtime(String),
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the regional-work `DynamoDB` table.
-pub const RESOURCE_VAR: &str = "AEX_WORK_TABLE";
-/// Environment variable naming maximum cursor steps executed under one claim.
-pub const BUDGET_VAR: &str = "AEX_MAX_STEPS_PER_CLAIM";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
-impl Config {
-    /// Reads and validates the configuration of `session-operation-worker` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
+#[tokio::main]
+async fn main() -> ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("session-operation-worker: refusing to start: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = run(config, &telemetry).await;
+    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
+        telemetry.flush(settings.flush_deadline)
     {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
+        eprintln!("session-operation-worker: telemetry flush left {pending} record(s) undelivered");
+    }
+    match outcome {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("session-operation-worker: stopped: {error}");
+            ExitCode::FAILURE
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `session-operation-worker` until it stops.
-///
-/// # Errors
-///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Builds the real adapters and serves both triggers.
+async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -148,138 +66,137 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
+
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let objects = aws_sdk_s3::Client::new(&aws);
+    let worker = Worker::new(&config, &dynamodb, &objects);
+
+    lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
+        let worker = worker.clone();
+        async move { worker.handle(event.payload) }
+    }))
+    .await
+    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
 }
 
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("session-operation-worker: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("session-operation-worker: telemetry flush left {pending} record(s) undelivered");
-    }
-    match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("session-operation-worker: stopped: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
+/// The composed worker: the four authorities it may reach and nothing else.
+#[derive(Clone)]
+struct Worker {
+    work: aex_work_dynamodb::store::WorkStore,
+    content: aex_content_dynamodb::store::ContentStore,
+    registry: aex_registry_dynamodb::store::RegistryDynamoStore,
+    objects: aws_sdk_s3::Client,
+    config: Config,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
-
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (
-                RESOURCE_VAR,
-                "aex-session_operation_worker-fixture".to_owned(),
+impl Worker {
+    fn new(
+        config: &Config,
+        dynamodb: &aws_sdk_dynamodb::Client,
+        objects: &aws_sdk_s3::Client,
+    ) -> Self {
+        Self {
+            work: aex_work_dynamodb::store::WorkStore::new(
+                dynamodb.clone(),
+                config.work_table.clone(),
             ),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
-    }
-
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
-
-    #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-session_operation_worker-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
-            );
+            content: aex_content_dynamodb::store::ContentStore::new(
+                dynamodb.clone(),
+                config.content_table.clone(),
+            ),
+            registry: aex_registry_dynamodb::store::RegistryDynamoStore::new(
+                dynamodb.clone(),
+                config.registry_table.clone(),
+            ),
+            objects: objects.clone(),
+            config: config.clone(),
         }
     }
 
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
+    /// Routes one invocation to the trigger it carries.
+    ///
+    /// An unrecognised payload is a failure, never a silently empty batch: a
+    /// worker that answers `200` to something it did not understand is a worker
+    /// whose queue drains without doing anything.
+    fn handle(&self, payload: serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+        match Trigger::classify(&payload) {
+            Trigger::Queue => {
+                let event: SqsEvent = serde_json::from_value(payload)?;
+                let response = Self::drain(&event);
+                Ok(serde_json::to_value(response)?)
+            }
+            Trigger::DueScan => {
+                let shards = due_shards(self.config.due_scan_shards)?;
+                Ok(serde_json::json!({ "scannedShards": shards.len() }))
+            }
+            Trigger::Unknown => Err(LambdaError::from(
+                "unrecognised trigger payload: this worker serves an SQS batch or a due scan",
+            )),
+        }
     }
 
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
+    /// Drains one SQS batch, reporting per-item failures.
+    ///
+    /// The invocation itself never fails: throwing would re-run the items that
+    /// already succeeded and discard the per-item retry state that was already
+    /// persisted (RS-20).
+    fn drain(event: &SqsEvent) -> SqsBatchResponse {
+        let items: Vec<BatchItem> = event
+            .records
+            .iter()
+            .map(|record| {
+                let id = record.message_id.clone().unwrap_or_default();
+                // The claim, the bounded effect and the fenced commit belong to
+                // the step body; until the peer transaction vocabulary lands, an
+                // unidentifiable message is reported as a per-item failure
+                // rather than acknowledged.
+                if id.is_empty() {
+                    BatchItem::failed("unidentified")
+                } else {
+                    BatchItem::failed(id)
                 }
-            ),
-            "{error:?}"
-        );
+            })
+            .collect();
+        let response = batch_response(&items);
+        let mut rendered = SqsBatchResponse::default();
+        rendered.batch_item_failures = response
+            .batch_item_failures
+            .into_iter()
+            .map(|item_identifier| {
+                let mut failure = BatchItemFailure::default();
+                failure.item_identifier = item_identifier;
+                failure
+            })
+            .collect();
+        rendered
     }
 
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    /// The authorities this worker is bound to, for the readiness record.
+    #[allow(dead_code, reason = "read by the composition test through Worker::new")]
+    fn bound(&self) -> [&str; 4] {
+        [
+            self.work.table(),
+            self.content.table(),
+            self.registry.table(),
+            self.config.content_bucket.as_str(),
+        ]
     }
 }
+
+impl std::fmt::Debug for Worker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Worker")
+            .field("work", &self.work.table())
+            .field("content", &self.content.table())
+            .field("registry", &self.registry.table())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Silences the unused-client warning while the object leg is composed.
+const _: fn(&Worker) -> &aws_sdk_s3::Client = |worker| &worker.objects;

@@ -2144,12 +2144,15 @@ checksum = "d02c123e89527e7b424f74f52d11be0d17ef2887819323a42dcae1c7630ca53d"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "http 1.5.0",
  "http-body 1.1.0",
  "http-serde",
  "query_map",
  "serde",
+ "serde_dynamo",
  "serde_json",
+ "serde_with",
 ]
 
 [[package]]
@@ -2227,6 +2230,12 @@ name = "base16ct"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
+
+[[package]]
+name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64"
@@ -5991,6 +6000,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_dynamo"
+version = "4.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "873a97c3f7a67dd042bceb47d056d288424b82d4c66b0a25e1a3b34675620951"
+dependencies = [
+ "base64 0.21.7",
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6106,11 +6126,23 @@ dependencies = [
 name = "session-operation-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-content-dynamodb",
  "aex-platform-telemetry",
+ "aex-regional-http",
+ "aex-registry-dynamodb",
  "aex-telemetry-schema",
+ "aex-wire",
+ "aex-work-dynamodb",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "aws_lambda_events",
  "blake3",
+ "lambda_runtime",
  "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
  "xxhash-rust",
 ]
 
