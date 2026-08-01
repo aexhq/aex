@@ -25,12 +25,15 @@ use aex_regional_http::projection::{
 };
 use aex_regional_http::router::RouteOwner;
 use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
+use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
+use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
+use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::ids::{ProviderCredentialId, ResourceName};
+use aex_wire::ids::{ProviderCredentialId, ResourceName, WorkspaceId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
@@ -46,8 +49,17 @@ use aex_wire::types::Timestamp;
 /// which is what lets a handler be constructed for one request by cloning two
 /// `Arc`s.
 pub struct Shared {
-    /// The ciphertext-metadata authority. Reads only on this deployable.
+    /// The ciphertext-metadata authority.
+    ///
+    /// Metadata only: this deployable holds no decrypt key, so the one thing it
+    /// writes here is a revocation fence.
     pub custody: Arc<dyn SecretCustodyStore>,
+    /// The physical `regional-secret-custody` table name.
+    ///
+    /// Carried because a conditional expression names its own table, and the
+    /// physical name is composed by the infrastructure stream rather than
+    /// guessed here.
+    pub custody_table: String,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
     /// The signing ring every continuation is minted and verified under.
@@ -98,6 +110,7 @@ impl Routes {
 /// records, per fragment, exactly what each remaining route is waiting for.
 const SERVED: &[RouteId] = &[
     RouteId::ProviderCredentialGet,
+    RouteId::ProviderCredentialRevoke,
     RouteId::ProviderCredentialsList,
     RouteId::RegistryFilesList,
     RouteId::RegistryInstructionsList,
@@ -280,13 +293,73 @@ impl ProviderCredentialsApi for Routes {
         Err(not_served(RouteId::ProviderCredentialRegister))
     }
 
+    /// Fences one BYOK binding.
+    ///
+    /// Two things are load bearing.
+    ///
+    /// **The update is committed as a one-action transaction, not as a bare
+    /// conditional update.** This deployable is granted `GetItem`, `Query` and
+    /// `TransactWriteItems` on `regional-secret-custody` and is deliberately not
+    /// granted `UpdateItem`, so the same expression issued directly would be
+    /// denied in production while passing every local test. Routing it through
+    /// the one transaction compiler also keeps the "no unconditional authority
+    /// write" check on the path.
+    ///
+    /// **Idempotency is carried by the terminal state (RS-31).** The scope
+    /// subject is the credential and the body is `EmptyRequest`, so one scope
+    /// plus one key can only ever carry this one intent: an
+    /// `idempotency_conflict` is unreachable rather than undetected, and a
+    /// replay answers from the stored row without a second write.
     async fn provider_credential_revoke(
         &self,
         _cx: &WireContext,
-        _provider_credential_id: ProviderCredentialId,
+        provider_credential_id: ProviderCredentialId,
         _body: models::EmptyRequest,
     ) -> WireResult<models::ProviderCredential> {
-        Err(not_served(RouteId::ProviderCredentialRevoke))
+        let workspace = self.cx.auth.workspace_id;
+        let stored = self
+            .shared
+            .custody
+            .load_provider_credential(workspace, provider_credential_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+            .ok_or_else(|| WireError::new(ErrorCode::ProviderCredentialNotFound))?;
+
+        if stored.state == CredentialState::Revoked {
+            return Ok(projection::provider_credential(&stored));
+        }
+
+        // Computed before the expression consumes the observed row, so the
+        // published revision is the one the condition committed against rather
+        // than a number re-derived after the fact.
+        let next_revision = stored
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+        let now = self.now()?;
+        let builder =
+            expressions::revoke_provider_credential(&self.shared.custody_table, &stored, now)
+                .map_err(|error| authority_failure(&error))?;
+        let mut plan = TransactionPlan::new(revocation_token(workspace, &stored));
+        plan.update(Participant::CUSTODY_PROVIDER_CREDENTIAL, builder)
+            .map_err(|error| authority_failure(&error))?;
+        self.shared
+            .custody
+            .commit(&plan)
+            .await
+            .map_err(|error| authority_failure(&error))?;
+
+        // The committed row is the observed one with the state fenced, the
+        // revision advanced and both instants stamped, so the answer is built
+        // from what the transaction wrote rather than from a second read that
+        // could observe a later state.
+        Ok(projection::provider_credential(&StoredCredential {
+            state: CredentialState::Revoked,
+            revision: next_revision,
+            revoked_at: Some(now),
+            updated_at: now,
+            ..stored
+        }))
     }
 
     async fn provider_credentials_list(
@@ -359,6 +432,25 @@ impl Routes {
         let next = self.continuation(page.next.as_ref(), &binding)?;
         Ok((page, next))
     }
+}
+
+/// The transport deduplication identity of one revocation.
+///
+/// It is derived from the binding and the **observed** revision, so two attempts
+/// to fence the same observed state are one transaction inside the provider's
+/// deduplication window and a later attempt against a moved row is not. The
+/// durable identity is the terminal state itself (RS-31); this token only stops
+/// a retry of the same attempt from being counted twice.
+fn revocation_token(workspace: WorkspaceId, stored: &StoredCredential) -> String {
+    use sha2::Digest as _;
+
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"aex.provider_credential.revoke.v1");
+    digest.update(workspace.to_string());
+    digest.update(stored.credential.to_string());
+    digest.update(stored.revision.to_be_bytes());
+    let digest: [u8; 32] = digest.finalize().into();
+    format!("aex-{}", hex::encode(&digest[..16]))
 }
 
 /// The snapshot token a registry listing's cursor is bound to.

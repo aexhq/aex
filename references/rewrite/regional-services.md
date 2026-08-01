@@ -10,7 +10,7 @@ keywords:
   - idempotency
   - composition
 audience: implementation agents and maintainers
-last_verified: 2026-08-01
+last_verified: 2026-08-02
 related:
   - references/rewrite/regional-domains.md
   - references/rewrite/regional-stores.md
@@ -846,3 +846,148 @@ services, next pass". The full record is
 The trust-anchor document a deployable reads at cold start changes shape: its
 `keyId` is the envelope's raw-UUID `kid` rather than a free string, and each
 entry carries `notAfterMs`.
+## Reads
+
+Branch `rw/regional-reads`, off `main`. This pass was scoped to the adapter reads
+the 52 unmounted routes were recorded as waiting on. It closed the two adapter
+gaps it found, mounted one more route, and **corrects the blocker table above**:
+for four of the six remaining families the adapter is not the blocker, and no
+amount of store work would have mounted them.
+
+### What is served
+
+| Deployable | Owns | Mounted before | Mounted now |
+| --- | --- | --- | --- |
+| `regional-session-api` | 61 | 9 | **10** |
+| `regional-secret-api` | 4 | 2 | 2 |
+
+The addition is `provider_credential_revoke`.
+
+### `provider_credential_revoke` was mounted, and it was not servable as written
+
+The previous pass recorded it as "servable ... left unmounted only because the
+directory cannot be populated". That reason does not hold: `provider_credential_get`
+and `provider_credentials_list` are already mounted over the same unpopulated
+directory, and a read over rows nothing yet writes answers `404` and an empty
+page — both honest.
+
+The route *was* unservable, for a different reason nobody had recorded.
+`regional-session-api` owns it, and `migrations/regional/tables/regional-secret-custody.json`
+grants that role `GetItem`, `Query` and `TransactWriteItems` — **not `UpdateItem`**.
+`expressions::revoke_provider_credential` returns an `UpdateBuilder`, and
+`SecretCustodyStore::commit_update` issues it as a bare conditional update, which
+that role is denied. Issued that way the route would pass every local test and
+fail in production with `AccessDeniedException`.
+
+The handler therefore wraps the same expression in a one-action
+`TransactionPlan` and commits it through `SecretCustodyStore::commit`. That is
+the write path the role actually holds, and it keeps the "no unconditional
+authority write" check on the path. `the_revocation_reaches_the_authority_as_a_transaction`
+asserts it, and `commit_update` stays a typed refusal in the fixture so a
+regression to the denied path fails the suite rather than the deployment.
+
+Idempotency is by terminal state (RS-31): a replay observes `revoked`, answers
+from the stored row and writes nothing. The transaction's deduplication token is
+derived from the binding plus the **observed** revision, so two attempts against
+the same observed state are one transaction and an attempt against a moved row is
+not.
+
+### `aex-usage-query-aws` has a store type
+
+`UsageProjectionReads` publishes the three reads the projection holds — the
+generation pointer, one coverage row and one bounded page of rollups — and
+`UsageQueryStore` is its DynamoDB adapter. Decoding is strict against the exact
+attribute names `aex_usage_application::projection` writes.
+
+Three decisions worth naming:
+
+- **It stays inside its own stream.** The three usage authority adapters carry
+  their own row reader and their own port error rather than linking
+  `aex-session-dynamodb`, so this one does too. That is what keeps
+  `tests/write_incapability.rs` a fact about this crate's sources alone.
+- **`current_generation` answers `Option`.** An absent pointer means the
+  projection was never cut over. Substituting `Generation::FIRST` would make a
+  never-built projection read as an empty one.
+- **Every read is strongly consistent, including the page query.** The coverage
+  vector exists to distinguish "you used nothing" from "we have not folded your
+  facts yet"; a coverage row from a replica could name a frontier ahead of the
+  rows the same request returned.
+
+`QueryError` gains `Unavailable`, `Denied` and `Misconfigured`. There is no
+ambiguous-commit arm, because every call the crate can make is a read.
+
+### `session-authority` has an approval codec and a read port
+
+The `approval` item type was declared in the table definition and in
+`keys::ITEM_TYPES`, and `keys::approval` built its key, but **nothing encoded or
+decoded one and no store method read one**. The placeholder row carried five
+loose strings, no session, no workspace and no expiry.
+
+`wire_pending::Approval` now mirrors `aex_session_domain::approval::Approval`:
+one `ApprovalBinding` of all eleven bound fields, a four-arm `ApprovalStatus`, a
+seven-arm `ApprovalCancelCause`, the workspace the tenancy check compares, and
+`expires_at`. All eleven bound fields are persisted rather than the seven the
+wire publishes, because `respond` revalidates the whole binding and an approval
+that cannot be revalidated would have to be dispatched on trust.
+
+`SessionReads` is the read-only adapter: a client and a table name, no cursor key
+because it mints no token and no transaction compiler because it commits nothing.
+`SessionQueries` publishes the head read plus one approval and a bounded page of
+them, listed by a `begins_with` range inside the session partition so an approval
+of another session is unreachable rather than filtered out.
+
+The routes are **not** mounted. See below.
+
+### The blocker table, corrected
+
+The previous pass attributed the remaining families to the stores. Four of them
+are blocked in the contract or the domain instead, and the evidence is in the
+generated models rather than in the adapters.
+
+| Route(s) | Precise next blocker | Owner |
+| --- | --- | --- |
+| the 1 `usage` | **`UsageAttribution.rated_cents` has no producer anywhere.** A search for `rated_cents` and `ratedCents` over the whole workspace returns exactly one hit: the generated model. The fold in `aex_usage_application::projection` writes `quantity` and `factCount` and no money at all, and `aex-usage-rating` needs a pinned rate book the regional API neither holds nor is configured with. Two smaller gaps ride along: `UsageFrontier.rated_sequence` names a pipeline stage `aex_usage_domain::frontier` does not have (its four are accepted/projected/published/settled, and `published` has no wire arm), and `UsageFrontier.service_through` is required on the wire while the coverage row's is optional. The store type is no longer the blocker. | usage metering + contracts |
+| the 3 `approvals` | **`models::ApprovalStatus` has no arm for a withdrawn approval.** Its four are pending/approved/denied/**expired**; the domain's four are pending/approved/denied/**cancelled**, and `aex_session_domain::approval` makes `Cancelled` reachable from seven causes including a stop, a run cancellation and binding drift. `expired` is not a synonym: it pairs with `expiresAt` ("when it stops being decidable"), so publishing `expired` for a drift-cancelled approval would contradict an `expiresAt` still in the future. Second gap: nothing in the workspace defines an approval expiry — no field in the domain record, no entry in the generated limit registry, no accepted record — so the value `expiresAt` publishes has no producer even though the row now has somewhere to put it. The codec and the reads exist; the vocabulary does not. | contracts + regional domains |
+| the 3 `operations` | The listing is the smallest part and it is **not** in `aex-work-dynamodb`: a durable operation is an `operation` item in `session-authority`, and `gsi_workspace_index` already carries the `WS#{workspace}#OP` partition with an `INCLUDE` projection. What blocks the family is `models::Operation`. `result` is a ten-arm typed union over concrete result structs — `SessionCloneResult` names the cloned session and nothing stores it — while `aex_operation_domain::operation::OperationResult` is `{measurement, content}`; neither direction is total. `error` needs an `ApiErrorBody`; the domain has `OperationFailure {code, class, detail}` and the stored row has neither. `OperationProgress.phase` is required inside the optional progress and the domain `Progress` has no phase. `kind` mismatches in both directions: the domain publishes `WorkspacePurge` and `ContentGc`, the wire publishes `WorkspaceDelete` and no `ContentGc`, so one internal GC operation would make a customer's whole listing undecodable. `cancelable`, `committed_at`, `started_at` and `terminal_at` are the only genuinely adapter-shaped gaps. | contracts + regional domains, then regional stores |
+| the 3 `workspace` | `models::Workspace` needs `apiUrl`, `name`, `slug`, `createdAt` and `operationalState`. Two of those are already reachable regionally and three are not — see the decision below. `EffectiveWorkspaceLimit.effectiveValue` has no source at all: `aex_wire::generated::limits` publishes each limit's identity and shape and **no default value**, and an override is a central fact, so a regional read that answered `source: default` for a workspace holding an override would be publishing a lie. | central identity/control |
+| the 10 registry `*_get`/`*_put`, 6 `files`, 4 `uploads` | Unchanged: the content decrypt path, the session's persisted root, and presigning. | as recorded above |
+
+### Where the missing `Workspace` fields belong
+
+The question the `workspace` family raises is whether `name`, `slug`,
+`createdAt` and `apiUrl` should join the `regional-authz-projection` placement
+row. They should not, and the reason is what the placement row is for.
+
+The placement row is an **admission** projection: region, status and three
+epochs. `the_placement_is_read_on_every_request_even_when_the_assertion_is_cached`
+means it is read on *every* request and is never cached — that is the property
+that makes a 30-second assertion cache safe. Widening a row on the hot path with
+four descriptive attributes used by three routes pays a per-request cost for data
+almost no request wants, and it turns a display-name edit into a write on the
+authorization path.
+
+The recommended split, for `central-control-worker` to confirm:
+
+- `name`, `slug` and `createdAt` belong on a **separate `workspace_profile` item**
+  in `regional-authz-projection`, written by the same control feed and read only
+  by the three `workspace` routes. Same table, same writer, same residency; the
+  hot row stays small.
+- `apiUrl` is **not a per-workspace fact at all**. It is one value per plane and
+  region, so it belongs in the deployable's configuration
+  (`AEX_REGIONAL_API_URL`) beside `AEX_REGION`, not repeated on every workspace
+  row where it could disagree with the host that served the request.
+- `operationalState` needs no new storage: `WorkspaceOperationalState` is
+  `{inheritedFrom: account, organizationId, state}`, and all three are already on
+  the verified request — the assertion carries the account state and the
+  organization, and `inheritedFrom` is a constant.
+- `status`, `region`, `id` and `organizationId` are already on the placement row.
+
+### Decisions taken beyond the sections above
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| RD-01 | A revocation `regional-session-api` owns is committed as a one-action `TransactWriteItems`, never as a bare conditional update | The role is granted the former and denied the latter. A capability the code assumes and IAM refuses is the class of defect that only appears in production, and the transaction path additionally keeps the unconditional-write check on the path. |
+| RD-02 | `aex-usage-query-aws` keeps its own row reader and error vocabulary rather than linking `aex-session-dynamodb` | The three usage authority adapters already do, and the write-incapability proof is a scan of this crate's own sources plus its own manifest. Borrowing another stream's reader would make "read-only" a claim about a dependency instead of a fact about the crate. |
+| RD-03 | The approval row persists all eleven bound fields, not the seven the wire publishes | `respond` revalidates the whole binding and commits `Cancelled { BindingDrift }` when any of the eleven moved. A row holding the public subset could not perform that comparison, so the bound call would have to be dispatched on trust. |
+| RD-04 | The workspace profile fields land on a second projection item rather than on the placement row | The placement row is read on every request and never cached. Descriptive data belongs beside the hot row, not inside it. |
+| RD-05 | This pass mounted one route rather than four families, and says so | Three of the four families it was scoped to are blocked in the contract or the domain, and closing them here would have meant inventing an expiry policy, a rated amount and two enum arms. An honest count beats a padded one (RS-18). |
