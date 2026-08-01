@@ -1,0 +1,26 @@
+[package]
+name = "aex-usage-transfer-aws"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-sqs.workspace = true
+aws-smithy-types.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+aex-usage-domain = { path = "../aex-usage-domain" }

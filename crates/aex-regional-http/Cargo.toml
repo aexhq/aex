@@ -1,0 +1,25 @@
+[package]
+name = "aex-regional-http"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+http.workspace = true
+lambda_http.workspace = true
+lambda_runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+aex-wire = { path = "../aex-wire" }

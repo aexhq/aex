@@ -1,0 +1,17 @@
+//! `aex-runtime-control-aws` owns the runtime-activity, queue and provider composition used
+//! by the runtime control worker: partial-batch handling, claims and receipts.
+//!
+//! # Invariants
+//!
+//! - a partial batch failure reports exactly the failed identifiers, never the whole batch
+//! - a receipt is written before the claim is released
+//! - an `IAM` denial is a typed denial, not a retry loop
+//!
+//! # Not this crate's job
+//!
+//! - the lifecycle rules (`aex-runtime-control`)
+//! - provider control calls (`aex-hands-control-aws`)
+//! - Brain semantics
+
+pub mod composition;
+pub mod queue;

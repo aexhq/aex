@@ -1,0 +1,21 @@
+[package]
+name = "content-lifecycle-worker"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "content-lifecycle-worker"
+path = "src/main.rs"
+
+[dependencies]
+aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+thiserror.workspace = true

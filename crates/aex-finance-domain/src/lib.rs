@@ -1,0 +1,18 @@
+//! `aex-finance-domain` owns the pure balanced money authority: journal postings,
+//! reservations, settlements, reversals and disputes.
+//!
+//! # Invariants
+//!
+//! - every transition is balanced: postings sum to zero across the affected accounts
+//! - money is integer micro-USD; no floating point value is representable
+//! - a reversal is a new balanced posting, never an edit of a recorded one
+//!
+//! # Not this crate's job
+//!
+//! - AWS delivery, Stripe transport or SQL (`aex-finance-aurora`)
+//! - rate cards and rating arithmetic (`aex-usage-rating`)
+//! - reading the clock: settlement time arrives as a parameter
+
+pub mod journal;
+pub mod reservation;
+pub mod settlement;
