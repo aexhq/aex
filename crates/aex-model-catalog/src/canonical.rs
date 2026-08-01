@@ -16,13 +16,16 @@
 //! - [`CompleteAssistantMessage`] can only be built by [`seal`], which requires
 //!   a terminal [`StopReason`] and a validated block set.
 
+use aex_wire::provider::ProviderId;
+use aex_wire::types::Timestamp;
+use aex_wire::{CanonicalJson, ContentHash, ResourceName, to_jcs_bytes};
 use serde::{Deserialize, Serialize};
 
-use crate::qualified::QualifiedModel;
-use crate::wire_pending::{
-    BoundedString, CanonicalJson, CatalogRevision, ContentHash, ModelSlug, ProviderId,
-    ProviderRequestId, ResourceName, Timestamp, ToolCallId, ToolName, base64_bytes, to_jcs_bytes,
+use crate::primitives::{
+    BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName, base64_bytes,
 };
+use crate::qualified::QualifiedModel;
+use crate::wire_pending::CatalogRevision;
 
 /// Byte bound on a single canonical text block.
 pub const TEXT_MAX: usize = 1_048_576;
@@ -104,8 +107,8 @@ pub enum ReasoningBody {
 }
 
 /// Opaque provider round-trip material: Anthropic `signature`, Gemini
-/// `thoughtSignature`, OpenAI `reasoning.encrypted_content`, DeepSeek and
-/// Moonshot echoed `reasoning_content`.
+/// `thoughtSignature`, `OpenAI` `reasoning.encrypted_content`, `DeepSeek` and
+/// `Moonshot` echoed `reasoning_content`.
 ///
 /// `provenance` exists so a token from one provider can never be replayed to
 /// another (D-12).
@@ -287,7 +290,9 @@ pub fn seal(
         return Err(SealError::EmptyBlocks);
     }
     if blocks.len() > MAX_SEALED_BLOCKS {
-        return Err(SealError::BlockLimit { limit: MAX_SEALED_BLOCKS });
+        return Err(SealError::BlockLimit {
+            limit: MAX_SEALED_BLOCKS,
+        });
     }
 
     let mut tool_ids: Vec<&ToolCallId> = Vec::new();
@@ -299,7 +304,7 @@ pub fn seal(
     for block in &blocks {
         match block {
             CanonicalBlock::ToolUse { id, .. } => {
-                if tool_ids.iter().any(|seen| *seen == id) {
+                if tool_ids.contains(&id) {
                     return Err(SealError::DuplicateToolCallId(id.clone()));
                 }
                 tool_ids.push(id);
@@ -339,7 +344,7 @@ pub fn seal(
         return Err(SealError::ReasoningTokenMissing);
     }
 
-    let proof = complete_proof(&blocks, stop, usage, model);
+    let proof = complete_proof(&blocks, stop, usage, model)?;
     Ok(CompleteAssistantMessage {
         blocks,
         stop_reason: stop,
@@ -365,7 +370,7 @@ fn complete_proof(
     stop: StopReason,
     usage: &NormalizedUsage,
     model: &QualifiedModel,
-) -> CompleteProof {
+) -> Result<CompleteProof, SealError> {
     let input = ProofInput {
         blocks,
         catalog: model.catalog(),
@@ -374,11 +379,11 @@ fn complete_proof(
         stop_reason: stop,
         usage,
     };
-    // Every field of `ProofInput` is a bounded, already-validated canonical
-    // type, so canonicalization cannot fail; a hash of the debug rendering
-    // would still be a distinct value per input, never a collision.
-    let bytes = to_jcs_bytes(&input).unwrap_or_default();
-    CompleteProof(ContentHash::of(&bytes))
+    // A canonicalization failure is refused rather than absorbed: a default
+    // digest would make two different block sets share a proof, which is
+    // exactly what the proof exists to prevent.
+    let bytes = to_jcs_bytes(&input).map_err(|_| SealError::InvalidToolInputJson)?;
+    Ok(CompleteProof(ContentHash::of(&bytes)))
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +447,9 @@ pub enum UsageCompleteness {
 }
 
 /// A bit set over the usage fields a provider may fail to report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct UsageFieldSet(pub u16);
 
@@ -518,8 +525,12 @@ impl UsageFieldSet {
 // ---------------------------------------------------------------------------
 
 /// A provider-neutral generation request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// Deliberately **not** `Serialize`/`Deserialize`: it carries a
+/// [`QualifiedModel`], which is a live handle into a loaded catalog revision
+/// rather than a wire value. What is hashed and journalled is
+/// [`CanonicalModelRequest::digest`]'s projection, not the struct itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalModelRequest {
     /// The qualified `(provider, model)` pair. Already admitted.
     pub selection: QualifiedModel,
@@ -549,8 +560,75 @@ pub struct CanonicalModelRequest {
     pub cache_breakpoints: Vec<CacheBreakpoint>,
     /// A non-secret correlation handle derived from the effect id.
     pub correlation: CorrelationId,
-    /// blake3 of the canonical form of this request.
+    /// The content hash of the canonical form of this request.
     pub request_hash: ContentHash,
+}
+
+/// The serializable projection of a request, and the only thing ever hashed or
+/// exported. `selection` collapses to the three facts that identify the pair;
+/// the live catalog handle does not travel.
+#[derive(Debug, Serialize)]
+struct RequestDigestInput<'a> {
+    cache_breakpoints: &'a [CacheBreakpoint],
+    catalog: CatalogRevision,
+    correlation: &'a CorrelationId,
+    max_output_tokens: u32,
+    messages: &'a [CanonicalMessage],
+    model: &'a ModelSlug,
+    parallel_tools: bool,
+    provider: ProviderId,
+    reasoning: &'a ReasoningRequest,
+    stop_sequences: &'a [BoundedString<64>],
+    structured_output: &'a Option<StructuredOutputRequest>,
+    system: &'a [SystemBlock],
+    temperature_milli: Option<u16>,
+    tool_choice: &'a ToolChoice,
+    tools: &'a [CanonicalToolDef],
+    top_p_milli: Option<u16>,
+}
+
+impl CanonicalModelRequest {
+    /// The content hash over the canonical projection of this request.
+    ///
+    /// Every field except `request_hash` itself participates, so two requests
+    /// that would produce different provider bodies cannot share a hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SealError::InvalidToolInputJson`] when a member cannot be
+    /// canonicalized. Every member is an already-validated bounded type, so
+    /// this is a total-function guard rather than a reachable path.
+    pub fn digest(&self) -> Result<ContentHash, SealError> {
+        let input = RequestDigestInput {
+            cache_breakpoints: &self.cache_breakpoints,
+            catalog: self.selection.catalog(),
+            correlation: &self.correlation,
+            max_output_tokens: self.max_output_tokens,
+            messages: &self.messages,
+            model: self.selection.model(),
+            parallel_tools: self.parallel_tools,
+            provider: self.selection.provider(),
+            reasoning: &self.reasoning,
+            stop_sequences: &self.stop_sequences,
+            structured_output: &self.structured_output,
+            system: &self.system,
+            temperature_milli: self.temperature_milli,
+            tool_choice: &self.tool_choice,
+            tools: &self.tools,
+            top_p_milli: self.top_p_milli,
+        };
+        let bytes = to_jcs_bytes(&input).map_err(|_| SealError::InvalidToolInputJson)?;
+        Ok(ContentHash::of(&bytes))
+    }
+
+    /// Whether `request_hash` matches the request it claims to describe.
+    ///
+    /// # Errors
+    ///
+    /// As [`CanonicalModelRequest::digest`].
+    pub fn hash_is_consistent(&self) -> Result<bool, SealError> {
+        Ok(self.digest()? == self.request_hash)
+    }
 }
 
 /// One system-instruction block.
@@ -695,7 +773,7 @@ impl CorrelationId {
 /// There is deliberately no conversion between this type and any canonical
 /// type, in either direction: a preview delta must never become history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "frame", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PreviewFrame {
     /// A block opened.
     BlockStart {
@@ -766,7 +844,7 @@ pub enum PreviewBlockKind {
 #[serde(deny_unknown_fields)]
 pub struct CredentialBindingRef {
     /// The stable `pcr_` id.
-    pub id: crate::wire_pending::ProviderCredentialId,
+    pub id: aex_wire::ids::ProviderCredentialId,
     /// The immutable binding revision.
     pub revision: u64,
     /// The `aex-secret-domain` source generation.
@@ -788,9 +866,9 @@ pub struct ProviderReceipt {
     /// The catalog revision in force.
     pub catalog: CatalogRevision,
     /// The dialect used.
-    pub dialect: crate::catalog::Dialect,
+    pub dialect: crate::document::Dialect,
     /// The dialect revision.
-    pub dialect_revision: crate::catalog::DialectRevision,
+    pub dialect_revision: crate::document::DialectRevision,
     /// Which credential binding was used. Identity only.
     pub credential: CredentialBindingRef,
     /// The provider's own request id, where it publishes one.

@@ -47,7 +47,7 @@ pub enum ProviderFailureKind {
     /// The caller cancelled.
     Cancelled,
     /// The provider ran out of a resource it names explicitly, such as
-    /// DeepSeek's `insufficient_system_resource`.
+    /// `DeepSeek`'s `insufficient_system_resource`.
     InsufficientProviderResource,
 }
 

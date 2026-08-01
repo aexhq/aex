@@ -5,11 +5,13 @@
 //! never an ignored value — that is the "unknown capability" property of
 //! BYOK-02 (D-04).
 
+use aex_wire::provider::ProviderId;
+use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::failure::ProviderFailureKind;
+use crate::primitives::{Blake3Digest, BoundedString, ModelSlug};
 use crate::receipt::{ConformanceReceipt, ProbeSuiteRevision};
-use crate::wire_pending::{BoundedString, ContentHash, ModelSlug, ProviderId, Timestamp};
 
 /// The document schema version this crate understands. There is exactly one.
 pub const SCHEMA_VERSION: u16 = 1;
@@ -17,7 +19,7 @@ pub const SCHEMA_VERSION: u16 = 1;
 /// blake3-256 of the canonical document bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct CatalogDigest(pub ContentHash);
+pub struct CatalogDigest(pub Blake3Digest);
 
 /// A strictly increasing sequence per publisher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -32,7 +34,7 @@ pub struct PublisherId(pub BoundedString<32>);
 /// blake3 of the adapter crate source tree that a receipt was earned against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct AdapterSourceDigest(pub ContentHash);
+pub struct AdapterSourceDigest(pub Blake3Digest);
 
 /// A dialect's revision. Bumping it is a code release, never a data release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -136,15 +138,15 @@ pub enum EntryState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Dialect {
-    /// OpenAI Responses.
+    /// `OpenAI` Responses.
     OpenAiResponses,
     /// Anthropic Messages.
     AnthropicMessages,
-    /// DeepSeek chat completions.
+    /// `DeepSeek` chat completions.
     DeepSeekChat,
     /// Z.AI chat completions.
     ZaiChat,
-    /// Moonshot chat completions.
+    /// `Moonshot` chat completions.
     MoonshotChat,
     /// Gemini `streamGenerateContent`.
     GeminiGenerateContent,
@@ -158,11 +160,11 @@ impl Dialect {
     #[must_use]
     pub const fn provider(self) -> ProviderId {
         match self {
-            Self::OpenAiResponses => ProviderId::OpenAi,
+            Self::OpenAiResponses => ProviderId::Openai,
             Self::AnthropicMessages => ProviderId::Anthropic,
-            Self::DeepSeekChat => ProviderId::DeepSeek,
+            Self::DeepSeekChat => ProviderId::Deepseek,
             Self::ZaiChat => ProviderId::Zai,
-            Self::MoonshotChat => ProviderId::MoonshotAi,
+            Self::MoonshotChat => ProviderId::Moonshotai,
             Self::GeminiGenerateContent | Self::GeminiInteractions => ProviderId::Google,
         }
     }
@@ -214,11 +216,11 @@ impl EndpointPin {
     #[must_use]
     pub const fn provider(self) -> ProviderId {
         match self {
-            Self::OpenAiApi => ProviderId::OpenAi,
+            Self::OpenAiApi => ProviderId::Openai,
             Self::AnthropicApi => ProviderId::Anthropic,
-            Self::DeepSeekApi => ProviderId::DeepSeek,
+            Self::DeepSeekApi => ProviderId::Deepseek,
             Self::ZaiPaasV4 => ProviderId::Zai,
-            Self::MoonshotIntlV1 => ProviderId::MoonshotAi,
+            Self::MoonshotIntlV1 => ProviderId::Moonshotai,
             Self::GeminiV1Beta => ProviderId::Google,
         }
     }
@@ -361,14 +363,19 @@ impl CapabilitySet {
     /// Every declared capability, in [`Capability::ALL`] order.
     #[must_use]
     pub fn declared(self) -> Vec<Capability> {
-        Capability::ALL.into_iter().filter(|c| self.has(*c)).collect()
+        Capability::ALL
+            .into_iter()
+            .filter(|c| self.has(*c))
+            .collect()
     }
 
     /// Whether the set contains a bit outside [`Capability::ALL`], which means
     /// the document was produced by a newer publisher than this binary.
     #[must_use]
     pub fn has_unknown_bits(self) -> bool {
-        let known = Capability::ALL.into_iter().fold(0u32, |acc, c| acc | c.bit());
+        let known = Capability::ALL
+            .into_iter()
+            .fold(0u32, |acc, c| acc | c.bit());
         self.0 & !known != 0
     }
 }
@@ -381,15 +388,15 @@ pub struct ModelLimits {
     pub context_window_tokens: u32,
     /// Maximum generated tokens.
     pub max_output_tokens: u32,
-    /// Minimum generated tokens the provider accepts (OpenAI Responses: 16).
+    /// Minimum generated tokens the provider accepts (`OpenAI` Responses: 16).
     pub min_output_tokens: u32,
     /// Maximum reasoning tokens, where the provider takes a budget.
     pub max_reasoning_tokens: Option<u32>,
     /// Minimum reasoning budget (Anthropic thinking: 1024).
     pub min_reasoning_tokens: Option<u32>,
-    /// Maximum tool declarations (DeepSeek: 128).
+    /// Maximum tool declarations (`DeepSeek`: 128).
     pub max_tools: u16,
-    /// Maximum stop sequences (Z.AI 4, Moonshot 5, DeepSeek 16).
+    /// Maximum stop sequences (Z.AI 4, `Moonshot` 5, `DeepSeek` 16).
     pub max_stop_sequences: u8,
     /// Inclusive temperature range in milli-units.
     pub temperature_milli: Option<(u16, u16)>,
@@ -430,7 +437,7 @@ pub struct ReasoningPolicy {
     pub encoding: ReasoningEncoding,
     /// Whether round-trip material must be echoed.
     pub replay: ReasoningReplay,
-    /// DeepSeek's thinking mode forbids `temperature`/`top_p`.
+    /// `DeepSeek`'s thinking mode forbids `temperature`/`top_p`.
     pub excludes_sampling: bool,
 }
 
@@ -454,13 +461,13 @@ pub enum ReasoningEncoding {
     None,
     /// Anthropic `thinking` blocks plus a mandatory `signature`.
     AnthropicThinking,
-    /// OpenAI `reasoning` items and `reasoning.encrypted_content`.
+    /// `OpenAI` `reasoning` items and `reasoning.encrypted_content`.
     OpenAiReasoning,
-    /// DeepSeek `reasoning_content`.
+    /// `DeepSeek` `reasoning_content`.
     DeepSeekThinking,
     /// Z.AI `reasoning_content` under a `thinking` request object.
     ZaiThinking,
-    /// Moonshot `reasoning_content`.
+    /// `Moonshot` `reasoning_content`.
     MoonshotThinking,
     /// Gemini `thinkingConfig` plus `part.thought` and `part.thoughtSignature`.
     GeminiThinkingConfig,
@@ -475,7 +482,7 @@ pub enum ReasoningReplay {
     /// Echoing improves results but omitting it is accepted.
     RecommendedEcho,
     /// The provider rejects a turn that carried tool calls without the
-    /// material (Gemini 3 `thoughtSignature`, DeepSeek `reasoning_content`).
+    /// material (Gemini 3 `thoughtSignature`, `DeepSeek` `reasoning_content`).
     RequiredWithToolCalls,
     /// The provider rejects any turn without it (Anthropic `signature`).
     RequiredAlways,
@@ -502,11 +509,11 @@ pub enum StructuredOutputPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SchemaEncoding {
-    /// OpenAI `text.format = {"type":"json_schema", …}`.
+    /// `OpenAI` `text.format = {"type":"json_schema", …}`.
     OpenAiTextFormat,
     /// Anthropic `output_config.format`.
     AnthropicOutputConfig,
-    /// Moonshot `response_format = {"type":"json_schema", …}`.
+    /// `Moonshot` `response_format = {"type":"json_schema", …}`.
     MoonshotResponseFormat,
     /// Gemini flat `generationConfig.responseMimeType` + `responseSchema`.
     GeminiGenerationConfigFlat,
@@ -534,7 +541,7 @@ pub struct ToolPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolEncoding {
-    /// OpenAI Responses: `{"type":"function","name",…}`.
+    /// `OpenAI` Responses: `{"type":"function","name",…}`.
     OpenAiFlat,
     /// Chat completions: `{"type":"function","function":{…}}`.
     OpenAiNestedFunction,
@@ -574,12 +581,14 @@ impl NamePattern {
             return false;
         }
         match self {
-            Self::OpenAiFunctionName | Self::AnthropicToolName => {
-                name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-            }
+            Self::OpenAiFunctionName | Self::AnthropicToolName => name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
             Self::GeminiFunctionName => {
                 let mut bytes = name.bytes();
-                let Some(first) = bytes.next() else { return false };
+                let Some(first) = bytes.next() else {
+                    return false;
+                };
                 if !(first.is_ascii_alphabetic() || first == b'_') {
                     return false;
                 }
@@ -633,12 +642,12 @@ pub struct UsageMapping {
 pub enum CacheReadSemantics {
     /// No cache accounting.
     None,
-    /// Separate read and write counters (Anthropic, OpenAI).
+    /// Separate read and write counters (Anthropic, `OpenAI`).
     SeparateReadWrite,
-    /// A hit/miss split of the prompt (DeepSeek).
+    /// A hit/miss split of the prompt (`DeepSeek`).
     HitMissSplit,
     /// A `cached_tokens` field that is a subset of the prompt count (Z.AI,
-    /// Moonshot, Gemini).
+    /// `Moonshot`, Gemini).
     CachedTokensSubsetOfInput,
 }
 
@@ -646,17 +655,17 @@ pub enum CacheReadSemantics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamUsageDelivery {
-    /// On the terminal dialect event (OpenAI `response.completed`, Gemini's
+    /// On the terminal dialect event (`OpenAI` `response.completed`, Gemini's
     /// last `usageMetadata`).
     TerminalEvent,
-    /// In one trailing chunk whose `choices` array is empty (DeepSeek).
+    /// In one trailing chunk whose `choices` array is empty (`DeepSeek`).
     TrailingChoicesEmptyChunk,
     /// On the last content chunk, the one carrying `finish_reason` (Z.AI).
     LastContentChunk,
     /// As cumulative deltas that overwrite rather than sum (Anthropic
     /// `message_delta.usage`).
     CumulativeDeltas,
-    /// Only when `stream_options.include_usage` is set (Moonshot).
+    /// Only when `stream_options.include_usage` is set (`Moonshot`).
     RequiresIncludeUsageFlag,
 }
 
@@ -754,7 +763,7 @@ pub struct ErrorClassMap {
     /// Status-code rules, sorted and unique by status.
     pub status: Vec<StatusClassRule>,
     /// Provider `type`/`code` string rules, sorted and unique by code. A code
-    /// rule always wins over a status rule, which is what makes Moonshot's
+    /// rule always wins over a status rule, which is what makes `Moonshot`'s
     /// three-way 429 split expressible.
     pub codes: Vec<CodeClassRule>,
     /// The kind for anything neither rule names.
@@ -841,10 +850,14 @@ impl PreDispatchRetryPolicy {
     /// supplies the jitter fraction so the policy stays pure and testable.
     #[must_use]
     pub fn backoff_ms(&self, attempt: u16, jitter_milli: u16) -> u32 {
-        let step = self.initial_backoff_ms.saturating_mul(1u32 << attempt.min(16));
+        let step = self
+            .initial_backoff_ms
+            .saturating_mul(1u32 << attempt.min(16));
         let capped = step.min(self.max_backoff_ms);
         let half = capped / 2;
-        half + (u64::from(half) * u64::from(jitter_milli.min(1000)) / 1000) as u32
+        let jitter = u64::from(half) * u64::from(jitter_milli.min(1000)) / 1000;
+        // `jitter <= half <= u32::MAX`, so the narrowing is exact.
+        half + u32::try_from(jitter).unwrap_or(half)
     }
 }
 
@@ -854,7 +867,7 @@ impl PreDispatchRetryPolicy {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DurableOperationSupport {
     /// None. This is the launch answer for all six providers: Anthropic is
-    /// stateless, OpenAI's `GET /v1/responses/{id}` requires `store: true`
+    /// stateless, `OpenAI`'s `GET /v1/responses/{id}` requires `store: true`
     /// which AEX deliberately disables, and Gemini Interactions is not the
     /// launch dialect (D-19).
     #[default]

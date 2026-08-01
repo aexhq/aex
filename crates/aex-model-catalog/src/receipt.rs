@@ -5,11 +5,19 @@
 //! capabilities are not all covered by passing probes, or whose receipt was
 //! earned against a different adapter source tree, cannot be loaded at all.
 
+use aex_wire::types::Timestamp;
+use aex_wire::{ContentHash, Uuid7};
 use serde::{Deserialize, Serialize};
 
-use crate::document::{AdapterSourceDigest, Capability};
 use crate::canonical::NormalizedUsage;
-use crate::wire_pending::{BoundedString, ContentHash, Timestamp};
+use crate::document::{AdapterSourceDigest, Capability};
+use crate::primitives::BoundedString;
+
+/// The Unix epoch. Checked at compile time, so no runtime unwrap exists.
+pub(crate) const EPOCH: Timestamp = match Timestamp::from_unix_millis(0) {
+    Ok(value) => value,
+    Err(_) => panic!("the Unix epoch is inside the wire timestamp range"),
+};
 
 /// Which revision of the probe suite a receipt was earned against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -190,7 +198,8 @@ impl ProbeId {
             return capabilities.has(Capability::PromptCacheExplicit)
                 || capabilities.has(Capability::PromptCacheImplicit);
         }
-        self.required_by().is_some_and(|capability| capabilities.has(capability))
+        self.required_by()
+            .is_some_and(|capability| capabilities.has(capability))
     }
 
     /// Which probe proves a capability, for the `CapabilityWithoutProbe` load
@@ -274,7 +283,7 @@ pub struct ProbeResult {
 #[serde(deny_unknown_fields)]
 pub struct ConformanceReceipt {
     /// A time-ordered receipt id.
-    pub receipt_id: uuid::Uuid,
+    pub receipt_id: Uuid7,
     /// Which probe suite produced it.
     pub probe_suite_revision: ProbeSuiteRevision,
     /// Which adapter source tree produced it.
@@ -327,19 +336,21 @@ impl ConformanceReceipt {
     ) -> Self {
         let detail = BoundedString::<512>::truncating(reason);
         Self {
-            receipt_id: uuid::Uuid::nil(),
+            receipt_id: Uuid7::compose(0, [0; 10]),
             probe_suite_revision: suite,
             adapter_source,
             catalog_entry_digest: entry_digest,
-            ran_at: Timestamp(0),
-            expires_at: Timestamp(0),
+            ran_at: EPOCH,
+            expires_at: EPOCH,
             plane: PlaneId(BoundedString::truncating("none")),
             region: Region(BoundedString::truncating("none")),
             results: ProbeId::ALL
                 .into_iter()
                 .map(|probe| ProbeResult {
                     probe,
-                    outcome: ProbeOutcome::Fail { detail: detail.clone() },
+                    outcome: ProbeOutcome::Fail {
+                        detail: detail.clone(),
+                    },
                     observed: Vec::new(),
                     duration_ms: 0,
                 })
