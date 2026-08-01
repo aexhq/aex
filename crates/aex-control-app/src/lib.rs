@@ -1,17 +1,31 @@
-//! `aex-control-app` owns central control use cases: command idempotency, the durable
-//! outbox, unknown-effect resolution and authorization matrices.
+//! `aex-control-app` orchestrates the control-plane commands over coarse ports.
 //!
 //! # Invariants
 //!
-//! - the durable commit and the external effect are separate steps joined by an outbox row
-//! - the same command identity replays to the same result without a second effect
-//! - authorization is decided from current state; there is no stale-permission fallback
+//! - authorization is decided **before** idempotency replay, so a denied
+//!   principal never sees a stored response
+//! - a cross-region effect is prepared, fenced and idempotent; an unknown
+//!   outcome leaves the workspace hidden and retryable and never returns a
+//!   different workspace or a false `201`
+//! - [`ports::EffectError::Unknown`] is never converted into failure; it is the
+//!   only correct answer to a lost response and it is a distinct arm from
+//!   `Unavailable`
+//! - an outbox row is committed in the same transaction as the aggregate it
+//!   describes
 //!
 //! # Not this crate's job
 //!
-//! - concrete AWS, email or `HTTP` clients
-//! - control invariants themselves (`aex-control-domain`)
-//! - regional data-plane authority
+//! - SQL, transactions or retry policy (`aex-control-aurora`)
+//! - HTTP, status codes or headers (`aex-central-http`)
 
 pub mod ports;
 pub mod use_cases;
+
+pub use ports::{
+    AuthorizationReader, ControlStore, EffectError, MailerPort, Page, RegionalControlPort,
+    RequestContext, StoreError, TxOutcome, UnknownCommit,
+};
+pub use use_cases::{
+    AcceptInvitations, CancelOperation, ControlError, CreateApiKey, CreateInvitation,
+    CreateOrganization, CreateWorkspace, DeleteWorkspace, RevokeApiKey,
+};

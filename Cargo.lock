@@ -234,11 +234,16 @@ name = "aex-control-app"
 version = "0.1.0"
 dependencies = [
  "aex-control-domain",
+ "aex-identity-app",
+ "aex-wire",
  "async-trait",
  "futures",
+ "proptest",
  "serde",
+ "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -372,12 +377,15 @@ dependencies = [
 name = "aex-identity-app"
 version = "0.1.0"
 dependencies = [
+ "aex-control-domain",
  "aex-identity-domain",
  "async-trait",
  "futures",
+ "proptest",
  "serde",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
