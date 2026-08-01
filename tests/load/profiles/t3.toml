@@ -1,0 +1,8 @@
+id = "t3"
+description = "The pressure tier: 500 offered agents, mixed and adversarial, where excess work must queue or be typed-rejected but never silently dropped."
+source = "Area 10 T3 row; Q-PERFORMANCE 500-offered bound; PERF-02, PERF-04"
+
+[vector]
+active_agents = 200
+offered_agents = 500
+duration_minutes = 30
