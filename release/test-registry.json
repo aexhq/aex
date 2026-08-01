@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 128,
+    "awaiting_owner": 127,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -366,12 +366,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the tools-mcp stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-central-http": {
       "name": "aex-central-http",

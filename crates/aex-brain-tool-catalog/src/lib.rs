@@ -15,4 +15,10 @@
 //! - session or approval storage
 
 pub mod catalog;
+pub mod control;
+pub mod manifest;
 pub mod signature;
+pub mod wire_pending;
+
+#[cfg(test)]
+mod tests;
