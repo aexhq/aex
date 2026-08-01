@@ -19,7 +19,47 @@ use serde_json::Value;
 /// Never: a `Value` is always serializable.
 #[must_use]
 pub fn to_jcs_bytes(value: &Value) -> Vec<u8> {
-    serde_json::to_vec(value).expect("a serde_json::Value always serializes")
+    let mut normalized = value.clone();
+    normalize(&mut normalized);
+    serde_json::to_vec(&normalized).expect("a serde_json::Value always serializes")
+}
+
+/// Rewrites an integral float as an integer, exactly as `aex-wire` does.
+///
+/// `1.0` and `1` are the same `ECMAScript` number and have to canonicalize the
+/// same way, or the two implementations disagree on any document that ever
+/// round-tripped through a float.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::float_cmp,
+    reason = "detecting an integral float is exactly an exact-bit-pattern question"
+)]
+fn normalize(value: &mut Value) {
+    match value {
+        Value::Number(number) => {
+            if let Some(as_f64) = number.as_f64()
+                && number.is_f64()
+                && as_f64.fract() == 0.0
+            {
+                let rounded = as_f64 as i64;
+                if as_f64 == rounded as f64 {
+                    *value = Value::Number(rounded.into());
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                normalize(item);
+            }
+        }
+        Value::Object(members) => {
+            for (_, member) in members.iter_mut() {
+                normalize(member);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::String(_) => {}
+    }
 }
 
 /// The SHA-256 of the JCS bytes, rendered `sha256:<64 lowercase hex>`.
@@ -60,8 +100,10 @@ pub fn digest_bytes(bytes: &[u8]) -> String {
 /// Never: a `Value` is always serializable.
 #[must_use]
 pub fn to_pretty(value: &Value) -> String {
+    let mut normalized = value.clone();
+    normalize(&mut normalized);
     let mut text =
-        serde_json::to_string_pretty(value).expect("a serde_json::Value always serializes");
+        serde_json::to_string_pretty(&normalized).expect("a serde_json::Value always serializes");
     text.push('\n');
     text
 }

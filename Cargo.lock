@@ -335,6 +335,7 @@ dependencies = [
 name = "aex-hands-protocol"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-wire",
  "serde",
  "serde_json",
@@ -652,6 +653,7 @@ dependencies = [
 name = "aex-payment-contracts"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-wire",
  "serde",
  "serde_json",

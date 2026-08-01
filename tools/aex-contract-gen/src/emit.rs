@@ -312,7 +312,7 @@ fn route_document(operation: &OperationIr) -> Value {
     })
 }
 
-/// The self-contained OpenAPI 3.1 document for one plane.
+/// The self-contained `OpenAPI` 3.1 document for one plane.
 fn openapi_document(ir: &ContractIr, plane_id: &str) -> Value {
     let plane = ir
         .planes
@@ -359,7 +359,7 @@ fn openapi_document(ir: &ContractIr, plane_id: &str) -> Value {
     })
 }
 
-/// One OpenAPI operation object.
+/// One `OpenAPI` operation object.
 fn openapi_operation(ir: &ContractIr, operation: &OperationIr) -> Value {
     let mut parameters = Vec::new();
     for param in &operation.path_params {

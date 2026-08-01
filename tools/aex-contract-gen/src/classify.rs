@@ -375,8 +375,8 @@ fn classify_error_registry(base: &Value, head: &Value, changes: &mut Vec<Change>
             });
         }
     }
-    if base["registries"]["evolution"]["requestUnknownFields"] != Value::from("reject")
-        || head["registries"]["evolution"]["requestUnknownFields"] != Value::from("reject")
+    if base["registries"]["evolution"]["requestUnknownFields"] != "reject"
+        || head["registries"]["evolution"]["requestUnknownFields"] != "reject"
     {
         changes.push(Change {
             classification: Classification::Breaking,

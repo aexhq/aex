@@ -49,10 +49,7 @@ pub mod models {
     pub use crate::generated::models::*;
 }
 
-#[cfg(feature = "server")]
 pub mod server;
-
-#[cfg(feature = "testing")]
 pub mod testing;
 
 pub use canonical::{CanonicalJson, intent_digest, to_jcs_bytes};

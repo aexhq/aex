@@ -10,7 +10,7 @@ use crate::rustsrc::{Source, quote};
 
 /// Schemas whose Rust type is hand-written in `aex-wire` rather than generated.
 ///
-/// They still appear in the published JSON Schemas and in the OpenAPI documents;
+/// They still appear in the published JSON Schemas and in the `OpenAPI` documents;
 /// only the Rust emission is suppressed, because the hand-written type carries
 /// invariants a generated struct cannot (an empty range is unconstructible).
 const HAND_WRITTEN: [&str; 1] = ["ByteRange"];

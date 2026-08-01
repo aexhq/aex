@@ -175,6 +175,28 @@ impl Uuid7 {
     }
 }
 
+impl fmt::Display for Uuid7 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let suffix = self.encode_suffix();
+        formatter.write_str(std::str::from_utf8(&suffix).unwrap_or_default())
+    }
+}
+
+impl Serialize for Uuid7 {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let suffix = self.encode_suffix();
+        serializer.serialize_str(std::str::from_utf8(&suffix).unwrap_or_default())
+    }
+}
+
+impl<'de> Deserialize<'de> for Uuid7 {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let text = <std::borrow::Cow<'de, str> as Deserialize<'de>>::deserialize(deserializer)?;
+        Self::decode_suffix(text.as_bytes()).map_err(D::Error::custom)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IdText and IdParseError
 // ---------------------------------------------------------------------------

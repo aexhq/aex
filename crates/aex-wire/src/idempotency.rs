@@ -109,7 +109,11 @@ pub enum PrincipalKind {
 
 /// The authenticated principal, as replay identity sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum PrincipalScope {
     /// A person acting through an account token or a browser session.
     Account {
@@ -182,6 +186,30 @@ impl fmt::Display for IntentDigest {
             write!(formatter, "{byte:02x}")?;
         }
         Ok(())
+    }
+}
+
+impl Serialize for IntentDigest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for IntentDigest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let text = <std::borrow::Cow<'de, str> as Deserialize<'de>>::deserialize(deserializer)?;
+        if text.len() != 64 {
+            return Err(D::Error::custom(
+                "an IntentDigest is 64 lowercase hex characters",
+            ));
+        }
+        let mut bytes = [0u8; 32];
+        for (index, slot) in bytes.iter_mut().enumerate() {
+            *slot = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
+                .map_err(|_| D::Error::custom("an IntentDigest is 64 lowercase hex characters"))?;
+        }
+        Ok(Self(bytes))
     }
 }
 

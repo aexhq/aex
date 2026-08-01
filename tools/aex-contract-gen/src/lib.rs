@@ -1,7 +1,7 @@
 //! The deterministic AEX contract generator.
 //!
 //! One authored tree under `api/` produces every downstream artifact: the two
-//! OpenAPI 3.1 plane documents, the published JSON Schemas, the machine
+//! `OpenAPI` 3.1 plane documents, the published JSON Schemas, the machine
 //! registries, the contract bundle and its lock file, and the generated Rust
 //! surface of `aex-wire`. `build` and `check` share one code path and differ
 //! only in whether the finished tree is written or compared, which is what makes
@@ -14,6 +14,15 @@
 //! - a sorted, symlink-free, extension-filtered walk for file discovery;
 //! - every recorded path is workspace-relative with `/` separators, so a Windows
 //!   run and a Linux run produce identical bytes.
+
+#![allow(
+    clippy::too_many_lines,
+    reason = "an emitter is one linear render; splitting it hides the shape it produces"
+)]
+#![allow(
+    clippy::format_push_string,
+    reason = "a renderer reads better with `format!` than with a `fmt::Write` import"
+)]
 
 pub mod classify;
 pub mod emit;
