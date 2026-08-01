@@ -183,6 +183,21 @@ impl<'a> Row<'a> {
         Ok(Self { item, item_type })
     }
 
+    /// Binds a row read from a secondary index whose projection omits the
+    /// discriminator.
+    ///
+    /// A `DynamoDB` `INCLUDE` projection carries only the attributes it names, so
+    /// [`Row::bind`] can never succeed against one: the discriminator is not
+    /// there to check. Use this only where a **sparse** index key already
+    /// restricts the partition to one row family, which is what makes the
+    /// missing check safe rather than merely convenient. Every typed accessor
+    /// still reports `item_type` in its errors, so a projection missing an
+    /// attribute names the family it was decoding.
+    #[must_use]
+    pub const fn bind_projected(item: &'a Item, item_type: &'static str) -> Self {
+        Self { item, item_type }
+    }
+
     /// The underlying item.
     #[must_use]
     pub const fn item(&self) -> &'a Item {
@@ -471,6 +486,36 @@ mod tests {
                 CodecError::UnexpectedItemType {
                     expected: "run",
                     ..
+                }
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_projected_row_binds_without_a_discriminator_and_still_decodes() {
+        // An `INCLUDE` projection carries only the attributes it names, so the
+        // discriminator is absent by construction rather than by corruption.
+        let mut item = row();
+        item.remove(ITEM_TYPE);
+        let bound = Row::bind_projected(&item, "session_head");
+        assert_eq!(bound.u64("revision").expect("revision decodes"), 7);
+    }
+
+    #[test]
+    fn a_projected_row_still_names_its_family_when_an_attribute_is_absent() {
+        let mut item = row();
+        item.remove(ITEM_TYPE);
+        item.remove("revision");
+        let error = Row::bind_projected(&item, "session_head")
+            .u64("revision")
+            .expect_err("the projection omits it");
+        assert!(
+            matches!(
+                error,
+                CodecError::Missing {
+                    item_type: "session_head",
+                    attribute: "revision"
                 }
             ),
             "{error}"

@@ -64,20 +64,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-content-aws",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-content-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-hands-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
@@ -127,20 +113,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-registry-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-runtime-activity-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-runtime-control",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
@@ -152,27 +124,6 @@
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
     "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-secret-aws",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-secret-custody-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-secret-keystore-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
