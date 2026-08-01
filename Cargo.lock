@@ -904,16 +904,20 @@ name = "aex-secret-custody-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-secret-domain",
+ "aex-session-dynamodb",
+ "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
  "aws-smithy-types",
- "futures",
- "serde",
+ "hex",
+ "proptest",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
- "time",
- "uuid",
+ "tokio",
 ]
 
 [[package]]

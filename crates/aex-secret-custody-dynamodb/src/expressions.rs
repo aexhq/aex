@@ -1,2 +1,369 @@
-//! `expressions` surface of `aex-secret-custody-dynamodb`. The owning implementation stream
-//! fills this module; the crate-level documentation states what may and may not live here.
+//! The verbatim `regional-secret-custody` condition and update expressions.
+//!
+//! Revocation is deliberately **one conditional update on one item**. It blocks
+//! every prior source generation for a name — including generations already
+//! copied into sessions and clones — because every use path conditions on
+//! `revokedThroughRevision < :boundRevision`. Marking individual generation rows
+//! is a lazy audit sweep and is never the fence. That keeps an emergency revoke
+//! O(1) whatever the generation count is, which matters because a fan-out over
+//! generations would exceed the 100-action transaction ceiling exactly when it
+//! was needed most.
+
+use aex_secret_domain::custody::CustodyRevision;
+use aex_secret_domain::revocation::RevocationEpoch;
+use aex_secret_domain::secret::{SecretRevision, SourceGeneration};
+use aex_session_dynamodb::attr::{Item, n, s, stamp};
+use aex_session_dynamodb::error::StoreError;
+use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
+use aex_wire::ids::{SessionId, WorkspaceId};
+use aex_wire::types::Timestamp;
+use aws_sdk_dynamodb::types::builders::UpdateBuilder;
+use aws_sdk_dynamodb::types::{ConditionCheck, Put, Update};
+
+use crate::codec::{self, CallAuthorization, SecretMetadata, StoredGeneration, secret_state_str};
+use crate::keys;
+
+/// A transport deduplication identity inside the provider's 36-character
+/// ceiling.
+#[must_use]
+pub fn token(tag: &str, parts: &[&str]) -> String {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    for part in parts {
+        hasher.update(part.as_bytes());
+        hasher.update([0x1f]);
+    }
+    let digest = hex::encode(hasher.finalize());
+    let tag: String = tag.chars().take(3).collect();
+    format!("{tag}-{}", &digest[..32])
+}
+
+/// The participants a secret `set` names, in plan order.
+pub const SET_ORDER: [Participant; 3] = [
+    Participant::SECRET_GENERATION,
+    Participant::SECRET_METADATA,
+    Participant::SECRET_LINEAGE,
+];
+
+/// Compiles the secret `set` transaction.
+///
+/// The generation row is written first and the metadata second, so a cancelled
+/// transaction can never leave metadata pointing at a generation that does not
+/// exist.
+///
+/// # Errors
+///
+/// [`StoreError`] when a row could not be encoded or an action could not be
+/// built.
+pub fn set(
+    table: &str,
+    generation: &StoredGeneration,
+    metadata: &SecretMetadata,
+    expected_revision: Option<SecretRevision>,
+) -> Result<TransactionPlan, StoreError> {
+    let mut plan = TransactionPlan::new(token(
+        "sec",
+        &[
+            &metadata.workspace.to_string(),
+            metadata.name.as_str(),
+            &metadata.revision.0.to_string(),
+        ],
+    ));
+    plan.put(
+        Participant::SECRET_GENERATION,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(codec::encode_generation(generation).map_err(
+                |error| StoreError::Invalid {
+                    detail: error.to_string(),
+                },
+            )?))
+            .condition_expression(IMMUTABLE),
+    )?;
+
+    let metadata_key = keys::secret(metadata.workspace, metadata.name.as_str())?;
+    let condition = if expected_revision.is_some() {
+        "#state = :ready AND revision = :expectedRevision"
+    } else {
+        "attribute_not_exists(pk)"
+    };
+    let mut update = Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&metadata_key.pk, &metadata_key.sk)))
+        .condition_expression(condition)
+        // The metadata row is written by an `Update` rather than a `Put` because
+        // it carries a monotone revision the caller conditions on. An update
+        // that *creates* a row writes exactly the attributes it names, so the
+        // discriminator has to be one of them: without it the row decodes as
+        // `Missing { attribute: "itemType" }` the first time anyone lists, which
+        // is what the engine-backed target caught.
+        .update_expression(
+            "SET #itemType = :itemType, revision = :revision, #state = :ready, \
+             activeSourceGeneration = :generation, \
+             revocationEpoch = if_not_exists(revocationEpoch, :zero), \
+             revokedThroughRevision = if_not_exists(revokedThroughRevision, :zero), \
+             #name = :name, workspaceId = :workspace, \
+             createdAt = if_not_exists(createdAt, :now), updatedAt = :now",
+        )
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_names("#name", "name")
+        .expression_attribute_names("#itemType", "itemType")
+        .expression_attribute_values(":itemType", s(codec::WORKSPACE_SECRET))
+        .expression_attribute_values(":ready", s(secret_state_str(metadata.state)))
+        .expression_attribute_values(":revision", n(metadata.revision.0))
+        .expression_attribute_values(":generation", n(metadata.generation.0))
+        .expression_attribute_values(":name", s(metadata.name.as_str().to_owned()))
+        .expression_attribute_values(":workspace", s(metadata.workspace.to_string()))
+        .expression_attribute_values(":zero", n(0))
+        .expression_attribute_values(":now", stamp(metadata.updated_at));
+    if let Some(revision) = expected_revision {
+        update = update.expression_attribute_values(":expectedRevision", n(revision.0));
+    }
+    plan.update(Participant::SECRET_METADATA, update)?;
+
+    plan.put(
+        Participant::SECRET_LINEAGE,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(
+                codec::encode_lineage(
+                    metadata.workspace,
+                    &metadata.name,
+                    metadata.generation,
+                    metadata.created_at,
+                )
+                .map_err(|error| StoreError::Invalid {
+                    detail: error.to_string(),
+                })?,
+            ))
+            .condition_expression(IMMUTABLE),
+    )?;
+    Ok(plan)
+}
+
+/// Builds the emergency revoke: one atomic fence, O(1) in the generation count.
+///
+/// # Errors
+///
+/// [`StoreError`] when the name could not enter a key.
+pub fn revoke(
+    table: &str,
+    workspace: WorkspaceId,
+    name: &str,
+    expected_epoch: RevocationEpoch,
+    now: Timestamp,
+) -> Result<UpdateBuilder, StoreError> {
+    let target = keys::secret(workspace, name)?;
+    Ok(Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression("attribute_exists(pk) AND revocationEpoch = :expectedEpoch")
+        .update_expression(
+            "SET revocationEpoch = revocationEpoch + :one, \
+             revokedThroughRevision = revision, revokedAt = :now, updatedAt = :now",
+        )
+        .expression_attribute_values(":expectedEpoch", n(expected_epoch.0))
+        .expression_attribute_values(":one", n(1))
+        .expression_attribute_values(":now", stamp(now)))
+}
+
+/// One name a custody admission binds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundName {
+    /// The name.
+    pub name: String,
+    /// The record revision the caller read.
+    pub bound_revision: SecretRevision,
+    /// The generation it admits.
+    pub source_generation: SourceGeneration,
+}
+
+/// Compiles the idle-only custody admission or rebind.
+///
+/// Every selected name is guarded by a `ConditionCheck` that refuses a revoked
+/// record, so an admission cannot bind a credential a concurrent revoke has
+/// already fenced.
+///
+/// # Errors
+///
+/// [`StoreError`] when a key component is unusable or an action could not be
+/// built.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct fence the transaction conditions on; \
+              collapsing them into one struct would hide which are load-bearing"
+)]
+pub fn admit_custody(
+    table: &str,
+    session: SessionId,
+    workspace: WorkspaceId,
+    names: &[BoundName],
+    bindings: Vec<Item>,
+    from_revision: CustodyRevision,
+    to_revision: CustodyRevision,
+    idle_epoch: u64,
+    now: Timestamp,
+) -> Result<TransactionPlan, StoreError> {
+    let mut plan = TransactionPlan::new(token(
+        "cus",
+        &[&session.to_string(), &to_revision.0.to_string()],
+    ));
+    for bound in names {
+        let target = keys::secret(workspace, &bound.name)?;
+        plan.condition_check(
+            Participant::SECRET_METADATA,
+            ConditionCheck::builder()
+                .table_name(table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression(
+                    "#state = :ready AND revision = :boundRevision \
+                     AND revokedThroughRevision < :boundRevision",
+                )
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(":ready", s("ready"))
+                .expression_attribute_values(":boundRevision", n(bound.bound_revision.0)),
+        )?;
+    }
+    for binding in bindings {
+        plan.put(
+            Participant::CUSTODY_BINDING,
+            Put::builder()
+                .table_name(table)
+                .set_item(Some(binding))
+                .condition_expression(IMMUTABLE),
+        )?;
+    }
+    let head = keys::custody_head(session);
+    plan.update(
+        Participant::CUSTODY_HEAD,
+        Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&head.pk, &head.sk)))
+            .condition_expression(
+                "#state = :active AND custodyRevision = :fromRevision AND idleEpoch = :idleEpoch",
+            )
+            .update_expression("SET custodyRevision = :toRevision, updatedAt = :now")
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_values(":active", s("active"))
+            .expression_attribute_values(":fromRevision", n(from_revision.0))
+            .expression_attribute_values(":toRevision", n(to_revision.0))
+            .expression_attribute_values(":idleEpoch", n(idle_epoch))
+            .expression_attribute_values(":now", stamp(now)),
+    )?;
+    Ok(plan)
+}
+
+/// The participants a managed-call authorization names, in plan order.
+pub const AUTHORIZE_ORDER: [Participant; 3] = [
+    Participant::SECRET_METADATA,
+    Participant::CUSTODY_HEAD,
+    Participant::CUSTODY_AUTHORIZATION,
+];
+
+/// Compiles the only gate that stands before a decrypt.
+///
+/// # Errors
+///
+/// [`StoreError`] when a key component is unusable or an action could not be
+/// built.
+pub fn authorize_managed_call(
+    table: &str,
+    authorization: &CallAuthorization,
+    bound_source_revision: SecretRevision,
+) -> Result<TransactionPlan, StoreError> {
+    let mut plan = TransactionPlan::new(token(
+        "aut",
+        &[
+            &authorization.session.to_string(),
+            &authorization.authorization_id,
+        ],
+    ));
+    let secret = keys::secret(authorization.workspace, authorization.name.as_str())?;
+    plan.condition_check(
+        Participant::SECRET_METADATA,
+        ConditionCheck::builder()
+            .table_name(table)
+            .set_key(Some(key(&secret.pk, &secret.sk)))
+            .condition_expression(
+                "#state = :ready AND revokedThroughRevision < :boundSourceRevision",
+            )
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_values(":ready", s("ready"))
+            .expression_attribute_values(":boundSourceRevision", n(bound_source_revision.0)),
+    )?;
+    let head = keys::custody_head(authorization.session);
+    plan.condition_check(
+        Participant::CUSTODY_HEAD,
+        ConditionCheck::builder()
+            .table_name(table)
+            .set_key(Some(key(&head.pk, &head.sk)))
+            .condition_expression("#state = :active AND custodyRevision = :expectedRevision")
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_values(":active", s("active"))
+            .expression_attribute_values(":expectedRevision", n(authorization.custody_revision.0)),
+    )?;
+    plan.put(
+        Participant::CUSTODY_AUTHORIZATION,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(codec::encode_authorization(authorization).map_err(
+                |error| StoreError::Invalid {
+                    detail: error.to_string(),
+                },
+            )?))
+            .condition_expression(IMMUTABLE),
+    )?;
+    Ok(plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_secret_domain::revocation::RevocationEpoch;
+    use aex_wire::ids::{PrefixedId, Uuid7, WorkspaceId};
+    use aex_wire::types::Timestamp;
+
+    use super::{revoke, token};
+
+    const TABLE: &str = "dev-eu-west-1-regional-secret-custody";
+
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [1; 10]))
+    }
+
+    fn now() -> Timestamp {
+        Timestamp::parse("2026-08-01T12:34:56.789Z").expect("the pinned spelling")
+    }
+
+    #[test]
+    fn a_revoke_is_one_update_on_one_item_whatever_the_generation_count_is() {
+        let built = revoke(
+            TABLE,
+            workspace(),
+            "openai-key",
+            RevocationEpoch::INITIAL,
+            now(),
+        )
+        .expect("builds")
+        .build()
+        .expect("a complete update");
+        let condition = built.condition_expression().expect("conditional");
+        assert!(condition.contains("revocationEpoch = :expectedEpoch"));
+        let update = built.update_expression();
+        assert!(update.contains("revocationEpoch = revocationEpoch + :one"));
+        assert!(
+            update.contains("revokedThroughRevision = revision"),
+            "the fence is the revision every use path compares against: {update}"
+        );
+    }
+
+    #[test]
+    fn a_transport_token_always_fits_the_provider_ceiling() {
+        let long = "n".repeat(400);
+        assert!(token("sec", &[&long, &long]).len() <= 36);
+    }
+
+    #[test]
+    fn a_name_that_could_forge_a_key_stops_the_revoke_builder() {
+        assert!(revoke(TABLE, workspace(), "a#b", RevocationEpoch::INITIAL, now()).is_err());
+    }
+}
