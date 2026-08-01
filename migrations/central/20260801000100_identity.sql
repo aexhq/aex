@@ -1,3 +1,4 @@
+-- aex-migration: 20260801000100 identity | tx=yes | destructive=no | phase=baseline
 -- 0002_identity.sql — people, provider links, and the four AEX-minted
 -- identity credentials.
 --

@@ -23,8 +23,10 @@ risk = ["money"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the central-finance stream; the cases land with the crate's own implementation"
 live_suite = "application crate; its ports are exercised through its deployable's companion"
+
+[package.metadata.aex.targets]
+faults = "unit"
 
 [dependencies]
 async-trait.workspace = true
@@ -34,3 +36,6 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-finance-domain = { path = "../aex-finance-domain" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-payment-contracts = { path = "../aex-payment-contracts" }
+aex-wire = { path = "../aex-wire" }

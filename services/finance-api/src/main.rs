@@ -1,282 +1,228 @@
-//! `finance-api` composition root (Rust Lambda ZIP).
-//!
-//! Exclusive responsibility: balance, policy and statement reads plus prepared
-//! provider-effect commands.
-//!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! `finance-api` Lambda composition root.
 
-/// Validated start-up configuration for `finance-api`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
+use std::sync::Arc;
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::{Json, Router};
+use serde::Serialize;
+
+/// Exact validated finance API configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// Aurora cluster holding the finance schema.
-    pub resource: String,
-    /// Maximum concurrent transitions per account group.
-    pub budget: u32,
+struct Config {
+    aurora_cluster_arn: String,
+    aurora_secret_arn: String,
+    database_name: String,
+    role: String,
+    stripe_command_edge_arn: String,
+    default_pricing_version: String,
+    plane: String,
+    region: String,
+    transaction_deadline_ms: u64,
+    page_limit: u32,
 }
-
-/// Why `finance-api` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
-    },
-}
-
-/// Why `finance-api` stopped.
-#[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    /// Start-up configuration was rejected.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`finance-api` has no implementation yet")]
-    NotImplemented,
-}
-
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming Aurora cluster holding the finance schema.
-pub const RESOURCE_VAR: &str = "AEX_FINANCE_DB_CLUSTER_ARN";
-/// Environment variable naming maximum concurrent transitions per account group.
-pub const BUDGET_VAR: &str = "AEX_ACCOUNT_CONTENTION_BUDGET";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
 
 impl Config {
-    /// Reads and validates the configuration of `finance-api` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let config = Self {
+            aurora_cluster_arn: required(&lookup, "AEX_AURORA_CLUSTER_ARN")?,
+            aurora_secret_arn: required(&lookup, "AEX_AURORA_SECRET_ARN")?,
+            database_name: required(&lookup, "AEX_DATABASE_NAME")?,
+            role: required(&lookup, "AEX_DATABASE_ROLE")?,
+            stripe_command_edge_arn: required(&lookup, "AEX_STRIPE_COMMAND_EDGE_ARN")?,
+            default_pricing_version: required(&lookup, "AEX_DEFAULT_PRICING_VERSION")?,
+            plane: required(&lookup, "AEX_PLANE")?,
+            region: required(&lookup, "AEX_REGION")?,
+            transaction_deadline_ms: positive_u64(&lookup, "AEX_TX_DEADLINE_MS")?,
+            page_limit: positive_u32(&lookup, "AEX_PAGE_LIMIT")?,
+        };
+        if config.role != "aex_finance_api" {
+            return Err(ConfigError::WrongRole(config.role));
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
+        if !matches!(config.plane.as_str(), "dev" | "prd") {
+            return Err(ConfigError::InvalidPlane(config.plane));
         }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
+        Ok(config)
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+fn required(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &'static str,
+) -> Result<String, ConfigError> {
+    lookup(name)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(ConfigError::Missing(name))
+}
+
+fn positive_u64(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &'static str,
+) -> Result<u64, ConfigError> {
+    let raw = required(lookup, name)?;
+    raw.parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or(ConfigError::InvalidPositiveInteger(name))
+}
+
+fn positive_u32(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &'static str,
+) -> Result<u32, ConfigError> {
+    let raw = required(lookup, name)?;
+    raw.parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or(ConfigError::InvalidPositiveInteger(name))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+enum ConfigError {
+    #[error("required variable `{0}` is missing")]
+    Missing(&'static str),
+    #[error("variable `{0}` must be a positive integer")]
+    InvalidPositiveInteger(&'static str),
+    #[error("finance API must use role `aex_finance_api`, got `{0}`")]
+    WrongRole(String),
+    #[error("plane must be `dev` or `prd`, got `{0}`")]
+    InvalidPlane(String),
+}
+
+#[derive(Debug)]
+struct AppState {
+    ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Health {
+    status: &'static str,
+}
+
+fn app(ready: bool) -> Router {
+    Router::new()
+        .route("/internal/healthz", get(healthz))
+        .route("/internal/readyz", get(readyz))
+        .with_state(Arc::new(AppState { ready }))
+}
+
+async fn healthz() -> Json<Health> {
+    Json(Health { status: "ok" })
+}
+
+async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<Health>) {
+    if state.ready {
+        (StatusCode::OK, Json(Health { status: "ready" }))
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(Health {
+                status: "not_ready",
+            }),
+        )
     }
 }
 
-/// Runs `finance-api` until it stops.
-///
-/// # Errors
-///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
-        ),
-    );
-    Err(RunError::NotImplemented)
-}
-
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("finance-api: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
+#[tokio::main]
+async fn main() -> Result<(), lambda_http::Error> {
+    let config = Config::from_env().map_err(|error| lambda_http::Error::from(error.to_string()))?;
+    let db = aex_finance_aurora::store::FinanceDbConfig {
+        cluster_arn: config.aurora_cluster_arn,
+        secret_arn: config.aurora_secret_arn,
+        database: config.database_name,
+        transaction_deadline_ms: config.transaction_deadline_ms,
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("finance-api: telemetry flush left {pending} record(s) undelivered");
-    }
-    match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("finance-api: stopped: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
+    db.validate()
+        .map_err(|error| lambda_http::Error::from(error.to_string()))?;
+    // Readiness becomes true only after the deployable-specific role probe is
+    // composed. The uncredentialed rewrite run cannot perform that AWS probe.
+    lambda_http::run(app(false)).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
     use std::collections::BTreeMap;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt as _;
+
+    use super::{Config, ConfigError, app};
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (RESOURCE_VAR, "aex-finance_api-fixture".to_owned()),
-            (BUDGET_VAR, "8".to_owned()),
+            ("AEX_AURORA_CLUSTER_ARN", "arn:cluster:fixture".into()),
+            ("AEX_AURORA_SECRET_ARN", "arn:secret:fixture".into()),
+            ("AEX_DATABASE_NAME", "aex".into()),
+            ("AEX_DATABASE_ROLE", "aex_finance_api".into()),
+            ("AEX_STRIPE_COMMAND_EDGE_ARN", "arn:lambda:stripe".into()),
+            ("AEX_DEFAULT_PRICING_VERSION", "synthetic-zero-v1".into()),
+            ("AEX_PLANE", "dev".into()),
+            ("AEX_REGION", "eu-west-1".into()),
+            ("AEX_TX_DEADLINE_MS", "5000".into()),
+            ("AEX_PAGE_LIMIT", "100".into()),
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
-
     #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-finance_api-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
+    fn configuration_is_total_and_role_specific() {
+        let vars = complete();
+        assert!(Config::from_lookup(|name| vars.get(name).cloned()).is_ok());
+        for name in vars.keys() {
+            let mut missing = vars.clone();
+            missing.remove(name);
+            assert!(
+                matches!(
+                    Config::from_lookup(|key| missing.get(key).cloned()),
+                    Err(ConfigError::Missing(_))
+                ),
+                "missing {name}"
             );
         }
+        let mut wrong = vars;
+        wrong.insert("AEX_DATABASE_ROLE", "aex_finance_ingest".into());
+        assert!(matches!(
+            Config::from_lookup(|name| wrong.get(name).cloned()),
+            Err(ConfigError::WrongRole(_))
+        ));
     }
 
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
-    }
-
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    #[tokio::test]
+    async fn health_and_readiness_are_distinct() {
+        let live = app(false);
+        let health = live
+            .clone()
+            .oneshot(
+                Request::get("/internal/healthz")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(health.status(), StatusCode::OK);
+        let ready = live
+            .oneshot(
+                Request::get("/internal/readyz")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let ready = app(true)
+            .oneshot(
+                Request::get("/internal/readyz")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(ready.status(), StatusCode::OK);
     }
 }

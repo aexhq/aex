@@ -8,13 +8,13 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 80,
+    "awaiting_owner": 81,
     "capacity_gates": 15,
-    "live_targets": 31,
-    "packages": 139,
+    "live_targets": 33,
+    "packages": 141,
     "seams_claimed": 32,
     "seams_declared": 34,
-    "workloads": 1
+    "workloads": 0
   },
   "packages": {
     "apps/docs": {
@@ -671,14 +671,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "faults": "unit"
+        },
         "not_applicable": {
-          "live_suite": "application crate; its ports are exercised through its deployable's companion",
-          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+          "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-finance-aurora": {
       "name": "aex-finance-aurora",
@@ -707,13 +708,14 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "integration": "integration"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-finance-domain": {
       "name": "aex-finance-domain",
@@ -734,14 +736,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-hands-agent": {
       "name": "aex-hands-agent",
@@ -1403,7 +1406,7 @@
       "name": "aex-regional-http",
       "kind": "cargo",
       "meta": {
-        "owner": "regional-services",
+        "owner": "regional-stores",
         "role": "composition",
         "artifact": "none",
         "layers": [
@@ -1411,8 +1414,6 @@
         ],
         "concerns": [
           "contract",
-          "property",
-          "fault",
           "security"
         ],
         "seams": [],
@@ -1421,15 +1422,14 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {
-          "primitives": "unit"
-        },
+        "targets": {},
         "not_applicable": {
-          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion",
+          "targets": "awaiting the regional-stores stream; the cases land with the crate's own implementation"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-regional-test-support": {
       "name": "aex-regional-test-support",
@@ -2034,14 +2034,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "properties": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the central-finance stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-usage-storage-aws": {
       "name": "aex-usage-storage-aws",
@@ -2578,13 +2579,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/finance-ingest": {
       "name": "finance-ingest",
@@ -2732,14 +2735,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "performance_contract": "e2e",
-          "secrets": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "services/regional-session-api": {
       "name": "regional-session-api",
@@ -2774,14 +2776,13 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {
-          "admission": "unit",
-          "performance_contract": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "services/regional-stream": {
       "name": "regional-stream",
@@ -2814,9 +2815,88 @@
           "untrusted_input"
         ],
         "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
+    "services/stripe-command-edge": {
+      "name": "@aexhq/stripe-command-edge",
+      "kind": "npm",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "stripe-command-edge",
+        "live_suite": "aex-live-stripe-command-edge",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "untrusted_input",
+          "iam"
+        ],
+        "scenarios": [],
         "targets": {
-          "performance_contract": "e2e",
-          "streaming": "unit"
+          "edge": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "services/stripe-webhook-edge": {
+      "name": "@aexhq/stripe-webhook-edge",
+      "kind": "npm",
+      "meta": {
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "stripe-webhook-edge",
+        "live_suite": "aex-live-stripe-webhook-edge",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input",
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {
+          "edge": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
         },
         "not_applicable": {}
       },
@@ -3840,6 +3920,7 @@
         "owner": "central-finance",
         "role": "live_companion",
         "artifact": "none",
+        "deployable": "stripe-command-edge",
         "layers": [
           "smoke",
           "e2e"
@@ -3850,6 +3931,7 @@
           "performance"
         ],
         "seams": [
+          "aws.iam.denial",
           "stripe.test_mode.webhook"
         ],
         "security_tier": "money",
@@ -3859,7 +3941,6 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "deployable": "the TypeScript Stripe command edge lands with the central-finance stream (P-AUTH-EDGE)",
           "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
@@ -3873,6 +3954,7 @@
         "owner": "central-finance",
         "role": "live_companion",
         "artifact": "none",
+        "deployable": "stripe-webhook-edge",
         "layers": [
           "smoke",
           "e2e"
@@ -3883,6 +3965,7 @@
           "performance"
         ],
         "seams": [
+          "aws.iam.denial",
           "stripe.test_mode.webhook"
         ],
         "security_tier": "money",
@@ -3892,7 +3975,6 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "deployable": "the TypeScript Stripe webhook edge lands with the central-finance stream (P-AUTH-EDGE)",
           "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },
@@ -4329,13 +4411,15 @@
           "sql"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/content-lifecycle-worker": {
       "name": "content-lifecycle-worker",
@@ -4367,14 +4451,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "lifecycle": "unit",
-          "performance_contract": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "workers/finance-reconcile": {
       "name": "finance-reconcile",
@@ -4631,14 +4714,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "performance_contract": "e2e",
-          "rotation": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "workers/runtime-control-worker": {
       "name": "runtime-control-worker",
@@ -4710,14 +4792,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "continuations": "unit",
-          "performance_contract": "e2e"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; the cases land with the binary's own implementation"
+        }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "workers/usage-compute-worker": {
       "name": "usage-compute-worker",
@@ -4901,6 +4982,8 @@
     "aex-live-runtime-control-worker",
     "aex-live-session-operation-worker",
     "aex-live-site",
+    "aex-live-stripe-command-edge",
+    "aex-live-stripe-webhook-edge",
     "aex-live-usage-compute-worker",
     "aex-live-usage-receipt-dispatcher",
     "aex-live-usage-storage-worker",
@@ -4994,6 +5077,8 @@
       "aex-live-regional-stream",
       "aex-live-runtime-control-worker",
       "aex-live-session-operation-worker",
+      "aex-live-stripe-command-edge",
+      "aex-live-stripe-webhook-edge",
       "aex-live-usage-compute-worker",
       "aex-live-usage-receipt-dispatcher",
       "aex-live-usage-storage-worker",

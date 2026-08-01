@@ -24,14 +24,23 @@ security_tier = "public_edge"
 risk = ["money"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the central-finance stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+conformance = "unit"
+smoke = "smoke"
+resource_envelope = "e2e"
 
 [[bin]]
 name = "finance-api"
 path = "src/main.rs"
 
 [dependencies]
+aex-finance-app = { path = "../../crates/aex-finance-app" }
+aex-finance-aurora = { path = "../../crates/aex-finance-aurora" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+axum.workspace = true
+lambda_http.workspace = true
+serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true

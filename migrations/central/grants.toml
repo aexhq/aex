@@ -1,0 +1,67 @@
+schema_version = 1
+
+[[role]]
+name = "aex_finance_api"
+schemas = ["finance", "control"]
+tables = [
+  "finance.account:SELECT,INSERT",
+  "finance.account_balance:SELECT,INSERT,UPDATE",
+  "finance.journal_transaction:SELECT,INSERT",
+  "finance.journal_posting:SELECT,INSERT",
+  "finance.billing_account:SELECT,INSERT,UPDATE",
+  "finance.provider_effect:SELECT,INSERT,UPDATE",
+  "finance.statement:SELECT",
+  "control.organization:SELECT",
+]
+
+[[role]]
+name = "aex_finance_ingest"
+schemas = ["finance"]
+tables = [
+  "finance.provider_event_inbox:SELECT,INSERT",
+  "finance.provider_effect:SELECT,UPDATE",
+  "finance.account:SELECT",
+  "finance.account_balance:SELECT,INSERT,UPDATE",
+  "finance.journal_transaction:SELECT,INSERT",
+  "finance.journal_posting:SELECT,INSERT",
+  "finance.billing_account:SELECT,UPDATE",
+]
+
+[[role]]
+name = "aex_finance_settlement"
+schemas = ["finance"]
+tables = [
+  "finance.usage_inbox:SELECT,INSERT,UPDATE",
+  "finance.reservation:SELECT,UPDATE",
+  "finance.reservation_closure:SELECT,INSERT,UPDATE",
+  "finance.pricing_context:SELECT",
+  "finance.account:SELECT",
+  "finance.account_balance:SELECT,INSERT,UPDATE",
+  "finance.journal_transaction:SELECT,INSERT",
+  "finance.journal_posting:SELECT,INSERT",
+  "finance.receipt_outbox:SELECT,INSERT",
+]
+
+[[role]]
+name = "aex_finance_reconcile"
+schemas = ["finance"]
+tables = [
+  "finance.account:SELECT",
+  "finance.account_balance:SELECT,INSERT,UPDATE",
+  "finance.journal_transaction:SELECT,INSERT",
+  "finance.journal_posting:SELECT,INSERT",
+  "finance.provider_effect:SELECT,UPDATE",
+  "finance.provider_event_inbox:SELECT",
+  "finance.receipt_outbox:SELECT,UPDATE",
+  "finance.statement:SELECT,INSERT,UPDATE",
+]
+
+[[role]]
+name = "aex_receipt_dispatcher"
+schemas = ["finance"]
+tables = ["finance.receipt_outbox:SELECT,UPDATE"]
+
+[[role]]
+name = "aex_provider_cost"
+schemas = ["finance"]
+tables = ["finance.provider_cost_fact:SELECT,INSERT"]

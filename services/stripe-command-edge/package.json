@@ -1,0 +1,36 @@
+{
+  "name": "@aexhq/stripe-command-edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "aex": {
+    "owner": "central-finance",
+    "role": "deployable",
+    "artifact": "lambda_zip",
+    "deployable": "stripe-command-edge",
+    "live_suite": "aex-live-stripe-command-edge",
+    "layers": ["unit", "smoke", "e2e"],
+    "concerns": ["contract", "fault", "security", "performance"],
+    "seams": ["aws.iam.denial", "stripe.test_mode.webhook"],
+    "security_tier": "secret",
+    "risk": ["untrusted_input", "iam"],
+    "scenarios": [],
+    "targets": {
+      "edge": "unit",
+      "smoke": "smoke",
+      "resource_envelope": "e2e"
+    }
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.1101.0",
+    "stripe": "22.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.8.3"
+  }
+}

@@ -13,6 +13,21 @@
 //! - rate cards and rating arithmetic (`aex-usage-rating`)
 //! - reading the clock: settlement time arrives as a parameter
 
+pub mod account;
+pub mod billing_account;
+pub mod effect;
 pub mod journal;
+pub mod money;
 pub mod reservation;
 pub mod settlement;
+pub mod transitions;
+
+pub use account::{AccountKind, AccountRef, AccountSide, Currency};
+pub use journal::{
+    BalancedTransaction, BusinessKey, ConservationError, IntentHash, Posting, TransactionId,
+    TransactionKind,
+};
+pub use money::{Cents, MICROUSD_PER_CENT, Microusd, MicrousdDelta, MoneyError};
+
+#[cfg(test)]
+mod tests;

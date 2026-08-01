@@ -325,6 +325,9 @@ name = "aex-finance-app"
 version = "0.1.0"
 dependencies = [
  "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
+ "aex-wire",
  "async-trait",
  "futures",
  "serde",
@@ -338,9 +341,11 @@ name = "aex-finance-aurora"
 version = "0.1.0"
 dependencies = [
  "aex-finance-app",
+ "aex-finance-domain",
  "aex-rds-data",
  "async-trait",
  "futures",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
@@ -352,6 +357,9 @@ dependencies = [
 name = "aex-finance-domain"
 version = "0.1.0"
 dependencies = [
+ "aex-wire",
+ "blake3",
+ "proptest",
  "serde",
  "thiserror",
  "time",
@@ -1179,11 +1187,21 @@ dependencies = [
 name = "aex-usage-rating"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-wire",
+ "blake3",
+ "hex",
+ "insta",
  "num-bigint",
  "num-rational",
  "num-traits",
+ "proptest",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
 ]
 
 [[package]]
@@ -2550,7 +2568,15 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "clap",
+ "serde",
+ "serde_json",
+ "sqlx",
  "thiserror",
+ "tokio",
+ "toml",
+ "zeroize",
 ]
 
 [[package]]
@@ -3285,9 +3311,16 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 name = "finance-api"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-app",
+ "aex-finance-aurora",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "axum",
+ "lambda_http",
+ "serde",
  "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

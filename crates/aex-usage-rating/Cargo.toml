@@ -23,12 +23,26 @@ risk = ["money"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the central-finance stream; the cases land with the crate's own implementation"
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
+[package.metadata.aex.targets]
+properties = "unit"
+
 [dependencies]
+aex-finance-domain = { path = "../aex-finance-domain" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-wire = { path = "../aex-wire" }
+blake3.workspace = true
+hex.workspace = true
 num-bigint.workspace = true
 num-rational.workspace = true
 num-traits.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true

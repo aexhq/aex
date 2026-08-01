@@ -1,282 +1,365 @@
-//! `central-schema-admin` composition root (one-shot Rust OCI task).
-//!
-//! Exclusive responsibility: native `PostgreSQL` migrations and grants; the sole DDL
-//! identity.
-//!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! One-shot central schema administration task.
 
-/// Validated start-up configuration for `central-schema-admin`.
-///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// Digest of the migration bundle admitted for this run.
-    pub resource: String,
-    /// Advisory lock acquisition timeout in seconds.
-    pub budget: u32,
+mod grants;
+mod migration;
+
+use std::path::PathBuf;
+
+use aex_wire::canonical::to_jcs_string;
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::Serialize;
+
+use crate::grants::GrantSet;
+use crate::migration::MigrationBundle;
+
+/// Fixed outer advisory lock, ASCII `AEX_MIGR`.
+pub const ADVISORY_LOCK_KEY: i64 = 0x4145_585F_4D49_4752;
+
+/// One-shot schema administration CLI.
+#[derive(Debug, Parser)]
+#[command(name = "central-schema-admin")]
+struct Cli {
+    /// Aurora `PostgreSQL` host.
+    #[arg(long)]
+    database_host: String,
+    /// Aurora `PostgreSQL` port.
+    #[arg(long)]
+    database_port: u16,
+    /// Database name.
+    #[arg(long)]
+    database_name: String,
+    /// Secrets Manager ARN containing the DDL-only credential.
+    #[arg(long)]
+    database_secret_arn: String,
+    /// Pinned RDS root CA bundle.
+    #[arg(long)]
+    tls_root_ca_path: PathBuf,
+    /// Connection timeout.
+    #[arg(long, default_value_t = 10_000)]
+    connect_timeout_ms: u64,
+    /// Remote plane.
+    #[arg(long, value_enum)]
+    plane: Plane,
+    /// Admitted release identity.
+    #[arg(long)]
+    release: String,
+    /// Emit the canonical machine receipt.
+    #[arg(long)]
+    json: bool,
+    /// Operation.
+    #[command(subcommand)]
+    command: Command,
 }
 
-/// Why `central-schema-admin` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
+/// Remote plane names.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Plane {
+    /// Development plane.
+    Dev,
+    /// Production plane.
+    Prd,
+}
+
+/// Supported schema operations.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Validate and display the embedded migration plan without a database.
+    Plan {
+        /// Required current database head.
+        #[arg(long)]
+        expect_applied_head: Option<i64>,
     },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
+    /// Apply pending migrations.
+    Migrate {
+        /// Required bundle head.
+        #[arg(long)]
+        expect_head: i64,
+        /// Required current database head.
+        #[arg(long)]
+        expect_applied_head: Option<i64>,
+        /// Outer lock timeout.
+        #[arg(long, default_value_t = 30_000)]
+        lock_timeout_ms: u64,
+        /// Statement deadline.
+        #[arg(long, default_value_t = 900_000)]
+        statement_timeout_ms: u64,
+        /// Admit migrations marked destructive.
+        #[arg(long, requires = "backup_evidence")]
+        allow_destructive: bool,
+        /// PITR/backup evidence identity.
+        #[arg(long, requires = "allow_destructive")]
+        backup_evidence: Option<String>,
+    },
+    /// Verify the applied schema and conservation laws.
+    Verify {
+        /// Required bundle head.
+        #[arg(long)]
+        expect_head: i64,
+        /// Run journal/projection conservation checks.
+        #[arg(long)]
+        check_conservation: bool,
+    },
+    /// Compare or reconcile declarative grants.
+    Grants {
+        /// Fail on grant drift without mutation.
+        #[arg(long, conflicts_with = "apply", required_unless_present = "apply")]
+        check: bool,
+        /// Reconcile the exact allowlist.
+        #[arg(long, conflicts_with = "check", required_unless_present = "check")]
+        apply: bool,
+    },
+    /// Continue a keyset-paged backfill.
+    Backfill {
+        /// Owning migration version.
+        #[arg(long)]
+        migration: i64,
+        /// Rows per transaction.
+        #[arg(long, default_value_t = 5_000)]
+        batch_size: u32,
+        /// Maximum batches; zero means until exhausted.
+        #[arg(long, default_value_t = 0)]
+        max_batches: u32,
+    },
+    /// Execute a committed sibling repair file.
+    Repair {
+        /// Failed non-transactional migration.
+        #[arg(long)]
+        migration: i64,
+        /// Exact confirmation token printed by the failed precondition.
+        #[arg(long)]
+        confirm: String,
     },
 }
 
-/// Why `central-schema-admin` stopped.
-#[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    /// Start-up configuration was rejected.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`central-schema-admin` has no implementation yet")]
-    NotImplemented,
+/// Stable process exit contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Exit {
+    Success = 0,
+    ChecksumDrift = 10,
+    LockUnavailable = 11,
+    HeadMismatch = 12,
+    PreconditionFailed = 13,
+    GrantDrift = 14,
+    DestructiveEvidenceMissing = 15,
+    Connection = 20,
+    SecretUnavailable = 21,
+    Conservation = 30,
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming digest of the migration bundle admitted for this run.
-pub const RESOURCE_VAR: &str = "AEX_MIGRATION_BUNDLE_DIGEST";
-/// Environment variable naming advisory lock acquisition timeout in seconds.
-pub const BUDGET_VAR: &str = "AEX_LOCK_TIMEOUT_SECONDS";
+impl Exit {
+    const ALL: [Self; 10] = [
+        Self::Success,
+        Self::ChecksumDrift,
+        Self::LockUnavailable,
+        Self::HeadMismatch,
+        Self::PreconditionFailed,
+        Self::GrantDrift,
+        Self::DestructiveEvidenceMissing,
+        Self::Connection,
+        Self::SecretUnavailable,
+        Self::Conservation,
+    ];
+}
 
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Receipt<'a> {
+    release_id: &'a str,
+    plane: &'a str,
+    bundle_head: i64,
+    applied_head_before: Option<i64>,
+    applied_head_after: Option<i64>,
+    migration_versions: Vec<i64>,
+    grant_roles: Vec<&'a str>,
+    lock_key: i64,
+    conservation: &'a str,
+}
 
-impl Config {
-    /// Reads and validates the configuration of `central-schema-admin` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
+async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
+    debug_assert_eq!(Exit::ALL.len(), 10);
+    let bundle_path = migration::bundle_path();
+    let bundle = MigrationBundle::load(&bundle_path)
+        .map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
+    migration::native_migrator()
+        .await
+        .map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
+    let grants = GrantSet::load(grants::grants_path())
+        .map_err(|error| (Exit::GrantDrift, error.to_string()))?;
+    grants
+        .role("aex_provider_cost")
+        .ok_or_else(|| (Exit::GrantDrift, "provider-cost role is absent".to_owned()))?;
+    match &cli.command {
+        Command::Plan {
+            expect_applied_head,
+        } => {
+            let receipt = Receipt {
+                release_id: &cli.release,
+                plane: match cli.plane {
+                    Plane::Dev => "dev",
+                    Plane::Prd => "prd",
+                },
+                bundle_head: bundle.head(),
+                applied_head_before: *expect_applied_head,
+                applied_head_after: *expect_applied_head,
+                migration_versions: bundle.versions(),
+                grant_roles: grants.role_names(),
+                lock_key: ADVISORY_LOCK_KEY,
+                conservation: "not_requested",
+            };
+            to_jcs_string(&receipt).map_err(|error| (Exit::ChecksumDrift, error.to_string()))
         }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
+        Command::Migrate {
+            expect_head,
+            allow_destructive,
+            backup_evidence,
+            ..
+        } => {
+            if *expect_head != bundle.head() {
+                return Err((
+                    Exit::HeadMismatch,
+                    "bundle head does not match --expect-head".into(),
+                ));
+            }
+            if *allow_destructive && backup_evidence.as_deref().is_none_or(str::is_empty) {
+                return Err((
+                    Exit::DestructiveEvidenceMissing,
+                    "destructive migration needs backup evidence".into(),
+                ));
+            }
+            Err((Exit::SecretUnavailable, "credential resolution is deliberately not performed in an uncredentialed rewrite run".into()))
         }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
+        _ => Err((
+            Exit::SecretUnavailable,
+            "database operation requires the DDL-only secret resolver".into(),
+        )),
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `central-schema-admin` until it stops.
-///
-/// # Errors
-///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
-        ),
-    );
-    Err(RunError::NotImplemented)
-}
-
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("central-schema-admin: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    let cli = Cli::parse();
+    match run(&cli).await {
+        Ok(receipt) => {
+            println!("{receipt}");
+            std::process::ExitCode::from(Exit::Success as u8)
         }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("central-schema-admin: telemetry flush left {pending} record(s) undelivered");
-    }
-    match outcome {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("central-schema-admin: stopped: {error}");
-            std::process::ExitCode::FAILURE
+        Err((exit, message)) => {
+            eprintln!("central-schema-admin: {message}");
+            std::process::ExitCode::from(exit as u8)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
+    use std::path::Path;
 
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (RESOURCE_VAR, "aex-central_schema_admin-fixture".to_owned()),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
+    use clap::Parser as _;
+
+    use super::{ADVISORY_LOCK_KEY, Cli, Exit, run};
+    use crate::grants::{GrantSet, grants_path};
+    use crate::migration::{MigrationBundle, bundle_path, native_migrator};
+
+    fn plan_args() -> Vec<&'static str> {
+        vec![
+            "central-schema-admin",
+            "--database-host",
+            "db.example",
+            "--database-port",
+            "5432",
+            "--database-name",
+            "aex",
+            "--database-secret-arn",
+            "arn:aws:secretsmanager:eu-west-1:000000000000:secret:fixture",
+            "--tls-root-ca-path",
+            "rds-ca.pem",
+            "--plane",
+            "dev",
+            "--release",
+            "rel_fixture",
+            "plan",
+        ]
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
+    #[tokio::test]
+    async fn exact_cli_and_exit_contract_are_stable() {
+        let cli = Cli::try_parse_from(plan_args()).expect("exact CLI parses");
+        let receipt = run(&cli).await.expect("plan is local and credential-free");
+        assert!(receipt.contains("\"lockKey\":4703262552200136530"));
+        assert_eq!(ADVISORY_LOCK_KEY, 4_703_262_552_200_136_530);
+        assert_eq!(Exit::ChecksumDrift as u8, 10);
+        assert_eq!(Exit::LockUnavailable as u8, 11);
+        assert_eq!(Exit::HeadMismatch as u8, 12);
+        assert_eq!(Exit::PreconditionFailed as u8, 13);
+        assert_eq!(Exit::GrantDrift as u8, 14);
+        assert_eq!(Exit::DestructiveEvidenceMissing as u8, 15);
+        assert_eq!(Exit::Connection as u8, 20);
+        assert_eq!(Exit::SecretUnavailable as u8, 21);
+        assert_eq!(Exit::Conservation as u8, 30);
     }
 
     #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-central_schema_admin-fixture");
-        assert_eq!(config.budget, 8);
+    fn finance_ddl_has_both_conservation_defences_and_no_bypass() {
+        let ddl = include_str!("../../../migrations/central/20260801000500_baseline_finance.sql");
+        assert!(ddl.contains("DEFERRABLE INITIALLY DEFERRED"));
+        assert!(ddl.contains("sum(amount_microusd)"));
+        assert!(ddl.contains("observed <> declared"));
+        assert!(ddl.contains("BEFORE UPDATE OR DELETE"));
+        assert!(ddl.contains("balance_microusd <= 0"));
+        assert!(!ddl.contains("current_setting"));
+        assert!(!ddl.contains("double precision"));
+        assert!(!ddl.contains("::float8"));
     }
 
     #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
+    fn bundle_is_linear_and_headers_match_filenames() {
+        let path = bundle_path();
+        let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
+        assert_eq!(bundle.head(), 20_260_801_000_600);
         assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
+            bundle.versions(),
+            vec![
+                20_260_801_000_000,
+                20_260_801_000_100,
+                20_260_801_000_200,
+                20_260_801_000_300,
+                20_260_801_000_400,
+                20_260_801_000_500,
+                20_260_801_000_600,
+            ]
+        );
+        assert!(
+            !Path::new(&bundle_path())
+                .join("approved-checksum-transitions.toml")
+                .exists()
         );
     }
 
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+    #[tokio::test]
+    async fn native_sqlx_migrator_uses_dedicated_history_schema() {
+        let migrator = native_migrator()
+            .await
+            .expect("SQLx parses committed SQL files");
+        assert_eq!(migrator.table_name, "schema_admin._sqlx_migrations");
+        assert_eq!(migrator.create_schemas.as_ref(), ["schema_admin"]);
+        assert!(!migrator.ignore_missing);
+        assert!(migrator.locking);
     }
 
     #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
+    fn declarative_grants_never_mutate_journal_or_let_costs_charge() {
+        let grants = GrantSet::load(grants_path()).expect("grant allowlist parses");
+        grants
+            .validate_money_boundaries()
+            .expect("money boundaries hold");
+        let text = std::fs::read_to_string(grants_path()).expect("fixture read");
+        assert!(!text.contains("journal_transaction:SELECT,INSERT,UPDATE"));
+        assert!(!text.contains("journal_posting:SELECT,INSERT,UPDATE"));
+        let provider = grants.role("aex_provider_cost").expect("cost role");
+        assert_eq!(
+            provider.tables,
+            ["finance.provider_cost_fact:SELECT,INSERT"]
         );
     }
 }
