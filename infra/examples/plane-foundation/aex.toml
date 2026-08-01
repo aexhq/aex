@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "composition"
+artifact = "none"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "An example root is never applied by this repository; the plane it describes is created by a private root that owns its own evidence."

@@ -1,13 +1,23 @@
-# cargo-nextest profiles for the AEX Rust workspace.
+# cargo-nextest profiles.
 #
-# Rules that these profiles encode (Q-FLAKE / no-silent-skips):
-#   * retries are always 0 — a retry-to-green lane hides a real defect;
-#   * fail-fast is off so one failure never masks the rest of the evidence;
-#   * every profile archives JUnit so CI keeps a machine-readable receipt.
+# Three rules are encoded here rather than repeated in workflow YAML, because a
+# rule that lives in six `-E` strings is a rule five of them will eventually
+# disagree with:
 #
-# Live suites are separate `tests/live/aex-live-*` packages and are selected
-# explicitly (`cargo nextest run -p aex-live-...`); they are never part of the
-# default lane and must fail, not self-skip, when a prerequisite is absent.
+#   * `retries = 0` in every profile, without exception. A retry-to-green lane
+#     hides a real defect and reports coverage it did not earn.
+#   * `fail-fast = false` everywhere, so one failure never masks the rest of
+#     the evidence.
+#   * a `default-filter` that excludes the live and load packages, so "not
+#     selected" is one declared config fact rather than a filter string
+#     repeated across every lane.
+#
+# Live suites are separate `tests/live/aex-live-*` packages selected explicitly
+# with `--profile live`. They must fail loudly on an absent target descriptor,
+# never self-skip.
+#
+# Every lane passes `--no-tests=fail`: a filter that matched nothing is an
+# error, not a pass.
 
 [profile.default]
 retries = 0
@@ -16,6 +26,7 @@ failure-output = "immediate"
 status-level = "pass"
 final-status-level = "flaky"
 slow-timeout = { period = "30s", terminate-after = 4 }
+default-filter = 'not package(/^aex-(live|load)-/)'
 
 [profile.default.junit]
 path = "junit.xml"
@@ -28,7 +39,62 @@ failure-output = "immediate-final"
 status-level = "retry"
 final-status-level = "flaky"
 slow-timeout = { period = "60s", terminate-after = 4 }
+default-filter = 'not package(/^aex-(live|load)-/)'
 
 [profile.ci.junit]
 path = "junit.xml"
 report-name = "aex-ci"
+
+# Real engines behind testcontainers. The targets that need them declare
+# `required-features = ["integration-engines"]`, so the unit lane does not even
+# build them and stays runnable without a container runtime.
+[profile.integration]
+retries = 0
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "flaky"
+slow-timeout = { period = "120s", terminate-after = 4 }
+
+[profile.integration.junit]
+path = "junit.xml"
+report-name = "aex-integration"
+
+# Deployed smoke and end-to-end lanes. No default-filter: this profile is
+# always selected together with an explicit package or filterset, and quietly
+# widening it would run live cases nobody asked for.
+[profile.live]
+retries = 0
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "flaky"
+slow-timeout = { period = "300s", terminate-after = 2 }
+
+[profile.live.junit]
+path = "junit.xml"
+report-name = "aex-live"
+
+[profile.load]
+retries = 0
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "flaky"
+slow-timeout = { period = "1800s", terminate-after = 1 }
+
+[profile.load.junit]
+path = "junit.xml"
+report-name = "aex-load"
+
+[profile.soak]
+retries = 0
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "flaky"
+slow-timeout = { period = "3600s", terminate-after = 24 }
+
+[profile.soak.junit]
+path = "junit.xml"
+report-name = "aex-soak"

@@ -1,0 +1,128 @@
+# The only explicit edge file in the delivery graph.
+#
+# Every other edge is derived from a manifest that already declares it. These
+# cannot be: a scenario exercises a deployable through its public surface
+# without importing it, so no dependency edge exists to derive.
+#
+# A deployable observed by no scenario fails `graph verify`. "Nobody has said
+# what this service is for" is a gap worth blocking on.
+
+schema = "aex.scenario-ownership.v1"
+
+# --- identity, authorization and control -------------------------------------
+
+[[scenario]]
+id = "SC-IDENTITY-ACCOUNT"
+owner = "central-identity"
+observes = ["artifact:central-identity-api"]
+
+[[scenario]]
+id = "SC-AUTHZ-ASSERTION"
+owner = "central-identity"
+observes = ["artifact:central-authz"]
+
+[[scenario]]
+id = "SC-CONTROL-WORKSPACE"
+owner = "central-identity"
+observes = ["artifact:central-control-api", "artifact:central-control-worker"]
+
+[[scenario]]
+id = "SC-SCHEMA-MIGRATE"
+owner = "central-finance"
+observes = ["artifact:central-schema-admin"]
+
+# --- money --------------------------------------------------------------------
+
+[[scenario]]
+id = "SC-FINANCE-INVOICE"
+owner = "central-finance"
+observes = ["artifact:finance-api", "artifact:finance-settlement-worker"]
+
+[[scenario]]
+id = "SC-FINANCE-PAYMENT"
+owner = "central-finance"
+observes = ["artifact:finance-ingest"]
+
+[[scenario]]
+id = "SC-FINANCE-RECONCILE"
+owner = "central-finance"
+observes = ["artifact:finance-reconcile", "artifact:provider-cost-reconciler"]
+
+[[scenario]]
+id = "SC-USAGE-SETTLE"
+owner = "observations-usage"
+observes = [
+  "artifact:usage-receipt-dispatcher",
+  "artifact:usage-storage-worker",
+  "artifact:usage-compute-worker",
+  "artifact:usage-transfer-worker",
+]
+
+# --- session lifecycle ---------------------------------------------------------
+
+[[scenario]]
+id = "SC-SESSION-ADMIT"
+owner = "regional-services"
+observes = ["artifact:regional-session-api"]
+
+[[scenario]]
+id = "SC-SESSION-TERMINAL"
+owner = "regional-services"
+observes = ["artifact:regional-session-api", "artifact:session-operation-worker"]
+
+[[scenario]]
+id = "SC-SESSION-STREAM"
+owner = "regional-services"
+observes = ["artifact:regional-stream"]
+
+[[scenario]]
+id = "SC-SECRET-CUSTODY"
+owner = "regional-stores"
+observes = ["artifact:regional-secret-api", "artifact:regional-secret-key-admin"]
+
+[[scenario]]
+id = "SC-CONTENT-LIFECYCLE"
+owner = "regional-stores"
+observes = ["artifact:content-lifecycle-worker"]
+
+[[scenario]]
+id = "SC-RUNTIME-CONTROL"
+owner = "hands"
+observes = ["artifact:runtime-control-worker"]
+
+# --- observation ----------------------------------------------------------------
+
+[[scenario]]
+id = "SC-OBSERVATION-ADMIT"
+owner = "observations-usage"
+observes = ["artifact:regional-otlp"]
+
+[[scenario]]
+id = "SC-OBSERVATION-QUERY"
+owner = "observations-usage"
+observes = ["artifact:regional-observation-api"]
+
+[[scenario]]
+id = "SC-OBSERVATION-EXPORT"
+owner = "observations-usage"
+observes = [
+  "artifact:observation-export-launcher",
+  "artifact:observation-export-task",
+]
+
+[[scenario]]
+id = "SC-OBSERVATION-GAP"
+owner = "observations-usage"
+observes = ["artifact:observation-reconciler"]
+
+# --- runtime ---------------------------------------------------------------------
+
+[[scenario]]
+id = "SC-BRAIN-TURN"
+owner = "brain-core"
+observes = ["artifact:brain-mux"]
+
+[[scenario]]
+id = "SC-HANDS-HOSTILE"
+owner = "hands"
+observes = ["artifact:hands-agent", "artifact:hands-image"]

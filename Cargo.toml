@@ -262,6 +262,13 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 # --- protocol adapters -------------------------------------------------------
 rmcp = { version = "3.1.0", default-features = false, features = ["client", "server", "macros", "transport-async-rw"] }
 
+# --- deterministic archive packaging (aex-release-tool only) -----------------
+# The release tool writes ZIP and tar.gz archives itself rather than delegating
+# to a packager, because artifact identity requires byte-stable archive
+# metadata that `cargo lambda --output-format zip` does not guarantee. Only the
+# DEFLATE stream is borrowed; every header field is written explicitly.
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+
 # --- general utilities -------------------------------------------------------
 regex = "1.13.1"
 once_cell = "1.21.4"

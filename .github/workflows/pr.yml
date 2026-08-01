@@ -1,0 +1,133 @@
+# Lane class 1 — pull request and merge queue.
+#
+# No cloud, registry, publish or signing credential reaches this lane. The
+# artifacts job compiles and packages at the production profile so the bytes
+# are proved buildable, and uploads nothing.
+#
+# `checks` is the single required status. It is the only job whose result is
+# meaningful on its own, because it compares what the lane declared it would
+# run against the receipts the lane actually produced.
+
+name: pr
+
+on:
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: pr-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: Route
+    uses: ./.github/workflows/_route.yml
+    with:
+      mode: affected
+      lane: pr
+      base_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      head_sha: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+      partitions: 4
+
+  gates:
+    name: Gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: false
+          shared-key: gates
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-deny
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Workspace structure
+        run: cargo run --locked -p aex-workspace-check
+
+      - name: Delivery graph
+        run: cargo run --locked --release -p aex-release-tool -- graph verify
+
+      - name: Router selftest
+        run: cargo run --locked --release -p aex-release-tool -- selftest
+
+      - name: Workflow structure
+        run: cargo run --locked --release -p aex-release-tool -- policy workflows
+
+      - name: Terraform packages no code
+        run: cargo run --locked --release -p aex-release-tool -- policy terraform
+
+      - name: Supply chain
+        run: cargo deny --all-features check
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  rust:
+    name: Rust
+    needs: route
+    if: needs.route.outputs.has_test == 'true'
+    uses: ./.github/workflows/_rust-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.test_matrix }}
+      lane: pr
+      cache_mode: restore
+
+  node:
+    name: TypeScript
+    needs: route
+    uses: ./.github/workflows/_node-lane.yml
+    with:
+      lane: pr
+
+  terraform:
+    name: Terraform
+    needs: route
+    if: needs.route.outputs.has_terraform == 'true'
+    uses: ./.github/workflows/_terraform-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.terraform_matrix }}
+      mode: static
+      lane: pr
+
+  artifacts:
+    name: Artifacts
+    needs: route
+    if: needs.route.outputs.has_artifact == 'true'
+    uses: ./.github/workflows/_build-artifacts.yml
+    with:
+      matrix: ${{ needs.route.outputs.artifact_matrix }}
+      lane: pr
+      publish: false
+
+  checks:
+    name: Checks
+    needs: [route, gates, rust, node, terraform, artifacts]
+    if: always()
+    uses: ./.github/workflows/_receipts.yml
+    with:
+      lane: pr
+      declared_jobs: '["route","gates","rust","node","terraform","artifacts"]'

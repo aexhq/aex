@@ -15,6 +15,78 @@ workspace = true
 name = "aex-release-tool"
 path = "src/main.rs"
 
+[package.metadata.aex]
+owner = "delivery"
+role = "tool"
+artifact = "none"
+layers = ["unit"]
+concerns = ["contract", "property", "security"]
+seams = []
+security_tier = "internal"
+risk = ["generated_code"]
+scenarios = []
+
+[package.metadata.aex.targets]
+graph = "unit"
+selection = "unit"
+monotonicity = "unit"
+schemas = "unit"
+artifacts = "unit"
+evidence = "unit"
+private_path = "unit"
+migration = "unit"
+policy = "unit"
+failing_fixtures = "unit"
+
+[package.metadata.aex.not_applicable]
+live_suite = "workspace tool; it observes releases and is never itself deployed"
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+flate2.workspace = true
+hex.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time.workspace = true
+toml.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+jsonschema.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+
+[[test]]
+name = "graph"
+
+[[test]]
+name = "selection"
+
+[[test]]
+name = "monotonicity"
+
+[[test]]
+name = "schemas"
+
+[[test]]
+name = "artifacts"
+
+[[test]]
+name = "evidence"
+
+[[test]]
+name = "private_path"
+
+[[test]]
+name = "migration"
+
+[[test]]
+name = "policy"
+
+[[test]]
+name = "failing_fixtures"

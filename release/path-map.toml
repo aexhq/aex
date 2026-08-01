@@ -1,0 +1,270 @@
+# File path to owning node.
+#
+# The first matching rule wins, so order is meaningful: the router rules come
+# before the generic ones, and the documentation catch-all comes last.
+#
+# Matching is segment-wise. A prefix always ends at a path boundary, so
+# `packages/sdk` never claims `packages/sdk-extra`.
+#
+# A path matching no rule is an ORPHAN. An orphan widens the run to repo-wide
+# *and* fails `graph verify`. Widening alone would hide the gap forever;
+# failing alone would leave a red build with an unsafe run.
+
+schema = "aex.path-map.v1"
+
+# --- the router itself -------------------------------------------------------
+# A change here forces the full graph: the thing deciding what runs cannot
+# decide that less should run because it changed.
+
+[[rule]]
+id = "release-tool"
+prefix = "tools/aex-release-tool/"
+kind = "router"
+
+[[rule]]
+id = "release-registries"
+prefix = "release/"
+kind = "router"
+
+[[rule]]
+id = "workflows"
+prefix = ".github/"
+kind = "router"
+
+[[rule]]
+id = "nextest-profiles"
+prefix = ".config/"
+kind = "router"
+
+# --- repo-wide triggers ------------------------------------------------------
+
+[[rule]]
+id = "workspace-manifest"
+exact = "Cargo.toml"
+kind = "repo-wide"
+
+[[rule]]
+id = "workspace-lockfile"
+exact = "Cargo.lock"
+kind = "repo-wide"
+
+[[rule]]
+id = "toolchain-pin"
+exact = "rust-toolchain.toml"
+kind = "repo-wide"
+
+[[rule]]
+id = "rustfmt-config"
+exact = "rustfmt.toml"
+kind = "repo-wide"
+
+[[rule]]
+id = "supply-chain-policy"
+exact = "deny.toml"
+kind = "repo-wide"
+
+[[rule]]
+id = "npm-root-manifest"
+exact = "package.json"
+kind = "repo-wide"
+
+[[rule]]
+id = "npm-lockfile"
+exact = "bun.lock"
+kind = "repo-wide"
+
+[[rule]]
+id = "typescript-base-config"
+exact = "tsconfig.base.json"
+kind = "repo-wide"
+
+[[rule]]
+id = "typescript-scripts-config"
+exact = "tsconfig.scripts.json"
+kind = "repo-wide"
+
+[[rule]]
+id = "eslint-config"
+exact = "eslint.config.mjs"
+kind = "repo-wide"
+
+# --- workspace members -------------------------------------------------------
+
+[[rule]]
+id = "cargo-crates"
+prefix = "crates/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "cargo-services"
+prefix = "services/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "cargo-workers"
+prefix = "workers/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "cargo-runtimes"
+prefix = "runtimes/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "cargo-live-companions"
+prefix = "tests/live/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "cargo-tools"
+prefix = "tools/"
+kind = "derive-cargo"
+
+[[rule]]
+id = "npm-packages"
+prefix = "packages/"
+kind = "derive-npm"
+
+[[rule]]
+id = "npm-apps"
+prefix = "apps/"
+kind = "derive-npm"
+
+# --- infrastructure ----------------------------------------------------------
+
+[[rule]]
+id = "terraform-modules"
+prefix = "infra/modules/"
+kind = "derive-terraform"
+
+[[rule]]
+id = "terraform-examples"
+prefix = "infra/examples/"
+kind = "derive-terraform"
+
+# --- generated bundles -------------------------------------------------------
+
+[[rule]]
+id = "contract-bundle-generated"
+prefix = "api/generated/"
+kind = "node"
+node = "bundle:contract"
+
+[[rule]]
+id = "contract-source-openapi"
+prefix = "api/openapi/"
+kind = "node"
+node = "bundle:contract"
+
+[[rule]]
+id = "contract-source-schemas"
+prefix = "api/schemas/"
+kind = "node"
+node = "bundle:contract"
+
+[[rule]]
+id = "conformance-corpus"
+prefix = "conformance/"
+kind = "node"
+node = "bundle:contract"
+
+[[rule]]
+id = "central-migrations"
+prefix = "migrations/central/"
+kind = "node"
+node = "bundle:migration"
+
+[[rule]]
+id = "regional-migrations"
+prefix = "migrations/regional/"
+kind = "node"
+node = "bundle:migration"
+
+# --- classified, owning nothing ---------------------------------------------
+# These paths cannot reach an artifact and cannot break a test. They are
+# classified rather than ignored by accident, so adding one is a decision.
+
+[[rule]]
+id = "load-workloads"
+prefix = "tests/load/"
+kind = "ignored"
+
+[[rule]]
+id = "test-support"
+prefix = "tests/support/"
+kind = "ignored"
+
+[[rule]]
+id = "scripts"
+prefix = "scripts/"
+kind = "ignored"
+
+[[rule]]
+id = "references"
+prefix = "references/"
+kind = "ignored"
+
+[[rule]]
+id = "infra-documentation"
+prefix = "infra/"
+kind = "ignored"
+
+[[rule]]
+id = "api-documentation"
+prefix = "api/"
+kind = "ignored"
+
+[[rule]]
+id = "migrations-documentation"
+prefix = "migrations/"
+kind = "ignored"
+
+[[rule]]
+id = "member-root-readme"
+prefix = "tests/"
+kind = "ignored"
+
+[[rule]]
+id = "environment-example"
+exact = ".env.example"
+kind = "ignored"
+
+[[rule]]
+id = "git-hooks"
+prefix = ".githooks/"
+kind = "ignored"
+
+[[rule]]
+id = "gitleaks-allowlist"
+exact = ".gitleaksignore"
+kind = "ignored"
+
+[[rule]]
+id = "editor-config"
+suffix = ".editorconfig"
+kind = "ignored"
+
+[[rule]]
+id = "gitignore"
+suffix = ".gitignore"
+kind = "ignored"
+
+[[rule]]
+id = "gitattributes"
+suffix = ".gitattributes"
+kind = "ignored"
+
+[[rule]]
+id = "licence-and-notice"
+suffix = "LICENSE"
+kind = "ignored"
+
+[[rule]]
+id = "notice"
+suffix = "NOTICE"
+kind = "ignored"
+
+[[rule]]
+id = "documentation"
+suffix = ".md"
+kind = "ignored"

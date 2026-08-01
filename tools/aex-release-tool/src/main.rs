@@ -1,26 +1,1073 @@
 //! `aex-release-tool` command-line entry point.
+//!
+//! Every subcommand is a thin shell over the library. The only logic here is
+//! argument parsing, file reading and the exit-code contract: a failure prints
+//! every violation it found and exits its classification code, and nothing
+//! exits `0` on a warning.
 
-use clap::Parser;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use clap::{Parser, Subcommand};
+
+use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane};
+use aex_release_tool::artifact::{self, ArtifactEnvelope, Form};
+use aex_release_tool::canon;
+use aex_release_tool::error::{Exit, Result, ToolError, io, usage};
+use aex_release_tool::evidence::{self, DeclaredJobs, FreshnessPolicy, Receipt};
+use aex_release_tool::graph::inputs::GraphInputs;
+use aex_release_tool::graph::matrix::{self, MatrixKind};
+use aex_release_tool::graph::select::{self, Lane, Mode};
+use aex_release_tool::graph::{NodeId, verify};
+use aex_release_tool::ledger::{self, JsonlLedger, LedgerEntry, LedgerStore, Readback};
+use aex_release_tool::manifest::CompositionManifest;
+use aex_release_tool::migration;
+use aex_release_tool::policy;
+use aex_release_tool::private_path;
+use aex_release_tool::schemas::{self, SchemaName};
+use aex_release_tool::selftest;
+use aex_release_tool::verification::VerificationStatement;
 
 /// the release graph, admission, manifest and evidence binary used by CI and deploy.
 #[derive(Debug, Parser)]
 #[command(
     name = "aex-release-tool",
     version,
-    about = "the release graph, admission, manifest and evidence binary used by CI and deploy"
+    about = "the release graph, admission, manifest and evidence binary used by CI and deploy",
+    disable_help_subcommand = true
 )]
 struct Cli {
-    /// Print the resolved invocation instead of executing it.
-    #[arg(long)]
-    dry_run: bool,
+    /// Repository root. Defaults to the enclosing Git work tree.
+    #[arg(long, global = true)]
+    root: Option<PathBuf>,
+    /// Emit canonical JSON.
+    #[arg(long, global = true)]
+    json: bool,
+    /// Suppress human-readable output.
+    #[arg(long, global = true)]
+    quiet: bool,
+    /// Accepted and ignored; output is never coloured.
+    #[arg(long, global = true)]
+    no_color: bool,
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Build, verify, select over and explain the delivery graph.
+    #[command(subcommand)]
+    Graph(GraphCommand),
+    /// Recipes, packaging and envelopes.
+    #[command(subcommand)]
+    Artifact(ArtifactCommand),
+    /// Composition manifests.
+    #[command(subcommand)]
+    Manifest(ManifestCommand),
+    /// Evidence receipts.
+    #[command(subcommand)]
+    Evidence(EvidenceCommand),
+    /// Verification statements.
+    #[command(subcommand)]
+    Verification(VerificationCommand),
+    /// Decide whether a candidate may be promoted.
+    Admit(AdmitArgs),
+    /// Terraform plan handling.
+    #[command(subcommand)]
+    Plan(PlanCommand),
+    /// The deployment ledger.
+    #[command(subcommand)]
+    Ledger(LedgerCommand),
+    /// The private-path allowlist gate.
+    #[command(subcommand)]
+    PrivatePath(PrivatePathCommand),
+    /// Migration bundles.
+    #[command(subcommand)]
+    Migration(MigrationCommand),
+    /// Source policies over checked-in files.
+    #[command(subcommand)]
+    Policy(PolicyCommand),
+    /// Print a release JSON Schema.
+    Schema {
+        /// Which schema.
+        #[arg(long)]
+        name: SchemaName,
+    },
+    /// Check the router's own determinism and monotonicity.
+    Selftest,
+}
+
+#[derive(Debug, Subcommand)]
+enum GraphCommand {
+    /// Merge every authority into one graph and summarize it.
+    Build {
+        /// Write the summary here instead of to standard output.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Run every fail-closed verification rule.
+    Verify,
+    /// Decide what runs.
+    Select {
+        /// Base commit of the diff.
+        #[arg(long)]
+        base: Option<String>,
+        /// Head commit of the diff.
+        #[arg(long)]
+        head: Option<String>,
+        /// Explicit changed paths, comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        paths: Option<Vec<String>>,
+        /// How wide to select.
+        #[arg(long, default_value = "affected")]
+        mode: Mode,
+        /// Which lane is asking.
+        #[arg(long, default_value = "pr")]
+        lane: Lane,
+        /// Write the selection here.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Explain why one node was selected.
+    Explain {
+        /// The node.
+        #[arg(long)]
+        unit: String,
+        /// Base commit.
+        #[arg(long)]
+        base: Option<String>,
+        /// Head commit.
+        #[arg(long)]
+        head: Option<String>,
+    },
+    /// Render the selection reason table.
+    Diff {
+        /// Base commit.
+        #[arg(long)]
+        base: String,
+        /// Head commit.
+        #[arg(long)]
+        head: String,
+        /// Output format.
+        #[arg(long, default_value = "markdown")]
+        format: DiffFormat,
+    },
+    /// Emit a GitHub Actions matrix.
+    Matrix {
+        /// The selection document.
+        #[arg(long)]
+        selection: PathBuf,
+        /// Which slice.
+        #[arg(long)]
+        kind: MatrixKind,
+        /// How many shards.
+        #[arg(long, default_value_t = 1)]
+        partitions: usize,
+        /// Observed per-node durations, as canonical JSON.
+        #[arg(long)]
+        shard_durations: Option<PathBuf>,
+        /// Append `key=value` lines here.
+        #[arg(long)]
+        github_output: Option<PathBuf>,
+    },
+}
+
+/// How `graph diff` renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+enum DiffFormat {
+    /// A pull-request summary table.
+    Markdown,
+    /// Canonical JSON.
+    Json,
+}
+
+#[derive(Debug, Subcommand)]
+enum ArtifactCommand {
+    /// Print every build recipe.
+    Recipes {
+        /// Restrict to one unit.
+        #[arg(long)]
+        unit: Option<String>,
+    },
+    /// Print the exact build invocation. Never compiles.
+    Plan {
+        /// The unit.
+        #[arg(long)]
+        unit: String,
+    },
+    /// Package a built input deterministically.
+    Package {
+        /// The unit.
+        #[arg(long)]
+        unit: String,
+        /// The built binary or output tree.
+        #[arg(long)]
+        input: PathBuf,
+        /// Where to write the archive.
+        #[arg(long)]
+        out: PathBuf,
+        /// Override the packaged form.
+        #[arg(long)]
+        form: Option<Form>,
+        /// Fixed archive timestamp.
+        #[arg(long, default_value_t = 0)]
+        source_date_epoch: u64,
+    },
+    /// Verify an envelope, and optionally the bytes it describes.
+    Verify {
+        /// The envelope.
+        #[arg(long)]
+        envelope: PathBuf,
+        /// The artifact bytes.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Require a signature regardless of the unit kind's policy.
+        #[arg(long)]
+        require_signature: bool,
+    },
+    /// Print the immutable destination an envelope publishes to.
+    PublishPlan {
+        /// The envelope.
+        #[arg(long)]
+        envelope: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ManifestCommand {
+    /// Recompute a manifest's digest.
+    Digest {
+        /// The manifest.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Validate a manifest.
+    Validate {
+        /// The manifest.
+        #[arg(long)]
+        file: PathBuf,
+        /// Also reject environment identities, mutable references and ranges.
+        #[arg(long)]
+        strict_environment_scan: bool,
+    },
+    /// Print the deployment order.
+    Order {
+        /// The manifest.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Which previous manifests a unit may roll back to.
+    RollbackCandidates {
+        /// The current manifest.
+        #[arg(long)]
+        file: PathBuf,
+        /// The unit.
+        #[arg(long)]
+        unit: String,
+        /// A JSON array of previous manifests.
+        #[arg(long)]
+        history: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum EvidenceCommand {
+    /// Verify one receipt.
+    Verify {
+        /// The receipt.
+        #[arg(long)]
+        receipt: PathBuf,
+    },
+    /// Check a receipt against its freshness class.
+    Require {
+        /// The receipt.
+        #[arg(long)]
+        receipt: PathBuf,
+        /// The freshness policy.
+        #[arg(long)]
+        policy: PathBuf,
+        /// The release the receipt must cover, where its class is release-bound.
+        #[arg(long)]
+        release_id: String,
+        /// Evaluation time, RFC 3339. Defaults to now.
+        #[arg(long)]
+        now: Option<String>,
+    },
+    /// Compare declared jobs against collected receipts.
+    Aggregate {
+        /// Receipt files.
+        #[arg(long = "receipt")]
+        receipts: Vec<PathBuf>,
+        /// The declared job list.
+        #[arg(long)]
+        expect: PathBuf,
+        /// Where to write the lane receipt.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum VerificationCommand {
+    /// Verify a statement against a manifest.
+    Verify {
+        /// The statement.
+        #[arg(long)]
+        statement: PathBuf,
+        /// The manifest.
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+struct AdmitArgs {
+    /// The candidate manifest.
+    #[arg(long)]
+    manifest: PathBuf,
+    /// A JSON object of unit id to envelope.
+    #[arg(long)]
+    envelopes: PathBuf,
+    /// Receipt files.
+    #[arg(long = "receipt")]
+    receipts: Vec<PathBuf>,
+    /// The dev verification statement.
+    #[arg(long)]
+    verification: Option<PathBuf>,
+    /// The freshness policy.
+    #[arg(long)]
+    freshness: PathBuf,
+    /// Which plane.
+    #[arg(long)]
+    plane: Plane,
+    /// Workflow builder identities permitted to have built an artifact.
+    #[arg(long = "builder", value_delimiter = ',')]
+    builders: Vec<String>,
+    /// The applied central schema head.
+    #[arg(long)]
+    applied_central_head: Option<String>,
+    /// The applied regional generation.
+    #[arg(long)]
+    applied_regional_generation: Option<u32>,
+    /// Evaluation time, RFC 3339.
+    #[arg(long)]
+    now: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum PlanCommand {
+    /// Summarize a `terraform show -json` plan.
+    Summarize {
+        /// The plan document.
+        #[arg(long)]
+        plan_json: PathBuf,
+        /// Where to write a Markdown summary.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Apply the plan policy.
+    Policy {
+        /// The plan document.
+        #[arg(long)]
+        plan_json: PathBuf,
+        /// The policy.
+        #[arg(long)]
+        policy: PathBuf,
+        /// Assert this is a manifest-only change.
+        #[arg(long)]
+        manifest_only: bool,
+        /// Assert this is an infrastructure-only change.
+        #[arg(long)]
+        infrastructure_only: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum LedgerCommand {
+    /// Append one entry.
+    Append {
+        /// The entry.
+        #[arg(long)]
+        entry: PathBuf,
+        /// The JSONL store.
+        #[arg(long)]
+        store: PathBuf,
+    },
+    /// List entries for a plane.
+    List {
+        /// The plane.
+        #[arg(long)]
+        plane: String,
+        /// The JSONL store.
+        #[arg(long)]
+        store: PathBuf,
+    },
+    /// Compare desired, ledger and actual.
+    Verify {
+        /// The plane.
+        #[arg(long)]
+        plane: String,
+        /// The JSONL store.
+        #[arg(long)]
+        store: PathBuf,
+        /// The desired binding digest.
+        #[arg(long)]
+        binding_digest: String,
+        /// The observed state.
+        #[arg(long)]
+        actual: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PrivatePathCommand {
+    /// Classify every tracked path in a repository.
+    Check {
+        /// The repository to classify.
+        #[arg(long)]
+        target: PathBuf,
+        /// The policy.
+        #[arg(long)]
+        policy: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MigrationCommand {
+    /// Build the bundle lock.
+    Bundle {
+        /// Where to write it.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Verify a bundle against the declared head.
+    Verify {
+        /// The bundle.
+        #[arg(long)]
+        bundle: PathBuf,
+        /// The declared head.
+        #[arg(long)]
+        head: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyCommand {
+    /// Scan the Terraform tree.
+    Terraform,
+    /// Lint every workflow.
+    Workflows,
+    /// Scan a Dockerfile for the COPY-only policy.
+    Dockerfile {
+        /// The Dockerfile.
+        #[arg(long)]
+        file: PathBuf,
+    },
+}
+
+fn main() -> ExitCode {
     let cli = Cli::parse();
-    anyhow::bail!(
-        "`aex-release-tool` has no implementation yet (dry_run = {})",
-        cli.dry_run
-    );
+    match run(&cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprint!("{err}");
+            ExitCode::from(u8::try_from(err.exit.code()).unwrap_or(1))
+        }
+    }
+}
+
+fn run(cli: &Cli) -> Result<()> {
+    let root = resolve_root(cli.root.as_deref())?;
+    match &cli.command {
+        Command::Graph(command) => run_graph(cli, &root, command),
+        Command::Artifact(command) => run_artifact(cli, &root, command),
+        Command::Manifest(command) => run_manifest(cli, command),
+        Command::Evidence(command) => run_evidence(cli, command),
+        Command::Verification(command) => run_verification(command),
+        Command::Admit(args) => run_admit(cli, args),
+        Command::Plan(command) => run_plan(cli, command),
+        Command::Ledger(command) => run_ledger(cli, command),
+        Command::PrivatePath(command) => run_private_path(command),
+        Command::Migration(command) => run_migration(cli, &root, command),
+        Command::Policy(command) => run_policy(cli, &root, command),
+        Command::Schema { name } => {
+            println!("{}", schemas::text(*name).trim_end());
+            Ok(())
+        }
+        Command::Selftest => {
+            let inputs = GraphInputs::load(&root)?;
+            let built = verify::build(&inputs)?;
+            let report = selftest::run(&built, &inputs)?;
+            emit(cli, &report)
+        }
+    }
+}
+
+fn resolve_root(explicit: Option<&Path>) -> Result<PathBuf> {
+    if let Some(root) = explicit {
+        return Ok(root.to_path_buf());
+    }
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|err| usage(format!("`git rev-parse` could not be run: {err}")))?;
+    if !output.status.success() {
+        return Err(usage(
+            "not inside a Git work tree; pass --root to name the repository",
+        ));
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+    ))
+}
+
+fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
+    let inputs = GraphInputs::load(root)?;
+    match command {
+        GraphCommand::Build { out } => {
+            let built = verify::build(&inputs)?;
+            let summary = verify::summarize(&built);
+            if let Some(path) = out {
+                write_canonical(path, &summary)
+            } else {
+                emit(cli, &summary)
+            }
+        }
+        GraphCommand::Verify => {
+            let built = verify::verify(&inputs)?;
+            emit(cli, &verify::summarize(&built))
+        }
+        GraphCommand::Select {
+            base,
+            head,
+            paths,
+            mode,
+            lane,
+            out,
+        } => {
+            let changed =
+                resolve_changed(root, base.as_deref(), head.as_deref(), paths.as_deref())?;
+            let built = verify::build(&inputs)?;
+            let selection = select::select(&built, &inputs, &changed, *mode, *lane)?;
+            if let Some(path) = out {
+                write_canonical(path, &selection)?;
+            }
+            emit(cli, &selection)
+        }
+        GraphCommand::Explain { unit, base, head } => {
+            let changed = resolve_changed(root, base.as_deref(), head.as_deref(), None)?;
+            let built = verify::build(&inputs)?;
+            let selection = select::select(&built, &inputs, &changed, Mode::Affected, Lane::Pr)?;
+            let target = NodeId(unit.clone());
+            let found = selection
+                .test
+                .iter()
+                .chain(&selection.deploy)
+                .chain(&selection.scenarios)
+                .find(|selected| selected.id == target);
+            match found {
+                Some(selected) => {
+                    println!("{}: {}", selected.id, select::describe(&selected.reason));
+                    Ok(())
+                }
+                None => Err(ToolError::single(
+                    Exit::RoutingUndecidable,
+                    "graph-explain-unselected",
+                    format!("`{unit}` was not selected by this change set"),
+                )),
+            }
+        }
+        GraphCommand::Diff { base, head, format } => {
+            let changed = resolve_changed(root, Some(base), Some(head), None)?;
+            let built = verify::build(&inputs)?;
+            let selection = select::select(&built, &inputs, &changed, Mode::Affected, Lane::Pr)?;
+            match format {
+                DiffFormat::Markdown => {
+                    print!("{}", select::to_markdown(&selection));
+                    Ok(())
+                }
+                DiffFormat::Json => emit(cli, &selection),
+            }
+        }
+        GraphCommand::Matrix {
+            selection,
+            kind,
+            partitions,
+            shard_durations,
+            github_output,
+        } => {
+            let selection: select::Selection = read_json(selection)?;
+            let durations: BTreeMap<String, u64> = match shard_durations {
+                Some(path) => read_json(path)?,
+                None => BTreeMap::new(),
+            };
+            let output = matrix::build(&selection, *kind, *partitions, &durations)?;
+            if let Some(path) = github_output {
+                append_text(path, &matrix::to_github_output(&output)?)?;
+            }
+            emit(cli, &output)
+        }
+    }
+}
+
+fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
+    match command {
+        ArtifactCommand::Recipes { unit } => {
+            let units = read_units(root)?;
+            let plans = artifact::recipes(&units)?;
+            let selected: Vec<_> = plans
+                .into_iter()
+                .filter(|plan| unit.as_ref().is_none_or(|id| &plan.unit == id))
+                .collect();
+            emit(cli, &selected)
+        }
+        ArtifactCommand::Plan { unit } => {
+            let units = read_units(root)?;
+            let found = units
+                .units
+                .iter()
+                .find(|candidate| &candidate.id == unit)
+                .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+            emit(cli, &artifact::plan(found)?)
+        }
+        ArtifactCommand::Package {
+            unit,
+            input,
+            out,
+            form,
+            source_date_epoch,
+        } => {
+            let units = read_units(root)?;
+            let found = units
+                .units
+                .iter()
+                .find(|candidate| &candidate.id == unit)
+                .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+            let form = match form {
+                Some(form) => *form,
+                None => match artifact::plan(found)?.form.as_str() {
+                    "lambda-zip" => Form::LambdaZip,
+                    "oci" => Form::Oci,
+                    "rootfs" => Form::Rootfs,
+                    "build-output" => Form::BuildOutput,
+                    _ => Form::Tarball,
+                },
+            };
+            let bytes = artifact::package(form, input, *source_date_epoch)?;
+            std::fs::write(out, &bytes).map_err(|err| io(&out.display().to_string(), &err))?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "unit": unit,
+                    "digest": canon::digest_bytes(&bytes),
+                    "sizeBytes": bytes.len(),
+                    "path": out.display().to_string(),
+                }),
+            )
+        }
+        ArtifactCommand::Verify {
+            envelope,
+            file,
+            require_signature,
+        } => {
+            let envelope: ArtifactEnvelope = read_json(envelope)?;
+            envelope.verify(file.as_deref(), *require_signature)?;
+            emit(
+                cli,
+                &serde_json::json!({ "unit": envelope.unit.id, "verified": true }),
+            )
+        }
+        ArtifactCommand::PublishPlan { envelope } => {
+            let envelope: ArtifactEnvelope = read_json(envelope)?;
+            emit(cli, &artifact::publish_destination(&envelope)?)
+        }
+    }
+}
+
+fn run_manifest(cli: &Cli, command: &ManifestCommand) -> Result<()> {
+    match command {
+        ManifestCommand::Digest { file } => {
+            let manifest: CompositionManifest = read_json(file)?;
+            println!("{}", manifest.digest()?);
+            Ok(())
+        }
+        ManifestCommand::Validate {
+            file,
+            strict_environment_scan,
+        } => {
+            let manifest: CompositionManifest = read_json(file)?;
+            manifest.validate(*strict_environment_scan)?;
+            emit(
+                cli,
+                &serde_json::json!({ "releaseId": manifest.release_id, "valid": true }),
+            )
+        }
+        ManifestCommand::Order { file } => {
+            let manifest: CompositionManifest = read_json(file)?;
+            emit(cli, &manifest.order)
+        }
+        ManifestCommand::RollbackCandidates {
+            file,
+            unit,
+            history,
+        } => {
+            let manifest: CompositionManifest = read_json(file)?;
+            let history: Vec<CompositionManifest> = read_json(history)?;
+            let candidates =
+                aex_release_tool::manifest::rollback_candidates(&history, &manifest, unit);
+            emit(
+                cli,
+                &serde_json::json!({ "unit": unit, "candidates": candidates }),
+            )
+        }
+    }
+}
+
+fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
+    match command {
+        EvidenceCommand::Verify { receipt } => {
+            let receipt: Receipt = read_json(receipt)?;
+            receipt.verify()?;
+            emit(
+                cli,
+                &serde_json::json!({ "receiptId": receipt.receipt_id, "verified": true }),
+            )
+        }
+        EvidenceCommand::Require {
+            receipt,
+            policy,
+            release_id,
+            now,
+        } => {
+            let receipt: Receipt = read_json(receipt)?;
+            let policy: FreshnessPolicy = read_toml(policy)?;
+            evidence::check_freshness(&receipt, &policy, release_id, parse_now(now.as_deref())?)?;
+            emit(
+                cli,
+                &serde_json::json!({ "receiptId": receipt.receipt_id, "fresh": true }),
+            )
+        }
+        EvidenceCommand::Aggregate {
+            receipts,
+            expect,
+            out,
+        } => {
+            let receipts: Vec<Receipt> = receipts
+                .iter()
+                .map(|path| read_json(path))
+                .collect::<Result<_>>()?;
+            let declared: DeclaredJobs = read_json(expect)?;
+            let lane = evidence::aggregate(&receipts, &declared)?;
+            if let Some(path) = out {
+                write_canonical(path, &lane)?;
+            }
+            emit(cli, &lane)
+        }
+    }
+}
+
+fn run_verification(command: &VerificationCommand) -> Result<()> {
+    match command {
+        VerificationCommand::Verify {
+            statement,
+            manifest,
+        } => {
+            let statement: VerificationStatement = read_json(statement)?;
+            let manifest: CompositionManifest = read_json(manifest)?;
+            statement.verify(&manifest)
+        }
+    }
+}
+
+fn run_admit(cli: &Cli, args: &AdmitArgs) -> Result<()> {
+    let manifest: CompositionManifest = read_json(&args.manifest)?;
+    let envelopes: BTreeMap<String, ArtifactEnvelope> = read_json(&args.envelopes)?;
+    let receipts: Vec<Receipt> = args
+        .receipts
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<_>>()?;
+    let statement: Option<VerificationStatement> = match &args.verification {
+        Some(path) => Some(read_json(path)?),
+        None => None,
+    };
+    let freshness: FreshnessPolicy = read_toml(&args.freshness)?;
+    let required = required_receipts_by_kind(&manifest);
+    let admission = aex_release_tool::admit::admit(&AdmissionInputs {
+        manifest: &manifest,
+        envelopes: &envelopes,
+        receipts: &receipts,
+        statement: statement.as_ref(),
+        freshness: &freshness,
+        plane: args.plane,
+        // Nothing here reads a plane. Operational readiness arrives as an
+        // input so `admit` stays credential-free; the release lane supplies it
+        // from the scheduled `plane` suite's receipts.
+        readiness: OperationalReadiness::default(),
+        required_receipts: &required,
+        builder_allowlist: &args.builders,
+        applied_central_head: args.applied_central_head.clone(),
+        applied_regional_generation: args.applied_regional_generation,
+        now: parse_now(args.now.as_deref())?,
+    })?;
+    emit(cli, &admission)
+}
+
+fn required_receipts_by_kind(manifest: &CompositionManifest) -> BTreeMap<String, Vec<String>> {
+    let mut required: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for entry in manifest.units.values() {
+        required.entry(entry.kind.clone()).or_insert_with(|| {
+            vec![
+                "unit".to_owned(),
+                "lint".to_owned(),
+                "sbom".to_owned(),
+                "license".to_owned(),
+                "vulnerability".to_owned(),
+            ]
+        });
+    }
+    required
+}
+
+fn run_plan(cli: &Cli, command: &PlanCommand) -> Result<()> {
+    match command {
+        PlanCommand::Summarize { plan_json, out } => {
+            let plan: serde_json::Value = read_json(plan_json)?;
+            let summary = policy::summarize_plan(&plan)?;
+            if let Some(path) = out {
+                let markdown = format!(
+                    "### Terraform plan\n\n- create: {}\n- update: {}\n- replace: {}\n- delete: {}\n",
+                    summary.create.len(),
+                    summary.update.len(),
+                    summary.replace.len(),
+                    summary.delete.len()
+                );
+                std::fs::write(path, markdown)
+                    .map_err(|err| io(&path.display().to_string(), &err))?;
+            }
+            emit(cli, &summary)
+        }
+        PlanCommand::Policy {
+            plan_json,
+            policy: policy_path,
+            manifest_only,
+            infrastructure_only,
+        } => {
+            if *manifest_only && *infrastructure_only {
+                return Err(usage(
+                    "--manifest-only and --infrastructure-only are mutually exclusive",
+                ));
+            }
+            let plan: serde_json::Value = read_json(plan_json)?;
+            let policy_doc: policy::PlanPolicy = read_toml(policy_path)?;
+            let summary = policy::summarize_plan(&plan)?;
+            policy::check_plan(&summary, &policy_doc)?;
+            if *manifest_only || *infrastructure_only {
+                policy::check_change_isolation(&summary, *manifest_only)?;
+            }
+            emit(cli, &summary)
+        }
+    }
+}
+
+fn run_ledger(cli: &Cli, command: &LedgerCommand) -> Result<()> {
+    match command {
+        LedgerCommand::Append { entry, store } => {
+            let entry: LedgerEntry = read_json(entry)?;
+            JsonlLedger::new(store).append(&entry)?;
+            emit(
+                cli,
+                &serde_json::json!({ "fence": entry.fence, "appended": true }),
+            )
+        }
+        LedgerCommand::List { plane, store } => emit(cli, &JsonlLedger::new(store).list(plane)?),
+        LedgerCommand::Verify {
+            plane,
+            store,
+            binding_digest,
+            actual,
+        } => {
+            let entries = JsonlLedger::new(store).list(plane)?;
+            let actual: Readback = read_json(actual)?;
+            ledger::verify_convergence(&entries, binding_digest, &actual)?;
+            emit(cli, &serde_json::json!({ "converged": true }))
+        }
+    }
+}
+
+fn run_private_path(command: &PrivatePathCommand) -> Result<()> {
+    match command {
+        PrivatePathCommand::Check { target, policy } => {
+            let policy: private_path::Policy = read_json(policy)?;
+            let paths = aex_release_tool::graph::inputs::tracked_files(target)?;
+            private_path::check(&policy, &paths, |path| {
+                std::fs::read_to_string(target.join(path)).ok()
+            })
+        }
+    }
+}
+
+fn run_migration(cli: &Cli, root: &Path, command: &MigrationCommand) -> Result<()> {
+    match command {
+        MigrationCommand::Bundle { out } => {
+            let bundle = migration::build_bundle(root)?;
+            if let Some(path) = out {
+                write_canonical(path, &bundle)?;
+            }
+            emit(cli, &bundle)
+        }
+        MigrationCommand::Verify { bundle, head } => {
+            let bundle: migration::Bundle = read_json(bundle)?;
+            let head: migration::SchemaHead = read_json(head)?;
+            migration::verify_bundle(&bundle, &head)?;
+            emit(
+                cli,
+                &serde_json::json!({ "head": bundle.head, "valid": true }),
+            )
+        }
+    }
+}
+
+fn run_policy(cli: &Cli, root: &Path, command: &PolicyCommand) -> Result<()> {
+    match command {
+        PolicyCommand::Terraform => {
+            let scanned = policy::scan_terraform(root)?;
+            emit(cli, &serde_json::json!({ "filesScanned": scanned }))
+        }
+        PolicyCommand::Workflows => emit(cli, &policy::lint_workflows(root)?),
+        PolicyCommand::Dockerfile { file } => {
+            let text = std::fs::read_to_string(file)
+                .map_err(|err| io(&file.display().to_string(), &err))?;
+            let violations = policy::scan_dockerfile(&file.display().to_string(), &text);
+            if violations.is_empty() {
+                emit(cli, &serde_json::json!({ "copyOnly": true }))
+            } else {
+                Err(ToolError::many(Exit::TerraformPolicy, violations))
+            }
+        }
+    }
+}
+
+// --- shared helpers ----------------------------------------------------------
+
+fn emit<T: serde::Serialize>(cli: &Cli, value: &T) -> Result<()> {
+    if cli.quiet {
+        return Ok(());
+    }
+    println!("{}", canon::to_string(value)?);
+    Ok(())
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    let text =
+        std::fs::read_to_string(path).map_err(|err| io(&path.display().to_string(), &err))?;
+    serde_json::from_str(&text).map_err(|err| {
+        ToolError::single(
+            Exit::Usage,
+            "document-unparseable",
+            format!("`{}`: {err}", path.display()),
+        )
+    })
+}
+
+fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    let text =
+        std::fs::read_to_string(path).map_err(|err| io(&path.display().to_string(), &err))?;
+    toml::from_str(&text).map_err(|err| {
+        ToolError::single(
+            Exit::Usage,
+            "document-unparseable",
+            format!("`{}`: {err}", path.display()),
+        )
+    })
+}
+
+fn read_units(root: &Path) -> Result<aex_release_tool::graph::inputs::Units> {
+    read_toml(&root.join("release/units.toml"))
+}
+
+fn write_canonical<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|err| io(&parent.display().to_string(), &err))?;
+    }
+    std::fs::write(path, canon::to_file_bytes(value)?)
+        .map_err(|err| io(&path.display().to_string(), &err))
+}
+
+fn append_text(path: &Path, text: &str) -> Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| io(&path.display().to_string(), &err))?;
+    file.write_all(text.as_bytes())
+        .map_err(|err| io(&path.display().to_string(), &err))
+}
+
+fn parse_now(value: Option<&str>) -> Result<time::OffsetDateTime> {
+    match value {
+        None => Ok(time::OffsetDateTime::now_utc()),
+        Some(text) => {
+            time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
+                .map_err(|err| usage(format!("`--now {text}` is not RFC 3339: {err}")))
+        }
+    }
+}
+
+/// Resolve the changed path set from a commit range or an explicit list.
+///
+/// A range and an explicit list are different questions and the caller must
+/// pick one. Silently defaulting to "no paths" would let an affected selection
+/// run nothing and report success.
+fn resolve_changed(
+    root: &Path,
+    base: Option<&str>,
+    head: Option<&str>,
+    paths: Option<&[String]>,
+) -> Result<Vec<String>> {
+    if let Some(paths) = paths {
+        return Ok(paths.to_vec());
+    }
+    let (Some(base), Some(head)) = (base, head) else {
+        return Err(ToolError::single(
+            Exit::RoutingUndecidable,
+            "routing-no-change-information",
+            "pass either --base and --head, or --paths; routing cannot be computed from \
+             nothing",
+        ));
+    };
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["diff", "--name-only", "-z", &format!("{base}..{head}")])
+        .output()
+        .map_err(|err| {
+            ToolError::single(
+                Exit::RoutingUndecidable,
+                "routing-git-unavailable",
+                format!("`git diff` could not be run: {err}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(ToolError::single(
+            Exit::RoutingUndecidable,
+            "routing-git-unavailable",
+            format!(
+                "`git diff {base}..{head}` failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 #[cfg(test)]
@@ -31,5 +1078,33 @@ mod tests {
     #[test]
     fn command_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn every_documented_subcommand_group_is_reachable() {
+        let command = Cli::command();
+        let mut names: Vec<&str> = command
+            .get_subcommands()
+            .map(clap::Command::get_name)
+            .collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                "admit",
+                "artifact",
+                "evidence",
+                "graph",
+                "ledger",
+                "manifest",
+                "migration",
+                "plan",
+                "policy",
+                "private-path",
+                "schema",
+                "selftest",
+                "verification",
+            ]
+        );
     }
 }
