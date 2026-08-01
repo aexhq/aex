@@ -266,6 +266,10 @@ pub struct JanitorPolicy {
     pub lane_tag: String,
     /// The expiry tag key.
     pub expires_at_tag: String,
+    /// The fixed prefix every run id carries.
+    pub run_id_prefix: String,
+    /// How many lowercase hex characters follow the prefix.
+    pub run_id_hex_len: usize,
     /// Grace added to a run's expiry before a survivor is residue.
     pub residue_grace_minutes: i64,
     /// The name templates `TestRun` mints, with `{run_id}` unsubstituted.
@@ -942,6 +946,47 @@ mod tests {
             Terminal::Deleted,
             TestCaseId("cleanup::demo".to_owned()),
         )
+    }
+
+    /// Reports at drop, so the report lands mid-unwind when the enclosing
+    /// scope is already panicking.
+    struct ReportOnDrop;
+
+    impl Drop for ReportOnDrop {
+        fn drop(&mut self) {
+            report_residue("a leak during an unwind");
+        }
+    }
+
+    /// The shared primitive the four `*-test-support` fixture ledgers call
+    /// instead of each deciding for themselves what to do during an unwind.
+    #[test]
+    fn report_residue_panics_when_it_can_and_counts_when_it_cannot() {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let outcome = std::panic::catch_unwind(|| report_residue("a plain leak"));
+        std::panic::set_hook(previous);
+        let payload = outcome.expect_err("not unwinding, so it panics");
+        assert_eq!(
+            payload.downcast_ref::<String>().map(String::as_str),
+            Some("a plain leak")
+        );
+
+        let before = residue_reports_during_panic();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let outcome = std::panic::catch_unwind(|| {
+            let _guard = ReportOnDrop;
+            panic!("the original failure");
+        });
+        std::panic::set_hook(previous);
+        let payload = outcome.expect_err("the original panic propagates");
+        assert_eq!(
+            payload.downcast_ref::<&str>().copied(),
+            Some("the original failure"),
+            "reporting must not replace the original failure"
+        );
+        assert_eq!(residue_reports_during_panic(), before + 1);
     }
 
     #[test]

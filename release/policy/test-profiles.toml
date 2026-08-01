@@ -77,6 +77,11 @@ run_id_tag = "aex:test-run-id"
 owner_tag = "aex:test-owner"
 lane_tag = "aex:test-lane"
 expires_at_tag = "aex:test-expires-at"
+# The shape of a run id. Here rather than in either crate because the harness
+# mints it and the janitor validates it, and a janitor that disagreed with the
+# minter about the shape would refuse to reclaim anything the harness created.
+run_id_prefix = "tr_"
+run_id_hex_len = 32
 # Added to a run's expiry before a surviving resource is called residue, so a
 # lane that is still running is never swept out from under itself.
 residue_grace_minutes = 30

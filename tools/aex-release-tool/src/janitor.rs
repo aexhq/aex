@@ -58,16 +58,6 @@ pub const SWEEP_SCHEMA: &str = "aex.janitor-sweep.v1";
 /// The schema discriminator every inventory document carries.
 pub const INVENTORY_SCHEMA: &str = "aex.janitor-inventory.v1";
 
-/// The run-id prefix, and the number of hex characters after it.
-///
-/// This restates `aex_test_harness::TestRunId`'s shape rather than importing
-/// it: the harness is a test-support crate and may only ever appear in
-/// `[dev-dependencies]`, so a release binary cannot link it. The shape is two
-/// constants and a character class, and `run_id_shape_matches_the_harness` in
-/// `tools/aex-workspace-check` holds the two together.
-const RUN_ID_PREFIX: &str = "tr_";
-const RUN_ID_HEX_LEN: usize = 32;
-
 /// One resource the plane offered, exactly as discovered.
 ///
 /// Deliberately untyped and untrusted. An inventory adapter does not pre-filter
@@ -399,14 +389,22 @@ impl Reclaimer for UnavailableAdapter {
 }
 
 /// Whether a string has the exact shape of a test run id.
+///
+/// The shape comes from `[janitor]` rather than from
+/// `aex_test_harness::TestRunId`, which a release binary cannot link: the
+/// harness is a test-support crate and may only appear in `[dev-dependencies]`.
+/// Reading it from the document both crates already embed is what stops the
+/// minter and the validator disagreeing.
 #[must_use]
 pub fn is_well_formed_run_id(text: &str) -> bool {
-    text.strip_prefix(RUN_ID_PREFIX).is_some_and(|hex_part| {
-        hex_part.len() == RUN_ID_HEX_LEN
-            && hex_part
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
+    let policy = &Policy::embedded().janitor;
+    text.strip_prefix(policy.run_id_prefix.as_str())
+        .is_some_and(|hex_part| {
+            hex_part.len() == policy.run_id_hex_len
+                && hex_part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
 }
 
 /// The guard. Decides whether one discovered resource may be reclaimed at all.
@@ -473,9 +471,9 @@ pub fn admit(
         return Err(refuse(
             RefusalRule::RunIdMalformed,
             format!(
-                "`{}` carries `{}` = `{run_id}`, which is not `{RUN_ID_PREFIX}` plus \
-                 {RUN_ID_HEX_LEN} lowercase hex characters",
-                resource.identity, policy.run_id_tag
+                "`{}` carries `{}` = `{run_id}`, which is not `{}` plus {} lowercase hex \
+                 characters",
+                resource.identity, policy.run_id_tag, policy.run_id_prefix, policy.run_id_hex_len
             ),
         ));
     }
@@ -791,7 +789,10 @@ pub fn describe_scheme() -> String {
         ),
         (
             janitor.run_id_tag.as_str(),
-            format!("= `{RUN_ID_PREFIX}` + {RUN_ID_HEX_LEN} lowercase hex"),
+            format!(
+                "= `{}` + {} lowercase hex",
+                janitor.run_id_prefix, janitor.run_id_hex_len
+            ),
         ),
         (
             janitor.owner_tag.as_str(),

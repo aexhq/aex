@@ -423,13 +423,26 @@ which on the three packages this stream owns emits, and exits `0`:
 `TestRun` mints one identity per live, e2e, user, load or soak run — `tr_` plus
 32 hex of a UUIDv7 — and everything else derives from it: the `aextest-<id>-`
 resource prefix, the `TEST#<id>#` DynamoDB partition prefix, the `test/<id>/` S3
-prefix, the four `aex:test-*` tags, and a `blake3(run_id ‖ logical_key)`
-idempotency key so two runs never collide.
+prefix, the five `aex:test-*` tags, and a `blake3(run_id ‖ logical_key)`
+idempotency key so two runs never collide. The fifth tag is
+`aex:test-synthetic`, the marker the janitor refuses to reclaim anything
+without; it and the run-id shape, the lane TTLs, the residue grace and the
+reclaimable resource table are all rows in `release/policy/test-profiles.toml`,
+which both this crate and `aex-release-tool` embed.
 
 `Budget::charge` returns `Allowed`, `SoftExceeded` or `Killed`; the counter
 saturates, and the verdict never improves once a run is stopped. `CleanupLedger`
-is the one cleanup ledger — `record`/`release`/`flush`/`residue`, append-only
-JSONL, flushed explicitly and again on `Drop`. `SecretCanary` has a redacted
+is the one cleanup ledger, and it reclaims rather than only recording:
+`release` calls the installed `Reclaimer` and stamps `released_at` only when
+the deletion succeeded, `reclaim_all` sweeps what remains in the policy's
+dependency order, and `Drop` fails naming every leak — reporting to stderr and
+a counter instead only while the thread is already unwinding, where panicking
+again would abort the process and destroy the original failure. A ledger with
+no reclaimer installed cannot release anything, so the default is a loud leak
+rather than a silent success. The four `*-test-support` copies are renamed
+`FixtureLedger`: they track product-internal fixture state with no discovery
+route a sweep could use, and they call `report_residue` rather than each
+deciding again what to do during a panic. `SecretCanary` has a redacted
 `Debug`, and `scan_for_leaks` reports shape and position and never the value.
 `ScriptedClock`, `ScriptedPort` and the Toxiproxy `Proxy`/`Toxic` descriptions
 are the only fault surfaces; an over-called scripted port fails rather than

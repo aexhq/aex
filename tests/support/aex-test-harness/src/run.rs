@@ -235,17 +235,29 @@ mod duration_seconds {
 pub struct TestRunId(String);
 
 impl TestRunId {
-    /// The fixed prefix every id carries.
-    pub const PREFIX: &'static str = "tr_";
+    /// The fixed prefix every id carries, from `[janitor]` in
+    /// `release/policy/test-profiles.toml`.
+    ///
+    /// The shape lives in policy rather than here because the janitor validates
+    /// it from the same document. A minter and a validator that disagreed about
+    /// the shape would produce a sweep that reclaims nothing.
+    #[must_use]
+    pub fn prefix() -> &'static str {
+        &crate::ledger::janitor_policy().run_id_prefix
+    }
+
     /// The number of hex characters after the prefix.
-    pub const HEX_LEN: usize = 32;
+    #[must_use]
+    pub fn hex_len() -> usize {
+        crate::ledger::janitor_policy().run_id_hex_len
+    }
 
     /// Mints a new time-ordered id.
     #[must_use]
     pub fn mint() -> Self {
         Self(format!(
             "{}{}",
-            Self::PREFIX,
+            Self::prefix(),
             hex::encode(Uuid::now_v7().as_bytes())
         ))
     }
@@ -259,8 +271,8 @@ impl TestRunId {
     /// Whether a string has the exact shape of a run id.
     #[must_use]
     pub fn is_well_formed(text: &str) -> bool {
-        text.strip_prefix(Self::PREFIX).is_some_and(|hex_part| {
-            hex_part.len() == Self::HEX_LEN
+        text.strip_prefix(Self::prefix()).is_some_and(|hex_part| {
+            hex_part.len() == Self::hex_len()
                 && hex_part
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -439,7 +451,12 @@ mod tests {
     fn a_minted_id_has_the_declared_shape() {
         let id = TestRunId::mint();
         assert!(TestRunId::is_well_formed(id.as_str()), "{id}");
-        assert_eq!(id.as_str().len(), TestRunId::PREFIX.len() + 32);
+        assert_eq!(
+            id.as_str().len(),
+            TestRunId::prefix().len() + TestRunId::hex_len()
+        );
+        assert_eq!(TestRunId::prefix(), "tr_");
+        assert_eq!(TestRunId::hex_len(), 32);
     }
 
     #[test]

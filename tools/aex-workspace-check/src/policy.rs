@@ -157,6 +157,10 @@ pub struct Janitor {
     pub lane_tag: String,
     /// The expiry tag key.
     pub expires_at_tag: String,
+    /// The fixed prefix every run id carries.
+    pub run_id_prefix: String,
+    /// How many lowercase hex characters follow the prefix.
+    pub run_id_hex_len: usize,
     /// Grace added to a run's expiry before a survivor counts as residue.
     pub residue_grace_minutes: i64,
     /// The name templates a run mints, with `{run_id}` unsubstituted.
