@@ -11,7 +11,8 @@ import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
 const session = await aex.sessions.create({
-  model: "anthropic/claude-haiku-4-5"
+  provider: "anthropic",
+  model: "claude-haiku-4-5"
 });
 
 const { run } = await session.messages.send("Summarize this repository.");
@@ -30,7 +31,7 @@ overwrite-by-name resources whose PUT result reports `created`, `replaced`, or
 never inline bytes or upload IDs. Persisted/live file reads, current registered
 file downloads, and telemetry exports remain explicit.
 
-The `aex` command is published separately by `@aexhq/cli`.
+The native `aex` command is distributed as a signed platform archive.
 
 ## License
 

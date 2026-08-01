@@ -24,6 +24,12 @@
       "generated_code"
     ],
     "scenarios": ["packed.sdk-install-node", "packed.sdk-install-bun"],
+    "targets": {
+      "conformance": "unit",
+      "security": "unit",
+      "compatibility": "unit",
+      "packed_user": "user"
+    },
     "not_applicable": {
       "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint"
     }
@@ -82,6 +88,6 @@
   },
   "engines": {
     "node": ">=22.0.0",
-    "bun": ">=1.3.0"
+    "bun": ">=1.3.14"
   }
 }
