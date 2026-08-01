@@ -25,11 +25,13 @@
 //!   `central-control-worker` owns delivery
 
 pub mod ambient;
+pub mod directory;
 pub mod mail;
 pub mod pepper;
 pub mod regional;
 
 pub use ambient::{OsSecretRng, SystemClock, Uuid7Factory};
+pub use directory::{DataApiPepperDirectory, PepperStatements};
 pub use mail::{OutboxMailer, OutboxWriter, PendingNotification};
 pub use pepper::{
     PepperDirectory, PepperRecord, PepperState, SecretsManagerPepperKeystore, pepper_cache_bound,

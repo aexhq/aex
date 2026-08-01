@@ -265,6 +265,27 @@ UPDATE identity.user \
 /// Advances the user epoch after a revoking transition.
 pub const BUMP_USER_EPOCH: &str = "SELECT control.bump_user_epoch(:user_id) AS epoch";
 
+/// The one active identity pepper, for a purpose.
+///
+/// The lifecycle row, never the material: `secret_ref` is a Secrets Manager
+/// version id and the keystore fetches the bytes itself. The partial unique
+/// index on `(purpose) WHERE state = 'active'` is what makes this at most one
+/// row without an `ORDER BY` to pick a winner from.
+pub const ACTIVE_IDENTITY_PEPPER: &str = "\
+SELECT version, purpose, state, secret_ref \
+  FROM identity.credential_pepper \
+ WHERE purpose = :purpose AND state = 'active'";
+
+/// One identity pepper version's lifecycle row.
+///
+/// Looked up by `(purpose, version)` because a credential names its version and
+/// nothing else; resolving it any other way would verify against a pepper the
+/// row does not name.
+pub const IDENTITY_PEPPER_BY_VERSION: &str = "\
+SELECT version, purpose, state, secret_ref \
+  FROM identity.credential_pepper \
+ WHERE purpose = :purpose AND version = :version";
+
 /// The identity readiness probe.
 pub const READINESS_PROBE: &str = "SELECT 1 AS ok";
 
@@ -299,6 +320,8 @@ pub const ALL: &[(&str, &str)] = &[
     ("COUNT_LIVE_ACCOUNT_TOKENS", COUNT_LIVE_ACCOUNT_TOKENS),
     ("SET_USER_STATUS", SET_USER_STATUS),
     ("BUMP_USER_EPOCH", BUMP_USER_EPOCH),
+    ("ACTIVE_IDENTITY_PEPPER", ACTIVE_IDENTITY_PEPPER),
+    ("IDENTITY_PEPPER_BY_VERSION", IDENTITY_PEPPER_BY_VERSION),
     ("READINESS_PROBE", READINESS_PROBE),
 ];
 

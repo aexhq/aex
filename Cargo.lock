@@ -197,10 +197,13 @@ name = "aex-central-runtime"
 version = "0.1.0"
 dependencies = [
  "aex-control-app",
+ "aex-control-aurora",
  "aex-control-domain",
  "aex-identity-app",
+ "aex-identity-aurora",
  "aex-identity-domain",
  "aex-internal-contracts",
+ "aex-rds-data",
  "aex-test-harness",
  "aex-wire",
  "async-trait",

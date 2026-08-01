@@ -52,10 +52,13 @@ time.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 aex-control-app = { path = "../aex-control-app" }
+aex-control-aurora = { path = "../aex-control-aurora" }
 aex-control-domain = { path = "../aex-control-domain" }
 aex-identity-app = { path = "../aex-identity-app" }
+aex-identity-aurora = { path = "../aex-identity-aurora" }
 aex-identity-domain = { path = "../aex-identity-domain" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-rds-data = { path = "../aex-rds-data" }
 aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
