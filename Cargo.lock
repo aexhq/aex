@@ -615,6 +615,9 @@ dependencies = [
 name = "aex-observation-query"
 version = "0.1.0"
 dependencies = [
+ "aex-observation-domain",
+ "aex-wire",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
