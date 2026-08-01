@@ -38,6 +38,7 @@ use aws_sdk_dynamodb::types::AttributeValue;
 use crate::CATEGORY;
 use crate::attribute::{Row, RowError};
 use crate::expressions::{FACT_BODY, StorageAuthority};
+use crate::gsi::OUTBOX_DUE_SORT as DUE_SORT;
 
 /// Why a stored row could not be turned into a domain value.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -360,6 +361,64 @@ pub fn decode_outbox(map: &HashMap<String, AttributeValue>) -> Result<OutboxRow,
     })
 }
 
+/// Decodes one outbox row as `gsi_outbox_due` projects it.
+///
+/// The index is an `INCLUDE` projection and does **not** carry `enqueuedAt`; it
+/// carries `outDueSk`, which is `{enqueuedAt}#{sequence:020}` and is a key
+/// attribute, so it is always present. The instant is read from there rather
+/// than from an attribute the index does not project — reading a base-table
+/// attribute off an index result is how a sweep decodes every row as corrupt.
+///
+/// # Errors
+///
+/// Returns [`DecodeError::Row`] for a missing or mis-shaped attribute and
+/// [`DecodeError::Unknown`] for an identifier, category or sort key this
+/// authority does not write.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "the SDK hands over exactly this map type; generalizing buys nothing"
+)]
+pub fn decode_due(map: &HashMap<String, AttributeValue>) -> Result<OutboxRow, DecodeError> {
+    let row = Row::bind(map, ItemType::Outbox)?;
+    let category = category(row.string("category")?)?;
+    if category != CATEGORY {
+        return Err(DecodeError::Unknown {
+            what: "category",
+            reason: format!(
+                "outbox row declares `{}` but this adapter addresses `{}`",
+                category.id(),
+                CATEGORY.id()
+            ),
+        });
+    }
+    let sort = row.string(DUE_SORT)?;
+    let (instant, _) = sort.split_once('#').ok_or_else(|| DecodeError::Unknown {
+        what: DUE_SORT,
+        reason: format!("`{sort}` is not `{{enqueuedAt}}#{{sequence}}`"),
+    })?;
+    let enqueued_at = Timestamp::parse(instant).map_err(|error| DecodeError::Unknown {
+        what: DUE_SORT,
+        reason: error.to_string(),
+    })?;
+    Ok(OutboxRow {
+        workspace: identifier(
+            "workspaceId",
+            row.string("workspaceId")?,
+            WorkspaceId::parse,
+        )?,
+        organization: identifier(
+            "organizationId",
+            row.string("organizationId")?,
+            OrganizationId::parse,
+        )?,
+        region: identifier("region", row.string("region")?, RegionId::parse)?,
+        fact_id: identifier("factId", row.string("factId")?, FactId::parse)?,
+        accepted_sequence: sequence("acceptedSequence", row.u64("acceptedSequence")?)?,
+        enqueued_at,
+        attempts: row.u32("attempts")?,
+    })
+}
+
 /// Where one identity claim says its fact lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimRow {
@@ -496,7 +555,8 @@ fn origin_or(value: u64, what: &'static str) -> Result<AcceptedSequence, DecodeE
 #[cfg(test)]
 mod tests {
     use super::{
-        DecodeError, decode_claim, decode_fact, decode_frontier, decode_outbox, decode_receipt,
+        DecodeError, decode_claim, decode_due, decode_fact, decode_frontier, decode_outbox,
+        decode_receipt,
     };
     use crate::attribute::{self, from_stream_json};
     use crate::expressions::{FACT_BODY, ReceiptRow, StorageAuthority};
@@ -819,6 +879,54 @@ mod tests {
             decoded.intent_hash,
             original.idempotency.intent_hash.to_string()
         );
+    }
+
+    #[test]
+    fn the_due_index_projection_decodes_where_the_base_row_decode_cannot() {
+        // `gsi_outbox_due` is an INCLUDE projection and carries no `enqueuedAt`.
+        // Reading a base-table attribute off an index result is how a sweep
+        // decodes every row as corrupt, so the two paths are separate and each
+        // is strict about what its own source projects.
+        let original = fact(9);
+        let full = attribute::item(
+            &StorageAuthority::new()
+                .outbox_item(&original, 5)
+                .expect("builds"),
+        );
+        // Exactly what the definition declares, plus the key attributes DynamoDB
+        // always carries into a global secondary index.
+        let projected: HashMap<String, AttributeValue> = [
+            "itemType",
+            "sk",
+            "factId",
+            "organizationId",
+            "workspaceId",
+            "region",
+            "category",
+            "acceptedSequence",
+            "attempts",
+            "pk",
+            crate::gsi::OUTBOX_DUE_PARTITION,
+            crate::gsi::OUTBOX_DUE_SORT,
+        ]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_owned(),
+                full.get(name)
+                    .unwrap_or_else(|| panic!("the outbox row writes `{name}`"))
+                    .clone(),
+            )
+        })
+        .collect();
+
+        assert!(
+            decode_outbox(&projected).is_err(),
+            "the base-table decode must not silently succeed on an index row"
+        );
+        let decoded = decode_due(&projected).expect("decodes");
+        assert_eq!(decoded, decode_outbox(&full).expect("decodes"));
+        assert_eq!(decoded.enqueued_at, original.accepted_at);
     }
 
     #[test]

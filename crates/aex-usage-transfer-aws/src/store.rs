@@ -294,7 +294,10 @@ impl AuthorityStore for TransferStore {
             .expression_attribute_names("#itemType", attribute::ITEM_TYPE)
             .expression_attribute_values(":factId", attribute::text(fact.as_str()))
             .expression_attribute_values(":claim", attribute::text(ItemType::FactClaim.id()))
-            .limit(2)
+            // No `Limit`: DynamoDB applies it *before* the filter, so a limit
+            // could read the fact and outbox rows, filter both away, and report
+            // that a claim which exists does not. One fact identity has at most
+            // four rows in one partition, so the page is bounded anyway.
             .send()
             .await
             .map_err(|error| classify(WHAT, Idempotence::Read, &error))?;
@@ -524,7 +527,8 @@ impl AuthorityStore for TransferStore {
 
         let mut entries = Vec::new();
         for item in output.items.unwrap_or_default() {
-            let row = codec::decode_outbox(&item).map_err(|error| decode_error(&error))?;
+            // Read through the index, which projects no `enqueuedAt`.
+            let row = codec::decode_due(&item).map_err(|error| decode_error(&error))?;
             entries.push(OutboxEntry {
                 workspace: row.workspace,
                 organization: row.organization,
