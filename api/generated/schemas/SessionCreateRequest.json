@@ -1,0 +1,71 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionCreateRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Create a session. The provider and model pair is explicit and required.",
+  "properties": {
+    "approvalPolicy": {
+      "$ref": "aex:schema:ApprovalPolicy",
+      "description": "When to ask for a decision."
+    },
+    "compute": {
+      "$ref": "aex:schema:SessionComputeRequest",
+      "description": "The baseline compute shape."
+    },
+    "credentials": {
+      "$ref": "aex:schema:SessionCredentials",
+      "description": "Secrets to take custody of."
+    },
+    "metadata": {
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ],
+        "x-aex-float": true
+      },
+      "description": "Caller-defined labels.",
+      "type": "object"
+    },
+    "model": {
+      "description": "The exact provider-native model id.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "network": {
+      "$ref": "aex:schema:SessionNetworkRequest",
+      "description": "The guest network policy."
+    },
+    "packages": {
+      "description": "Packages to pre-install.",
+      "items": {
+        "$ref": "aex:schema:PackageRequest"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "provider": {
+      "$ref": "aex:schema:ProviderId",
+      "description": "The direct BYOK provider."
+    },
+    "providerCredentialId": {
+      "description": "Which BYOK binding to use.",
+      "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "provider_credential"
+    },
+    "registered": {
+      "$ref": "aex:schema:SessionRegisteredSelection",
+      "description": "Registered resources to mount."
+    }
+  },
+  "required": [
+    "model",
+    "provider"
+  ],
+  "title": "SessionCreateRequest",
+  "type": "object"
+}

@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/AccountOperationalState.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether the account may consume paid capacity.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:AccountActiveState",
+      "x-aex-discriminator-value": "active"
+    },
+    {
+      "$ref": "aex:schema:AccountPausedState",
+      "x-aex-discriminator-value": "paused"
+    }
+  ],
+  "title": "AccountOperationalState",
+  "x-aex-discriminator": "status"
+}

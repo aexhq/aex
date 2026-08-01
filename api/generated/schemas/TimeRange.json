@@ -1,0 +1,26 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TimeRange.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A half-open instant range, `gte` inclusive and `lt` exclusive.",
+  "properties": {
+    "gte": {
+      "description": "Inclusive lower bound.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "lt": {
+      "description": "Exclusive upper bound.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    }
+  },
+  "required": [
+    "gte",
+    "lt"
+  ],
+  "title": "TimeRange",
+  "type": "object"
+}

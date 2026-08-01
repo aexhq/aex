@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UploadPart.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One written part and the entity tag the store returned.",
+  "properties": {
+    "etag": {
+      "description": "The entity tag the store returned.",
+      "maxLength": 256,
+      "type": "string"
+    },
+    "partNumber": {
+      "description": "Which part.",
+      "maximum": 10000,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "etag",
+    "partNumber"
+  ],
+  "title": "UploadPart",
+  "type": "object"
+}

@@ -1,0 +1,68 @@
+# How each unit kind is rolled out.
+#
+# This is policy data rather than workflow YAML on purpose: the release engine
+# is one parameterized lane, and encoding "Lambda switches an alias, Fargate
+# drains" in step conditions would fork that lane per unit kind and put the
+# rollout contract somewhere nobody reviews it.
+
+schema = "aex.rollout-policy.v1"
+
+[kind."rust-lambda"]
+strategy = "alias-switch"
+# Publish a new version, smoke the version directly, then move the alias. The
+# alias is what every event source and route targets, so nothing observes the
+# new code until its own smoke passed.
+publish_version = true
+smoke_target = "version"
+promote = "alias"
+rollback = "previous-alias-target"
+
+[kind."ts-lambda"]
+strategy = "alias-switch"
+publish_version = true
+smoke_target = "version"
+promote = "alias"
+rollback = "previous-alias-target"
+
+[kind."rust-oci-service"]
+strategy = "rolling-revision"
+# The circuit breaker is what makes this safe: a revision that never reaches
+# steady state is rolled back by the platform rather than by a timeout in a
+# workflow step.
+circuit_breaker = true
+minimum_healthy_percent = 100
+maximum_percent = 200
+wait_for_steady_state = true
+rollback = "previous-task-definition"
+
+[kind."rust-oci-task"]
+strategy = "run-once"
+# A one-shot task has no traffic to shift. It succeeds, or the deployment
+# fails; there is no partial state to drain.
+wait_for_exit = true
+rollback = "none"
+rollback_rationale = "a completed task cannot be un-run; recovery is the task's own re-entrancy contract"
+
+[kind."build-output"]
+strategy = "staged-then-promote"
+# Deploy to a unique URL, test that exact URL, then promote the same build
+# without rebuilding. A promotion that rebuilds is a different artifact.
+test_unique_url = true
+promote_without_rebuild = true
+rollback = "previous-deployment-id"
+
+[kind."rust-binary"]
+strategy = "publish-only"
+rollback = "none"
+rollback_rationale = "a downloaded binary is not recalled; a defect is fixed by publishing the next version"
+
+[kind."npm-package"]
+strategy = "publish-only"
+rollback = "none"
+rollback_rationale = "a published version is immutable; deprecation is the only reverse gear"
+
+[kind.rootfs]
+strategy = "generation-pin"
+# A running guest keeps the image it booted. A new image applies to new
+# generations only, so rollback is a pin change and never a live swap.
+rollback = "previous-image-digest"

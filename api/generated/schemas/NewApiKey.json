@@ -1,0 +1,57 @@
+{
+  "$id": "https://schemas.aex.dev/v1/NewApiKey.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A freshly minted key. The value never appears in a later read.",
+  "properties": {
+    "createdAt": {
+      "description": "When it was minted.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "id": {
+      "description": "Identity.",
+      "pattern": "^key_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "api_key"
+    },
+    "name": {
+      "description": "Display name.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "scopes": {
+      "description": "The scopes it carries.",
+      "items": {
+        "type": "string",
+        "x-aex-registry": "scopes"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "value": {
+      "description": "The one-time secret value.",
+      "maxLength": 128,
+      "minLength": 60,
+      "type": "string"
+    },
+    "workspaceId": {
+      "description": "The workspace it authorizes.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "createdAt",
+    "id",
+    "name",
+    "scopes",
+    "value",
+    "workspaceId"
+  ],
+  "title": "NewApiKey",
+  "type": "object"
+}

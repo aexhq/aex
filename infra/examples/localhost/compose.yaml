@@ -1,0 +1,66 @@
+name: aex-local-substrate
+
+# Every image is pinned to the exact tag recorded in
+# `release/policy/test-images.toml`. The tags here, the defaults in
+# `variables.tf` and that policy file must agree; `terraform test` asserts the
+# Terraform half, and the release tool asserts the rest.
+#
+# None of these substitutes proves the semantics listed in the `cannot_prove`
+# output of this root. A green local run is never evidence for a seam marked
+# `requires_live = true`.
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:2.6.1
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: aexlocal
+      MINIO_ROOT_PASSWORD: aexlocaldev
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    tmpfs:
+      - /data
+
+  postgres:
+    image: postgres:17.5-bookworm
+    environment:
+      POSTGRES_USER: aexlocal
+      POSTGRES_PASSWORD: aexlocaldev
+      POSTGRES_DB: aex_local
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aexlocal -d aex_local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data

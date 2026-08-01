@@ -1,0 +1,28 @@
+# The identifier registry. One row per resource an AEX id can name.
+#
+# Every id is a lowercase UUIDv7 rendered as 26 Crockford base32 characters after
+# a fixed prefix. `tools/aex-contract-gen` turns this file into `IdKind`, the
+# newtypes in `aex_wire::ids`, and `api/generated/registries/ids.json`.
+ids:
+  - { key: user, prefix: usr, rust: UserId, doc: "An authenticated person." }
+  - { key: organization, prefix: org, rust: OrganizationId, doc: "The billing and ownership boundary." }
+  - { key: membership, prefix: mem, rust: MembershipId, doc: "A person's role inside one organization." }
+  - { key: invitation, prefix: inv, rust: InvitationId, doc: "A pending invitation to join an organization." }
+  - { key: workspace, prefix: wsp, rust: WorkspaceId, doc: "A region-pinned execution and content boundary." }
+  - { key: api_key, prefix: key, rust: ApiKeyId, doc: "Workspace API key metadata; never the secret." }
+  - { key: provider_credential, prefix: pcr, rust: ProviderCredentialId, doc: "A BYOK provider-credential binding." }
+  - { key: session, prefix: ses, rust: SessionId, doc: "A durable conversation and its workspace." }
+  - { key: message, prefix: msg, rust: MessageId, doc: "One message in a session." }
+  - { key: run, prefix: run, rust: RunId, doc: "One admitted turn of execution." }
+  - { key: agent, prefix: agt, rust: AgentId, doc: "One agent within a run, root or subagent." }
+  - { key: tool_call, prefix: tcl, rust: ToolCallId, doc: "One bound tool invocation." }
+  - { key: operation, prefix: op, rust: OperationId, doc: "A durable operation record." }
+  - { key: approval, prefix: apr, rust: ApprovalId, doc: "A pending or resolved tool approval." }
+  - { key: generation, prefix: gen, rust: GenerationId, doc: "One exact `MicroVM` generation." }
+  - { key: observation, prefix: obs, rust: ObservationId, doc: "One admitted telemetry observation." }
+  - { key: telemetry_batch, prefix: bch, rust: TelemetryBatchId, doc: "One admitted OTLP batch." }
+  - { key: telemetry_gap, prefix: gap, rust: TelemetryGapId, doc: "One recorded telemetry gap." }
+  - { key: export, prefix: exp, rust: ExportId, doc: "One telemetry export artifact." }
+  - { key: upload, prefix: upl, rust: UploadId, doc: "One staged multipart upload." }
+  - { key: measurement, prefix: msr, rust: MeasurementId, doc: "One metered download measurement." }
+  - { key: statement, prefix: stm, rust: StatementId, doc: "One immutable issued billing statement." }

@@ -1,0 +1,23 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsGap.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The telemetry gaps that blocked a completeness requirement.",
+  "properties": {
+    "gapIds": {
+      "description": "The blocking gaps.",
+      "items": {
+        "pattern": "^gap_[0-9a-hjkmnp-tv-z]{26}$",
+        "type": "string",
+        "x-aex-id": "telemetry_gap"
+      },
+      "maxItems": 100,
+      "type": "array"
+    }
+  },
+  "required": [
+    "gapIds"
+  ],
+  "title": "ErrorDetailsGap",
+  "type": "object"
+}

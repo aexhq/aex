@@ -1,0 +1,535 @@
+# The deployable registry.
+#
+# One row per deployable. `graph verify` reads it, builds the `artifact:` nodes
+# and their input-closure edges from it, and rejects a row that omits its
+# resource shape or names a package, live companion or scenario that does not
+# exist.
+#
+# WHAT IS DELIBERATELY MISSING
+#
+# Twenty-five rows carry no `[unit.lambda]` or `[unit.fargate]` block, so
+# `graph verify` reports `unit-resource-shape-missing` for each of them. That
+# is the intended state, not an oversight: the accepted design declares
+# isolation requirements for these deployables but no memory, timeout,
+# reserved-concurrency or task-shape values, and inventing them here would
+# turn a missing decision into a shipped one. Each owning stream fills its own
+# rows; the two shapes below are the only ones the accepted design pins
+# (`brain-mux` stop timeout 120 s and desired count 1, `regional-stream` stop
+# timeout 30 s).
+#
+# `dashboard`, `site`, `aex-cli`, `@aexhq/sdk`, the two Stripe TypeScript edges,
+# the model and tool catalogues and the three generated bundles are also
+# artifacts, and are absent here because their packages are not workspace
+# members yet. Adding a member is an architecture decision this stream does not
+# own.
+
+schema = "aex.units.v1"
+
+# --- central plane: request APIs ---------------------------------------------
+
+[[unit]]
+id = "central-identity-api"
+kind = "rust-lambda"
+plane = "central"
+package = "central-identity-api"
+bin = "central-identity-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_CENTRAL_IDENTITY_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "central-identity-api"
+live_suite = "aex-live-central-identity-api"
+
+[[unit]]
+id = "central-authz"
+kind = "rust-lambda"
+plane = "central"
+package = "central-authz"
+bin = "central-authz"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_CENTRAL_AUTHZ_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "central-authz"
+live_suite = "aex-live-central-authz"
+
+[[unit]]
+id = "central-control-api"
+kind = "rust-lambda"
+plane = "central"
+package = "central-control-api"
+bin = "central-control-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_CENTRAL_CONTROL_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "central-control-api"
+live_suite = "aex-live-central-control-api"
+
+[[unit]]
+id = "finance-api"
+kind = "rust-lambda"
+plane = "central"
+package = "finance-api"
+bin = "finance-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_FINANCE_API_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "finance-api"
+live_suite = "aex-live-finance-api"
+
+[[unit]]
+id = "finance-ingest"
+kind = "rust-lambda"
+plane = "central"
+package = "finance-ingest"
+bin = "finance-ingest"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_FINANCE_INGEST_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "finance-ingest"
+live_suite = "aex-live-finance-ingest"
+
+# --- central plane: workers ---------------------------------------------------
+
+[[unit]]
+id = "central-control-worker"
+kind = "rust-lambda"
+plane = "central"
+package = "central-control-worker"
+bin = "central-control-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_CENTRAL_CONTROL_WORKER_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "central-control-worker"
+live_suite = "aex-live-central-control-worker"
+
+[[unit]]
+id = "finance-settlement-worker"
+kind = "rust-lambda"
+plane = "central"
+package = "finance-settlement-worker"
+bin = "finance-settlement-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_FINANCE_SETTLEMENT_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "finance-settlement-worker"
+live_suite = "aex-live-finance-settlement-worker"
+
+[[unit]]
+id = "finance-reconcile"
+kind = "rust-lambda"
+plane = "central"
+package = "finance-reconcile"
+bin = "finance-reconcile"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_FINANCE_RECONCILE_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "finance-reconcile"
+live_suite = "aex-live-finance-reconcile"
+
+[[unit]]
+id = "usage-receipt-dispatcher"
+kind = "rust-lambda"
+plane = "central"
+package = "usage-receipt-dispatcher"
+bin = "usage-receipt-dispatcher"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_USAGE_RECEIPT_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "usage-receipt-dispatcher"
+live_suite = "aex-live-usage-receipt-dispatcher"
+
+[[unit]]
+id = "provider-cost-reconciler"
+kind = "rust-lambda"
+plane = "central"
+package = "provider-cost-reconciler"
+bin = "provider-cost-reconciler"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_PROVIDER_COST_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "provider-cost-reconciler"
+live_suite = "aex-live-provider-cost-reconciler"
+
+[[unit]]
+id = "central-schema-admin"
+kind = "rust-oci-task"
+plane = "central"
+package = "central-schema-admin"
+bin = "central-schema-admin"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+config_env_namespace = "AEX_SCHEMA_ADMIN_"
+config_schema_version = 1
+required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "central-schema-admin"
+live_suite = "aex-live-central-schema-admin"
+
+# --- regional plane: request APIs ---------------------------------------------
+
+[[unit]]
+id = "regional-session-api"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-session-api"
+bin = "regional-session-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_REGIONAL_SESSION_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "conformance", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "regional-session-api"
+live_suite = "aex-live-regional-session-api"
+
+[[unit]]
+id = "regional-secret-api"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-secret-api"
+bin = "regional-secret-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_REGIONAL_SECRET_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "regional-secret-api"
+live_suite = "aex-live-regional-secret-api"
+
+[[unit]]
+id = "regional-observation-api"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-observation-api"
+bin = "regional-observation-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_REGIONAL_OBSERVATION_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "regional-observation-api"
+live_suite = "aex-live-regional-observation-api"
+
+[[unit]]
+id = "regional-otlp"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-otlp"
+bin = "regional-otlp"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_REGIONAL_OTLP_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "regional-otlp"
+live_suite = "aex-live-regional-otlp"
+
+[[unit]]
+id = "regional-stream"
+kind = "rust-oci-service"
+plane = "regional"
+package = "regional-stream"
+bin = "regional-stream"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+config_env_namespace = "AEX_REGIONAL_STREAM_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "regional-stream"
+live_suite = "aex-live-regional-stream"
+
+# The one long-lived multi-socket process besides the mux. The 30 s stop
+# timeout is the drain deadline the accepted design pins; the CPU, memory and
+# port values below are the module defaults a root may raise, not a guess at
+# capacity.
+[unit.fargate]
+cpu = 1024
+memory_mb = 2048
+desired_count = 2
+stop_timeout_s = 30
+port = 8080
+
+# --- regional plane: workers --------------------------------------------------
+
+[[unit]]
+id = "session-operation-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "session-operation-worker"
+bin = "session-operation-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_SESSION_OPERATION_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "session-operation-worker"
+live_suite = "aex-live-session-operation-worker"
+
+[[unit]]
+id = "runtime-control-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "runtime-control-worker"
+bin = "runtime-control-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_RUNTIME_CONTROL_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "runtime-control-worker"
+live_suite = "aex-live-runtime-control-worker"
+
+[[unit]]
+id = "content-lifecycle-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "content-lifecycle-worker"
+bin = "content-lifecycle-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_CONTENT_LIFECYCLE_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "content-lifecycle-worker"
+live_suite = "aex-live-content-lifecycle-worker"
+
+[[unit]]
+id = "regional-secret-key-admin"
+kind = "rust-oci-task"
+plane = "regional"
+package = "regional-secret-key-admin"
+bin = "regional-secret-key-admin"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+config_env_namespace = "AEX_SECRET_KEY_ADMIN_"
+config_schema_version = 1
+required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "regional-secret-key-admin"
+live_suite = "aex-live-regional-secret-key-admin"
+
+[[unit]]
+id = "observation-reconciler"
+kind = "rust-lambda"
+plane = "regional"
+package = "observation-reconciler"
+bin = "observation-reconciler"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_OBSERVATION_RECONCILER_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "observation-reconciler"
+live_suite = "aex-live-observation-reconciler"
+
+[[unit]]
+id = "observation-export-launcher"
+kind = "rust-lambda"
+plane = "regional"
+package = "observation-export-launcher"
+bin = "observation-export-launcher"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_OBSERVATION_EXPORT_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "observation-export-launcher"
+live_suite = "aex-live-observation-export-launcher"
+
+[[unit]]
+id = "observation-export-task"
+kind = "rust-oci-task"
+plane = "regional"
+package = "observation-export-task"
+bin = "observation-export-task"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+config_env_namespace = "AEX_OBSERVATION_EXPORT_TASK_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "observation-export-task"
+live_suite = "aex-live-observation-export-task"
+
+[[unit]]
+id = "usage-storage-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "usage-storage-worker"
+bin = "usage-storage-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_USAGE_STORAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "usage-storage-worker"
+live_suite = "aex-live-usage-storage-worker"
+
+[[unit]]
+id = "usage-compute-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "usage-compute-worker"
+bin = "usage-compute-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_USAGE_COMPUTE_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "usage-compute-worker"
+live_suite = "aex-live-usage-compute-worker"
+
+[[unit]]
+id = "usage-transfer-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "usage-transfer-worker"
+bin = "usage-transfer-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_USAGE_TRANSFER_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "usage-transfer-worker"
+live_suite = "aex-live-usage-transfer-worker"
+
+# --- runtime plane -------------------------------------------------------------
+
+[[unit]]
+id = "brain-mux"
+kind = "rust-oci-service"
+plane = "runtime"
+package = "brain-mux"
+bin = "brain-mux"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+config_env_namespace = "AEX_BRAIN_MUX_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "property", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "brain-mux"
+live_suite = "aex-live-brain-mux"
+
+# `desired_count` is pinned to 1 until the multi-task rendezvous-affinity
+# routing decision lands; the accepted design defers it explicitly. The 120 s
+# stop timeout is the drain deadline that design pins.
+[unit.fargate]
+cpu = 2048
+memory_mb = 4096
+desired_count = 1
+stop_timeout_s = 120
+port = 8080
+
+[[unit]]
+id = "hands-agent"
+kind = "rust-binary"
+plane = "runtime"
+package = "hands-agent"
+bin = "hands-agent"
+target = "x86_64-unknown-linux-musl"
+profile = "release"
+form = "tar.gz"
+config_env_namespace = "AEX_HANDS_AGENT_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "contract", "lint", "deny", "sbom", "license", "vulnerability", "determinism"]
+alarm_spec = "hands-agent"
+live_suite = "aex-live-hands-agent"
+
+[[unit]]
+id = "hands-image"
+kind = "rootfs"
+plane = "runtime"
+package = "hands-image"
+target = "x86_64-unknown-linux-musl"
+profile = "release"
+form = "ext4"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "sbom", "license", "vulnerability", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"

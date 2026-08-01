@@ -1,0 +1,16 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RunStatus.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where a run ended up.",
+  "enum": [
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "interrupted"
+  ],
+  "title": "RunStatus",
+  "type": "string"
+}

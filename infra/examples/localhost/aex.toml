@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "composition"
+artifact = "none"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "The local substrate runs under the integration lane through compose, not as a deployed plane, so no live suite can own it."

@@ -1,0 +1,33 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UploadPartGrant.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One presigned PUT grant.",
+  "properties": {
+    "expiresAt": {
+      "description": "When the signature stops verifying.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "partNumber": {
+      "description": "Which part.",
+      "maximum": 10000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "url": {
+      "description": "The signed URL.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "expiresAt",
+    "partNumber",
+    "url"
+  ],
+  "title": "UploadPartGrant",
+  "type": "object"
+}

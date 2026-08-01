@@ -1,0 +1,79 @@
+# Receipt classes and signatures required before a unit kind may be published.
+#
+# Only pre-publication evidence appears here. Smoke, e2e, user, capacity and
+# soak receipts belong to the verification statement: an artifact cannot carry
+# proof that only exists once it is deployed.
+
+schema = "aex.artifact-policy.v1"
+
+[kind."rust-lambda"]
+required_receipts = [
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity",
+]
+signature = "none"
+signature_rationale = "the Lambda ZIP is addressed by digest in an immutable S3 key and covered by build provenance; a second signature would add a key to rotate without adding a check"
+
+[kind."ts-lambda"]
+required_receipts = [
+  "unit", "lint", "sbom", "license", "vulnerability", "package-integrity",
+]
+signature = "none"
+signature_rationale = "as rust-lambda"
+
+[kind."rust-oci-service"]
+required_receipts = [
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity",
+]
+signature = "none"
+signature_rationale = "the image is pulled by digest from a tag-immutable repository"
+
+[kind."rust-oci-task"]
+required_receipts = [
+  "unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity",
+]
+signature = "none"
+signature_rationale = "as rust-oci-service"
+
+[kind."rust-binary"]
+required_receipts = [
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "determinism",
+]
+signature = "sigstore-cosign"
+signature_rationale = "a binary a customer downloads is verified outside our infrastructure, where a digest in our own metadata proves nothing"
+
+[kind."npm-package"]
+required_receipts = [
+  "unit", "contract", "lint", "sbom", "license", "vulnerability", "package-integrity",
+]
+signature = "npm-provenance"
+signature_rationale = "the registry is the distribution boundary and publishes the attestation itself"
+
+[kind."build-output"]
+required_receipts = ["unit", "lint", "sbom", "license", "vulnerability"]
+signature = "none"
+signature_rationale = "the archive is deployed by digest to a project the binding names"
+
+[kind.rootfs]
+required_receipts = ["unit", "sbom", "license", "vulnerability", "determinism"]
+signature = "sigstore-cosign"
+signature_rationale = "the guest image is the isolation boundary; its identity must be verifiable by the host that boots it"
+
+[kind."contract-bundle"]
+required_receipts = ["contract", "conformance", "determinism"]
+signature = "none"
+signature_rationale = "the bundle is content-addressed and every consumer records its digest"
+
+[kind."migration-bundle"]
+required_receipts = ["integration", "determinism"]
+signature = "none"
+signature_rationale = "as contract-bundle"
+
+[kind."infra-module-bundle"]
+required_receipts = ["lint", "determinism"]
+signature = "none"
+signature_rationale = "as contract-bundle"
+
+[kind.catalog]
+required_receipts = ["unit", "property", "determinism"]
+signature = "aws-kms"
+signature_rationale = "the catalogue decides what a runtime will admit, so it is verified at load rather than trusted because of where it was fetched from"

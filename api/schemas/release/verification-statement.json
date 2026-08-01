@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aex.dev/release/v1/verification-statement.json",
+  "title": "aex.verification-statement.v1",
+  "description": "Proof that a composition actually ran, keyed by releaseId. It is a separate object because a manifest cannot contain its own post-deployment evidence without a digest cycle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "statementDigest",
+    "releaseId",
+    "plane",
+    "bindingDigest",
+    "bindingRef",
+    "regions",
+    "deployed",
+    "receipts",
+    "startedAt",
+    "completedAt",
+    "conclusion",
+    "attestation",
+    "ledgerFence"
+  ],
+  "properties": {
+    "schema": { "const": "aex.verification-statement.v1" },
+    "statementDigest": { "$ref": "#/$defs/sha256" },
+    "releaseId": { "$ref": "#/$defs/sha256" },
+    "plane": { "enum": ["dev", "prd"] },
+    "bindingDigest": { "$ref": "#/$defs/sha256" },
+    "bindingRef": { "$ref": "#/$defs/sha1" },
+    "regions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "deployed": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "unit",
+          "expectedDigest",
+          "actualDigest",
+          "actualVersionOrAlias",
+          "readbackAt"
+        ],
+        "properties": {
+          "unit": { "type": "string" },
+          "expectedDigest": { "$ref": "#/$defs/sha256" },
+          "actualDigest": { "$ref": "#/$defs/sha256" },
+          "actualVersionOrAlias": { "type": "string" },
+          "actualTaskDefinition": { "type": "string" },
+          "readbackAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "receiptDigest", "conclusion", "collectedAt"],
+        "properties": {
+          "class": { "type": "string" },
+          "receiptDigest": { "$ref": "#/$defs/sha256" },
+          "conclusion": { "enum": ["passed", "failed", "infrastructure_failed", "incomplete"] },
+          "collectedAt": { "type": "string", "format": "date-time" },
+          "coversUnits": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "migrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appliedHead", "adminTaskArn", "receiptDigest"],
+      "properties": {
+        "appliedHead": { "type": "string", "pattern": "^[0-9]{14}$" },
+        "adminTaskArn": { "type": "string" },
+        "receiptDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "conclusion": { "enum": ["passed", "failed", "infrastructure_failed", "incomplete"] },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicateType", "bundleDigest", "builderId"],
+      "properties": {
+        "predicateType": { "type": "string" },
+        "bundleDigest": { "type": "string" },
+        "builderId": { "type": "string" }
+      }
+    },
+    "ledgerFence": { "type": "integer", "minimum": 0 }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ApiKeyCreateRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Mint a workspace API key.",
+  "properties": {
+    "name": {
+      "description": "Display name.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "scopes": {
+      "description": "The scopes to grant.",
+      "items": {
+        "type": "string",
+        "x-aex-registry": "scopes"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "workspaceId": {
+      "description": "The workspace to authorize.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "name",
+    "scopes",
+    "workspaceId"
+  ],
+  "title": "ApiKeyCreateRequest",
+  "type": "object"
+}

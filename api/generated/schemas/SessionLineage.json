@@ -1,0 +1,29 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionLineage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Immutable provenance. A fork records its parent exactly once.",
+  "properties": {
+    "forkOperationId": {
+      "description": "The operation that forked it.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    },
+    "forkedAtPersistRevision": {
+      "description": "The parent revision forked from.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "parentSessionId": {
+      "description": "The session this was forked from.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    }
+  },
+  "required": [],
+  "title": "SessionLineage",
+  "type": "object"
+}

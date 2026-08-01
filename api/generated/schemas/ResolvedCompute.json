@@ -1,0 +1,55 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ResolvedCompute.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The complete provider-derived capacity of the selected shape.",
+  "properties": {
+    "baseline": {
+      "$ref": "aex:schema:ComputeShape",
+      "description": "Guaranteed capacity."
+    },
+    "endpointBandwidthMBps": {
+      "description": "Endpoint bandwidth.",
+      "maximum": 1024,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "maxConcurrentConnections": {
+      "description": "Concurrent connection ceiling.",
+      "maximum": 4096,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "maxDiskGiB": {
+      "description": "Maximum guest disk.",
+      "maximum": 1024,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "peak": {
+      "$ref": "aex:schema:ComputeShape",
+      "description": "Burst ceiling."
+    },
+    "size": {
+      "description": "The selected baseline token.",
+      "enum": [
+        "512mb",
+        "1gb",
+        "2gb",
+        "4gb",
+        "8gb"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "baseline",
+    "endpointBandwidthMBps",
+    "maxConcurrentConnections",
+    "maxDiskGiB",
+    "peak",
+    "size"
+  ],
+  "title": "ResolvedCompute",
+  "type": "object"
+}

@@ -1,0 +1,51 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TraceSummary.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The header of one assembled trace.",
+  "properties": {
+    "endedAt": {
+      "description": "Latest span end.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "rootName": {
+      "description": "The root span name.",
+      "maxLength": 256,
+      "minLength": 0,
+      "type": "string"
+    },
+    "spanCount": {
+      "description": "How many spans were assembled.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "startedAt": {
+      "description": "Earliest span start.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "traceId": {
+      "description": "The W3C trace identifier.",
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "workspaceId": {
+      "description": "The owning workspace, when attributable.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "endedAt",
+    "rootName",
+    "spanCount",
+    "startedAt",
+    "traceId"
+  ],
+  "title": "TraceSummary",
+  "type": "object"
+}

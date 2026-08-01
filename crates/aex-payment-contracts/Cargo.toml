@@ -22,13 +22,16 @@ security_tier = "money"
 risk = ["money"]
 scenarios = []
 
+[package.metadata.aex.targets]
+effects = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the contracts stream; the cases land with the crate's own implementation"
 live_suite = "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
 
 [dependencies]
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
-time.workspace = true
-uuid.workspace = true

@@ -1,0 +1,571 @@
+{
+  "errors": [
+    {
+      "class": "auth",
+      "code": "unauthenticated",
+      "message": "no valid credential was presented",
+      "precedenceStage": "authentication",
+      "remedy": "present a valid account token or workspace API key",
+      "retryable": false,
+      "status": 401
+    },
+    {
+      "class": "auth",
+      "code": "forbidden",
+      "message": "the principal may not act on this resource",
+      "precedenceStage": "authorization",
+      "remedy": null,
+      "retryable": false,
+      "status": 403
+    },
+    {
+      "class": "auth",
+      "code": "insufficient_scope",
+      "message": "the credential lacks the required scope",
+      "precedenceStage": "scope",
+      "remedy": "mint a key that carries the scope named in `details`",
+      "retryable": false,
+      "status": 403
+    },
+    {
+      "class": "auth",
+      "code": "token_invalid",
+      "message": "the credential did not verify",
+      "precedenceStage": "authentication",
+      "remedy": null,
+      "retryable": false,
+      "status": 401
+    },
+    {
+      "class": "auth",
+      "code": "token_revoked",
+      "message": "the credential has been revoked",
+      "precedenceStage": "authentication",
+      "remedy": null,
+      "retryable": false,
+      "status": 401
+    },
+    {
+      "class": "auth",
+      "code": "token_expired",
+      "message": "the credential has expired",
+      "precedenceStage": "authentication",
+      "remedy": null,
+      "retryable": false,
+      "status": 401
+    },
+    {
+      "class": "auth",
+      "code": "malformed_token",
+      "message": "the credential is not a well-formed AEX credential",
+      "precedenceStage": "authentication",
+      "remedy": null,
+      "retryable": false,
+      "status": 401
+    },
+    {
+      "class": "state",
+      "code": "authorization_pending",
+      "message": "the device authorization has not been approved yet",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 400
+    },
+    {
+      "class": "quota",
+      "code": "slow_down",
+      "message": "poll less often",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 429
+    },
+    {
+      "class": "not_found",
+      "code": "not_found",
+      "message": "no such resource",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 404
+    },
+    {
+      "class": "not_found",
+      "code": "gone",
+      "message": "the resource was deleted",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 410
+    },
+    {
+      "class": "conflict",
+      "code": "idempotency_conflict",
+      "message": "the idempotency key was reused with a different intent",
+      "precedenceStage": "idempotency_identity",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "conflict",
+      "code": "operation_idempotency_conflict",
+      "message": "the operation id was reused with a different intent",
+      "precedenceStage": "operation_identity",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "validation",
+      "code": "invalid_request",
+      "message": "the request body failed strict validation",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "invalid_cursor",
+      "message": "the cursor is malformed, expired, or bound to a different query",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "invalid_file_selection",
+      "message": "the include or exclude selection is not a valid file selection",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "invalid_range",
+      "message": "the byte range is absent, empty, or larger than one grant may sign",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "payload_too_large",
+      "message": "the encoded body exceeded the effective limit",
+      "precedenceStage": "transport_envelope",
+      "remedy": null,
+      "retryable": false,
+      "status": 413
+    },
+    {
+      "class": "quota",
+      "code": "limit_exceeded",
+      "message": "an effective workspace limit was exceeded",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 429
+    },
+    {
+      "class": "state",
+      "code": "session_not_idle",
+      "message": "the session must be idle for this operation",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 409
+    },
+    {
+      "class": "state",
+      "code": "workspace_activation_required",
+      "message": "the regional workspace is not activated yet",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 409
+    },
+    {
+      "class": "state",
+      "code": "workspace_not_live",
+      "message": "the workspace is not live",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "state",
+      "code": "session_deleting",
+      "message": "the session is being deleted",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "not_found",
+      "code": "session_deleted",
+      "message": "the session was deleted",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 410
+    },
+    {
+      "class": "conflict",
+      "code": "deletion_in_progress",
+      "message": "a deletion of this resource is already running",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "state",
+      "code": "operation_not_cancelable",
+      "message": "the operation has passed its cancellation point",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "not_found",
+      "code": "approval_not_found",
+      "message": "no such approval",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 404
+    },
+    {
+      "class": "conflict",
+      "code": "approval_already_resolved",
+      "message": "the approval already has a decision",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "not_found",
+      "code": "file_not_found",
+      "message": "no such file entry",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 404
+    },
+    {
+      "class": "state",
+      "code": "content_missing",
+      "message": "the referenced content is not present",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "not_found",
+      "code": "export_not_found",
+      "message": "no such export",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 404
+    },
+    {
+      "class": "state",
+      "code": "export_not_ready",
+      "message": "the export is still preparing",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 409
+    },
+    {
+      "class": "not_found",
+      "code": "export_expired",
+      "message": "the export expired",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 410
+    },
+    {
+      "class": "not_found",
+      "code": "export_revoked",
+      "message": "the export was revoked",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 410
+    },
+    {
+      "class": "not_found",
+      "code": "download_grant_expired",
+      "message": "the download grant expired",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 410
+    },
+    {
+      "class": "validation",
+      "code": "telemetry_payload_too_large",
+      "message": "the OTLP payload exceeded its effective limit",
+      "precedenceStage": "transport_envelope",
+      "remedy": null,
+      "retryable": false,
+      "status": 413
+    },
+    {
+      "class": "validation",
+      "code": "invalid_telemetry",
+      "message": "the telemetry payload is not the pinned OTLP revision",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "quota",
+      "code": "telemetry_quota_exceeded",
+      "message": "the telemetry admission quota was exceeded",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 429
+    },
+    {
+      "class": "state",
+      "code": "telemetry_incomplete",
+      "message": "the requested range has recorded gaps and completeness was required",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 409
+    },
+    {
+      "class": "validation",
+      "code": "unsupported_export_signal",
+      "message": "that signal cannot be exported in the requested format",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "invalid_query",
+      "message": "the observation query exceeded its structural bounds",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "invalid_metric_aggregation",
+      "message": "the metric aggregation is not computable over the selection",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "invalid_network_policy",
+      "message": "the requested network policy is not permitted",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "unsupported_package_ecosystem",
+      "message": "that package ecosystem is not supported",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "state",
+      "code": "package_resolution_failed",
+      "message": "a requested package could not be resolved",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "state",
+      "code": "package_artifact_unavailable",
+      "message": "a resolved package artifact could not be fetched",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 409
+    },
+    {
+      "class": "state",
+      "code": "package_integrity_mismatch",
+      "message": "a package artifact failed its integrity check",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "validation",
+      "code": "unknown_provider",
+      "message": "no such provider",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "validation",
+      "code": "unknown_model",
+      "message": "no such model for that provider",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "state",
+      "code": "unqualified_provider_model",
+      "message": "the provider and model pair has no live conformance receipt",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "not_found",
+      "code": "provider_credential_not_found",
+      "message": "no such provider credential binding",
+      "precedenceStage": "tombstone_and_parent",
+      "remedy": null,
+      "retryable": false,
+      "status": 404
+    },
+    {
+      "class": "state",
+      "code": "provider_credential_revoked",
+      "message": "the provider credential binding was revoked",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "validation",
+      "code": "invalid_auto_topup_policy",
+      "message": "the auto top-up policy is not internally consistent",
+      "precedenceStage": "body_limit_and_parse",
+      "remedy": null,
+      "retryable": false,
+      "status": 400
+    },
+    {
+      "class": "state",
+      "code": "payment_method_required",
+      "message": "the organization has no usable saved payment method",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 402
+    },
+    {
+      "class": "unavailable",
+      "code": "authentication_unavailable",
+      "message": "the authorization authority could not be reached",
+      "precedenceStage": "authentication",
+      "remedy": null,
+      "retryable": true,
+      "status": 503
+    },
+    {
+      "class": "state",
+      "code": "account_paused",
+      "message": "the account is paused and this route is not pause-exempt",
+      "precedenceStage": "account_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 402
+    },
+    {
+      "class": "unavailable",
+      "code": "account_state_unavailable",
+      "message": "the account state could not be established",
+      "precedenceStage": "account_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 503
+    },
+    {
+      "class": "precondition",
+      "code": "precondition_failed",
+      "message": "the `If-Match` or generation precondition did not hold",
+      "precedenceStage": "precondition",
+      "remedy": null,
+      "retryable": false,
+      "status": 412
+    },
+    {
+      "class": "conflict",
+      "code": "wrong_workspace_region",
+      "message": "the workspace is placed in a different region",
+      "precedenceStage": "placement",
+      "remedy": "reissue the request against the `apiUrl` in `details`",
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "unavailable",
+      "code": "observability_unavailable",
+      "message": "the observation authority could not be reached",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 503
+    },
+    {
+      "class": "quota",
+      "code": "rate_limited",
+      "message": "too many requests",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": true,
+      "status": 429
+    },
+    {
+      "class": "unavailable",
+      "code": "upstream_error",
+      "message": "a dependency failed",
+      "precedenceStage": "commit",
+      "remedy": null,
+      "retryable": true,
+      "status": 502
+    },
+    {
+      "class": "internal",
+      "code": "internal_error",
+      "message": "an unexpected condition occurred",
+      "precedenceStage": "commit",
+      "remedy": null,
+      "retryable": false,
+      "status": 500
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/HandsNetworkRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The guest network policy.",
+  "properties": {
+    "mode": {
+      "$ref": "aex:schema:NetworkMode",
+      "description": "What the guest may reach."
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "title": "HandsNetworkRequest",
+  "type": "object"
+}

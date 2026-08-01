@@ -1,0 +1,83 @@
+{
+  "$id": "https://schemas.aex.dev/v1/Workspace.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A region-pinned execution and content boundary.",
+  "properties": {
+    "apiUrl": {
+      "description": "The regional host this workspace answers on.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "createdAt": {
+      "description": "When it was created.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "deletionOperationId": {
+      "description": "The running deletion operation.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    },
+    "id": {
+      "description": "Identity.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    },
+    "name": {
+      "description": "Display name.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "operationalState": {
+      "$ref": "aex:schema:WorkspaceOperationalState",
+      "description": "Inherited account state."
+    },
+    "organizationId": {
+      "description": "The owning organization.",
+      "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "organization"
+    },
+    "region": {
+      "description": "Immutable placement.",
+      "enum": [
+        "us-east-1",
+        "us-east-2",
+        "us-west-2",
+        "ap-northeast-1",
+        "eu-west-1"
+      ],
+      "type": "string"
+    },
+    "slug": {
+      "description": "URL-safe name.",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "aex:schema:WorkspaceStatus",
+      "description": "Whether it admits work."
+    }
+  },
+  "required": [
+    "apiUrl",
+    "createdAt",
+    "id",
+    "name",
+    "operationalState",
+    "organizationId",
+    "region",
+    "slug",
+    "status"
+  ],
+  "title": "Workspace",
+  "type": "object"
+}

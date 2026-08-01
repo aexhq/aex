@@ -1,0 +1,56 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ApiKey.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Workspace API key metadata. There is no public last-used timestamp.",
+  "properties": {
+    "createdAt": {
+      "description": "When it was minted.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "id": {
+      "description": "Identity.",
+      "pattern": "^key_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "api_key"
+    },
+    "name": {
+      "description": "Display name.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "revokedAt": {
+      "description": "When it was revoked.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "scopes": {
+      "description": "The scopes it carries.",
+      "items": {
+        "type": "string",
+        "x-aex-registry": "scopes"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "workspaceId": {
+      "description": "The workspace it authorizes.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "createdAt",
+    "id",
+    "name",
+    "scopes",
+    "workspaceId"
+  ],
+  "title": "ApiKey",
+  "type": "object"
+}

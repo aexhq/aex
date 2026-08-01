@@ -1,0 +1,273 @@
+# Accounts, organizations, workspaces, keys and the device flow.
+module: central
+schemas:
+  AccountPauseReason:
+    doc: Why an account is paused.
+    type: enum
+    values:
+      - { value: top_up_required, doc: "The prepaid balance is exhausted." }
+
+  AccountActiveState:
+    doc: An account in good standing.
+    type: object
+    fields:
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic state revision." }
+      changedAt: { type: timestamp, doc: "When the state last changed." }
+
+  AccountPausedState:
+    doc: A paused account and what it takes to restore it.
+    type: object
+    fields:
+      reason: { type: ref, to: AccountPauseReason, doc: "Why the account is paused." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic state revision." }
+      changedAt: { type: timestamp, doc: "When the state last changed." }
+      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest top-up that restores service." }
+      retentionFundedUntil: { type: timestamp, optional: true, doc: "How long retained content stays funded." }
+      deletionScheduledAt: { type: timestamp, optional: true, doc: "When unfunded content is scheduled for deletion." }
+
+  AccountOperationalState:
+    doc: Whether the account may consume paid capacity.
+    type: union
+    tag: status
+    variants:
+      - { value: active, payload: AccountActiveState, doc: "Active." }
+      - { value: paused, payload: AccountPausedState, doc: "Paused." }
+
+  WorkspaceOperationalState:
+    doc: The workspace view of the account operational state it inherits.
+    type: object
+    fields:
+      inheritedFrom: { type: ref, to: OperationalStateSource, doc: "Always the account." }
+      organizationId: { type: id, of: organization, doc: "The organization the state comes from." }
+      state: { type: ref, to: AccountOperationalState, doc: "The inherited state." }
+
+  OperationalStateSource:
+    doc: Where a workspace operational state comes from.
+    type: enum
+    values:
+      - { value: account, doc: "Inherited from the owning account." }
+
+  OrganizationRole:
+    doc: The caller role inside one organization.
+    type: enum
+    values:
+      - { value: owner, doc: "Full control including deletion and billing." }
+      - { value: admin, doc: "Manage members, workspaces and keys." }
+      - { value: member, doc: "Use the organization resources." }
+
+  Organization:
+    doc: The billing and ownership boundary.
+    type: object
+    fields:
+      id: { type: id, of: organization, doc: "Identity." }
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+      slug: { type: string, min: 1, max: 64, pattern: "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", doc: "URL-safe name." }
+      callerRole: { type: ref, to: OrganizationRole, doc: "What the calling principal may do here." }
+      createdAt: { type: timestamp, doc: "When it was created." }
+
+  OrganizationPage:
+    doc: One page of organizations.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Organization }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  OrganizationCreateRequest:
+    doc: Create an organization.
+    type: object
+    fields:
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+
+  MembershipStatus:
+    doc: Whether a membership is usable.
+    type: enum
+    values:
+      - { value: active, doc: "The only membership status v1 exposes." }
+
+  Membership:
+    doc: A person's role inside one organization.
+    type: object
+    fields:
+      id: { type: id, of: membership, doc: "Identity." }
+      organizationId: { type: id, of: organization, doc: "The organization." }
+      userId: { type: id, of: user, doc: "The person." }
+      email: { type: string, min: 3, max: 320, doc: "The person's email address." }
+      role: { type: ref, to: OrganizationRole, doc: "The role." }
+      status: { type: ref, to: MembershipStatus, doc: "Whether the membership is usable." }
+      createdAt: { type: timestamp, doc: "When it was created." }
+
+  MembershipPage:
+    doc: One page of memberships.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Membership }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  InvitationRole:
+    doc: The role an invitation grants; ownership is never invited.
+    type: enum
+    values:
+      - { value: admin, doc: "Manage members, workspaces and keys." }
+      - { value: member, doc: "Use the organization resources." }
+
+  InvitationStatus:
+    doc: Where an invitation is in its lifecycle.
+    type: enum
+    values:
+      - { value: pending, doc: "Sent, not yet resolved." }
+      - { value: accepted, doc: "Redeemed into a membership." }
+      - { value: revoked, doc: "Withdrawn." }
+      - { value: expired, doc: "Timed out." }
+
+  Invitation:
+    doc: A pending invitation to join an organization.
+    type: object
+    fields:
+      id: { type: id, of: invitation, doc: "Identity." }
+      organizationId: { type: id, of: organization, doc: "The organization." }
+      email: { type: string, min: 3, max: 320, doc: "Who was invited." }
+      role: { type: ref, to: InvitationRole, doc: "The role it grants." }
+      status: { type: ref, to: InvitationStatus, doc: "Lifecycle position." }
+      createdAt: { type: timestamp, doc: "When it was sent." }
+      expiresAt: { type: timestamp, doc: "When it stops being redeemable." }
+      resolvedAt: { type: timestamp, optional: true, doc: "When it was accepted, revoked or expired." }
+
+  InvitationCreateRequest:
+    doc: Invite a person to an organization.
+    type: object
+    fields:
+      email: { type: string, min: 3, max: 320, doc: "Who to invite." }
+      role: { type: ref, to: InvitationRole, doc: "The role to grant." }
+
+  WorkspaceStatus:
+    doc: Whether a workspace admits work.
+    type: enum
+    values:
+      - { value: active, doc: "Admitting work." }
+      - { value: deleting, doc: "A deletion operation is running." }
+
+  Workspace:
+    doc: A region-pinned execution and content boundary.
+    type: object
+    fields:
+      id: { type: id, of: workspace, doc: "Identity." }
+      organizationId: { type: id, of: organization, doc: "The owning organization." }
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+      slug: { type: string, min: 1, max: 64, pattern: "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", doc: "URL-safe name." }
+      region: { type: region, doc: "Immutable placement." }
+      apiUrl: { type: https_url, doc: "The regional host this workspace answers on." }
+      status: { type: ref, to: WorkspaceStatus, doc: "Whether it admits work." }
+      operationalState: { type: ref, to: WorkspaceOperationalState, doc: "Inherited account state." }
+      createdAt: { type: timestamp, doc: "When it was created." }
+      deletionOperationId: { type: id, of: operation, optional: true, doc: "The running deletion operation." }
+
+  WorkspacePage:
+    doc: One page of workspaces.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Workspace }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  WorkspaceCreateRequest:
+    doc: Create a region-pinned workspace. Region is required and immutable.
+    type: object
+    fields:
+      organizationId: { type: id, of: organization, doc: "The owning organization." }
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+      region: { type: region, doc: "Where the workspace lives, forever." }
+
+  WorkspaceDeleteRequest:
+    doc: Admit the global workspace-deletion operation.
+    type: object
+    fields:
+      confirmation: { type: id, of: workspace, doc: "The workspace id, restated." }
+
+  WorkspaceTombstone:
+    doc: What remains of a deleted workspace.
+    type: object
+    fields:
+      workspaceId: { type: id, of: workspace, doc: "The deleted workspace." }
+      organizationId: { type: id, of: organization, doc: "The owning organization." }
+      deletedAt: { type: timestamp, doc: "When deletion committed." }
+      operationId: { type: id, of: operation, doc: "The operation that deleted it." }
+
+  ApiKey:
+    doc: Workspace API key metadata. There is no public last-used timestamp.
+    type: object
+    fields:
+      id: { type: id, of: api_key, doc: "Identity." }
+      workspaceId: { type: id, of: workspace, doc: "The workspace it authorizes." }
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
+      createdAt: { type: timestamp, doc: "When it was minted." }
+      revokedAt: { type: timestamp, optional: true, doc: "When it was revoked." }
+
+  ApiKeyPage:
+    doc: One page of API key metadata.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: ApiKey }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  ApiKeyCreateRequest:
+    doc: Mint a workspace API key.
+    type: object
+    fields:
+      workspaceId: { type: id, of: workspace, doc: "The workspace to authorize." }
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes to grant." }
+
+  NewApiKey:
+    doc: A freshly minted key. The value never appears in a later read.
+    type: object
+    fields:
+      id: { type: id, of: api_key, doc: "Identity." }
+      workspaceId: { type: id, of: workspace, doc: "The workspace it authorizes." }
+      name: { type: string, min: 1, max: 128, doc: "Display name." }
+      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
+      createdAt: { type: timestamp, doc: "When it was minted." }
+      value: { type: string, min: 60, max: 128, doc: "The one-time secret value." }
+
+  DeviceAuthorizationRequest:
+    doc: Begin the CLI device-authorization flow.
+    type: object
+    fields:
+      clientId: { type: string, min: 1, max: 128, doc: "The public client identifier." }
+      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes requested." }
+
+  DeviceAuthorization:
+    doc: A pending device authorization the user must approve in a browser.
+    type: object
+    fields:
+      deviceCode: { type: string, min: 32, max: 256, doc: "The polling secret." }
+      userCode: { type: string, min: 6, max: 16, doc: "The short code the user types." }
+      verificationUri: { type: https_url, doc: "Where the user approves." }
+      verificationUriComplete: { type: https_url, doc: "The same page with the code prefilled." }
+      expiresAt: { type: timestamp, doc: "When the device code stops working." }
+      intervalSeconds: { type: integer, min: 1, max: 60, doc: "Minimum polling interval." }
+
+  DeviceTokenRequest:
+    doc: Exchange an approved device code for an account token.
+    type: object
+    fields:
+      clientId: { type: string, min: 1, max: 128, doc: "The public client identifier." }
+      deviceCode: { type: string, min: 32, max: 256, doc: "The polling secret." }
+
+  DeviceToken:
+    doc: An issued account token.
+    type: object
+    fields:
+      accountToken: { type: string, min: 16, max: 4096, doc: "The bearer token; store it, never log it." }
+      expiresAt: { type: timestamp, doc: "When the token stops verifying." }
+      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
+
+  DashboardBootstrap:
+    doc: The one bounded read that fills the dashboard shell.
+    type: object
+    fields:
+      userId: { type: id, of: user, doc: "The signed-in person." }
+      email: { type: string, min: 3, max: 320, doc: "Their email address." }
+      account: { type: ref, to: AccountOperationalState, doc: "Their account operational state." }
+      organizations: { type: array, max: 100, items: { type: ref, to: Organization }, doc: "Organizations they belong to." }
+      workspaces: { type: array, max: 500, items: { type: ref, to: Workspace }, doc: "Workspaces they can reach." }
+      generatedAt: { type: timestamp, doc: "When this snapshot was taken." }
