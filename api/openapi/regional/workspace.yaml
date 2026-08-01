@@ -1,0 +1,6 @@
+plane: regional
+fragment: workspace
+operations:
+  - { id: workspace_current_get, method: GET, path: /api/workspace, summary: "Read the workspace this credential is pinned to.", scope: "workspace:read", success: Workspace, pauseExempt: true, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, workspace_not_live] }
+  - { id: workspace_limits_list, method: GET, path: /api/workspace/limits, summary: "List the effective workspace safety limits.", scope: "workspace:read", success: EffectiveWorkspaceLimitPage, pauseExempt: true, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, invalid_cursor], query: { cursor: { type: cursor, optional: true, doc: "Opaque continuation token." }, limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." } } }
+  - { id: workspace_limit_get, method: GET, path: "/api/workspace/limits/{limitId}", summary: "Read one effective workspace safety limit.", scope: "workspace:read", success: EffectiveWorkspaceLimit, pauseExempt: true, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, not_found] }

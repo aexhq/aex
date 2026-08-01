@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageAggregate.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One rated aggregate, discriminated by priced category.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:UsageStorageAggregate",
+      "x-aex-discriminator-value": "storage"
+    },
+    {
+      "$ref": "aex:schema:UsageComputeAggregate",
+      "x-aex-discriminator-value": "compute"
+    },
+    {
+      "$ref": "aex:schema:UsageMemoryAggregate",
+      "x-aex-discriminator-value": "memory"
+    },
+    {
+      "$ref": "aex:schema:UsageDataTransferAggregate",
+      "x-aex-discriminator-value": "data_transfer"
+    }
+  ],
+  "title": "UsageAggregate",
+  "x-aex-discriminator": "category"
+}

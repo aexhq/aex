@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessagePartFile.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A reference to a persisted file.",
+  "properties": {
+    "mediaType": {
+      "description": "Declared media type.",
+      "maxLength": 255,
+      "minLength": 1,
+      "type": "string"
+    },
+    "path": {
+      "description": "The normalized POSIX path.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    },
+    "source": {
+      "$ref": "aex:schema:FileSource",
+      "description": "Always the persisted tree."
+    }
+  },
+  "required": [
+    "path",
+    "source"
+  ],
+  "title": "MessagePartFile",
+  "type": "object"
+}

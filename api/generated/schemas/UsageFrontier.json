@@ -1,0 +1,67 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageFrontier.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "How far the pipeline has advanced for one workspace and category.",
+  "properties": {
+    "acceptedSequence": {
+      "description": "Facts accepted by the authority.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "aggregatedSequence": {
+      "description": "Facts folded into the projection.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "category": {
+      "$ref": "aex:schema:UsageCategory",
+      "description": "The priced category."
+    },
+    "ratedSequence": {
+      "description": "Facts priced.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "region": {
+      "description": "The region.",
+      "enum": [
+        "us-east-1",
+        "us-east-2",
+        "us-west-2",
+        "ap-northeast-1",
+        "eu-west-1"
+      ],
+      "type": "string"
+    },
+    "serviceThrough": {
+      "description": "Service time the frontiers are complete through.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "settledSequence": {
+      "description": "Facts settled centrally.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "workspaceId": {
+      "description": "The workspace.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "acceptedSequence",
+    "aggregatedSequence",
+    "category",
+    "ratedSequence",
+    "region",
+    "serviceThrough",
+    "settledSequence",
+    "workspaceId"
+  ],
+  "title": "UsageFrontier",
+  "type": "object"
+}

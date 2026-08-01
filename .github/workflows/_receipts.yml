@@ -1,0 +1,74 @@
+# The single required status.
+#
+# It compares the jobs the lane declared it would run against the receipts the
+# lane actually produced. A required job that emitted nothing is not a pass; a
+# routed matrix that selected nothing must still emit a `no-affected-unit`
+# receipt. Those two states are the whole reason this job exists.
+
+name: receipts
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        type: string
+        required: true
+      declared_jobs:
+        description: JSON array of job names the lane declared.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  aggregate:
+    name: Receipts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Download every receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: receipt-*
+          path: receipts
+          merge-multiple: true
+
+      - name: Declare the expected job set
+        run: |
+          set -euo pipefail
+          printf '%s\n' '{"schema":"aex.declared-jobs.v1","lane":"${{ inputs.lane }}","jobs":${{ inputs.declared_jobs }}}' > declared-jobs.json
+
+      - name: Aggregate
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          receipts=(receipts/*.json)
+          if [ ${#receipts[@]} -eq 0 ]; then
+            echo "no receipt was collected at all; a lane that proves nothing does not pass"
+            exit 40
+          fi
+          args=()
+          for receipt in "${receipts[@]}"; do
+            args+=(--receipt "$receipt")
+          done
+          cargo run --locked --release -p aex-release-tool -- \
+            evidence aggregate "${args[@]}" --expect declared-jobs.json \
+            --out lane-receipt.json
+
+      - name: Upload the lane receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: lane-receipt-${{ inputs.lane }}
+          path: lane-receipt.json
+          if-no-files-found: error

@@ -1,0 +1,55 @@
+{
+  "$id": "https://schemas.aex.dev/v1/DownloadGrant.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A short-lived signed grant for exactly one object and range.",
+  "properties": {
+    "authorizedBytes": {
+      "description": "Bytes this grant authorizes.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "expiresAt": {
+      "description": "When the signature stops verifying.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "measurementId": {
+      "description": "The metered download measurement.",
+      "pattern": "^msr_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "measurement"
+    },
+    "range": {
+      "$ref": "aex:schema:ByteRange",
+      "description": "The signed range, when the grant is partial."
+    },
+    "sha256": {
+      "description": "The immutable whole-object hash.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "The whole object size.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "url": {
+      "description": "The signed URL; never printed by the CLI.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "authorizedBytes",
+    "expiresAt",
+    "measurementId",
+    "sha256",
+    "sizeBytes",
+    "url"
+  ],
+  "title": "DownloadGrant",
+  "type": "object"
+}

@@ -1,0 +1,384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aex.dev/release/v1/artifact-envelope.json",
+  "title": "aex.artifact-envelope.v1",
+  "description": "Everything that shaped one artifact's bytes, plus the supply-chain verdicts and the receipts earned before publication. Post-deployment evidence is deliberately absent: an artifact cannot contain proof that only exists once it is deployed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "envelopeDigest",
+    "unit",
+    "media",
+    "source",
+    "inputs",
+    "output",
+    "identities",
+    "composition",
+    "sbom",
+    "licenses",
+    "vulnerabilities",
+    "provenance",
+    "signature",
+    "receipts",
+    "retention",
+    "createdAt"
+  ],
+  "properties": {
+    "schema": { "const": "aex.artifact-envelope.v1" },
+    "envelopeDigest": { "$ref": "#/$defs/sha256" },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "plane"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+        "kind": {
+          "enum": [
+            "rust-lambda",
+            "rust-oci-service",
+            "rust-oci-task",
+            "rust-binary",
+            "ts-lambda",
+            "rootfs",
+            "build-output",
+            "npm-package",
+            "catalog",
+            "contract-bundle",
+            "migration-bundle",
+            "infra-module-bundle"
+          ]
+        },
+        "plane": { "enum": ["central", "regional", "runtime", "public", "neutral"] },
+        "family": { "type": "string" }
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mediaType", "form"],
+      "properties": {
+        "mediaType": { "type": "string" },
+        "form": {
+          "enum": ["zip", "oci-image", "oci-index", "ext4", "squashfs", "tar.gz", "npm-tarball", "json"]
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commitSha", "treeClean", "workflow"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "commitSha": { "$ref": "#/$defs/sha1" },
+        "treeClean": { "const": true },
+        "ref": { "type": "string", "pattern": "^refs/heads/main$" },
+        "workflow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "ref", "path", "runId", "runAttempt", "jobName", "builderId"],
+          "properties": {
+            "repository": { "type": "string" },
+            "ref": { "type": "string" },
+            "path": { "type": "string" },
+            "runId": { "type": "string", "pattern": "^[0-9]+$" },
+            "runAttempt": { "type": "integer", "minimum": 1 },
+            "jobName": { "type": "string" },
+            "builderId": { "type": "string", "format": "uri" }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lockfileDigest", "toolchain", "buildProfile", "buildCommand", "inputClosureDigest"],
+      "properties": {
+        "lockfileDigest": { "$ref": "#/$defs/sha256" },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["channel", "rustcVersion", "rustcCommitHash", "host", "target"],
+          "properties": {
+            "channel": { "const": "1.97.1" },
+            "rustcVersion": { "type": "string" },
+            "rustcCommitHash": { "$ref": "#/$defs/sha1" },
+            "host": { "type": "string" },
+            "target": { "$ref": "#/$defs/triple" },
+            "components": { "type": "array", "items": { "type": "string" } },
+            "packagerVersion": {
+              "type": "string",
+              "description": "cargo-lambda / zig / bun / terraform version when it shapes bytes"
+            }
+          }
+        },
+        "buildProfile": { "enum": ["release", "release-lambda"] },
+        "buildCommand": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["argv", "env", "digest"],
+          "properties": {
+            "argv": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } },
+            "digest": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "inputClosureDigest": { "$ref": "#/$defs/sha256" },
+        "inputClosureCount": { "type": "integer", "minimum": 1 },
+        "baseImage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ref", "digest"],
+          "properties": {
+            "ref": { "type": "string" },
+            "digest": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "buildArgs": { "type": "object", "additionalProperties": { "type": "string" } },
+        "sourceDateEpoch": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "sizeBytes", "target", "location"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "architecture", "triple"],
+          "properties": {
+            "os": { "enum": ["linux", "none"] },
+            "architecture": { "enum": ["arm64", "amd64", "none"] },
+            "triple": { "$ref": "#/$defs/triple" },
+            "libcVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" }
+          }
+        },
+        "ociIndexDigest": { "$ref": "#/$defs/sha256" },
+        "ociChildDigest": { "$ref": "#/$defs/sha256" },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "uri", "immutable"],
+          "properties": {
+            "kind": { "enum": ["s3", "ecr", "npm", "gha-artifact", "local"] },
+            "uri": { "type": "string" },
+            "immutable": { "const": true },
+            "objectVersionId": { "type": "string" }
+          }
+        },
+        "symbols": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "digest": { "$ref": "#/$defs/sha256" },
+            "uri": { "type": "string" }
+          }
+        }
+      }
+    },
+    "identities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractDigest", "configSchemaVersion"],
+      "properties": {
+        "contractDigest": { "$ref": "#/$defs/sha256" },
+        "telemetrySchemaDigest": { "$ref": "#/$defs/sha256" },
+        "configSchemaVersion": { "type": "integer", "minimum": 1 },
+        "configEnvNamespace": { "type": "string", "pattern": "^AEX_[A-Z0-9_]*$" },
+        "migration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requiredCentralHead": { "type": "string", "pattern": "^[0-9]{14}$" },
+            "centralBundleDigest": { "$ref": "#/$defs/sha256" },
+            "regionalBundleDigest": { "$ref": "#/$defs/sha256" },
+            "regionalGeneration": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "catalogs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": { "$ref": "#/$defs/sha256" },
+            "tool": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "adjacent"],
+      "properties": {
+        "minimum": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["unit", "constraint"],
+            "properties": {
+              "unit": { "type": "string" },
+              "constraint": {
+                "enum": ["present", "configSchemaAtLeast", "contractDigestEqual", "schemaHeadAtLeast"]
+              },
+              "value": { "type": "string" }
+            }
+          }
+        },
+        "adjacent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["storageCompatible", "protocolCompatible", "rollbackEligible"],
+          "properties": {
+            "storageCompatible": { "type": "boolean" },
+            "protocolCompatible": { "type": "boolean" },
+            "rollbackEligible": { "type": "boolean" },
+            "rationale": { "type": "string", "minLength": 8 }
+          }
+        }
+      }
+    },
+    "sbom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "digest", "uri", "componentCount"],
+      "properties": {
+        "format": { "enum": ["spdx-2.3", "cyclonedx-1.6"] },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "uri": { "type": "string" },
+        "componentCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "licenses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyDigest", "verdict", "denials"],
+      "properties": {
+        "policyDigest": { "$ref": "#/$defs/sha256" },
+        "verdict": { "const": "allowed" },
+        "denials": { "type": "array", "maxItems": 0, "items": { "type": "string" } },
+        "inventoryDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "vulnerabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scanner", "database", "scannedAt", "unapprovedCritical", "unapprovedHigh"],
+      "properties": {
+        "scanner": { "type": "string" },
+        "database": { "type": "string" },
+        "scannedAt": { "type": "string", "format": "date-time" },
+        "unapprovedCritical": { "const": 0 },
+        "unapprovedHigh": { "const": 0 },
+        "approvedExceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "reason", "expiresAt", "approver"],
+            "properties": {
+              "id": { "type": "string" },
+              "reason": { "type": "string" },
+              "expiresAt": { "type": "string", "format": "date-time" },
+              "approver": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicateType", "bundleDigest", "builderId", "attested"],
+      "properties": {
+        "predicateType": { "const": "https://slsa.dev/provenance/v1" },
+        "bundleDigest": { "$ref": "#/$defs/sha256" },
+        "uri": { "type": "string" },
+        "builderId": { "type": "string", "format": "uri" },
+        "attested": { "const": true }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present", "kind"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "kind": { "enum": ["none", "sigstore-cosign", "aws-kms", "npm-provenance"] },
+        "keyId": { "type": "string" },
+        "bundleDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "receiptDigest", "source", "conclusion"],
+        "properties": {
+          "class": {
+            "enum": [
+              "unit",
+              "property",
+              "contract",
+              "conformance",
+              "integration",
+              "lint",
+              "deny",
+              "package-integrity",
+              "sbom",
+              "license",
+              "vulnerability",
+              "determinism",
+              "boundary"
+            ]
+          },
+          "receiptDigest": { "$ref": "#/$defs/sha256" },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "commitSha", "workflowRunId", "runAttempt"],
+            "properties": {
+              "repository": { "type": "string" },
+              "commitSha": { "$ref": "#/$defs/sha1" },
+              "workflowRunId": { "type": "string" },
+              "runAttempt": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "conclusion": { "const": "passed" }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class"],
+      "properties": {
+        "class": { "enum": ["canonical-metadata", "artifact-bytes", "diagnostic", "bulky-profile"] },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "triple": {
+      "enum": [
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu.2.34",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu.2.34",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl",
+        "none"
+      ]
+    }
+  }
+}

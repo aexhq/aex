@@ -1,0 +1,4 @@
+plane: central
+fragment: bootstrap
+operations:
+  - { id: dashboard_bootstrap_get, method: GET, path: /api/bootstrap, summary: "One bounded read that fills the dashboard shell.", scope: "account:read", altPrincipal: user_session, success: DashboardBootstrap, pauseExempt: true, errors: [unauthenticated, forbidden, insufficient_scope, account_state_unavailable] }

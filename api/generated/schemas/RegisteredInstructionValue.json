@@ -1,0 +1,19 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredInstructionValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A registered instruction.",
+  "properties": {
+    "text": {
+      "description": "The instruction text.",
+      "maxLength": 262144,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "RegisteredInstructionValue",
+  "type": "object"
+}

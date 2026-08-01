@@ -1,0 +1,31 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BlobUpload.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A large value staged through the upload surface.",
+  "properties": {
+    "sha256": {
+      "description": "Hash of the staged bytes.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "Size of the staged bytes.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "uploadId": {
+      "description": "The ready staged upload.",
+      "pattern": "^upl_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "upload"
+    }
+  },
+  "required": [
+    "sha256",
+    "sizeBytes",
+    "uploadId"
+  ],
+  "title": "BlobUpload",
+  "type": "object"
+}

@@ -17,3 +17,18 @@ apps/docs/content/docs/** text eol=lf
 *.rs text eol=lf
 *.toml text eol=lf
 Cargo.lock text eol=lf
+
+# The contract bundle, the published schemas, the two plane documents and the
+# conformance corpus are compared byte-for-byte by
+# `cargo run -p aex-contract-gen -- check`. Same rule, same reason.
+api/generated/** text eol=lf
+api/openapi/** text eol=lf
+api/schemas/** text eol=lf
+conformance/** text eol=lf
+
+# The derived test registry and the unearned-evidence ledger are rewritten by
+# `aex-workspace-check registry build` on every manifest change and are meant to
+# be regenerated on conflict, like `Cargo.lock`. Without this, the tool writes LF,
+# Windows checks out CRLF, and every regeneration reports a whole-file diff.
+release/*.json text eol=lf
+release/policy/** text eol=lf

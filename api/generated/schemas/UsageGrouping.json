@@ -1,0 +1,15 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageGrouping.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The axes a usage query may group by.",
+  "enum": [
+    "category",
+    "region",
+    "workspace",
+    "session",
+    "run",
+    "operation"
+  ],
+  "title": "UsageGrouping",
+  "type": "string"
+}

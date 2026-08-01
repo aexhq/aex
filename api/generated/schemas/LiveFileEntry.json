@@ -1,0 +1,22 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LiveFileEntry.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One live file entry plus what the read did to the workspace.",
+  "properties": {
+    "entry": {
+      "$ref": "aex:schema:FileEntry",
+      "description": "The entry."
+    },
+    "workspaceAccess": {
+      "$ref": "aex:schema:WorkspaceAccess",
+      "description": "What the read did."
+    }
+  },
+  "required": [
+    "entry",
+    "workspaceAccess"
+  ],
+  "title": "LiveFileEntry",
+  "type": "object"
+}

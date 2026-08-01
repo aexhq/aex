@@ -37,3 +37,10 @@ scripts/aex-sample.ts
 # Rust build output
 target/
 **/*.rs.bk
+
+# Terraform working state. `.terraform/` holds provider binaries a lane
+# downloads on demand; `.terraform.lock.hcl` is NOT ignored, because the
+# resolved provider versions are part of what a plan means.
+.terraform/
+*.tfstate
+*.tfstate.*

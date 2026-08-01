@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BlobInline.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A small value carried in the request.",
+  "properties": {
+    "data": {
+      "description": "The encoded bytes.",
+      "maxLength": 1048576,
+      "minLength": 0,
+      "type": "string"
+    },
+    "encoding": {
+      "$ref": "aex:schema:BlobEncoding",
+      "description": "How the data is encoded."
+    },
+    "sha256": {
+      "description": "Hash of the decoded bytes.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "data",
+    "encoding",
+    "sha256"
+  ],
+  "title": "BlobInline",
+  "type": "object"
+}

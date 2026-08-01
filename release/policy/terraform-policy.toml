@@ -1,0 +1,38 @@
+# What a Terraform plan may and may not do.
+#
+# The source scanner rejects these constructs before a plan exists; this file
+# is the second gate, over the plan itself, because a module dependency or a
+# provider upgrade can introduce a resource the source scan never saw.
+
+schema = "aex.terraform-policy.v1"
+
+# Resource types that package, fetch or invoke code. Terraform deploys bytes
+# the release lane already published and recorded; a plan that would produce
+# bytes is a plan whose output has no artifact envelope, no SBOM, no
+# provenance and no digest anybody verified.
+forbidden_resource_types = [
+  "null_resource",
+  "archive_file",
+  "external",
+  "aws_lambda_invocation",
+  "docker_image",
+  "docker_container",
+  "docker_registry_image",
+]
+
+# Types whose destruction or replacement is never routine. A plan that would
+# replace one of these is a plan that would destroy durable state, and it
+# needs a decision rather than an approval click.
+protected_resource_types = [
+  "aws_dynamodb_table",
+  "aws_s3_bucket",
+  "aws_kms_key",
+  "aws_rds_cluster",
+  "aws_db_instance",
+  "aws_secretsmanager_secret",
+  "aws_ecr_repository",
+]
+
+# Every managed resource carries these so cost, ownership and provenance are
+# answerable from the bill rather than from memory.
+required_tags = ["plane", "region", "releaseId", "deployable"]

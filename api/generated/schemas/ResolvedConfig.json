@@ -1,0 +1,59 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ResolvedConfig.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Everything the platform actually resolved for this session.",
+  "properties": {
+    "approvalPolicy": {
+      "$ref": "aex:schema:ApprovalPolicy",
+      "description": "Resolved approval policy."
+    },
+    "compute": {
+      "$ref": "aex:schema:ResolvedCompute",
+      "description": "Resolved capacity."
+    },
+    "model": {
+      "description": "The exact provider-native model id.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "network": {
+      "$ref": "aex:schema:ResolvedNetwork",
+      "description": "Resolved network policy."
+    },
+    "packages": {
+      "description": "Resolved packages.",
+      "items": {
+        "$ref": "aex:schema:PackageRequest"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "provider": {
+      "$ref": "aex:schema:ProviderId",
+      "description": "The provider."
+    },
+    "providerCredentialId": {
+      "description": "The BYOK binding in use.",
+      "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "provider_credential"
+    },
+    "registered": {
+      "$ref": "aex:schema:SessionRegisteredSelection",
+      "description": "Resolved registered selection."
+    }
+  },
+  "required": [
+    "approvalPolicy",
+    "compute",
+    "model",
+    "network",
+    "packages",
+    "provider",
+    "registered"
+  ],
+  "title": "ResolvedConfig",
+  "type": "object"
+}
