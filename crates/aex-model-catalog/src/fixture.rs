@@ -24,13 +24,49 @@ use crate::document::{
 };
 use crate::failure::ProviderFailureKind;
 use crate::primitives::{Blake3Digest, BoundedString, ModelSlug};
+use crate::qualified::QualifiedModel;
 use crate::receipt::{
     ConformanceReceipt, ObservedFact, PlaneId, ProbeId, ProbeOutcome, ProbeResult,
     ProbeSuiteRevision, Region,
 };
+use crate::wire_pending::CatalogRevision;
 
 /// The probe-suite revision every fixture is stamped with.
 pub const SUITE: ProbeSuiteRevision = ProbeSuiteRevision(1);
+
+/// Mints a [`QualifiedModel`] directly from an entry, without a signed document.
+///
+/// The only production path to a `QualifiedModel` is [`crate::Catalog::load`],
+/// which requires a valid ECDSA P-256 signature — and signing needs
+/// `aws-lc-rs`, which the provider gateway does not and should not depend on.
+/// Without this, no adapter test could reach `build_request` at all.
+///
+/// This is a **fixture, not a bypass**. It produces the handle and nothing
+/// more. Every gate that decides admissibility — `EntryState`, the conformance
+/// receipt, emergency disable, revision expiry — lives in
+/// [`crate::Catalog::admit`], which this function neither touches nor can
+/// reach.
+#[must_use]
+pub fn qualified(entry: ModelEntry) -> QualifiedModel {
+    let revision = CatalogRevision(Blake3Digest::of(
+        format!("fixture/{}/{}", entry.provider, entry.model).as_bytes(),
+    ));
+    QualifiedModel::new(std::sync::Arc::new(entry), revision)
+}
+
+/// The [`QualifiedModel`] for a `Staged` fixture entry, in one call.
+///
+/// # Panics
+///
+/// As [`entry`].
+#[must_use]
+pub fn qualified_entry(
+    provider: ProviderId,
+    model: &str,
+    capabilities: CapabilitySet,
+) -> QualifiedModel {
+    qualified(entry(provider, model, capabilities))
+}
 
 /// A bounded string from a literal that is known to fit.
 ///
