@@ -92,10 +92,11 @@ test("no declared field is absent from its schema, and no optional field is requ
     for (const field of fields) {
       expect({ declaredName, field: field.name, known: properties.has(field.name) })
         .toEqual({ declaredName, field: field.name, known: true });
-      if (!field.optional) {
-        expect({ declaredName, field: field.name, required: required.has(field.name) })
-          .toEqual({ declaredName, field: field.name, required: true });
-      }
+      // A field declared without `?` claims the API always sends it, so the schema
+      // must require it. An optional declaration makes no claim either way.
+      const claimSupported = field.optional || required.has(field.name);
+      expect({ declaredName, field: field.name, nonOptionalIsRequired: claimSupported })
+        .toEqual({ declaredName, field: field.name, nonOptionalIsRequired: true });
     }
   }
 });
