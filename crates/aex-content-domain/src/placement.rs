@@ -7,7 +7,7 @@
 
 use core::fmt;
 
-use crate::digest::{ContentDigest, Crc32c};
+use crate::digest::Crc32c;
 
 /// Largest canonical body that may be stored inline.
 pub const INLINE_PLACEMENT_MAX_BYTES: u64 = 32_768;
@@ -130,57 +130,10 @@ impl Placement {
     }
 }
 
-/// The identity of the ciphertext holding a body.
-///
-/// Opaque to the domain: it names a wrapped-key generation and a nonce so an
-/// adapter can decrypt, and it never participates in a digest.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CiphertextIdentity {
-    /// The key generation the body was wrapped under.
-    pub key_generation: u64,
-    /// The wrapped data key, as stored.
-    pub wrapped_key: Vec<u8>,
-    /// The nonce used for the body.
-    pub nonce: Vec<u8>,
-}
-
-/// What a stored body claims about itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContentDescriptor {
-    /// Owning workspace.
-    pub workspace: crate::wire_pending::WorkspaceId,
-    /// SHA-256 of the canonical plaintext, measured before compression and
-    /// encryption.
-    pub digest: ContentDigest,
-    /// Plaintext length in bytes.
-    pub size_bytes: u64,
-    /// Declared media type, when one is known.
-    pub media_type: Option<crate::wire_pending::MediaType>,
-    /// Where the body physically lives.
-    pub placement: Placement,
-    /// The ciphertext identity.
-    pub ciphertext: CiphertextIdentity,
-    /// When the descriptor was first written.
-    pub created_at: crate::wire_pending::Timestamp,
-}
-
-impl ContentDescriptor {
-    /// Whether the placement class agrees with the plaintext length.
-    ///
-    /// The two may legitimately disagree only while a body is migrating, which
-    /// the domain never initiates; a descriptor that fails this predicate has
-    /// been assembled incorrectly by an adapter.
-    #[must_use]
-    pub fn placement_matches_size(&self) -> bool {
-        self.placement.class() == placement_for(self.size_bytes)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        placement_for, ContentObjectKey, ObjectKeyError, PlacementClass,
-        INLINE_PLACEMENT_MAX_BYTES,
+        ContentObjectKey, INLINE_PLACEMENT_MAX_BYTES, ObjectKeyError, PlacementClass, placement_for,
     };
 
     #[test]

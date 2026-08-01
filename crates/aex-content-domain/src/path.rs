@@ -154,7 +154,7 @@ impl fmt::Debug for NormalizedPath {
 
 const fn is_control(character: char) -> bool {
     let code = character as u32;
-    code < 0x20 || (0x7f..=0x9f).contains(&code)
+    code < 0x20 || (code >= 0x7f && code <= 0x9f)
 }
 
 /// A symlink target, stored **resolved** and root-relative.
@@ -362,10 +362,19 @@ mod tests {
     fn the_rejected_class_is_never_accepted() {
         assert_eq!(NormalizedPath::parse(""), Err(PathError::Empty));
         assert_eq!(NormalizedPath::parse("/a"), Err(PathError::Absolute));
-        assert_eq!(NormalizedPath::parse("a/"), Err(PathError::TrailingSeparator));
+        assert_eq!(
+            NormalizedPath::parse("a/"),
+            Err(PathError::TrailingSeparator)
+        );
         assert_eq!(NormalizedPath::parse("a//b"), Err(PathError::EmptySegment));
-        assert_eq!(NormalizedPath::parse("a/./b"), Err(PathError::RelativeSegment));
-        assert_eq!(NormalizedPath::parse("a/../b"), Err(PathError::RelativeSegment));
+        assert_eq!(
+            NormalizedPath::parse("a/./b"),
+            Err(PathError::RelativeSegment)
+        );
+        assert_eq!(
+            NormalizedPath::parse("a/../b"),
+            Err(PathError::RelativeSegment)
+        );
         assert_eq!(NormalizedPath::parse(".."), Err(PathError::RelativeSegment));
         assert_eq!(
             NormalizedPath::parse("a\\b"),
@@ -399,22 +408,47 @@ mod tests {
             .map(|value| value.as_str().to_owned())
             .collect();
         assert_eq!(ancestors, vec!["a".to_owned(), "a/b".to_owned()]);
-        assert!(NormalizedPath::parse("a").expect("accepted").ancestors().is_empty());
+        assert!(
+            NormalizedPath::parse("a")
+                .expect("accepted")
+                .ancestors()
+                .is_empty()
+        );
     }
 
     #[test]
     fn symlink_targets_must_stay_inside_the_root() {
         let link = NormalizedPath::parse("a/b/link").expect("accepted");
         assert_eq!(
-            RelativeInternalPath::parse(&link, "c").expect("accepted").as_str(),
+            RelativeInternalPath::parse(&link, "c")
+                .expect("accepted")
+                .as_str(),
             "a/b/c"
         );
         assert_eq!(
-            RelativeInternalPath::parse(&link, "../c").expect("accepted").as_str(),
+            RelativeInternalPath::parse(&link, "../c")
+                .expect("accepted")
+                .as_str(),
             "a/c"
         );
         assert_eq!(
-            RelativeInternalPath::parse(&link, "../../c"),
+            RelativeInternalPath::parse(&link, "../../c")
+                .expect("accepted")
+                .as_str(),
+            "c"
+        );
+        assert_eq!(
+            RelativeInternalPath::parse(&link, "../../../c"),
+            Err(PathError::EscapesRoot)
+        );
+        assert_eq!(
+            RelativeInternalPath::parse(&link, "..")
+                .expect("accepted")
+                .as_str(),
+            "a"
+        );
+        assert_eq!(
+            RelativeInternalPath::parse(&link, "../.."),
             Err(PathError::EscapesRoot)
         );
         assert_eq!(
