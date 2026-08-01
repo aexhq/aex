@@ -29,13 +29,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-hands",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-managed-web",
     "owner": "tools-mcp",
     "blocking_rule": "aex-empty-unit",

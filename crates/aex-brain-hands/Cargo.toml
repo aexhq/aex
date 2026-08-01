@@ -23,16 +23,19 @@ security_tier = "internal"
 risk = ["concurrency"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the brain-core stream; the cases land with the crate's own implementation"
+[package.metadata.aex.targets]
+lazy_materialization = "unit"
+admission_counter = "unit"
+result_incorporation = "unit"
+argv_constructors = "unit"
 
 [dependencies]
-async-trait.workspace = true
-bytes.workspace = true
-futures.workspace = true
+aex-hands-agent = { path = "../aex-hands-agent" }
+aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-hands-tools = { path = "../aex-hands-tools" }
+aex-runtime-control = { path = "../aex-runtime-control" }
+aex-wire = { path = "../aex-wire" }
+blake3.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-time.workspace = true
 tokio.workspace = true
-uuid.workspace = true
-aex-hands-protocol = { path = "../aex-hands-protocol" }

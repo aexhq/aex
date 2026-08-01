@@ -35,15 +35,15 @@ dependencies = [
 name = "aex-brain-hands"
 version = "0.1.0"
 dependencies = [
+ "aex-hands-agent",
  "aex-hands-protocol",
- "async-trait",
- "bytes",
- "futures",
+ "aex-hands-tools",
+ "aex-runtime-control",
+ "aex-wire",
+ "blake3",
  "serde",
  "thiserror",
- "time",
  "tokio",
- "uuid",
 ]
 
 [[package]]
