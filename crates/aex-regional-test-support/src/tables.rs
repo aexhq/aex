@@ -321,7 +321,10 @@ pub fn validate_document(path: &str, document: &serde_json::Value) -> Result<(),
     })?;
     let failures: Vec<String> = validator
         .iter_errors(document)
-        .map(|error| format!("{} at {}", error, error.instance_path))
+        .map(|error| {
+            let pointer = error.instance_path().to_string();
+            format!("{error} at {pointer}")
+        })
         .collect();
     if failures.is_empty() {
         return Ok(());

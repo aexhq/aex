@@ -1,0 +1,12 @@
+{
+  "$id": "https://schemas.aex.dev/v1/FileEntryType.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a file entry is.",
+  "enum": [
+    "file",
+    "directory",
+    "symlink"
+  ],
+  "title": "FileEntryType",
+  "type": "string"
+}

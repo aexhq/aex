@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/NetworkMode.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the guest may reach.",
+  "enum": [
+    "none",
+    "public_internet"
+  ],
+  "title": "NetworkMode",
+  "type": "string"
+}

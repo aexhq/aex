@@ -1,0 +1,10 @@
+{
+  "$id": "https://schemas.aex.dev/v1/FileSource.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where a referenced file lives. Only persisted files may be attached.",
+  "enum": [
+    "persisted"
+  ],
+  "title": "FileSource",
+  "type": "string"
+}

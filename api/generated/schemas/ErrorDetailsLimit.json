@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsLimit.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The effective limit that was exceeded.",
+  "properties": {
+    "effective": {
+      "description": "The effective value at the time of the request.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Which limit.",
+      "type": "string",
+      "x-aex-registry": "limits"
+    },
+    "measured": {
+      "description": "What the request would have required.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "effective",
+    "limit",
+    "measured"
+  ],
+  "title": "ErrorDetailsLimit",
+  "type": "object"
+}

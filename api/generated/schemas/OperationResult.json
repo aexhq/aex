@@ -1,0 +1,41 @@
+{
+  "$id": "https://schemas.aex.dev/v1/OperationResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The typed successful result of a durable operation.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:SessionStopResult",
+      "x-aex-discriminator-value": "session_stop"
+    },
+    {
+      "$ref": "aex:schema:SessionPersistResult",
+      "x-aex-discriminator-value": "session_persist"
+    },
+    {
+      "$ref": "aex:schema:SessionForkResult",
+      "x-aex-discriminator-value": "session_fork"
+    },
+    {
+      "$ref": "aex:schema:WorkspaceDiscardResult",
+      "x-aex-discriminator-value": "workspace_discard"
+    },
+    {
+      "$ref": "aex:schema:SessionTombstone",
+      "x-aex-discriminator-value": "session_delete"
+    },
+    {
+      "$ref": "aex:schema:CredentialRebindResult",
+      "x-aex-discriminator-value": "credential_rebind"
+    },
+    {
+      "$ref": "aex:schema:TelemetryExportResult",
+      "x-aex-discriminator-value": "telemetry_export"
+    },
+    {
+      "$ref": "aex:schema:WorkspaceTombstone",
+      "x-aex-discriminator-value": "workspace_delete"
+    }
+  ],
+  "title": "OperationResult",
+  "x-aex-discriminator": "kind"
+}

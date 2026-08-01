@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LimitSource.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where an effective limit value came from.",
+  "enum": [
+    "default",
+    "workspace_override"
+  ],
+  "title": "LimitSource",
+  "type": "string"
+}

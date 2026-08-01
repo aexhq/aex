@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredFileValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A registered file.",
+  "properties": {
+    "content": {
+      "$ref": "aex:schema:BlobInput",
+      "description": "The bytes."
+    },
+    "mediaType": {
+      "description": "Declared media type.",
+      "maxLength": 255,
+      "minLength": 1,
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "aex:schema:RegisteredFileMode",
+      "description": "POSIX mode."
+    },
+    "mountPath": {
+      "description": "Where it is mounted in the guest.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    }
+  },
+  "required": [
+    "content",
+    "mediaType",
+    "mode",
+    "mountPath"
+  ],
+  "title": "RegisteredFileValue",
+  "type": "object"
+}

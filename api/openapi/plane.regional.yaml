@@ -1,0 +1,23 @@
+# The regional workspace plane.
+#
+# A workspace key is accepted only at its own pinned regional endpoint; a request
+# to any other region fails with `wrong_workspace_region` before resource lookup.
+id: regional
+title: AEX regional workspace API
+server: https://{awsRegion}.api.aex.dev
+serverDescription: The workspace's pinned regional host.
+securityScheme: workspaceApiKey
+fragments:
+  - workspace
+  - sessions
+  - operations
+  - files
+  - registry
+  - uploads
+  - secrets
+  - provider-credentials
+  - approvals
+  - observations
+  - otlp
+  - telemetry-lifecycle
+  - usage

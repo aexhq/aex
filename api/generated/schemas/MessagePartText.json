@@ -1,0 +1,19 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessagePartText.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A text part.",
+  "properties": {
+    "text": {
+      "description": "The text.",
+      "maxLength": 1048576,
+      "minLength": 0,
+      "type": "string"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "MessagePartText",
+  "type": "object"
+}

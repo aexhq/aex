@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionWorkspaceDiscardRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Admit the durable workspace-discard operation.",
+  "properties": {
+    "ifGenerationId": {
+      "description": "Only discard this exact generation.",
+      "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "generation"
+    }
+  },
+  "required": [],
+  "title": "SessionWorkspaceDiscardRequest",
+  "type": "object"
+}

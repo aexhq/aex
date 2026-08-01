@@ -1,0 +1,21 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LimitMapValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A limit whose effective value is a map of named dimensions.",
+  "properties": {
+    "values": {
+      "additionalProperties": {
+        "pattern": "^(0|[1-9]\\d*)$",
+        "type": "string"
+      },
+      "description": "The effective value per dimension.",
+      "type": "object"
+    }
+  },
+  "required": [
+    "values"
+  ],
+  "title": "LimitMapValue",
+  "type": "object"
+}

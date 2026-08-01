@@ -1,0 +1,13 @@
+{
+  "$id": "https://schemas.aex.dev/v1/InvitationStatus.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where an invitation is in its lifecycle.",
+  "enum": [
+    "pending",
+    "accepted",
+    "revoked",
+    "expired"
+  ],
+  "title": "InvitationStatus",
+  "type": "string"
+}

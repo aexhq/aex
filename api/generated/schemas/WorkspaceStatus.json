@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/WorkspaceStatus.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether a workspace admits work.",
+  "enum": [
+    "active",
+    "deleting"
+  ],
+  "title": "WorkspaceStatus",
+  "type": "string"
+}

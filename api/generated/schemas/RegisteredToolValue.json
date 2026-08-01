@@ -1,0 +1,41 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredToolValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A registered custom tool.",
+  "properties": {
+    "bundle": {
+      "$ref": "aex:schema:BlobInput",
+      "description": "The bundle bytes."
+    },
+    "bundleFormat": {
+      "$ref": "aex:schema:BundleFormat",
+      "description": "The bundle format."
+    },
+    "description": {
+      "description": "What the tool does.",
+      "maxLength": 4096,
+      "minLength": 1,
+      "type": "string"
+    },
+    "entry": {
+      "description": "Relative entry path inside the bundle.",
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+    },
+    "inputSchema": {
+      "description": "JSON Schema 2020-12 for the arguments.",
+      "x-aex-canonical-json": true
+    }
+  },
+  "required": [
+    "bundle",
+    "bundleFormat",
+    "description",
+    "entry",
+    "inputSchema"
+  ],
+  "title": "RegisteredToolValue",
+  "type": "object"
+}

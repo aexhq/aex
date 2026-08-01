@@ -1,0 +1,10 @@
+{
+  "$id": "https://schemas.aex.dev/v1/EmptyRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A body that carries no fields; still strict, so an extra member is rejected.",
+  "properties": {},
+  "required": [],
+  "title": "EmptyRequest",
+  "type": "object"
+}

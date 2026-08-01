@@ -1,0 +1,136 @@
+{
+  "ids": [
+    {
+      "description": "An authenticated person.",
+      "kind": "user",
+      "prefix": "usr",
+      "rust": "UserId"
+    },
+    {
+      "description": "The billing and ownership boundary.",
+      "kind": "organization",
+      "prefix": "org",
+      "rust": "OrganizationId"
+    },
+    {
+      "description": "A person's role inside one organization.",
+      "kind": "membership",
+      "prefix": "mem",
+      "rust": "MembershipId"
+    },
+    {
+      "description": "A pending invitation to join an organization.",
+      "kind": "invitation",
+      "prefix": "inv",
+      "rust": "InvitationId"
+    },
+    {
+      "description": "A region-pinned execution and content boundary.",
+      "kind": "workspace",
+      "prefix": "wsp",
+      "rust": "WorkspaceId"
+    },
+    {
+      "description": "Workspace API key metadata; never the secret.",
+      "kind": "api_key",
+      "prefix": "key",
+      "rust": "ApiKeyId"
+    },
+    {
+      "description": "A BYOK provider-credential binding.",
+      "kind": "provider_credential",
+      "prefix": "pcr",
+      "rust": "ProviderCredentialId"
+    },
+    {
+      "description": "A durable conversation and its workspace.",
+      "kind": "session",
+      "prefix": "ses",
+      "rust": "SessionId"
+    },
+    {
+      "description": "One message in a session.",
+      "kind": "message",
+      "prefix": "msg",
+      "rust": "MessageId"
+    },
+    {
+      "description": "One admitted turn of execution.",
+      "kind": "run",
+      "prefix": "run",
+      "rust": "RunId"
+    },
+    {
+      "description": "One agent within a run, root or subagent.",
+      "kind": "agent",
+      "prefix": "agt",
+      "rust": "AgentId"
+    },
+    {
+      "description": "One bound tool invocation.",
+      "kind": "tool_call",
+      "prefix": "tcl",
+      "rust": "ToolCallId"
+    },
+    {
+      "description": "A durable operation record.",
+      "kind": "operation",
+      "prefix": "op",
+      "rust": "OperationId"
+    },
+    {
+      "description": "A pending or resolved tool approval.",
+      "kind": "approval",
+      "prefix": "apr",
+      "rust": "ApprovalId"
+    },
+    {
+      "description": "One exact `MicroVM` generation.",
+      "kind": "generation",
+      "prefix": "gen",
+      "rust": "GenerationId"
+    },
+    {
+      "description": "One admitted telemetry observation.",
+      "kind": "observation",
+      "prefix": "obs",
+      "rust": "ObservationId"
+    },
+    {
+      "description": "One admitted OTLP batch.",
+      "kind": "telemetry_batch",
+      "prefix": "bch",
+      "rust": "TelemetryBatchId"
+    },
+    {
+      "description": "One recorded telemetry gap.",
+      "kind": "telemetry_gap",
+      "prefix": "gap",
+      "rust": "TelemetryGapId"
+    },
+    {
+      "description": "One telemetry export artifact.",
+      "kind": "export",
+      "prefix": "exp",
+      "rust": "ExportId"
+    },
+    {
+      "description": "One staged multipart upload.",
+      "kind": "upload",
+      "prefix": "upl",
+      "rust": "UploadId"
+    },
+    {
+      "description": "One metered download measurement.",
+      "kind": "measurement",
+      "prefix": "msr",
+      "rust": "MeasurementId"
+    },
+    {
+      "description": "One immutable issued billing statement.",
+      "kind": "statement",
+      "prefix": "stm",
+      "rust": "StatementId"
+    }
+  ]
+}

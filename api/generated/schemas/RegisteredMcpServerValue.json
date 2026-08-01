@@ -1,0 +1,33 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredMcpServerValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A registered MCP server. Configuration never contains a secret value.",
+  "properties": {
+    "headers": {
+      "description": "Secret-backed headers.",
+      "items": {
+        "$ref": "aex:schema:McpHeader"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "transport": {
+      "$ref": "aex:schema:McpTransport",
+      "description": "The transport."
+    },
+    "url": {
+      "description": "The server endpoint.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "headers",
+    "transport",
+    "url"
+  ],
+  "title": "RegisteredMcpServerValue",
+  "type": "object"
+}

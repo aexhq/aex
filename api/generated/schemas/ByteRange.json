@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ByteRange.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An explicit inclusive byte range over an immutable object.",
+  "properties": {
+    "endInclusive": {
+      "description": "Last byte, inclusive.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "start": {
+      "description": "First byte, inclusive.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "endInclusive",
+    "start"
+  ],
+  "title": "ByteRange",
+  "type": "object"
+}

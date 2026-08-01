@@ -1,0 +1,78 @@
+{
+  "$id": "https://schemas.aex.dev/v1/Observation.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One admitted observation, in the canonical envelope.",
+  "properties": {
+    "acceptedAt": {
+      "description": "When AEX admitted it.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "body": {
+      "description": "The signal-specific payload.",
+      "x-aex-canonical-json": true
+    },
+    "id": {
+      "description": "Identity.",
+      "pattern": "^obs_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "observation"
+    },
+    "observedAt": {
+      "description": "When the producer says it happened.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "runId": {
+      "description": "The owning run, when attributable.",
+      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "run"
+    },
+    "sequence": {
+      "description": "Position in the ordered series.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "sessionId": {
+      "description": "The owning session, when attributable.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    },
+    "signal": {
+      "$ref": "aex:schema:ObservationSignal",
+      "description": "Which signal it belongs to."
+    },
+    "spanId": {
+      "description": "The W3C span.",
+      "pattern": "^[0-9a-f]{16}$",
+      "type": "string"
+    },
+    "traceId": {
+      "description": "The W3C trace.",
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "workspaceId": {
+      "description": "The owning workspace.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "acceptedAt",
+    "body",
+    "id",
+    "observedAt",
+    "sequence",
+    "signal",
+    "workspaceId"
+  ],
+  "title": "Observation",
+  "type": "object"
+}

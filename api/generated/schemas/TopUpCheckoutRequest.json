@@ -1,0 +1,31 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TopUpCheckoutRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Create a hosted top-up checkout.",
+  "properties": {
+    "amountCents": {
+      "description": "The amount to add, in whole cents.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "cancelUrl": {
+      "description": "Where to return after cancellation.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "successUrl": {
+      "description": "Where to return after success.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "amountCents"
+  ],
+  "title": "TopUpCheckoutRequest",
+  "type": "object"
+}

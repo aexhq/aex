@@ -1,0 +1,204 @@
+# Shapes both planes use.
+module: common
+schemas:
+  EmptyRequest:
+    doc: A body that carries no fields; still strict, so an extra member is rejected.
+    type: object
+    fields: {}
+
+  ApiError:
+    doc: The one error envelope every failing request returns.
+    type: object
+    fields:
+      error: { type: ref, to: ApiErrorBody, doc: "The failure." }
+
+  ApiErrorBody:
+    doc: The failure itself.
+    type: object
+    fields:
+      code: { type: error_code, doc: "The closed v1 error code." }
+      message: { type: string, max: 2048, doc: "A human message; never a provider body." }
+      requestId: { type: string, max: 128, doc: "The diagnostic request identifier." }
+      retryable: { type: boolean, doc: "Whether an identical retry can succeed." }
+      operationId: { type: id, of: operation, optional: true, doc: "The durable operation this failure belongs to." }
+      details: { type: ref, to: ErrorDetails, optional: true, doc: "Typed remediation detail." }
+
+  ErrorDetails:
+    doc: Closed, typed remediation detail; never an untyped bag.
+    type: union
+    tag: type
+    variants:
+      - { value: required_scope, payload: ErrorDetailsRequiredScope, doc: "The scope the credential lacks." }
+      - { value: limit, payload: ErrorDetailsLimit, doc: "The effective limit that was exceeded." }
+      - { value: quota, payload: ErrorDetailsQuota, doc: "The quota dimension that was exhausted." }
+      - { value: region, payload: ErrorDetailsRegion, doc: "The authoritative region for the workspace." }
+      - { value: retry, payload: ErrorDetailsRetry, doc: "How long to wait before retrying." }
+      - { value: operation, payload: ErrorDetailsOperation, doc: "The original operation that already exists." }
+      - { value: validation, payload: ErrorDetailsValidation, doc: "Exactly where the body failed validation." }
+      - { value: gap, payload: ErrorDetailsGap, doc: "The telemetry gaps that blocked completeness." }
+
+  ErrorDetailsRequiredScope:
+    doc: The scope the credential lacks.
+    type: object
+    fields:
+      scope: { type: scope, doc: "The missing scope." }
+
+  ErrorDetailsLimit:
+    doc: The effective limit that was exceeded.
+    type: object
+    fields:
+      limit: { type: limit_id, doc: "Which limit." }
+      effective: { type: decimal, doc: "The effective value at the time of the request." }
+      measured: { type: decimal, doc: "What the request would have required." }
+
+  ErrorDetailsQuota:
+    doc: The quota dimension that was exhausted.
+    type: object
+    fields:
+      dimension: { type: limit_id, doc: "Which quota dimension." }
+      used: { type: decimal, doc: "Already consumed." }
+      attempted: { type: decimal, doc: "What this request would have added." }
+
+  ErrorDetailsRegion:
+    doc: The authoritative placement of the workspace.
+    type: object
+    fields:
+      expected: { type: region, doc: "Where the workspace actually lives." }
+      apiUrl: { type: https_url, doc: "The regional host to reissue against." }
+
+  ErrorDetailsRetry:
+    doc: How long to wait before retrying.
+    type: object
+    fields:
+      retryAfterMs: { type: integer, min: 0, max: 86400000, doc: "Milliseconds to wait." }
+
+  ErrorDetailsOperation:
+    doc: The original operation the replay resolved to.
+    type: object
+    fields:
+      operationId: { type: id, of: operation, doc: "The original operation." }
+
+  ErrorDetailsValidation:
+    doc: Exactly where the body failed validation.
+    type: object
+    fields:
+      pointer: { type: json_pointer, doc: "RFC 6901 pointer to the offending position." }
+      reason: { type: string, max: 512, doc: "Why that position was rejected." }
+
+  ErrorDetailsGap:
+    doc: The telemetry gaps that blocked a completeness requirement.
+    type: object
+    fields:
+      gapIds: { type: array, max: 100, items: { type: id, of: telemetry_gap }, doc: "The blocking gaps." }
+
+  ByteRange:
+    doc: An explicit inclusive byte range over an immutable object.
+    type: object
+    fields:
+      start: { type: decimal, doc: "First byte, inclusive." }
+      endInclusive: { type: decimal, doc: "Last byte, inclusive." }
+
+  DownloadGrant:
+    doc: A short-lived signed grant for exactly one object and range.
+    type: object
+    fields:
+      measurementId: { type: id, of: measurement, doc: "The metered download measurement." }
+      url: { type: https_url, doc: "The signed URL; never printed by the CLI." }
+      expiresAt: { type: timestamp, doc: "When the signature stops verifying." }
+      sha256: { type: content_hash, doc: "The immutable whole-object hash." }
+      sizeBytes: { type: decimal, doc: "The whole object size." }
+      authorizedBytes: { type: decimal, doc: "Bytes this grant authorizes." }
+      range: { type: ref, to: ByteRange, optional: true, doc: "The signed range, when the grant is partial." }
+
+  WorkspaceAccess:
+    doc: What a live read actually did to the session workspace.
+    type: object
+    fields:
+      generationId: { type: id, of: generation, optional: true, doc: "The generation the read observed." }
+      woke: { type: boolean, doc: "Whether the read woke a retained session." }
+      consistency: { type: ref, to: FileConsistency, doc: "The consistency the read achieved." }
+
+  HostedSession:
+    doc: A short-lived hosted provider page.
+    type: object
+    fields:
+      url: { type: https_url, doc: "The hosted page." }
+      expiresAt: { type: timestamp, doc: "When the page stops working." }
+
+  TimeRange:
+    doc: A half-open instant range, `gte` inclusive and `lt` exclusive.
+    type: object
+    fields:
+      gte: { type: timestamp, doc: "Inclusive lower bound." }
+      lt: { type: timestamp, doc: "Exclusive upper bound." }
+
+  OperationKind:
+    doc: Every durable operation the platform admits.
+    type: enum
+    values:
+      - { value: session_stop, doc: "Stop the running turn." }
+      - { value: session_persist, doc: "Persist the live workspace." }
+      - { value: session_fork, doc: "Fork the session." }
+      - { value: workspace_discard, doc: "Discard the live workspace." }
+      - { value: session_delete, doc: "Delete the session." }
+      - { value: credential_rebind, doc: "Rebind session credentials." }
+      - { value: telemetry_export, doc: "Produce a telemetry export artifact." }
+      - { value: workspace_delete, doc: "Delete the workspace across both planes." }
+
+  OperationStatus:
+    doc: Where a durable operation is in its lifecycle.
+    type: enum
+    values:
+      - { value: queued, doc: "Admitted, not started." }
+      - { value: running, doc: "In progress." }
+      - { value: succeeded, doc: "Committed." }
+      - { value: failed, doc: "Terminal failure." }
+      - { value: cancelled, doc: "Cancelled before its commit point." }
+
+  OperationProgress:
+    doc: Coarse progress; never a completion promise.
+    type: object
+    fields:
+      phase: { type: string, max: 64, doc: "The named phase." }
+      completed: { type: decimal, optional: true, doc: "Units done." }
+      total: { type: decimal, optional: true, doc: "Units expected." }
+
+  Operation:
+    doc: A durable operation record.
+    type: object
+    fields:
+      id: { type: id, of: operation, doc: "The operation identity minted by the caller." }
+      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
+      sessionId: { type: id, of: session, optional: true, doc: "The owning session, when there is one." }
+      kind: { type: ref, to: OperationKind, doc: "What the operation does." }
+      status: { type: ref, to: OperationStatus, doc: "Lifecycle position." }
+      progress: { type: ref, to: OperationProgress, optional: true, doc: "Coarse progress." }
+      cancelable: { type: boolean, doc: "Whether cancellation is still possible." }
+      result: { type: ref, to: OperationResult, optional: true, doc: "The typed successful result." }
+      error: { type: ref, to: ApiErrorBody, optional: true, doc: "The terminal failure." }
+      createdAt: { type: timestamp, doc: "When the operation was admitted." }
+      startedAt: { type: timestamp, optional: true, doc: "When work began." }
+      updatedAt: { type: timestamp, doc: "Last change to this record." }
+      committedAt: { type: timestamp, optional: true, doc: "When the effect became durable." }
+      terminalAt: { type: timestamp, optional: true, doc: "When the record reached a terminal status." }
+
+  OperationPage:
+    doc: One page of durable operations.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: Operation }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token; absent on the last page." }
+
+  OperationResult:
+    doc: The typed successful result of a durable operation.
+    type: union
+    tag: kind
+    variants:
+      - { value: session_stop, payload: SessionStopResult, doc: "Stop result." }
+      - { value: session_persist, payload: SessionPersistResult, doc: "Persist result." }
+      - { value: session_fork, payload: SessionForkResult, doc: "Fork result." }
+      - { value: workspace_discard, payload: WorkspaceDiscardResult, doc: "Discard result." }
+      - { value: session_delete, payload: SessionTombstone, doc: "Session tombstone." }
+      - { value: credential_rebind, payload: CredentialRebindResult, doc: "Rebind result." }
+      - { value: telemetry_export, payload: TelemetryExportResult, doc: "Export result." }
+      - { value: workspace_delete, payload: WorkspaceTombstone, doc: "Workspace tombstone." }

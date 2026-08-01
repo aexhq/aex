@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.aex.dev/v1/WorkspaceContinuity.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What survives between runs, and from when.",
+  "properties": {
+    "lastPersistedAt": {
+      "description": "When the workspace was last persisted.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "liveGenerationId": {
+      "description": "The live generation, when one exists.",
+      "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "generation"
+    },
+    "persistRevision": {
+      "description": "Monotonic persist revision.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "rootHash": {
+      "description": "The persisted workspace root.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "persistRevision"
+  ],
+  "title": "WorkspaceContinuity",
+  "type": "object"
+}

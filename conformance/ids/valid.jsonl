@@ -1,0 +1,23 @@
+# AUTHORED. One accepted identifier per registry kind.
+{"kind":"user","text":"usr_01kyw2qa4ne00r40r40m30e209"}
+{"kind":"organization","text":"org_01kyw2qa4pew48j2gb1g6gw3rg"}
+{"kind":"membership","text":"mem_01kyw2qa4qfr7s048j2ca1a5gq"}
+{"kind":"invitation","text":"inv_01kyw2qa4remb9e60s38dhr78y"}
+{"kind":"workspace","text":"wsp_01kyw2qa4sfgesw7s044h26915"}
+{"kind":"api_key","text":"key_01kyw2qa4tecjaa9h750mjmasc"}
+{"kind":"provider_credential","text":"pcr_01kyw2qa4vf8ntrb9e5wr32chk"}
+{"kind":"session","text":"ses_01kyw2qa4we4sb6d1n6rvkge9t"}
+{"kind":"message","text":"msg_01kyw2qa4xf0wvmesw7mz3yg21"}
+{"kind":"run","text":"run_01kyw2qa4yfx082gj38h2mcht8"}
+{"kind":"agent","text":"agt_01kyw2qa4zes3rgjaa9d64tkjf"}
+{"kind":"tool_call","text":"tcl_01kyw2qa50fn78ym2ha99n8nap"}
+{"kind":"operation","text":"op_01kyw2qa51ehascntrb5d5pq2x"}
+{"kind":"approval","text":"apr_01kyw2qa52fde9tqjzc1gp4rv4"}
+{"kind":"generation","text":"gen_01kyw2qa53e9ht8sb6cxm6jtkb"}
+{"kind":"observation","text":"obs_01kyw2qa54f5napv3ddsqq0wbj"}
+{"kind":"telemetry_batch","text":"bch_01kyw2qa55e1rv4wvmenv7ey3s"}
+{"kind":"telemetry_gap","text":"gap_01kyw2qa56exwbjykvfhyqwzw0"}
+{"kind":"export","text":"exp_01kyw2qa57fszr10c2ge28b1m7"}
+{"kind":"upload","text":"upl_01kyw2qa58ep38f249ha5rs3ce"}
+{"kind":"measurement","text":"msr_01kyw2qa59fj6rx3wgj699754n"}
+{"kind":"statement","text":"stm_01kyw2qa5aeea9b5mqk2csn6ww"}
