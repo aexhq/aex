@@ -271,11 +271,19 @@ pub enum SessionCommand {
     Persist {
         session: String,
     },
-    Fork {
+    Clone {
         session: String,
     },
-    Delete {
+    Trash {
         session: String,
+    },
+    Restore {
+        session: String,
+    },
+    Purge {
+        session: String,
+        #[arg(long)]
+        confirm: String,
     },
     Discard {
         session: String,

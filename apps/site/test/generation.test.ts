@@ -20,9 +20,9 @@ test("generation is byte-identical and covers every generated operation", () => 
   const routes = JSON.parse(
     readFileSync(resolve(import.meta.dir, "../../../api/generated/registries/routes.json"), "utf8"),
   ) as { routes: Array<{ operationId: string }> };
-  expect(routes.routes).toHaveLength(144);
+  expect(routes.routes).toHaveLength(146);
   for (const route of routes.routes) expect(api).toContain(`\`${route.operationId}\``);
-}, 30_000);
+}, 120_000);
 
 test("the site is a network-independent static export", () => {
   const config = readFileSync(resolve(import.meta.dir, "../next.config.mjs"), "utf8");

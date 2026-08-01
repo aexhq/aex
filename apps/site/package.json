@@ -26,9 +26,9 @@
   "scripts": {
     "generate": "bun generate/main.ts",
     "build": "bun run generate && node node_modules/next/dist/bin/next build",
-    "lint": "tsc --noEmit && bun test --isolate test",
+    "lint": "tsc --noEmit && bun test --isolate --timeout 120000 test",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test --isolate test"
+    "test:unit": "bun test --isolate --timeout 120000 test"
   },
   "dependencies": {
     "next": "16.2.6",

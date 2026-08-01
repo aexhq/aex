@@ -23,7 +23,7 @@ status: implemented-with-deferrals
   planning, and deterministic completions for Bash, Zsh, Fish, PowerShell, and
   Elvish.
 - Added `apps/site` as a Next 16 static export. Its deterministic generator
-  covers all 144 operations in the current route registry and writes only to
+  covers all 146 operations in the current route registry and writes only to
   the gitignored `.generated/` tree. The site build does not call a product API.
 - Added a stateless Next 16 dashboard core. It has no database, AWS SDK, storage
   adapter, provider-token retention, or durable credential. The implemented BFF
