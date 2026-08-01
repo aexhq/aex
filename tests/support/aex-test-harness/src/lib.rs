@@ -51,7 +51,11 @@ pub use containers::{
 };
 pub use fault::{Clock, FaultError, Proxy, ScriptedClock, ScriptedPort, Toxic};
 pub use images::{ImageError, ImageRef, image};
-pub use ledger::{CleanupLedger, Entry, LedgerError, ResourceKind, Terminal, TestCaseId};
+pub use ledger::{
+    CleanupLedger, Discovery, Entry, JanitorPolicy, LedgerError, Naming, ReclaimError,
+    ReclaimSummary, Reclaimer, ReleaseError, ResourceKind, ResourcePolicy, Terminal, TestCaseId,
+    janitor_policy, residue_reports_during_panic,
+};
 pub use run::{Lane, TestRun, TestRunId, Ttl};
 
 /// The policy document that pins the closed value sets and the per-lane TTLs.
