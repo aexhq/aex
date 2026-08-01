@@ -21,12 +21,16 @@
 //! the authority and the query engine, and its `KEYS_ONLY` stream is the only
 //! wake `regional-stream` consumes.
 
+pub mod composition;
 pub mod expressions;
+pub mod health;
 pub mod segments;
 pub mod spool;
 pub mod store;
 
+pub use composition::{Capability, CapabilityViolation, Role, assert_grant};
 pub use expressions::{DENSE_INDEX_PROJECTION, ExpressionBuilder, Index, is_safe_expression};
+pub use health::{HEALTHZ, Probe, READYZ, Readiness, readiness};
 pub use segments::{Segment, SegmentDirectory};
 pub use spool::{GateEvidence, GateState, Pending, SpoolChunk};
 pub use store::{AdmissionPlan, StagedRecord, StoreError, TransactionEnvelope};

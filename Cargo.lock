@@ -576,6 +576,7 @@ name = "aex-observation-application"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
+ "aex-wire",
  "async-trait",
  "futures",
  "serde",

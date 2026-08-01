@@ -17,3 +17,7 @@
 pub mod checkpoint;
 pub mod encoder;
 pub mod manifest;
+
+pub use checkpoint::{ExportCheckpoint, PartRecord, Publication, PublishFence, ResumeError};
+pub use encoder::{EncodeError, Format, GzipPins, MemberEncoder, NdjsonEncoder, ZipPins};
+pub use manifest::{Completeness, ExportManifest, ExportMember, ManifestError};
