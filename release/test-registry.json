@@ -5,10 +5,10 @@
     "migrations": "absent",
     "nextest_list": "absent",
     "routes_registry": "present",
-    "scenario_ownership": "absent"
+    "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 129,
+    "awaiting_owner": 128,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -4067,22 +4067,33 @@
         ],
         "concerns": [
           "contract",
-          "property"
+          "property",
+          "security"
         ],
         "seams": [],
-        "security_tier": "diagnostic",
+        "security_tier": "internal",
         "risk": [
-          "none"
+          "generated_code"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "artifacts": "unit",
+          "evidence": "unit",
+          "failing_fixtures": "unit",
+          "graph": "unit",
+          "migration": "unit",
+          "monotonicity": "unit",
+          "policy": "unit",
+          "private_path": "unit",
+          "schemas": "unit",
+          "selection": "unit"
+        },
         "not_applicable": {
-          "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane",
-          "targets": "awaiting the delivery stream; the cases land with the tool's own implementation"
+          "live_suite": "workspace tool; it observes releases and is never itself deployed"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tools/aex-workspace-check": {
       "name": "aex-workspace-check",

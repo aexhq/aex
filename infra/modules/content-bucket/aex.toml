@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["iam"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "The bucket policy denials are proven by the aws.s3.conditional_put and aws.s3.unversioned_delete seams owned by the content deployable's live suite."

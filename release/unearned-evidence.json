@@ -806,13 +806,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tools/aex-release-tool",
-    "owner": "delivery",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the delivery stream; the cases land with the tool's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tools/eslint-plugin-aex",
     "owner": "delivery",
     "blocking_rule": "aex-empty-unit",
@@ -942,13 +935,6 @@
     "subject": "migrations/central/*.sql",
     "owner": "central-finance",
     "blocking_rule": "aex-migration-uncovered",
-    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
-  },
-  {
-    "reason_class": "pending_authority",
-    "subject": "release/scenario-ownership.toml",
-    "owner": "delivery",
-    "blocking_rule": "aex-scenario-orphan",
     "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
   },
   {
