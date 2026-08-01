@@ -24,19 +24,13 @@ risk = ["concurrency"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the hands stream; the cases land with the crate's own implementation"
+targets = "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
-async-trait.workspace = true
-aws-config.workspace = true
-aws-sdk-dynamodb.workspace = true
-aws-sdk-sqs.workspace = true
-aws-smithy-types.workspace = true
-futures.workspace = true
+aex-hands-control-aws = { path = "../aex-hands-control-aws" }
+aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-runtime-control = { path = "../aex-runtime-control" }
+aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-time.workspace = true
-uuid.workspace = true
-aex-runtime-activity-dynamodb = { path = "../aex-runtime-activity-dynamodb" }
-aex-runtime-control = { path = "../aex-runtime-control" }

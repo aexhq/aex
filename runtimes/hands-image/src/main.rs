@@ -7,6 +7,8 @@
 //! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
 //! itself lives in the library crates this deployable composes.
 
+pub mod image;
+
 /// Validated start-up configuration for `hands-image`.
 ///
 /// Nothing here has a default. A variable that identifies a resource must be
