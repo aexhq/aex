@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionForkResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The result of a fork operation.",
+  "properties": {
+    "session": {
+      "$ref": "aex:schema:Session",
+      "description": "The new session."
+    }
+  },
+  "required": [
+    "session"
+  ],
+  "title": "SessionForkResult",
+  "type": "object"
+}

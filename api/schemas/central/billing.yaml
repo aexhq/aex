@@ -1,0 +1,96 @@
+# Prepaid balance, top-up policy and immutable issued statements.
+#
+# Every money field on the wire is a canonical decimal integer string of whole
+# cents. No amount crosses this boundary as a floating-point number.
+module: central
+schemas:
+  BillingBalance:
+    doc: The prepaid balance of one organization.
+    type: object
+    fields:
+      organizationId: { type: id, of: organization, doc: "The organization." }
+      currency: { type: ref, to: Currency, doc: "Always USD." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic balance revision." }
+      availableCents: { type: cents, doc: "Spendable now." }
+      reservedCents: { type: cents, doc: "Held against admitted work." }
+      pendingCents: { type: cents, doc: "Recorded but not yet settled." }
+      operationalState: { type: ref, to: AccountOperationalState, doc: "What the balance implies." }
+      updatedAt: { type: timestamp, doc: "When the balance last changed." }
+
+  Currency:
+    doc: The only supported currency.
+    type: enum
+    values:
+      - { value: USD, doc: "United States dollar." }
+
+  TopUpCheckoutRequest:
+    doc: Create a hosted top-up checkout.
+    type: object
+    fields:
+      amountCents: { type: cents, doc: "The amount to add, in whole cents." }
+      successUrl: { type: https_url, optional: true, doc: "Where to return after success." }
+      cancelUrl: { type: https_url, optional: true, doc: "Where to return after cancellation." }
+
+  PortalSessionRequest:
+    doc: Create a hosted billing portal session.
+    type: object
+    fields:
+      returnUrl: { type: https_url, optional: true, doc: "Where to return when the user is done." }
+
+  AutoTopupPolicy:
+    doc: The complete automatic top-up policy.
+    type: object
+    fields:
+      organizationId: { type: id, of: organization, doc: "The organization." }
+      enabled: { type: boolean, doc: "Whether automatic top-up runs." }
+      thresholdCents: { type: cents, doc: "Balance at or below which a top-up is attempted." }
+      amountCents: { type: cents, doc: "How much each automatic top-up adds." }
+      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic policy revision." }
+      updatedAt: { type: timestamp, doc: "When the policy last changed." }
+
+  AutoTopupPolicyRequest:
+    doc: Replace the automatic top-up policy; every field is required.
+    type: object
+    fields:
+      enabled: { type: boolean, doc: "Whether automatic top-up runs." }
+      thresholdCents: { type: cents, doc: "Balance at or below which a top-up is attempted." }
+      amountCents: { type: cents, doc: "How much each automatic top-up adds." }
+
+  StatementSummary:
+    doc: The header of one immutable issued statement.
+    type: object
+    fields:
+      id: { type: id, of: statement, doc: "Identity." }
+      organizationId: { type: id, of: organization, doc: "The organization." }
+      period: { type: ref, to: TimeRange, doc: "The billed period." }
+      currency: { type: ref, to: Currency, doc: "Always USD." }
+      totalCents: { type: cents, doc: "The issued total." }
+      artifactHash: { type: content_hash, doc: "Hash of the issued artifact." }
+      issuedAt: { type: timestamp, doc: "When it was issued." }
+
+  StatementSummaryPage:
+    doc: One page of statement headers, newest first.
+    type: object
+    fields:
+      items: { type: array, max: 1000, items: { type: ref, to: StatementSummary }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+
+  StatementLine:
+    doc: One priced category line. Lines sum exactly to the statement total.
+    type: object
+    fields:
+      category: { type: ref, to: UsageCategory, doc: "The priced category." }
+      totalCents: { type: cents, doc: "The line total." }
+
+  Statement:
+    doc: One immutable issued statement. The platform never rerenders history.
+    type: object
+    fields:
+      id: { type: id, of: statement, doc: "Identity." }
+      organizationId: { type: id, of: organization, doc: "The organization." }
+      period: { type: ref, to: TimeRange, doc: "The billed period." }
+      currency: { type: ref, to: Currency, doc: "Always USD." }
+      totalCents: { type: cents, doc: "The issued total." }
+      artifactHash: { type: content_hash, doc: "Hash of the issued artifact." }
+      issuedAt: { type: timestamp, doc: "When it was issued." }
+      lines: { type: array, max: 64, items: { type: ref, to: StatementLine }, doc: "The priced lines." }

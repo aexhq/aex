@@ -1,0 +1,68 @@
+# The retained TypeScript lane.
+#
+# The SDK's conformance corpus runs on Node and on Bun, because "it works on
+# our runtime" is not the claim the package makes. The packed tarball is
+# installed outside the workspace, so a missing file or a stray workspace
+# specifier fails here rather than at a customer.
+
+name: node-lane
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: "1.3.14"
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Lint and typecheck
+        run: |
+          set -euo pipefail
+          bun run lint
+          bun run typecheck
+
+      - name: Unit tests
+        run: bun run test:unit
+
+      - name: Packed clean install
+        run: |
+          set -euo pipefail
+          bun pm pack --filter @aexhq/sdk --destination "$RUNNER_TEMP/pack"
+          cd "$RUNNER_TEMP"
+          mkdir -p consumer && cd consumer
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$RUNNER_TEMP"/pack/*.tgz
+          node --input-type=module -e "import('@aexhq/sdk').then(m => { if (!m) process.exit(1); })"
+
+      - name: Upload the JUnit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: junit-${{ inputs.lane }}-node
+          path: reports/junit.xml
+          if-no-files-found: error

@@ -1,0 +1,18 @@
+# The bootstrap and control plane.
+#
+# `fragments` is an explicit ordered list. Directory order is never used, so
+# adding a file cannot silently change the generated bundle.
+id: central
+title: AEX bootstrap and control API
+server: https://api.aex.dev
+serverDescription: The single bootstrap host; it is not regional.
+securityScheme: accountToken
+fragments:
+  - identity
+  - auth
+  - bootstrap
+  - organizations
+  - workspaces
+  - api-keys
+  - billing
+  - operations

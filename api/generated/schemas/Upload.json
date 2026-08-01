@@ -1,0 +1,70 @@
+{
+  "$id": "https://schemas.aex.dev/v1/Upload.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One staged multipart upload. Uploads are transport plumbing, not assets.",
+  "properties": {
+    "contentType": {
+      "description": "The declared media type.",
+      "maxLength": 255,
+      "minLength": 1,
+      "type": "string"
+    },
+    "createdAt": {
+      "description": "When staging began.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "expiresAt": {
+      "description": "When the orphan grace expires.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "id": {
+      "description": "Identity.",
+      "pattern": "^upl_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "upload"
+    },
+    "partCount": {
+      "description": "How many parts the object needs.",
+      "maximum": 10000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "partSizeBytes": {
+      "description": "The required part size.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "sha256": {
+      "description": "The declared whole-object hash.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "The declared object size.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "aex:schema:UploadState",
+      "description": "Lifecycle position."
+    }
+  },
+  "required": [
+    "contentType",
+    "createdAt",
+    "expiresAt",
+    "id",
+    "partCount",
+    "partSizeBytes",
+    "sha256",
+    "sizeBytes",
+    "state"
+  ],
+  "title": "Upload",
+  "type": "object"
+}

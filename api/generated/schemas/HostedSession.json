@@ -1,0 +1,26 @@
+{
+  "$id": "https://schemas.aex.dev/v1/HostedSession.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A short-lived hosted provider page.",
+  "properties": {
+    "expiresAt": {
+      "description": "When the page stops working.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "url": {
+      "description": "The hosted page.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "expiresAt",
+    "url"
+  ],
+  "title": "HostedSession",
+  "type": "object"
+}

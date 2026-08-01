@@ -1,0 +1,9 @@
+{
+  "additiveResponseFields": [],
+  "openEnums": [
+    "ErrorCodeValue",
+    "ObservationFrame"
+  ],
+  "requestUnknownFields": "reject",
+  "unknownFramePolicy": "surface"
+}

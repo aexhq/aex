@@ -1,0 +1,27 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessageSendRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Admit a message and start or queue its run.",
+  "properties": {
+    "content": {
+      "description": "The parts.",
+      "items": {
+        "$ref": "aex:schema:MessagePart"
+      },
+      "maxItems": 256,
+      "type": "array"
+    },
+    "maxSpendCents": {
+      "description": "Spend ceiling for the resulting run.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    }
+  },
+  "required": [
+    "content"
+  ],
+  "title": "MessageSendRequest",
+  "type": "object"
+}

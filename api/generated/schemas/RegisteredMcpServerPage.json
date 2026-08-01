@@ -1,0 +1,27 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredMcpServerPage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One page of registered MCP servers.",
+  "properties": {
+    "items": {
+      "description": "The page.",
+      "items": {
+        "$ref": "aex:schema:RegisteredMcpServer"
+      },
+      "maxItems": 1000,
+      "type": "array"
+    },
+    "nextCursor": {
+      "description": "Continuation token.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-cursor": true
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "RegisteredMcpServerPage",
+  "type": "object"
+}

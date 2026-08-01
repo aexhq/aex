@@ -1,0 +1,138 @@
+# The change router.
+#
+# It runs once and every lane reads its outputs, so module count drives matrix
+# size rather than job count.
+#
+# The router never guesses. `graph select` refuses to compute a selection from
+# no change information at all (exit 11), and this job publishes a routing
+# receipt either way. An empty selection and a broken router are different
+# results and must never look the same downstream.
+
+name: route
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: affected | full | shadow
+        type: string
+        required: true
+      lane:
+        description: pr | main | assurance | release
+        type: string
+        required: true
+      base_sha:
+        type: string
+        required: true
+      head_sha:
+        type: string
+        required: true
+      partitions:
+        type: number
+        required: false
+        default: 4
+    outputs:
+      routing_failed:
+        value: ${{ jobs.route.outputs.routing_failed }}
+      repo_wide:
+        value: ${{ jobs.route.outputs.repo_wide }}
+      test_matrix:
+        value: ${{ jobs.route.outputs.test_matrix }}
+      has_test:
+        value: ${{ jobs.route.outputs.has_test }}
+      artifact_matrix:
+        value: ${{ jobs.route.outputs.artifact_matrix }}
+      has_artifact:
+        value: ${{ jobs.route.outputs.has_artifact }}
+      terraform_matrix:
+        value: ${{ jobs.route.outputs.terraform_matrix }}
+      has_terraform:
+        value: ${{ jobs.route.outputs.has_terraform }}
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: Route affected units
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      routing_failed: ${{ steps.test.outputs.routing_failed }}
+      repo_wide: ${{ steps.test.outputs.repo_wide }}
+      test_matrix: ${{ steps.test.outputs.matrix }}
+      has_test: ${{ steps.test.outputs.has_entries }}
+      artifact_matrix: ${{ steps.artifact.outputs.matrix }}
+      has_artifact: ${{ steps.artifact.outputs.has_entries }}
+      terraform_matrix: ${{ steps.terraform.outputs.matrix }}
+      has_terraform: ${{ steps.terraform.outputs.has_entries }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: false
+          shared-key: router
+
+      - name: Build the release tool
+        run: cargo build --locked --release -p aex-release-tool
+
+      - name: Verify the delivery graph
+        run: ./target/release/aex-release-tool graph verify
+
+      - name: Select
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph select \
+            --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
+            --mode "${{ inputs.mode }}" --lane "${{ inputs.lane }}" \
+            --out selection.json --quiet
+
+      - name: Test matrix
+        id: test
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph matrix \
+            --selection selection.json --kind test \
+            --partitions "${{ inputs.partitions }}" \
+            --github-output "$GITHUB_OUTPUT" --quiet
+
+      - name: Artifact matrix
+        id: artifact
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph matrix \
+            --selection selection.json --kind artifact \
+            --github-output "$GITHUB_OUTPUT" --quiet
+
+      - name: Terraform matrix
+        id: terraform
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph matrix \
+            --selection selection.json --kind terraform \
+            --github-output "$GITHUB_OUTPUT" --quiet
+
+      - name: Summarize the routing decision
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph diff \
+            --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
+            --format markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the selection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: selection-${{ inputs.lane }}
+          path: selection.json
+          if-no-files-found: error

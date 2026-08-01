@@ -1,0 +1,94 @@
+# Lane class 2 — protected main build and publication.
+#
+# Publication is not deployment. This lane mints immutable bytes and a complete
+# composition manifest; nothing is applied to any plane. A failed build is
+# fixed forward with a new commit and a new artifact, and an identity is never
+# overwritten or reused.
+#
+# Concurrency does not cancel: a cancelled publish leaves a partially minted
+# release nobody recorded.
+
+name: main
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: main-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: Route
+    uses: ./.github/workflows/_route.yml
+    with:
+      mode: affected
+      lane: main
+      base_sha: ${{ github.event.before }}
+      head_sha: ${{ github.sha }}
+      partitions: 8
+
+  verify:
+    name: Verify
+    needs: route
+    if: needs.route.outputs.has_test == 'true'
+    uses: ./.github/workflows/_rust-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.test_matrix }}
+      lane: main
+      cache_mode: restore-save
+
+  node:
+    name: TypeScript
+    needs: route
+    uses: ./.github/workflows/_node-lane.yml
+    with:
+      lane: main
+
+  build:
+    name: Build and publish
+    needs: [route, verify]
+    if: needs.route.outputs.has_artifact == 'true'
+    uses: ./.github/workflows/_build-artifacts.yml
+    with:
+      matrix: ${{ needs.route.outputs.artifact_matrix }}
+      lane: main
+      publish: true
+
+  manifest:
+    name: Manifest
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Compose
+        run: |
+          set -euo pipefail
+          echo "A new complete manifest carries forward the last main manifest with"
+          echo "only the changed unit digests replaced. The release object store"
+          echo "that holds the previous manifest does not exist yet."
+          exit 40
+
+  receipts:
+    name: Checks
+    needs: [route, verify, node, build, manifest]
+    if: always()
+    uses: ./.github/workflows/_receipts.yml
+    with:
+      lane: main
+      declared_jobs: '["route","verify","node","build","manifest"]'

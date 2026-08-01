@@ -1,0 +1,33 @@
+# The authorization scope registry.
+#
+# The set is derived mechanically from the route table: a scope this file lacks
+# is a route change, not a registry change.
+scopes:
+  - { scope: "account:read", doc: "Read the caller's account and operational state." }
+  - { scope: "organizations:read", doc: "List and read organizations the caller belongs to." }
+  - { scope: "organizations:write", doc: "Create organizations." }
+  - { scope: "memberships:read", doc: "List memberships of an organization." }
+  - { scope: "memberships:write", doc: "Invite people to an organization." }
+  - { scope: "workspaces:read", doc: "List and read workspaces." }
+  - { scope: "workspaces:write", doc: "Create workspaces." }
+  - { scope: "workspaces:delete", doc: "Admit the global workspace-deletion operation." }
+  - { scope: "api_keys:read", doc: "List workspace API key metadata." }
+  - { scope: "api_keys:write", doc: "Mint and revoke workspace API keys." }
+  - { scope: "billing:read", doc: "Read balances, statements and usage." }
+  - { scope: "billing:write", doc: "Create checkouts, portal sessions and top-up policy." }
+  - { scope: "operations:read", doc: "Read durable operation records." }
+  - { scope: "operations:write", doc: "Request cancellation of a durable operation." }
+  - { scope: "workspace:read", doc: "Read the current workspace and its effective limits." }
+  - { scope: "sessions:read", doc: "Read sessions, messages, runs and approvals." }
+  - { scope: "sessions:write", doc: "Create sessions, send messages, and admit session operations." }
+  - { scope: "sessions:delete", doc: "Admit the durable session-deletion operation." }
+  - { scope: "files:read", doc: "Read persisted session files and mint their download grants." }
+  - { scope: "files:write", doc: "Admit the persist operation." }
+  - { scope: "files:live", doc: "Read live workspace files, which may wake a retained session." }
+  - { scope: "resources:read", doc: "Read registered files, skills, tools, instructions and MCP servers." }
+  - { scope: "resources:write", doc: "Replace and delete registered resources and stage uploads." }
+  - { scope: "secrets:read", doc: "Read secret metadata; values are never readable." }
+  - { scope: "secrets:write", doc: "Set and delete secrets and register provider credentials." }
+  - { scope: "secrets:revoke", doc: "Revoke a secret, cancelling current custody." }
+  - { scope: "telemetry:read", doc: "Query observations, gaps and exports." }
+  - { scope: "telemetry:write", doc: "Admit customer OTLP batches." }

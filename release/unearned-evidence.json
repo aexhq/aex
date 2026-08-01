@@ -169,13 +169,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-hands-protocol",
-    "owner": "contracts",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-hands-tools",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
@@ -201,13 +194,6 @@
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-internal-contracts",
-    "owner": "contracts",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -271,13 +257,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-payment-contracts",
-    "owner": "contracts",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -425,13 +404,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-wire",
-    "owner": "contracts",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the contracts stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -834,20 +806,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tools/aex-contract-gen",
-    "owner": "contracts",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the contracts stream; the cases land with the tool's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tools/aex-release-tool",
-    "owner": "delivery",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the delivery stream; the cases land with the tool's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tools/eslint-plugin-aex",
     "owner": "delivery",
     "blocking_rule": "aex-empty-unit",
@@ -967,13 +925,6 @@
   },
   {
     "reason_class": "pending_authority",
-    "subject": "api/generated/registries/routes.json",
-    "owner": "contracts",
-    "blocking_rule": "aex-route-uncovered",
-    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
-  },
-  {
-    "reason_class": "pending_authority",
     "subject": "cargo nextest list --message-format json",
     "owner": "test-architecture",
     "blocking_rule": "aex-empty-unit",
@@ -984,13 +935,6 @@
     "subject": "migrations/central/*.sql",
     "owner": "central-finance",
     "blocking_rule": "aex-migration-uncovered",
-    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
-  },
-  {
-    "reason_class": "pending_authority",
-    "subject": "release/scenario-ownership.toml",
-    "owner": "delivery",
-    "blocking_rule": "aex-scenario-orphan",
     "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
   },
   {

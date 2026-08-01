@@ -1,0 +1,23 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageMemoryAggregate.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Byte-milliseconds of guest memory.",
+  "properties": {
+    "attribution": {
+      "$ref": "aex:schema:UsageAttribution",
+      "description": "What it is attributed to."
+    },
+    "byteMilliseconds": {
+      "description": "Byte-milliseconds.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attribution",
+    "byteMilliseconds"
+  ],
+  "title": "UsageMemoryAggregate",
+  "type": "object"
+}

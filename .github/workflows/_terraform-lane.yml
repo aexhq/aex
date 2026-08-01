@@ -1,0 +1,76 @@
+# The infrastructure lane.
+#
+# `mode: static` needs no credential at all: `terraform test` runs against
+# `mock_provider`, and the source policy scan is pure text. A fork's pull
+# request gets exactly that. `mode: speculative-plan` adds a read-only plan
+# role and is available only to a same-repository branch.
+
+name: terraform-lane
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+      mode:
+        description: static | speculative-plan
+        type: string
+        required: true
+      lane:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
+        with:
+          terraform_version: "1.14.0"
+          terraform_wrapper: false
+
+      - name: Provider plugin cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: tf-${{ runner.os }}-${{ hashFiles('infra/**/.terraform.lock.hcl') }}
+
+      - name: Format
+        run: terraform fmt -check -recursive infra/
+
+      - name: Validate
+        working-directory: infra/${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Test against mocked providers
+        working-directory: infra/${{ matrix.name }}
+        run: terraform test
+
+      - name: Source policy
+        run: cargo run --locked --release -p aex-release-tool -- policy terraform
+
+      - name: Speculative plan
+        if: inputs.mode == 'speculative-plan'
+        run: |
+          set -euo pipefail
+          echo "A speculative plan needs the read-only plan role, which the"
+          echo "cut-readiness review has not created. The lane is wired and"
+          echo "refuses rather than pretending to have planned."
+          exit 1

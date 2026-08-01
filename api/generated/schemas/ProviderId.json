@@ -1,0 +1,15 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ProviderId.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The six direct BYOK providers. There is no gateway and no arbitrary base URL.",
+  "enum": [
+    "openai",
+    "anthropic",
+    "deepseek",
+    "zai",
+    "moonshotai",
+    "google"
+  ],
+  "title": "ProviderId",
+  "type": "string"
+}

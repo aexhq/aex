@@ -1,0 +1,42 @@
+{
+  "$id": "https://schemas.aex.dev/v1/EffectiveWorkspaceLimit.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One effective workspace safety limit. There is no public mutation route.",
+  "properties": {
+    "changedAt": {
+      "description": "When the value last changed.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "effectiveValue": {
+      "$ref": "aex:schema:LimitValue",
+      "description": "The value in force."
+    },
+    "id": {
+      "description": "Which limit.",
+      "type": "string",
+      "x-aex-registry": "limits"
+    },
+    "revision": {
+      "description": "Monotonic concurrency token.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "aex:schema:LimitSource",
+      "description": "Where the value came from."
+    }
+  },
+  "required": [
+    "changedAt",
+    "effectiveValue",
+    "id",
+    "revision",
+    "source"
+  ],
+  "title": "EffectiveWorkspaceLimit",
+  "type": "object"
+}

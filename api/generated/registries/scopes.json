@@ -1,0 +1,116 @@
+{
+  "scopes": [
+    {
+      "description": "Read the caller's account and operational state.",
+      "scope": "account:read"
+    },
+    {
+      "description": "List and read organizations the caller belongs to.",
+      "scope": "organizations:read"
+    },
+    {
+      "description": "Create organizations.",
+      "scope": "organizations:write"
+    },
+    {
+      "description": "List memberships of an organization.",
+      "scope": "memberships:read"
+    },
+    {
+      "description": "Invite people to an organization.",
+      "scope": "memberships:write"
+    },
+    {
+      "description": "List and read workspaces.",
+      "scope": "workspaces:read"
+    },
+    {
+      "description": "Create workspaces.",
+      "scope": "workspaces:write"
+    },
+    {
+      "description": "Admit the global workspace-deletion operation.",
+      "scope": "workspaces:delete"
+    },
+    {
+      "description": "List workspace API key metadata.",
+      "scope": "api_keys:read"
+    },
+    {
+      "description": "Mint and revoke workspace API keys.",
+      "scope": "api_keys:write"
+    },
+    {
+      "description": "Read balances, statements and usage.",
+      "scope": "billing:read"
+    },
+    {
+      "description": "Create checkouts, portal sessions and top-up policy.",
+      "scope": "billing:write"
+    },
+    {
+      "description": "Read durable operation records.",
+      "scope": "operations:read"
+    },
+    {
+      "description": "Request cancellation of a durable operation.",
+      "scope": "operations:write"
+    },
+    {
+      "description": "Read the current workspace and its effective limits.",
+      "scope": "workspace:read"
+    },
+    {
+      "description": "Read sessions, messages, runs and approvals.",
+      "scope": "sessions:read"
+    },
+    {
+      "description": "Create sessions, send messages, and admit session operations.",
+      "scope": "sessions:write"
+    },
+    {
+      "description": "Admit the durable session-deletion operation.",
+      "scope": "sessions:delete"
+    },
+    {
+      "description": "Read persisted session files and mint their download grants.",
+      "scope": "files:read"
+    },
+    {
+      "description": "Admit the persist operation.",
+      "scope": "files:write"
+    },
+    {
+      "description": "Read live workspace files, which may wake a retained session.",
+      "scope": "files:live"
+    },
+    {
+      "description": "Read registered files, skills, tools, instructions and MCP servers.",
+      "scope": "resources:read"
+    },
+    {
+      "description": "Replace and delete registered resources and stage uploads.",
+      "scope": "resources:write"
+    },
+    {
+      "description": "Read secret metadata; values are never readable.",
+      "scope": "secrets:read"
+    },
+    {
+      "description": "Set and delete secrets and register provider credentials.",
+      "scope": "secrets:write"
+    },
+    {
+      "description": "Revoke a secret, cancelling current custody.",
+      "scope": "secrets:revoke"
+    },
+    {
+      "description": "Query observations, gaps and exports.",
+      "scope": "telemetry:read"
+    },
+    {
+      "description": "Admit customer OTLP batches.",
+      "scope": "telemetry:write"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsRetry.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "How long to wait before retrying.",
+  "properties": {
+    "retryAfterMs": {
+      "description": "Milliseconds to wait.",
+      "maximum": 86400000,
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "retryAfterMs"
+  ],
+  "title": "ErrorDetailsRetry",
+  "type": "object"
+}

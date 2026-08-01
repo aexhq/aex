@@ -1,0 +1,27 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TelemetryExportRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Admit a durable telemetry-export operation.",
+  "properties": {
+    "completeness": {
+      "$ref": "aex:schema:ExportCompleteness",
+      "description": "What to do about recorded gaps."
+    },
+    "format": {
+      "$ref": "aex:schema:ExportFormat",
+      "description": "The artifact format."
+    },
+    "query": {
+      "$ref": "aex:schema:ObservationQuery",
+      "description": "What to export."
+    }
+  },
+  "required": [
+    "completeness",
+    "format",
+    "query"
+  ],
+  "title": "TelemetryExportRequest",
+  "type": "object"
+}

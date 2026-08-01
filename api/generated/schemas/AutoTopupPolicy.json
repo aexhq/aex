@@ -1,0 +1,52 @@
+{
+  "$id": "https://schemas.aex.dev/v1/AutoTopupPolicy.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The complete automatic top-up policy.",
+  "properties": {
+    "amountCents": {
+      "description": "How much each automatic top-up adds.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "enabled": {
+      "description": "Whether automatic top-up runs.",
+      "type": "boolean"
+    },
+    "organizationId": {
+      "description": "The organization.",
+      "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "organization"
+    },
+    "revision": {
+      "description": "Monotonic policy revision.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "thresholdCents": {
+      "description": "Balance at or below which a top-up is attempted.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "updatedAt": {
+      "description": "When the policy last changed.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    }
+  },
+  "required": [
+    "amountCents",
+    "enabled",
+    "organizationId",
+    "revision",
+    "thresholdCents",
+    "updatedAt"
+  ],
+  "title": "AutoTopupPolicy",
+  "type": "object"
+}

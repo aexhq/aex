@@ -1,0 +1,10 @@
+{
+  "$id": "https://schemas.aex.dev/v1/AccountPauseReason.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Why an account is paused.",
+  "enum": [
+    "top_up_required"
+  ],
+  "title": "AccountPauseReason",
+  "type": "string"
+}

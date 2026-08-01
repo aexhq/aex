@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BlobEncoding.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "How inline blob bytes are encoded.",
+  "enum": [
+    "utf8",
+    "base64"
+  ],
+  "title": "BlobEncoding",
+  "type": "string"
+}

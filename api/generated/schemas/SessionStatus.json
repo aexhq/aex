@@ -1,0 +1,13 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionStatus.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a session is doing right now.",
+  "enum": [
+    "idle",
+    "running",
+    "awaiting_approval",
+    "deleting"
+  ],
+  "title": "SessionStatus",
+  "type": "string"
+}

@@ -1,0 +1,45 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageQuery.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A bounded query over rated usage.",
+  "properties": {
+    "categories": {
+      "description": "Restrict to these categories.",
+      "items": {
+        "$ref": "aex:schema:UsageCategory"
+      },
+      "maxItems": 4,
+      "type": "array"
+    },
+    "cursor": {
+      "description": "Continuation token.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-cursor": true
+    },
+    "groupBy": {
+      "description": "Grouping axes.",
+      "items": {
+        "$ref": "aex:schema:UsageGrouping"
+      },
+      "maxItems": 6,
+      "type": "array"
+    },
+    "limit": {
+      "description": "Page size.",
+      "maximum": 1000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "timeRange": {
+      "$ref": "aex:schema:TimeRange",
+      "description": "The service-time window."
+    }
+  },
+  "required": [
+    "timeRange"
+  ],
+  "title": "UsageQuery",
+  "type": "object"
+}

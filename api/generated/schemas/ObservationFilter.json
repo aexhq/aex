@@ -1,0 +1,33 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationFilter.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A bounded filter AST. Structural bounds are enforced before construction.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:ObservationFilterAll",
+      "x-aex-discriminator-value": "all"
+    },
+    {
+      "$ref": "aex:schema:ObservationFilterAny",
+      "x-aex-discriminator-value": "any"
+    },
+    {
+      "$ref": "aex:schema:ObservationFilterNot",
+      "x-aex-discriminator-value": "not"
+    },
+    {
+      "$ref": "aex:schema:ObservationFilterCompare",
+      "x-aex-discriminator-value": "compare"
+    },
+    {
+      "$ref": "aex:schema:ObservationFilterIn",
+      "x-aex-discriminator-value": "in"
+    },
+    {
+      "$ref": "aex:schema:ObservationFilterExists",
+      "x-aex-discriminator-value": "exists"
+    }
+  ],
+  "title": "ObservationFilter",
+  "x-aex-discriminator": "op"
+}

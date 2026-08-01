@@ -1,0 +1,19 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsOperation.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The original operation the replay resolved to.",
+  "properties": {
+    "operationId": {
+      "description": "The original operation.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    }
+  },
+  "required": [
+    "operationId"
+  ],
+  "title": "ErrorDetailsOperation",
+  "type": "object"
+}

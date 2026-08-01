@@ -1,0 +1,40 @@
+{
+  "$id": "https://schemas.aex.dev/v1/WorkspaceTombstone.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What remains of a deleted workspace.",
+  "properties": {
+    "deletedAt": {
+      "description": "When deletion committed.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "operationId": {
+      "description": "The operation that deleted it.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    },
+    "organizationId": {
+      "description": "The owning organization.",
+      "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "organization"
+    },
+    "workspaceId": {
+      "description": "The deleted workspace.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "deletedAt",
+    "operationId",
+    "organizationId",
+    "workspaceId"
+  ],
+  "title": "WorkspaceTombstone",
+  "type": "object"
+}

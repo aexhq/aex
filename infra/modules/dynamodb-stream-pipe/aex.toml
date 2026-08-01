@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["iam"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Pipe delivery is proven by the aws.dynamodb.streams seam owned by the regional-stores live suite."

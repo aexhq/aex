@@ -1,0 +1,14 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MetricAggregationCalculation.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The calculations a metric aggregation may request.",
+  "enum": [
+    "sum",
+    "count",
+    "min",
+    "max",
+    "avg"
+  ],
+  "title": "MetricAggregationCalculation",
+  "type": "string"
+}
