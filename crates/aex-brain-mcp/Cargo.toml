@@ -26,6 +26,7 @@ scenarios = []
 [package.metadata.aex.not_applicable]
 
 [dependencies]
+aex-brain-domain = { path = "../aex-brain-domain" }
 aex-brain-managed-web = { path = "../aex-brain-managed-web" }
 aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
 aex-wire = { path = "../aex-wire" }

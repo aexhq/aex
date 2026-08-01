@@ -1,0 +1,92 @@
+{
+  "schema": "aex.regional-table.v1",
+  "table": "runtime-activity",
+  "owner": "regional-stores",
+  "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+  "billingMode": "PAY_PER_REQUEST",
+  "deletionProtection": true,
+  "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
+  "serverSideEncryption": {
+    "type": "KMS",
+    "keyAlias": "alias/aex-regional-runtime",
+    "rationale": "Per-authority customer managed key. The table holds generation metadata only, never customer content."
+  },
+  "attributes": [
+    { "name": "pk", "type": "S" },
+    { "name": "sk", "type": "S" },
+    { "name": "rtDuePk", "type": "S" },
+    { "name": "rtDueSk", "type": "S" }
+  ],
+  "keySchema": { "partition": "pk", "sort": "sk" },
+  "globalSecondaryIndexes": [
+    {
+      "name": "gsi_runtime_due",
+      "partition": "rtDuePk",
+      "sort": "rtDueSk",
+      "sparse": true,
+      "rationale": "Sixteen shards over non-terminal generation heads. A dedicated due index rather than a regional-work item per evaluation, because the 180 second true-idle timer would otherwise cost a work-item rewrite per generation per evaluation; the index gives the reaper a bounded ordered scan at zero write cost between evaluations.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": [
+          "sessionId",
+          "workspaceId",
+          "generationId",
+          "state",
+          "fence",
+          "idleSince",
+          "providerLifetimeExpiresAt",
+          "keepaliveLeaseUntil"
+        ]
+      }
+    }
+  ],
+  "stream": {
+    "enabled": true,
+    "viewType": "NEW_IMAGE",
+    "consumers": ["runtime-control-worker"],
+    "rationale": "The table holds no customer content, only generation metadata, so NEW_IMAGE is safe and gives the worker a state-change hint without a read."
+  },
+  "timeToLive": {
+    "enabled": true,
+    "attribute": "expiresAtEpochSeconds",
+    "appliesTo": ["idle_probe"],
+    "rationale": "Probes only, at 7 days. Receipts have no TTL: they are lifecycle evidence referenced by usage facts."
+  },
+  "itemTypes": [
+    "hands_generation",
+    "lifecycle_intent",
+    "lifecycle_receipt",
+    "idle_probe",
+    "current_generation"
+  ],
+  "iam": [
+    {
+      "role": "runtime-control-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:TransactWriteItems"
+      ],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "brain-mux",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:TransactWriteItems"
+      ],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-session-api",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    }
+  ],
+  "tags": { "aex:plane": "regional", "aex:component": "runtime-activity", "aex:data-class": "authority" }
+}

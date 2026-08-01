@@ -32,3 +32,8 @@ conformance/** text eol=lf
 # Windows checks out CRLF, and every regeneration reports a whole-file diff.
 release/*.json text eol=lf
 release/policy/** text eol=lf
+
+# The regional table generation definitions and the bundle Terraform consumes
+# are rebuilt byte-for-byte by `aex-regional-test-support`'s bundler and asserted
+# against the checked-in file. Same rule, same reason.
+migrations/regional/** text eol=lf

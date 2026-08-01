@@ -1,0 +1,120 @@
+{
+  "schema": "aex.regional-table.v1",
+  "table": "regional-work",
+  "owner": "regional-stores",
+  "purpose": "Durable runnable work: wake, due, claim, lease, fence, attempt, dedupe claims and per-shard reconciliation cursors over one sharded due index. Also carries the transactional usage-fact outbox so usage workers need no content or session visibility.",
+  "billingMode": "PAY_PER_REQUEST",
+  "deletionProtection": true,
+  "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
+  "serverSideEncryption": {
+    "type": "KMS",
+    "keyAlias": "alias/aex-regional-work",
+    "rationale": "Per-authority customer managed key; the work table never holds customer content, only typed non-content work metadata."
+  },
+  "attributes": [
+    { "name": "pk", "type": "S" },
+    { "name": "sk", "type": "S" },
+    { "name": "dueShardPk", "type": "S" },
+    { "name": "dueShardSk", "type": "S" }
+  ],
+  "keySchema": { "partition": "pk", "sort": "sk" },
+  "globalSecondaryIndexes": [
+    {
+      "name": "gsi_due",
+      "partition": "dueShardPk",
+      "sort": "dueShardSk",
+      "sparse": true,
+      "rationale": "Sixty-four shards, never a literal single due partition. The index attributes are removed when work reaches done or poisoned, so the index holds only outstanding work. Priority is folded into effectiveDueAt as a lead, which gives priority ordering plus bounded ageing with one sort key.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": [
+          "workId",
+          "kind",
+          "state",
+          "dueAt",
+          "attempt",
+          "maxAttempts",
+          "fence",
+          "sessionId",
+          "agentId",
+          "workspaceId",
+          "leaseExpiresAt"
+        ]
+      }
+    }
+  ],
+  "stream": {
+    "enabled": true,
+    "viewType": "NEW_IMAGE",
+    "consumers": [
+      "eventbridge-pipe:agent-wake",
+      "eventbridge-pipe:operation-step",
+      "eventbridge-pipe:content-lifecycle",
+      "eventbridge-pipe:runtime-control",
+      "eventbridge-pipe:usage-facts"
+    ],
+    "rationale": "NEW_IMAGE is safe only because the codec rejects a payload map larger than 4 KiB or carrying a key outside the declared per-kind schema, which keeps non-content work metadata only an enforced property rather than an assumed one."
+  },
+  "timeToLive": {
+    "enabled": true,
+    "attribute": "expiresAtEpochSeconds",
+    "appliesTo": ["work"],
+    "rationale": "Set to updatedAt plus 24 hours when a record reaches done. A redelivered hint inside the window finds state done and acks; after it, the domain re-derives a no-op. Both arms are correct, so TTL timing is not a fence."
+  },
+  "itemTypes": ["work", "work_dedupe", "work_cursor"],
+  "iam": [
+    {
+      "role": "regional-session-api",
+      "actions": ["dynamodb:TransactWriteItems", "dynamodb:GetItem"],
+      "resources": ["table"]
+    },
+    {
+      "role": "session-operation-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:TransactWriteItems"
+      ],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "content-lifecycle-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem",
+        "dynamodb:TransactWriteItems"
+      ],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "runtime-control-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem",
+        "dynamodb:TransactWriteItems"
+      ],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "brain-mux",
+      "actions": ["dynamodb:TransactWriteItems", "dynamodb:GetItem"],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-stream",
+      "actions": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:DescribeStream",
+        "dynamodb:ListStreams"
+      ],
+      "resources": ["stream"]
+    }
+  ],
+  "tags": { "aex:plane": "regional", "aex:component": "work", "aex:data-class": "authority" }
+}

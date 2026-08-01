@@ -15,7 +15,6 @@
 
 pub mod client;
 pub mod recovery;
-pub mod wire_pending;
 
 #[cfg(test)]
 mod tests;

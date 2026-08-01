@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use aex_brain_domain::DispatchProof;
 use aex_wire::{CanonicalJson, ids::ResourceName};
 use serde_json::json;
 
@@ -10,7 +11,6 @@ use crate::client::{
 use crate::recovery::{
     DropRecovery, McpTaskId, TaskCapability, TaskState, after_stream_drop, task_transition,
 };
-use crate::wire_pending::DispatchProof;
 
 #[test]
 fn every_post_has_revision_identity_accept_and_argument_mirrors() {

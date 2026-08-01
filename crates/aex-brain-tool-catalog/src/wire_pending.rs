@@ -5,20 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// How replay affects an already-started tool effect.
-// TODO(cross-stream): replaced by aex_brain_domain::effect::EffectClass at merge
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectClass {
-    /// A total function of committed input.
-    Pure,
-    /// A managed operation with an AEX-controlled idempotency identity.
-    IdempotentManaged,
-    /// A detached operation that exposes a durable query identity.
-    DurableDetached,
-    /// An effect whose outcome is ambiguous after dispatch.
-    NonReplayable,
-}
+pub use aex_brain_domain::EffectClass;
 
 /// The executor selected before any tool I/O.
 // TODO(cross-stream): replaced by aex_brain_domain::tool::ExecutorRoute at merge

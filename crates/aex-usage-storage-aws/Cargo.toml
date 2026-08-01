@@ -23,8 +23,12 @@ security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
 
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+integration = "DEFERRED, not inapplicable: the DynamoDB Local suite (concurrent producers converging on a contiguous sequence, ambiguous-commit resolution by re-reading ID#, replay vs conflict discrimination) is unwritten. The expression and codec halves are covered at the unit layer; the transaction's live behaviour is not."
+
+[package.metadata.aex.targets]
+isolation = "unit"
 
 [dependencies]
 async-trait.workspace = true

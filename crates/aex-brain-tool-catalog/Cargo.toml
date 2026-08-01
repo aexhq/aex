@@ -26,6 +26,7 @@ scenarios = []
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
+aex-brain-domain = { path = "../aex-brain-domain" }
 aex-wire = { path = "../aex-wire" }
 p256.workspace = true
 jsonschema.workspace = true

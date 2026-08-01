@@ -25,9 +25,11 @@ pub mod clock;
 pub mod fixtures;
 pub mod ids;
 pub mod prefix;
+pub mod tables;
 pub mod teardown;
 
 pub use clock::TestClock;
 pub use ids::IdFactory;
 pub use prefix::{PrefixError, RunPrefix};
+pub use tables::{TableBundle, TableDefinition, TableError};
 pub use teardown::{CleanupEntry, CleanupLedger, RegionalResource};

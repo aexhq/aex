@@ -1,0 +1,71 @@
+{
+  "schema": "aex.regional-table.v1",
+  "table": "regional-authz-projection",
+  "owner": "regional-stores",
+  "purpose": "Read-only regional projection of workspace placement, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
+  "billingMode": "PAY_PER_REQUEST",
+  "deletionProtection": true,
+  "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
+  "serverSideEncryption": {
+    "type": "KMS",
+    "keyAlias": "alias/aex-regional-authz",
+    "rationale": "Per-authority customer managed key. The projection carries authorization epochs, not credentials."
+  },
+  "attributes": [
+    { "name": "pk", "type": "S" },
+    { "name": "sk", "type": "S" }
+  ],
+  "keySchema": { "partition": "pk", "sort": "sk" },
+  "globalSecondaryIndexes": [],
+  "stream": {
+    "enabled": false,
+    "viewType": "NONE",
+    "consumers": [],
+    "rationale": "The projection is a read replica of central control state; regional consumers read it by key, never by change feed."
+  },
+  "timeToLive": {
+    "enabled": false,
+    "attribute": "",
+    "appliesTo": [],
+    "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
+  },
+  "itemTypes": ["workspace_placement", "key_revocation", "feed_frontier"],
+  "iam": [
+    {
+      "role": "central-control-worker",
+      "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:TransactWriteItems"],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-session-api",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-secret-api",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-observation-api",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    },
+    {
+      "role": "regional-otlp",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    },
+    {
+      "role": "brain-mux",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    },
+    {
+      "role": "session-operation-worker",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    }
+  ],
+  "tags": { "aex:plane": "regional", "aex:component": "authz-projection", "aex:data-class": "projection" }
+}

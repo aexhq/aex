@@ -1,8 +1,7 @@
 //! Task-only recovery for MCP 2026-07-28.
 
+use aex_brain_domain::DispatchProof;
 use aex_wire::ids::ResourceName;
-
-use crate::wire_pending::DispatchProof;
 
 /// Whether registration proved the server's Tasks extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
