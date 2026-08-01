@@ -186,6 +186,9 @@ tokio-util = { version = "0.7.19", features = ["codec", "io"] }
 futures = { version = "0.3.33", default-features = false, features = ["std", "async-await"] }
 async-trait = "0.1.91"
 bytes = { version = "1.12.1", features = ["serde"] }
+# Safe pin projection. `unsafe_code` is forbidden workspace-wide, so a future or
+# body wrapper cannot hand-roll one.
+pin-project-lite = "0.2.17"
 
 # --- HTTP server, client and TLS -------------------------------------------
 axum = { version = "0.8.9", features = ["macros"] }
@@ -194,6 +197,7 @@ tower-http = { version = "0.7.0", features = ["trace", "limit", "timeout", "requ
 hyper = { version = "1.11.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 http = "1.5.0"
+http-body = "1.1.0"
 http-body-util = "0.1.4"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "stream", "http2", "charset"] }
 rustls = { version = "0.23.43", default-features = false, features = ["aws-lc-rs", "logging", "tls12", "std"] }
@@ -260,6 +264,9 @@ num-traits = "0.2.19"
 rand = { version = "0.10.2", features = ["std", "std_rng", "thread_rng"] }
 zeroize = { version = "1.9.0", features = ["derive", "alloc", "std"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
+# Safe wrappers over the four syscall seams the usage probe needs
+# (`clock_gettime(ThreadCPUTime)`); keeps `unsafe_code` forbidden.
+rustix = { version = "1.1.4", default-features = false, features = ["std", "time"] }
 
 # --- protocol adapters -------------------------------------------------------
 rmcp = { version = "3.1.0", default-features = false, features = ["client", "server", "macros", "transport-async-rw"] }

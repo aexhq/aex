@@ -388,9 +388,29 @@ pub enum LambdaVcpuConvention {
 }
 
 impl LambdaVcpuConvention {
-    /// Millicpu granted to a function of `memory_mb` under this convention.
+    /// The millicpu-milliseconds a function of `memory_mb` accrues over
+    /// `billed_ms`.
+    ///
+    /// The whole product is formed in `u128` and floored **once**, at the end.
+    /// Flooring the per-millisecond millicpu first would discard up to a
+    /// millicpu per millisecond — roughly half a percent at 128 MB — which is a
+    /// systematic undercharge rather than a rounding detail.
     #[must_use]
-    pub const fn millicpu(self, memory_mb: u32) -> u64 {
+    pub const fn millicpu_ms(self, memory_mb: u32, billed_ms: u64) -> u128 {
+        match self {
+            Self::LinearAt1769Mb { .. } => {
+                (memory_mb as u128) * 1_000 * (billed_ms as u128) / 1_769
+            }
+        }
+    }
+
+    /// The nominal millicpu a function of `memory_mb` is granted.
+    ///
+    /// Reporting only: the billed quantity always comes from
+    /// [`LambdaVcpuConvention::millicpu_ms`], which does not floor this
+    /// intermediate.
+    #[must_use]
+    pub const fn nominal_millicpu(self, memory_mb: u32) -> u64 {
         match self {
             Self::LinearAt1769Mb { .. } => memory_mb as u64 * 1_000 / 1_769,
         }
@@ -686,9 +706,8 @@ impl Evidence {
                 convention,
                 ..
             } => match meter {
-                Meter::ComputeMillicpuMs => Ok(Quantity::product(
-                    convention.millicpu(*memory_mb),
-                    *billed_ms,
+                Meter::ComputeMillicpuMs => Ok(Quantity::new(
+                    convention.millicpu_ms(*memory_mb, *billed_ms),
                 )?),
                 Meter::MemoryByteMs => Ok(Quantity::product(
                     u64::from(*memory_mb) * 1_048_576,
@@ -1035,17 +1054,29 @@ mod tests {
     }
 
     #[test]
-    fn the_lambda_convention_floors_in_integer_arithmetic() {
+    fn the_lambda_convention_floors_once_over_the_whole_product() {
         let convention = LambdaVcpuConvention::LinearAt1769Mb { version: 1 };
-        assert_eq!(convention.millicpu(1_769), 1_000);
-        assert_eq!(convention.millicpu(128), 72);
+        assert_eq!(convention.nominal_millicpu(1_769), 1_000);
+        assert_eq!(convention.nominal_millicpu(128), 72);
+
         let evidence = Evidence::LambdaReport {
             request_id: Box::from("req"),
             memory_mb: 128,
             billed_ms: 250,
             convention,
         };
+        // 128 * 1000 * 250 / 1769 = 18_088.18..., floored to 18_088.
+        //
+        // Flooring the nominal 72.35 millicpu first and then multiplying would
+        // give 72 * 250 = 18_000 — a systematic 0.5% undercharge that grows with
+        // the invocation, not a rounding detail.
         assert_eq!(
+            evidence
+                .derive(Meter::ComputeMillicpuMs)
+                .expect("derives compute"),
+            Quantity::new(128 * 1_000 * 250 / 1_769).expect("representable")
+        );
+        assert_ne!(
             evidence
                 .derive(Meter::ComputeMillicpuMs)
                 .expect("derives compute"),
@@ -1057,6 +1088,16 @@ mod tests {
                 .expect("derives memory"),
             Quantity::new(128 * 1_048_576 * 250).expect("representable")
         );
+    }
+
+    #[test]
+    fn the_lambda_convention_is_exact_at_the_one_vcpu_point() {
+        let convention = LambdaVcpuConvention::LinearAt1769Mb { version: 1 };
+        // 1769 MB is exactly one vCPU, so the product divides without remainder
+        // and the floor is a no-op.
+        assert_eq!(convention.millicpu_ms(1_769, 1_000), 1_000_000);
+        assert_eq!(convention.millicpu_ms(3_538, 1_000), 2_000_000);
+        assert_eq!(convention.millicpu_ms(1_769, 0), 0);
     }
 
     #[test]

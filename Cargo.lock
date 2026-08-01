@@ -954,12 +954,17 @@ dependencies = [
 name = "aex-usage-application"
 version = "0.1.0"
 dependencies = [
+ "aex-usage-application",
  "aex-usage-domain",
  "async-trait",
  "futures",
+ "pin-project-lite",
+ "proptest",
+ "rustix",
  "serde",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 

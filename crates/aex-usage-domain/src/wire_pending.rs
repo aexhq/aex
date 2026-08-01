@@ -154,6 +154,10 @@ bounded_id! {
     AgentId
 }
 bounded_id! {
+    /// One Brain activation of one agent; the CPU attribution scope.
+    ActivationId
+}
+bounded_id! {
     /// A run a fact is attributed to.
     RunId
 }
@@ -289,6 +293,22 @@ impl Timestamp {
         instant
             .format(&TIMESTAMP_FORMAT)
             .expect("the canonical format never fails on a representable instant")
+    }
+
+    /// The instant `millis` milliseconds after this one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TimestampError::OutOfRange`] when the result is not a
+    /// representable calendar instant.
+    pub fn plus_millis(self, millis: u64) -> Result<Self, TimestampError> {
+        let delta =
+            i64::try_from(millis).map_err(|_| TimestampError::OutOfRange { millis: i64::MAX })?;
+        let sum = self
+            .0
+            .checked_add(delta)
+            .ok_or(TimestampError::OutOfRange { millis: i64::MAX })?;
+        Self::from_unix_millis(sum)
     }
 
     /// Milliseconds from `self` to `other`, or `None` when `other` precedes `self`.
