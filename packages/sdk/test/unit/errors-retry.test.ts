@@ -19,12 +19,12 @@ import {
 const cases = [
   ["unauthenticated", "auth", AexAuthError],
   ["not_found", "not_found", AexNotFoundError],
-  ["conflict", "conflict", AexConflictError],
+  ["idempotency_conflict", "conflict", AexConflictError],
   ["precondition_failed", "precondition", AexPreconditionError],
   ["invalid_request", "validation", AexValidationError],
   ["rate_limited", "quota", AexQuotaError],
-  ["invalid_state", "state", AexStateError],
-  ["upstream_unavailable", "unavailable", AexUnavailableError],
+  ["session_not_idle", "state", AexStateError],
+  ["upstream_error", "unavailable", AexUnavailableError],
   ["internal_error", "internal", AexInternalError],
 ] as const;
 
@@ -69,7 +69,7 @@ describe("retry policy", () => {
         if (attempts < RETRY_POLICY.maxAttempts) {
           throw new AexUnavailableError({
             status: 503,
-            code: "upstream_unavailable",
+            code: "upstream_error",
             requestId: `req_${attempts}`,
             retryable: true,
             retryAfterMs: 700,

@@ -1,4 +1,4 @@
-import type { RouteId } from "../wire_pending.js";
+import { ROUTES, type RouteId } from "../wire_pending.js";
 
 export interface WireRequest {
   readonly routeId: RouteId;
@@ -29,7 +29,7 @@ export class FetchTransport implements AexTransport {
   }
 
   async execute<T>(request: WireRequest): Promise<WireResponse<T>> {
-    const plane = request.routeId === "workspace_get" ? "central" : "regional";
+    const plane = ROUTES[request.routeId].plane;
     const response = await this.#fetch(`${this.#baseUrls[plane]}${request.path}`, {
       method: request.method,
       headers: request.headers,

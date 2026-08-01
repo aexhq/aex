@@ -1,0 +1,192 @@
+/*
+ * The AEX design tokens, as the dashboard consumes them.
+ *
+ * TODO(cross-stream): `apps/site` OWNS this contract. The authoritative file is
+ * `apps/site/design/tokens.css` on `rw/site-design`, which had not landed on `main`
+ * when this branch was cut, so the block below is a verbatim copy of it — same
+ * names, same values, same theming structure — rather than a second system.
+ *
+ * At merge: delete this file and import `apps/site/design/index.css` from
+ * `app/layout.tsx` instead. Every rule in `app.css` references `--aex-*` names
+ * only, so that merge is a deletion and an import, never a translation.
+ *
+ * The one addition the dashboard needs is the status palette at the end. It is not
+ * in the site's file because marketing has no failure states; it is proposed to the
+ * site stream to adopt so both surfaces keep one vocabulary. It is namespaced
+ * `--aex-status-*` so it merges by concatenation.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, from furthest back to nearest front. */
+  --aex-color-canvas: #faf9f7;
+  --aex-color-surface: #ffffff;
+  --aex-color-surface-sunken: #f2f0ec;
+  --aex-color-border: #e2dfd8;
+  --aex-color-border-strong: #948d82;
+
+  /* Text, from most to least prominent. All three pass AA on the canvas. */
+  --aex-color-text: #1a1917;
+  --aex-color-text-muted: #55514a;
+  --aex-color-text-faint: #6b665d;
+
+  /* One accent. Used for links, primary action, and section markers. */
+  --aex-color-accent: #9a3d16;
+  --aex-color-accent-hover: #7c2f0f;
+  --aex-color-accent-contrast: #ffffff;
+  --aex-color-accent-surface: #fbefe8;
+  --aex-color-focus: #1c4fd8;
+
+  /* Type. */
+  --aex-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --aex-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --aex-text-xs: 0.75rem;
+  --aex-text-sm: 0.875rem;
+  --aex-text-base: 1rem;
+  --aex-text-lg: 1.125rem;
+  --aex-text-xl: 1.3125rem;
+  --aex-text-2xl: 1.625rem;
+  --aex-text-3xl: clamp(1.875rem, 1.35rem + 2.1vw, 2.75rem);
+  --aex-text-display: clamp(2.375rem, 1.45rem + 3.7vw, 4rem);
+  --aex-leading-tight: 1.12;
+  --aex-leading-snug: 1.3;
+  --aex-leading-normal: 1.62;
+  --aex-tracking-tight: -0.022em;
+  --aex-tracking-wide: 0.09em;
+  --aex-weight-regular: 400;
+  --aex-weight-medium: 500;
+  --aex-weight-semibold: 600;
+
+  /* Spacing, on a 4px base. */
+  --aex-space-1: 0.25rem;
+  --aex-space-2: 0.5rem;
+  --aex-space-3: 0.75rem;
+  --aex-space-4: 1rem;
+  --aex-space-5: 1.5rem;
+  --aex-space-6: 2rem;
+  --aex-space-7: 2.5rem;
+  --aex-space-8: 3rem;
+  --aex-space-9: 4rem;
+  --aex-space-10: 5.5rem;
+  --aex-space-11: 7rem;
+
+  /* Radius. */
+  --aex-radius-sm: 0.25rem;
+  --aex-radius-md: 0.5rem;
+  --aex-radius-lg: 0.875rem;
+  --aex-radius-full: 999px;
+
+  /* Elevation. Flat by default; the border carries most of the separation. */
+  --aex-shadow-none: none;
+  --aex-shadow-sm: 0 1px 2px rgb(26 25 23 / 6%);
+  --aex-shadow-md: 0 2px 4px rgb(26 25 23 / 5%), 0 8px 20px rgb(26 25 23 / 6%);
+  --aex-shadow-lg: 0 4px 8px rgb(26 25 23 / 6%), 0 20px 48px rgb(26 25 23 / 9%);
+
+  /* Layout. */
+  --aex-measure: 68ch;
+  --aex-width-page: 74rem;
+  --aex-width-prose: 46rem;
+  --aex-border-width: 1px;
+
+  /* Motion. Overridden to a near-zero duration under reduced motion. */
+  --aex-duration-fast: 120ms;
+  --aex-duration-slow: 240ms;
+  --aex-ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --aex-color-canvas: #131211;
+    --aex-color-surface: #1a1917;
+    --aex-color-surface-sunken: #100f0e;
+    --aex-color-border: #302c28;
+    --aex-color-border-strong: #6e675d;
+
+    --aex-color-text: #f3f0ea;
+    --aex-color-text-muted: #b3aca1;
+    --aex-color-text-faint: #9a9388;
+
+    --aex-color-accent: #f0895a;
+    --aex-color-accent-hover: #f7a883;
+    --aex-color-accent-contrast: #1a1005;
+    --aex-color-accent-surface: #2a1b12;
+    --aex-color-focus: #8fb4ff;
+
+    --aex-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --aex-shadow-md: 0 2px 4px rgb(0 0 0 / 34%), 0 8px 20px rgb(0 0 0 / 38%);
+    --aex-shadow-lg: 0 4px 8px rgb(0 0 0 / 36%), 0 20px 48px rgb(0 0 0 / 46%);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --aex-color-canvas: #faf9f7;
+  --aex-color-surface: #ffffff;
+  --aex-color-surface-sunken: #f2f0ec;
+  --aex-color-border: #e2dfd8;
+  --aex-color-border-strong: #948d82;
+
+  --aex-color-text: #1a1917;
+  --aex-color-text-muted: #55514a;
+  --aex-color-text-faint: #6b665d;
+
+  --aex-color-accent: #9a3d16;
+  --aex-color-accent-hover: #7c2f0f;
+  --aex-color-accent-contrast: #ffffff;
+  --aex-color-accent-surface: #fbefe8;
+  --aex-color-focus: #1c4fd8;
+
+  --aex-shadow-sm: 0 1px 2px rgb(26 25 23 / 6%);
+  --aex-shadow-md: 0 2px 4px rgb(26 25 23 / 5%), 0 8px 20px rgb(26 25 23 / 6%);
+  --aex-shadow-lg: 0 4px 8px rgb(26 25 23 / 6%), 0 20px 48px rgb(26 25 23 / 9%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --aex-color-canvas: #131211;
+  --aex-color-surface: #1a1917;
+  --aex-color-surface-sunken: #100f0e;
+  --aex-color-border: #302c28;
+  --aex-color-border-strong: #6e675d;
+
+  --aex-color-text: #f3f0ea;
+  --aex-color-text-muted: #b3aca1;
+  --aex-color-text-faint: #9a9388;
+
+  --aex-color-accent: #f0895a;
+  --aex-color-accent-hover: #f7a883;
+  --aex-color-accent-contrast: #1a1005;
+  --aex-color-accent-surface: #2a1b12;
+  --aex-color-focus: #8fb4ff;
+
+  --aex-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --aex-shadow-md: 0 2px 4px rgb(0 0 0 / 34%), 0 8px 20px rgb(0 0 0 / 38%);
+  --aex-shadow-lg: 0 4px 8px rgb(0 0 0 / 36%), 0 20px 48px rgb(0 0 0 / 46%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --aex-duration-fast: 1ms;
+    --aex-duration-slow: 1ms;
+  }
+}
+
+/*
+ * Status palette — a dashboard addition to the contract, proposed to the site
+ * stream. Four reserved roles, never reused as a decorative accent and never the
+ * sole carrier of meaning: every status in the dashboard renders as a distinct
+ * glyph plus a text label, with the label in `--aex-color-text`. That pairing is
+ * what makes the sub-3:1 warning and serious steps legible on the light canvas.
+ * The steps are mode-invariant and clear 3:1 against the dark surface.
+ */
+:root {
+  --aex-status-good: #0ca30c;
+  --aex-status-warning: #fab219;
+  --aex-status-serious: #ec835a;
+  --aex-status-critical: #d03b3b;
+}
