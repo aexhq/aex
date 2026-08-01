@@ -19,3 +19,4 @@ pub mod activation;
 pub mod kernel;
 pub mod ports;
 pub mod pressure;
+pub mod subagent;
