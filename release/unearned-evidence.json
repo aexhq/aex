@@ -1,20 +1,6 @@
 [
   {
     "reason_class": "awaiting_owner",
-    "subject": "apps/docs",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; the directory is renamed to apps/site by P-PACKAGES"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "apps/user-tests",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; the black-box journeys land with the regenerated SDK"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-hands",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
@@ -379,27 +365,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "packages/cli",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; OD-08 replaces this package with tools/aex-cli"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "packages/contracts",
-    "owner": "contracts",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the contracts stream; OD-08 deletes this package in favour of the generated bundle"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "packages/sdk",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; the SDK is regenerated over the new wire (OD-08)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "runtimes/brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
@@ -537,20 +502,6 @@
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-dashboard",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-dashboard",
-    "owner": "clients",
-    "blocking_rule": "aex-orphan-companion",
-    "detail": "the dashboard application lands with the clients stream (P-DASHBOARD); this companion is written and unselected until it does"
   },
   {
     "reason_class": "awaiting_owner",
@@ -694,13 +645,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-site",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-stripe-command-edge",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -754,13 +698,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tools/aex-cli",
-    "owner": "clients",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the clients stream; the cases land with the tool's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -1002,21 +939,42 @@
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "apps/docs",
+    "subject": "apps/dashboard",
     "owner": "clients",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "apps/docs",
+    "subject": "apps/dashboard",
     "owner": "clients",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "apps/docs",
+    "subject": "apps/dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `user` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/site",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/site",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "apps/site",
     "owner": "clients",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `user` needs a deployed artifact (OD-07)"
@@ -1025,20 +983,6 @@
     "reason_class": "requires_deployment",
     "subject": "apps/user-tests",
     "owner": "clients",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `user` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "packages/cli",
-    "owner": "clients",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `user` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "packages/contracts",
-    "owner": "contracts",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `user` needs a deployed artifact (OD-07)"
   },
@@ -1933,7 +1877,21 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "apps/docs",
+    "subject": "apps/dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "apps/dashboard",
+    "owner": "clients",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `vercel.build_output.deploy` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "apps/site",
     "owner": "clients",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `vercel.build_output.deploy` cannot be satisfied by any local substitute"

@@ -8,17 +8,60 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 122,
+    "awaiting_owner": 114,
     "capacity_gates": 15,
-    "live_targets": 31,
-    "packages": 139,
+    "live_targets": 32,
+    "packages": 138,
     "seams_claimed": 32,
     "seams_declared": 34,
     "workloads": 0
   },
   "packages": {
-    "apps/docs": {
-      "name": "@aexhq/docs",
+    "apps/dashboard": {
+      "name": "@aexhq/dashboard",
+      "kind": "npm",
+      "meta": {
+        "owner": "clients",
+        "role": "web_app",
+        "artifact": "vercel_build_output",
+        "deployable": "dashboard",
+        "live_suite": "aex-live-dashboard",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e",
+          "user"
+        ],
+        "concerns": [
+          "security",
+          "compatibility"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "vercel.build_output.deploy"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [
+          "local.dashboard-no-db",
+          "local.dashboard-route-allowlist"
+        ],
+        "targets": {
+          "browser_authz": "e2e",
+          "browser_user": "user",
+          "deployed_smoke": "smoke",
+          "security": "unit"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "apps/site": {
+      "name": "@aexhq/site",
       "kind": "npm",
       "meta": {
         "owner": "clients",
@@ -43,14 +86,20 @@
         "risk": [
           "generated_code"
         ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the clients stream; the directory is renamed to apps/site by P-PACKAGES"
-        }
+        "scenarios": [
+          "local.site-determinism",
+          "local.site-references"
+        ],
+        "targets": {
+          "deployed_references": "e2e",
+          "deployed_smoke": "smoke",
+          "generation": "unit",
+          "static_user": "user"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "apps/user-tests": {
       "name": "@aexhq/user-tests",
@@ -72,15 +121,21 @@
         "risk": [
           "generated_code"
         ],
-        "scenarios": [],
-        "targets": {},
+        "scenarios": [
+          "packed.sdk-install-node",
+          "local.site-determinism",
+          "live.session-round-trip"
+        ],
+        "targets": {
+          "public_user": "user",
+          "registry": "unit"
+        },
         "not_applicable": {
-          "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion",
-          "targets": "awaiting the clients stream; the black-box journeys land with the regenerated SDK"
+          "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-application": {
       "name": "aex-brain-application",
@@ -2143,66 +2198,6 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "packages/cli": {
-      "name": "@aexhq/cli",
-      "kind": "npm",
-      "meta": {
-        "owner": "clients",
-        "role": "client",
-        "artifact": "npm_package",
-        "layers": [
-          "unit",
-          "user"
-        ],
-        "concerns": [
-          "contract",
-          "compatibility"
-        ],
-        "seams": [],
-        "security_tier": "public_edge",
-        "risk": [
-          "generated_code"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "live_suite": "replaced by the native tools/aex-cli; no deployed endpoint of its own",
-          "targets": "awaiting the clients stream; OD-08 replaces this package with tools/aex-cli"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "packages/contracts": {
-      "name": "@aexhq/contracts",
-      "kind": "npm",
-      "meta": {
-        "owner": "contracts",
-        "role": "client",
-        "artifact": "npm_package",
-        "layers": [
-          "unit",
-          "user"
-        ],
-        "concerns": [
-          "contract",
-          "compatibility"
-        ],
-        "seams": [],
-        "security_tier": "public_edge",
-        "risk": [
-          "generated_code"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "live_suite": "generated contract package; no deployed endpoint of its own",
-          "targets": "awaiting the contracts stream; OD-08 deletes this package in favour of the generated bundle"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
     "packages/sdk": {
       "name": "@aexhq/sdk",
       "kind": "npm",
@@ -2216,7 +2211,9 @@
         ],
         "concerns": [
           "contract",
-          "compatibility"
+          "compatibility",
+          "property",
+          "security"
         ],
         "seams": [
           "npm.registry.publish"
@@ -2225,15 +2222,22 @@
         "risk": [
           "generated_code"
         ],
-        "scenarios": [],
-        "targets": {},
+        "scenarios": [
+          "packed.sdk-install-node",
+          "packed.sdk-install-bun"
+        ],
+        "targets": {
+          "compatibility": "unit",
+          "conformance": "unit",
+          "packed_user": "user",
+          "security": "unit"
+        },
         "not_applicable": {
-          "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint of its own, and D-18's aex-live-sdk is outside the frozen member set",
-          "targets": "awaiting the clients stream; the SDK is regenerated over the new wire (OD-08)"
+          "live_suite": "clean-install and packed-tarball evidence is package-owned; the SDK has no deployed endpoint"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "runtimes/brain-mux": {
       "name": "brain-mux",
@@ -3010,6 +3014,7 @@
         "owner": "clients",
         "role": "live_companion",
         "artifact": "none",
+        "deployable": "dashboard",
         "layers": [
           "smoke",
           "e2e"
@@ -3028,14 +3033,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "deployable": "the dashboard application lands with the clients stream (P-DASHBOARD); this companion is written and unselected until it does",
-          "targets": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "e2e": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-finance-api": {
       "name": "aex-live-finance-api",
@@ -3744,13 +3749,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the clients stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "e2e": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-stripe-command-edge": {
       "name": "aex-live-stripe-command-edge",
@@ -4038,14 +4044,17 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "cli_contract": "unit",
+          "config_exit_output": "unit",
+          "download": "unit"
+        },
         "not_applicable": {
-          "live_suite": "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own",
-          "targets": "awaiting the clients stream; the cases land with the tool's own implementation"
+          "live_suite": "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tools/aex-contract-gen": {
       "name": "aex-contract-gen",
@@ -4796,6 +4805,7 @@
     "aex-live-central-identity-api",
     "aex-live-central-schema-admin",
     "aex-live-content-lifecycle-worker",
+    "aex-live-dashboard",
     "aex-live-finance-api",
     "aex-live-finance-ingest",
     "aex-live-finance-reconcile",

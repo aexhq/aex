@@ -456,6 +456,11 @@ version = "0.1.0"
 [[package]]
 name = "aex-live-dashboard"
 version = "0.1.0"
+dependencies = [
+ "aex-test-harness",
+ "reqwest",
+ "tokio",
+]
 
 [[package]]
 name = "aex-live-finance-api"
@@ -536,6 +541,11 @@ version = "0.1.0"
 [[package]]
 name = "aex-live-site"
 version = "0.1.0"
+dependencies = [
+ "aex-test-harness",
+ "reqwest",
+ "tokio",
+]
 
 [[package]]
 name = "aex-live-stripe-command-edge"
