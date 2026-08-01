@@ -512,6 +512,33 @@ pub fn residue_reports_during_panic() -> usize {
     RESIDUE_REPORTS_DURING_PANIC.load(Ordering::SeqCst)
 }
 
+/// Reports residue in the loudest channel available at this instant.
+///
+/// Not panicking: this panics, and the leak fails the test.
+///
+/// Already unwinding: panicking again inside a `Drop` aborts the process and
+/// destroys the original failure message, so the report goes to stderr and
+/// increments [`residue_reports_during_panic`] instead. The check is never
+/// stood down - a failing test is exactly when a leak matters most - only its
+/// channel changes.
+///
+/// This is the one implementation. The four `*-test-support` fixture ledgers
+/// call it rather than each deciding for themselves what to do while a thread
+/// is unwinding; that decision, taken four times, is how the guard came to be
+/// disabled in all four.
+///
+/// # Panics
+///
+/// Panics with `report` when the current thread is not already panicking.
+pub fn report_residue(report: &str) {
+    if std::thread::panicking() {
+        RESIDUE_REPORTS_DURING_PANIC.fetch_add(1, Ordering::SeqCst);
+        eprintln!("{report}");
+    } else {
+        panic!("{report}");
+    }
+}
+
 /// The append-only record of everything a run created, and the path that
 /// reclaims it.
 pub struct CleanupLedger {
@@ -841,13 +868,7 @@ impl Drop for CleanupLedger {
         if self.reported.load(Ordering::SeqCst) || self.residue().is_empty() {
             return;
         }
-        let report = self.residue_report();
-        if std::thread::panicking() {
-            RESIDUE_REPORTS_DURING_PANIC.fetch_add(1, Ordering::SeqCst);
-            eprintln!("{report}");
-        } else {
-            panic!("{report}");
-        }
+        report_residue(&self.residue_report());
     }
 }
 
@@ -855,7 +876,8 @@ impl Drop for CleanupLedger {
 mod tests {
     use super::{
         CleanupLedger, Discovery, Entry, Naming, ReclaimError, Reclaimer, ReleaseError,
-        ResourceKind, Terminal, TestCaseId, janitor_policy, residue_reports_during_panic,
+        ResourceKind, Terminal, TestCaseId, janitor_policy, report_residue,
+        residue_reports_during_panic,
     };
     use crate::run::{Lane, TestRunId};
     use std::collections::BTreeSet;

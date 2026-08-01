@@ -8,13 +8,13 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 58,
-    "capacity_gates": 15,
+    "awaiting_owner": 48,
+    "capacity_gates": 19,
     "live_targets": 34,
     "packages": 140,
     "seams_claimed": 32,
     "seams_declared": 34,
-    "workloads": 1
+    "workloads": 8
   },
   "packages": {
     "apps/dashboard": {
@@ -378,7 +378,9 @@
         ],
         "scenarios": [],
         "targets": {
-          "expressions": "unit"
+          "adapters": "unit",
+          "expressions": "unit",
+          "plans": "unit"
         },
         "not_applicable": {
           "integration": "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
@@ -464,14 +466,15 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "composition": "unit"
+        },
         "not_applicable": {
-          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion",
-          "targets": "awaiting the central-identity stream; the cases land with the crate's own implementation"
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-central-test-support": {
       "name": "aex-central-test-support",
@@ -1483,6 +1486,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "mount": "unit",
           "primitives": "unit"
         },
         "not_applicable": {
@@ -2473,13 +2477,16 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "resource_envelope": "e2e",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/central-control-api": {
       "name": "central-control-api",
@@ -2503,6 +2510,7 @@
         ],
         "seams": [
           "aws.rds_data.transaction",
+          "aws.sqs.fifo",
           "aws.iam.denial",
           "aws.alb.framing"
         ],
@@ -2512,13 +2520,16 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "resource_envelope": "e2e",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/central-identity-api": {
       "name": "central-identity-api",
@@ -2551,13 +2562,16 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "resource_envelope": "e2e",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/finance-api": {
       "name": "finance-api",
@@ -2750,6 +2764,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "performance_contract": "e2e",
           "secrets": "unit"
         },
@@ -2793,6 +2808,7 @@
         "scenarios": [],
         "targets": {
           "admission": "unit",
+          "composition": "unit",
           "performance_contract": "e2e"
         },
         "not_applicable": {}
@@ -2832,6 +2848,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "performance_contract": "e2e",
           "streaming": "unit"
         },
@@ -2961,13 +2978,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "load": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-authz": {
       "name": "aex-live-central-authz",
@@ -2995,13 +3013,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "live": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-control-api": {
       "name": "aex-live-central-control-api",
@@ -3024,20 +3042,21 @@
           "aws.alb.framing",
           "aws.aurora.serverless_v2",
           "aws.iam.denial",
-          "aws.rds_data.transaction"
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo"
         ],
         "security_tier": "public_edge",
         "risk": [
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "live": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-control-worker": {
       "name": "aex-live-central-control-worker",
@@ -3066,13 +3085,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "live": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-identity-api": {
       "name": "aex-live-central-identity-api",
@@ -3102,13 +3121,13 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "live": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-schema-admin": {
       "name": "aex-live-central-schema-admin",
@@ -4395,13 +4414,16 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "resource_envelope": "e2e",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/central-schema-admin": {
       "name": "central-schema-admin",
@@ -4474,6 +4496,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "lifecycle": "unit",
           "performance_contract": "e2e"
         },
@@ -4744,6 +4767,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "performance_contract": "e2e",
           "rotation": "unit"
         },
@@ -4823,6 +4847,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "continuations": "unit",
           "performance_contract": "e2e"
         },
@@ -4863,7 +4888,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -4940,7 +4965,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -4978,7 +5003,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -5163,6 +5188,7 @@
     ],
     "aws.sqs.fifo": [
       "aex-live-brain-mux",
+      "aex-live-central-control-api",
       "aex-live-central-control-worker",
       "aex-live-finance-ingest",
       "aex-live-finance-settlement-worker",
