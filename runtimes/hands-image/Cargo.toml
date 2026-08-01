@@ -33,8 +33,11 @@ path = "src/main.rs"
 targets = "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-hands-agent = { path = "../../crates/aex-hands-agent" }
+clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

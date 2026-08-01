@@ -33,3 +33,10 @@ aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# The guest declares the run-hook payload it will accept; the trusted side
+# declares the one it sends. The two are separate types on purpose — the guest
+# links no trusted crate (H-BOUNDARY B6) — so a test compares their key sets
+# rather than a comment asking a reviewer to.
+aex-hands-agent = { path = "../aex-hands-agent" }

@@ -555,6 +555,20 @@ mod tests {
     }
 
     #[test]
+    fn the_rootfs_paths_are_the_ones_the_guest_binary_reads() {
+        // Two packages have to agree about where the journal and the workspace
+        // live: the binary reads them from its environment and the image writes
+        // them. Both take the values from `aex_hands_agent::boot`, and this is the
+        // assertion that keeps the third copy — the rootfs contract — in step.
+        assert_eq!(super::JOURNAL_PATH, aex_hands_agent::boot::JOURNAL_ROOT);
+        assert_eq!(super::WORKSPACE_PATH, aex_hands_agent::boot::GUEST_ROOT);
+        assert_eq!(
+            format!("0.0.0.0:{}", super::HOOK_PORT),
+            aex_hands_agent::boot::LISTEN_ADDR
+        );
+    }
+
+    #[test]
     fn the_build_inputs_are_pinned() {
         assert_eq!(ARCHITECTURE, "ARM_64");
         assert_eq!(GUEST_TARGET, "aarch64-unknown-linux-musl");
