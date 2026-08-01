@@ -32,6 +32,7 @@ errors:
   - { code: operation_not_cancelable, status: 409, retryable: false, class: state, stage: domain_state, message: "the operation has passed its cancellation point" }
   - { code: approval_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such approval" }
   - { code: approval_already_resolved, status: 409, retryable: false, class: conflict, stage: domain_state, message: "the approval already has a decision" }
+  - { code: approval_binding_changed, status: 409, retryable: false, class: conflict, stage: domain_state, message: "the bound call drifted between the request and the decision, so the approval was cancelled", remedy: "re-read the approval and decide against its current bound call" }
   - { code: file_not_found, status: 404, retryable: false, class: not_found, stage: domain_state, message: "no such file entry" }
   - { code: content_missing, status: 409, retryable: false, class: state, stage: domain_state, message: "the referenced content is not present" }
   - { code: export_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such export" }

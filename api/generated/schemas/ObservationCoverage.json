@@ -2,11 +2,12 @@
   "$id": "https://schemas.aex.dev/v1/ObservationCoverage.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "What the answer is actually complete over. Never omitted.",
+  "description": "What the answer is actually complete over. Never omitted. All four watermarks are accepted-time positions in epoch milliseconds (O-04).",
   "properties": {
     "accepted": {
-      "$ref": "aex:schema:ObservationWatermark",
-      "description": "Admission watermark."
+      "description": "Admission watermark, in epoch milliseconds.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
     },
     "caughtUp": {
       "description": "Whether indexing has reached admission.",
@@ -17,14 +18,14 @@
       "type": "boolean"
     },
     "earliestReplay": {
-      "description": "Earliest replayable observation time.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
+      "description": "Earliest replayable position, in epoch milliseconds.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
     },
     "indexed": {
-      "$ref": "aex:schema:ObservationWatermark",
-      "description": "Indexing watermark."
+      "description": "Indexing watermark, in epoch milliseconds.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
     },
     "missingIntervals": {
       "description": "Known holes.",
@@ -35,7 +36,7 @@
       "type": "array"
     },
     "snapshot": {
-      "description": "The pinned snapshot position.",
+      "description": "The pinned snapshot position, in epoch milliseconds.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
     },

@@ -79,16 +79,15 @@
 {"bindings":{"approvalId":"apr_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_approval_get","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals/apr_01kyw2qa4ne00r40r40m30e209","plane":"regional"}
 {"bindings":{"approvalId":"apr_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_approval_respond","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals/apr_01kyw2qa4ne00r40r40m30e209/responses","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_approvals_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals","plane":"regional"}
+{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_clone","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/clones","plane":"regional"}
 {"bindings":{},"method":"POST","operationId":"session_create","path":"/api/sessions","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_credential_rebind","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/credential-rebinds","plane":"regional"}
-{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_delete","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/deletions","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_live_download_create","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/live/downloads","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_live_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/live/list","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_live_stat","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/live/stat","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_persisted_download_create","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/persisted/downloads","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_persisted_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/persisted/list","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_persisted_stat","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/persisted/stat","plane":"regional"}
-{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_fork","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/forks","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_get","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_message_send","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/messages","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_messages_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/messages","plane":"regional"}
@@ -113,6 +112,8 @@
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_observations_traces_query","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/traces/query","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_observations_traces_stream","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/traces/stream","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_persist","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/persists","plane":"regional"}
+{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_purge","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/purges","plane":"regional"}
+{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_restore","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/restores","plane":"regional"}
 {"bindings":{"runId":"run_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_run_get","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/runs/run_01kyw2qa4ne00r40r40m30e209","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_runs_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/runs","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_stop","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/stops","plane":"regional"}
@@ -122,6 +123,7 @@
 {"bindings":{"exportId":"exp_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_telemetry_export_revoke","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/telemetry/exports/exp_01kyw2qa4ne00r40r40m30e209/revocations","plane":"regional"}
 {"bindings":{"gapId":"gap_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_telemetry_gap_get","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/telemetry/gaps/gap_01kyw2qa4ne00r40r40m30e209","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_telemetry_gaps_query","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/telemetry/gaps/query","plane":"regional"}
+{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_trash","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/trashes","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_workspace_discard","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/workspace/discards","plane":"regional"}
 {"bindings":{},"method":"GET","operationId":"sessions_list","path":"/api/sessions","plane":"regional"}
 {"bindings":{},"method":"POST","operationId":"telemetry_export_create","path":"/api/telemetry/exports","plane":"regional"}

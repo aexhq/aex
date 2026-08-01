@@ -24,6 +24,7 @@ pub mod control;
 pub mod journal;
 pub mod money;
 pub mod observation;
+pub mod outbox;
 pub mod release;
 pub mod usage;
 pub mod wake;

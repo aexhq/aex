@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionPurgeRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Admit the durable purge operation. Purge is irreversible.",
+  "properties": {
+    "cascade": {
+      "$ref": "aex:schema:PurgeCascade",
+      "description": "How clone descendants are treated."
+    }
+  },
+  "required": [
+    "cascade"
+  ],
+  "title": "SessionPurgeRequest",
+  "type": "object"
+}
