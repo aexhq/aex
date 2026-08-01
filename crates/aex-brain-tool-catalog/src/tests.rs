@@ -11,6 +11,10 @@ use crate::manifest::{
     validate_entry,
 };
 use crate::manifest::{CatalogCanonicalError, ToolName, ToolNameError, canonical_catalog_bytes};
+use crate::readiness::{
+    BuiltinSelection, CapabilitySet, ExecutorRegistry, ReadinessFailure, ReadinessInput,
+    ResolvedSecretNames, advertise,
+};
 use crate::signature::{
     CatalogSignature, CatalogVerifyError, SigningKeyId, TrustStore, VerificationKey,
     catalog_signing_input, verify_catalog_signature,
@@ -617,4 +621,165 @@ fn submit_result_digest_is_canonical_and_budgeted_without_truncation() {
             remaining: 32_000
         })
     );
+}
+
+#[test]
+fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
+    let entries = builtin_entries().expect("compiled catalog");
+    let executors = ready_executors();
+    let capabilities = CapabilitySet::new([("hands.browser", 1)]);
+    let secrets = ResolvedSecretNames::new(["aex_web_search"]).expect("secret names");
+    let advertised = advertise(ReadinessInput {
+        entries: &entries,
+        executors: &executors,
+        capabilities: &capabilities,
+        secrets: &secrets,
+        selection: &BuiltinSelection::Default,
+        approval_required: &[],
+    })
+    .expect("all routes ready");
+    assert_eq!(advertised.entries.len(), 33);
+
+    let no_search = ResolvedSecretNames::default();
+    let advertised = advertise(ReadinessInput {
+        entries: &entries,
+        executors: &executors,
+        capabilities: &capabilities,
+        secrets: &no_search,
+        selection: &BuiltinSelection::Default,
+        approval_required: &[],
+    })
+    .expect("absent optional search authority excludes the tool");
+    assert_eq!(advertised.entries.len(), 32);
+    assert!(!advertised.contains("web_search"));
+
+    let no_browser = CapabilitySet::default();
+    let advertised = advertise(ReadinessInput {
+        entries: &entries,
+        executors: &executors,
+        capabilities: &no_browser,
+        secrets: &secrets,
+        selection: &BuiltinSelection::Default,
+        approval_required: &[],
+    })
+    .expect("absent optional browser capability excludes four tools");
+    assert_eq!(advertised.entries.len(), 29);
+}
+
+#[test]
+fn advertisement_fails_closed_on_ambiguous_missing_and_duplicate_routes() {
+    let entries = builtin_entries().expect("compiled catalog");
+    let capabilities = CapabilitySet::new([("hands.browser", 1)]);
+    let secrets = ResolvedSecretNames::new(["aex_web_search"]).expect("secret names");
+
+    let mut ambiguous = ready_executors();
+    ambiguous.declare_ready(ExecutorRoute::ManagedWeb);
+    assert!(matches!(
+        advertise(ReadinessInput {
+            entries: &entries,
+            executors: &ambiguous,
+            capabilities: &capabilities,
+            secrets: &secrets,
+            selection: &BuiltinSelection::Default,
+            approval_required: &[],
+        }),
+        Err(ReadinessFailure::AmbiguousRoute {
+            route: ExecutorRoute::ManagedWeb,
+            candidates: 2,
+            ..
+        })
+    ));
+
+    let mut missing = ready_executors();
+    missing.remove(ExecutorRoute::ManagedWeb);
+    assert!(matches!(
+        advertise(ReadinessInput {
+            entries: &entries,
+            executors: &missing,
+            capabilities: &capabilities,
+            secrets: &secrets,
+            selection: &BuiltinSelection::Default,
+            approval_required: &[],
+        }),
+        Err(ReadinessFailure::NoReadyExecutor {
+            route: ExecutorRoute::ManagedWeb,
+            ..
+        })
+    ));
+
+    let mut duplicate = entries.clone();
+    duplicate.push(entries[0].clone());
+    assert!(matches!(
+        advertise(ReadinessInput {
+            entries: &duplicate,
+            executors: &ready_executors(),
+            capabilities: &capabilities,
+            secrets: &secrets,
+            selection: &BuiltinSelection::Default,
+            approval_required: &[],
+        }),
+        Err(ReadinessFailure::DuplicateName { .. })
+    ));
+}
+
+#[test]
+fn selection_and_approval_names_are_total() {
+    let entries = builtin_entries().expect("compiled catalog");
+    let executors = ready_executors();
+    let capabilities = CapabilitySet::new([("hands.browser", 1)]);
+    let secrets = ResolvedSecretNames::new(["aex_web_search"]).expect("secret names");
+    let selection = BuiltinSelection::Exact(vec![
+        ToolName::parse("todo_read").expect("fixture tool name"),
+    ]);
+    let advertised = advertise(ReadinessInput {
+        entries: &entries,
+        executors: &executors,
+        capabilities: &capabilities,
+        secrets: &secrets,
+        selection: &selection,
+        approval_required: &["todo_read"],
+    })
+    .expect("exact selection");
+    assert_eq!(advertised.entries.len(), 1);
+
+    let unknown = BuiltinSelection::Exact(vec![
+        ToolName::parse("not_a_tool").expect("grammar-valid fixture"),
+    ]);
+    assert!(matches!(
+        advertise(ReadinessInput {
+            entries: &entries,
+            executors: &executors,
+            capabilities: &capabilities,
+            secrets: &secrets,
+            selection: &unknown,
+            approval_required: &[],
+        }),
+        Err(ReadinessFailure::UnknownSelection { .. })
+    ));
+
+    assert!(matches!(
+        advertise(ReadinessInput {
+            entries: &entries,
+            executors: &executors,
+            capabilities: &capabilities,
+            secrets: &secrets,
+            selection: &BuiltinSelection::Default,
+            approval_required: &["not_a_tool"],
+        }),
+        Err(ReadinessFailure::ApprovalPolicyNamesUnknown { .. })
+    ));
+}
+
+fn ready_executors() -> ExecutorRegistry {
+    ExecutorRegistry::new([
+        ExecutorRoute::Control,
+        ExecutorRoute::Park,
+        ExecutorRoute::SubagentScheduler,
+        ExecutorRoute::ManagedWeb,
+        ExecutorRoute::Mcp,
+        ExecutorRoute::HandsFilesystem,
+        ExecutorRoute::HandsDevelopment,
+        ExecutorRoute::HandsBrowser,
+        ExecutorRoute::RegisteredCustom,
+    ])
 }

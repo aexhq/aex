@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// How replay affects an already-started tool effect.
 // TODO(cross-stream): replaced by aex_brain_domain::effect::EffectClass at merge
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectClass {
     /// A total function of committed input.
@@ -22,7 +22,7 @@ pub enum EffectClass {
 
 /// The executor selected before any tool I/O.
 // TODO(cross-stream): replaced by aex_brain_domain::tool::ExecutorRoute at merge
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorRoute {
     /// Fold-local Brain control.
