@@ -22,13 +22,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-provider-gateway",
-    "owner": "providers",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the providers stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-test-support",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
@@ -138,13 +131,6 @@
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the providers stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
