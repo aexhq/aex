@@ -1,6 +1,6 @@
 [package]
 name = "aex-cli"
-version = "0.1.0"
+version = "0.50.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,14 +22,38 @@ security_tier = "public_edge"
 risk = ["untrusted_input"]
 scenarios = []
 
+[package.metadata.aex.targets]
+cli_contract = "unit"
+config_exit_output = "unit"
+download = "unit"
+
 [package.metadata.aex.not_applicable]
-targets = "awaiting the clients stream; the cases land with the tool's own implementation"
 live_suite = "packed-binary evidence is package-owned in the tool's own targets; the CLI has no deployed endpoint of its own"
 
 [[bin]]
-name = "aex-cli"
+name = "aex"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+aex-wire = { path = "../../crates/aex-wire" }
 clap.workspace = true
+clap_complete.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "cli_contract"
+path = "tests/cli_contract.rs"
+
+[[test]]
+name = "config_exit_output"
+path = "tests/config_exit_output.rs"
+
+[[test]]
+name = "download"
+path = "tests/download.rs"

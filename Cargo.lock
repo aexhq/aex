@@ -169,10 +169,16 @@ dependencies = [
 
 [[package]]
 name = "aex-cli"
-version = "0.1.0"
+version = "0.50.0"
 dependencies = [
+ "aex-wire",
  "anyhow",
  "clap",
+ "clap_complete",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -2332,6 +2338,15 @@ dependencies = [
  "clap_lex",
  "strsim",
  "terminal_size",
+]
+
+[[package]]
+name = "clap_complete"
+version = "4.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f84a88507dbd05c695f2cb5e8558e747179134005e9893882dec964190ed89"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
