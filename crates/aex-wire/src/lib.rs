@@ -33,7 +33,9 @@
 mod generated;
 
 pub mod canonical;
+pub mod client;
 pub mod cursor;
+pub mod dispatch;
 pub mod error;
 pub mod idempotency;
 pub mod ids;
@@ -53,7 +55,9 @@ pub mod server;
 pub mod testing;
 
 pub use canonical::{CanonicalJson, intent_digest, to_jcs_bytes};
+pub use client::{BaseUrl, ClientError, Transport, TransportError, WireRequest, WireResponse};
 pub use cursor::Cursor;
+pub use dispatch::{DispatchOutcome, RawRequest, RawResponse, RequestLimits};
 pub use error::{ApiError, ApiErrorBody, ErrorCode, ObservedErrorCode, WireError, WireResult};
 pub use ids::{ContentHash, FilePath, PrefixedId, ResourceName, SpanId, TraceId, Uuid7};
 pub use page::Page;
