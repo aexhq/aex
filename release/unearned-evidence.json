@@ -15,20 +15,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-application",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-domain",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-hands",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
@@ -57,17 +43,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-store-aws",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-brain-test-support",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the crate's own implementation"
+    "detail": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
   },
   {
     "reason_class": "awaiting_owner",
@@ -424,7 +403,7 @@
     "subject": "runtimes/brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; the cases land with the binary's own implementation"
+    "detail": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
   },
   {
     "reason_class": "awaiting_owner",

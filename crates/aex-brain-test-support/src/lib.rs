@@ -23,11 +23,15 @@
 
 pub mod clock;
 pub mod fixtures;
+pub mod histories;
 pub mod ids;
+pub mod journal_gen;
 pub mod prefix;
 pub mod teardown;
 
 pub use clock::TestClock;
+pub use histories::{Golden, Rejection};
 pub use ids::IdFactory;
+pub use journal_gen::{HistoryBuilder, Hostile};
 pub use prefix::{PrefixError, RunPrefix};
 pub use teardown::{BrainResource, CleanupEntry, CleanupLedger};
