@@ -1,0 +1,57 @@
+# aex
+
+> Explicit durable agent sessions through the strict aex v1 API.
+
+Create sessions, admit messages and runs, manage overwrite-by-name workspace resources, read persisted or live files through grants, and query or export telemetry.
+
+Models use a managed `creator/model` slug; the session request does not select an execution implementation.
+
+## Feature areas
+
+## Sessions and runs
+
+Explicit session creation, message admission, durable run polling, and operation-backed lifecycle changes.
+
+## Registered resources and files
+
+Overwrite-by-name inputs plus distinct persisted and live file reads with short-lived download grants.
+
+## Telemetry
+
+Query, stream, aggregate, inspect gaps, and create durable telemetry exports.
+
+## Account and billing
+
+Bootstrap resources for accounts, organizations, workspaces, API keys, balances, usage, and statements.
+
+## Start
+
+- [Overview](https://aex.dev/docs/)
+- [Features](https://aex.dev/docs/features/)
+- [Quickstart](https://aex.dev/docs/guides/quickstart/)
+- [Sessions](https://aex.dev/docs/concepts/sessions/)
+- [Composition](https://aex.dev/docs/concepts/composition/)
+- [Registered Resources](https://aex.dev/docs/guides/resources/)
+- [Telemetry](https://aex.dev/docs/guides/telemetry/)
+- [Limits](https://aex.dev/docs/guides/limits/)
+
+## Guides
+
+- [Quickstart](https://aex.dev/docs/guides/quickstart/)
+- [Authentication](https://aex.dev/docs/guides/authentication/)
+- [Resources](https://aex.dev/docs/guides/resources/)
+- [Files](https://aex.dev/docs/guides/files/)
+- [Telemetry](https://aex.dev/docs/guides/telemetry/)
+- [Networking](https://aex.dev/docs/guides/networking/)
+- [Limits](https://aex.dev/docs/guides/limits/)
+- [Errors](https://aex.dev/docs/guides/errors/)
+- [Retries](https://aex.dev/docs/guides/retries/)
+- [Billing](https://aex.dev/docs/guides/billing/)
+- [Release](https://aex.dev/docs/guides/release/)
+- [Testing](https://aex.dev/docs/guides/testing/)
+
+## Reference
+
+- [SDK](https://aex.dev/docs/reference/sdk/)
+- [CLI](https://aex.dev/docs/reference/cli/)
+- [HTTP API](https://aex.dev/docs/reference/api/)

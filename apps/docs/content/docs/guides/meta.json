@@ -1,0 +1,20 @@
+{
+  "$generated": "GENERATED FILE - do not edit. Written by scripts/docs/generate-all.mjs; run 'bun run docs:generate'.",
+  "title": "Guides",
+  "icon": "PackageCheck",
+  "defaultOpen": true,
+  "pages": [
+    "quickstart",
+    "authentication",
+    "resources",
+    "files",
+    "telemetry",
+    "networking",
+    "limits",
+    "errors",
+    "retries",
+    "billing",
+    "release",
+    "testing"
+  ]
+}

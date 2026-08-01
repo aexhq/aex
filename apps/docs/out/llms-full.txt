@@ -1,0 +1,2570 @@
+# aex
+
+> aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
+
+Open durable agent sessions, send turns, stream events, capture files, and compose agents with skills, files, MCP, secrets, networking controls, and subagents across the managed runtime.
+
+Providers: Anthropic (`anthropic`), DeepSeek (`deepseek`), OpenAI (`openai`), Gemini (`gemini`), Mistral (`mistral`), OpenRouter (`openrouter`), Doubao (`doubao`).
+
+## Feature areas
+
+## Agent runtime
+
+Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
+
+## Durable infrastructure
+
+Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
+
+## Agent composition
+
+Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls.
+
+## Subagents
+
+Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
+
+## Models and providers
+
+Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao behind one submission shape.
+
+## Typed control surface
+
+Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy.
+
+## Start
+
+- [Overview](https://aex.dev/docs/)
+- [Features](https://aex.dev/docs/features/)
+- [Quickstart](https://aex.dev/docs/guides/quickstart/)
+- [Sessions](https://aex.dev/docs/concepts/sessions/)
+- [Composition](https://aex.dev/docs/concepts/composition/)
+- [Providers & Runtimes](https://aex.dev/docs/concepts/providers-and-runtimes/)
+- [Secrets](https://aex.dev/docs/guides/secrets/)
+- [Limits](https://aex.dev/docs/guides/limits/)
+
+## Guides
+
+- [Quickstart](https://aex.dev/docs/guides/quickstart/)
+- [Authentication](https://aex.dev/docs/guides/authentication/)
+- [Session Config](https://aex.dev/docs/guides/session-config/)
+- [Session Record](https://aex.dev/docs/guides/session-record/)
+- [Limits](https://aex.dev/docs/guides/limits/)
+- [Defaults](https://aex.dev/docs/guides/defaults/)
+- [Limits And Quotas](https://aex.dev/docs/guides/limits-and-quotas/)
+- [Errors](https://aex.dev/docs/guides/errors/)
+- [Retries](https://aex.dev/docs/guides/retries/)
+- [Secrets](https://aex.dev/docs/guides/secrets/)
+- [Credentials](https://aex.dev/docs/guides/credentials/)
+- [Networking](https://aex.dev/docs/guides/networking/)
+- [Skills](https://aex.dev/docs/guides/skills/)
+- [Vision Skills](https://aex.dev/docs/guides/vision-skills/)
+- [MCP](https://aex.dev/docs/guides/mcp/)
+- [Files](https://aex.dev/docs/guides/files/)
+- [Events](https://aex.dev/docs/guides/events/)
+- [Webhooks](https://aex.dev/docs/guides/webhooks/)
+- [Billing](https://aex.dev/docs/guides/billing/)
+- [Cleanup](https://aex.dev/docs/guides/cleanup/)
+
+## Reference
+
+- [SDK](https://aex.dev/docs/reference/sdk/)
+- [CLI](https://aex.dev/docs/reference/cli/)
+- [Events](https://aex.dev/docs/reference/events/)
+- [Provider Runtime Capabilities](https://aex.dev/docs/reference/provider-runtime-capabilities/)
+
+
+
+# Sessions
+
+---
+title: Sessions
+description: Resumable threads, explicit runs, and committed checkpoints.
+icon: Play
+---
+
+A session is a resumable thread. Its `status` describes whether that thread can
+progress, not whether the previous run succeeded. Typical resumable states are
+`running`, `idle`, `suspended`, `awaiting_approval`, and recoverable `error`.
+The previous run verdict is available as `lastRun.outcome` and on its terminal
+RUN event.
+
+```ts
+const session = await aex.sessions.create({
+  model,
+  apiKeys
+});
+
+const run = session.messages.send("Write the report and save it as a file.");
+for await (const event of run) console.log(event.type);
+const result = await run.finished();
+
+console.log(result.status); // succeeded | failed | timed_out | cancelled | interrupted
+console.log(result.session.status); // usually idle after a successful run
+```
+
+`finished()` resolves only after `RUN_FINISHED` or `RUN_ERROR`. A
+`RUN_FINISHED` is the consistency barrier: session state, usage, checkpoint,
+and checkpoint-backed files are committed before it is emitted. This release does not
+expose a separate pre-checkpoint "brain idle" wait. The committed session
+projection must identify that exact run in `lastRun`; an idle projection with a
+missing or older `lastRun` is treated as inconsistent and `finished()` fails.
+
+The three common namespaces are stable properties:
+
+```ts
+const messages = await session.messages.list();
+const snapshot = await session.files.list();
+
+for await (const event of session.events.iterate()) {
+  console.log(event.type);
+}
+
+console.log(snapshot.revision.checkpointId);
+console.log(snapshot.files);
+```
+
+Reopen a durable session with `aex.sessions.open(id)`. Use a stable
+`idempotencyKey` for create and message mutations that your application may
+repeat. Reads and explicitly idempotent mutations receive bounded transport
+retries; a user run is never replayed as a whole by the SDK.
+
+`aex.start(...)` is the one-shot create, send, and finish convenience. It
+returns the same five-value run outcome and committed file snapshot.
+
+
+
+# Composition
+
+---
+title: Composition
+description: Publish reusable workspace resources and pin them to sessions.
+icon: Blocks
+---
+
+Files, skills, custom tools, and instructions follow one lifecycle:
+
+1. Build a local draft with `File`, `Skill`, `Tool`, or `Instructions`.
+2. Publish it through `aex.workspace.<kind>.publish(...)`.
+3. Pass the returned immutable, version-pinned ref under `assets`.
+
+```ts
+import { Aex, File, Instructions, Models, Skill } from "@aexhq/sdk";
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+const [input, rules, reportWriter] = await Promise.all([
+  File.fromPath("./input").then((draft) => aex.workspace.files.publish(draft)),
+  Instructions.fromContent("Follow the repository conventions.", { name: "repo-rules" })
+    .then((draft) => aex.workspace.instructions.publish(draft)),
+  Skill.fromDir("./skills/report-writer", { name: "report-writer" })
+    .then((draft) => aex.workspace.skills.publish(draft))
+]);
+
+await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Use the attached material to produce a report.",
+  assets: {
+    files: [input],
+    instructions: [rules],
+    skills: [reportWriter]
+  },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+Published refs contain `resourceId`, `version`, `assetId`, and `contentHash`.
+Changing a logical resource creates a new version; an existing session remains
+pinned to the exact bytes it received.
+
+Builtin capabilities stay in `builtinTools`, and remote MCP servers stay in
+`mcpServers`. Neither is mixed into `assets.tools`.
+
+Workspace lists are cursor paged:
+
+```ts
+const page = await aex.workspace.files.list({ limit: 100 });
+const next = page.nextCursor
+  ? await aex.workspace.files.list({ cursor: page.nextCursor, limit: 100 })
+  : undefined;
+```
+
+The default and maximum page size are both 100.
+
+
+
+# Providers And Runtimes
+
+---
+title: Providers & runtimes
+description: How provider selection maps to managed runtime execution.
+icon: Network
+---
+
+aex exposes one submission shape across supported providers:
+
+| Provider | Selector |
+| --- | --- |
+| Anthropic | `Providers.ANTHROPIC` |
+| DeepSeek | `Providers.DEEPSEEK` |
+| OpenAI | `Providers.OPENAI` |
+| Gemini | `Providers.GEMINI` |
+| Mistral | `Providers.MISTRAL` |
+| OpenRouter | `Providers.OPENROUTER` |
+| Doubao | `Providers.DOUBAO` |
+
+All submissions run on a managed runtime. The optional `runtime` object has two
+independent selectors:
+
+- `runtime.kind` selects the execution backend: `RuntimeKinds.CONTAINER`
+  (the default, `"container"`), `RuntimeKinds.SPOT_CONTAINER`
+  (`"spot_container"`), or `RuntimeKinds.LAMBDA` (`"lambda"`).
+- `runtime.size` selects a managed machine-size preset; use `Sizes.*` in
+  TypeScript.
+
+Omit either field to use its default (`container` for `kind` and
+`shared-0.25x-1gb` for `size`). The CLI equivalents are `--runtime <kind>` and
+`--runtime-size <size>`.
+
+## Selection
+
+### TypeScript
+
+```ts
+import { Models, Providers, RuntimeKinds, Sizes } from "@aexhq/sdk";
+
+await aex.start({
+  provider: Providers.OPENAI,
+  model: Models.GPT_4_1,
+  message: "Summarise the attached files.",
+  runtime: {
+    kind: RuntimeKinds.LAMBDA,
+    size: Sizes.SHARED_0_25X_1GB
+  },
+  apiKeys: { openai: process.env.OPENAI_API_KEY! }
+});
+```
+
+### CLI
+
+```bash
+aex start \
+  --api-key "$AEX_API_KEY" \
+  --provider openai \
+  --openai-api-key "$OPENAI_API_KEY" \
+  --model gpt-4.1 \
+  --runtime lambda \
+  --runtime-size shared-0.25x-1gb \
+  --prompt "Summarise the attached files." \
+  --follow
+```
+
+Events, files, cleanup, and downloads use the same SDK and CLI surface for
+every provider. For the exact supported model list, use the generated
+[provider/runtime capability matrix](../provider-runtime-capabilities.md).
+
+
+
+# Agent Tools
+
+---
+title: Agent tools
+description: Select builtin capabilities and attach published custom tools.
+icon: TerminalSquare
+---
+
+`builtinTools` controls platform-provided capabilities:
+
+- `"default"` enables the standard set and is the default.
+- `"none"` disables all builtin tools.
+- An array such as `[BuiltinTools.bash, BuiltinTools.read_file]` selects an
+  explicit subset.
+
+Custom tools are workspace resources. Build and publish them, then attach the
+returned ref under `assets.tools`.
+
+```ts
+import { BuiltinTools, Tool } from "@aexhq/sdk";
+
+const draft = await Tool.fromFiles({
+  name: "lookup_metric",
+  description: "Looks up one metric.",
+  inputSchema: {
+    type: "object",
+    properties: { name: { type: "string" } },
+    required: ["name"]
+  },
+  entry: "index.js",
+  files: {
+    "index.js": "export default async ({ input }) => ({ content: [{ type: 'text', text: input.name }] });"
+  }
+});
+const lookup = await aex.workspace.tools.publish(draft);
+
+await aex.start({
+  model,
+  message: "Look up revenue and save the result.",
+  builtinTools: [BuiltinTools.write_file],
+  assets: { tools: [lookup] },
+  apiKeys
+});
+```
+
+Tool entries must be `.js`, `.mjs`, or `.cjs` modules present in the bundle.
+The SDK validates the manifest before any network request.
+
+Use `mcpServers` for remote MCP tools. The final runtime tool set consists of
+the selected builtins, pinned custom tools, and declared MCP tools.
+
+
+
+# Subagents
+
+---
+title: Subagents
+description: Delegate bounded work to child sessions and inspect their lineage.
+icon: GitFork
+---
+
+The builtin `subagent` capability lets an agent delegate work to child sessions.
+Enable it with the default builtin set or include it explicitly in
+`builtinTools`. Use `builtinTools: "none"` to disable agent-driven delegation.
+
+Children are durable session records with their own events and checkpointed
+files. Discover them from the parent handle:
+
+```ts
+const children = await session.children();
+
+for (const child of children) {
+  console.log(child.id, child.parentSessionId, child.depth, child.status);
+  const events = await child.events.list();
+  const snapshot = await child.files.list();
+  const descendants = await child.children();
+  console.log(child.ref.lastRun?.outcome, events.length, snapshot.files.length, descendants.length);
+}
+```
+
+Child `status` is a session lifecycle state. Inspect `lastRun.outcome` or the
+child's terminal RUN event for its run verdict. Child handles are read-only:
+they expose events, checkpointed files, and recursive lineage, but not top-level
+session controls such as send, cancel, suspend, resume, or delete.
+
+Provider credentials are inherited through the hosted runtime's vaulted
+channel; they are not copied into public child submissions or event payloads.
+Depth, breadth, and spend limits are enforced server-side. Use
+`overrides.maxSpendUsd` and a deliberate builtin selection to bound a parent
+workflow.
+
+
+
+# Quickstart
+
+---
+title: Quickstart
+---
+
+# Quickstart
+
+## Install
+
+```bash
+npm i @aexhq/sdk
+```
+
+Set an aex workspace key and the BYOK key for your model:
+
+```bash
+export AEX_API_KEY="<your-aex-api-key>"
+export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
+```
+
+The workspace key needs `sessions:read`, `sessions:write`, and `files:read` for
+this workflow. Add `billing:read` when the application also reads cost and
+billing-account resources.
+
+## Run a session
+
+```ts
+import { Aex, Models, Sizes } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_KEY!);
+const session = await aex.sessions.create({
+  model: Models.CLAUDE_HAIKU_4_5,
+  system: "You are a concise engineering assistant.",
+  runtime: Sizes.SHARED_0_25X_1GB,
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+
+const run = session.messages.send("Write a short report and save it as a file.");
+for await (const event of run) {
+  console.log(event.type, event.runId);
+}
+
+const result = await run.finished();
+console.log(result.status, result.costUsd, result.text);
+```
+
+`finished()` resolves only after `RUN_FINISHED` or `RUN_ERROR`. A
+`RUN_FINISHED` result is checkpoint-consistent: its session record, cost,
+usage, messages, and files all reflect the same committed run. A `RUN_ERROR`
+that failed before a checkpoint has `files: []` and no `checkpoint`.
+
+Held outcomes remain explicit. `suspended` and `awaiting_approval` are not
+reported as successful runs, and `result.ok` is true only for `succeeded`.
+
+## Reopen and continue
+
+```ts
+const resumed = await aex.sessions.open(session.id);
+if (resumed.record.acceptsMessages) {
+  await resumed.messages.send("Validate the report and summarize the result.").finished();
+}
+```
+
+`record.currentRun` describes active work and `record.lastRun` describes the
+most recently completed or held run.
+
+## Publish reusable inputs
+
+Workspace resources are versioned and immutable when submitted. Publish local
+drafts first, then pass the returned pinned refs under `assets`:
+
+```ts
+import { File } from "@aexhq/sdk";
+
+const source = await aex.workspace.files.publish(
+  await File.fromPath("./input.csv", { mountPath: "/workspace/input" })
+);
+
+const withInput = await aex.sessions.create({
+  model: Models.CLAUDE_HAIKU_4_5,
+  assets: { files: [source] },
+  builtinTools: "default",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+The same pattern applies to `aex.workspace.skills`, `.tools`, and
+`.instructions`. Raw uploaded bytes are assets; workspace resources add typed,
+versioned meaning to those bytes.
+
+## Read checkpointed files
+
+```ts
+const completed = await withInput.messages.send("Create output/report.md").finished();
+const snapshot = await withInput.files.list({
+  checkpointId: completed.checkpoint?.checkpointId
+});
+
+console.log(snapshot.revision, snapshot.files);
+const report = await withInput.files.findOne({ filename: "report.md" });
+if (report) {
+  console.log((await withInput.files.read(report)).text);
+}
+```
+
+Session file IDs are meaningful only with their checkpoint. File objects carry
+`checkpointId`, and ID selectors must include it.
+
+## One-shot convenience
+
+`aex.start()` is the one retained convenience for create, send, and finish:
+
+```ts
+const result = await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Summarize this repository.",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+
+console.log(result.sessionId, result.status, result.text);
+```
+
+The bundled CLI provides the same one-shot workflow:
+
+```bash
+npx aex start \
+  --api-key "$AEX_API_KEY" \
+  --anthropic-api-key "$ANTHROPIC_API_KEY" \
+  --model claude-haiku-4-5 \
+  --prompt "Write a short report and save it as a file." \
+  --follow
+```
+
+## Next
+
+- [Composition](concepts/composition.md)
+- [Events](events.md)
+- [Files](files.md)
+- [Webhooks](webhooks.md)
+- [Provider/runtime capabilities](provider-runtime-capabilities.md)
+
+
+
+# Authentication
+
+---
+title: Authentication
+---
+
+# Authentication
+
+Every SDK and CLI call authenticates with an **aex API key**: a bearer
+credential that is **workspace-scoped** — the workspace is derived server-side
+from the token, so there is no workspace parameter anywhere in the API. A
+request either carries a valid token for a workspace or it is rejected with
+`401 unauthorized` (see [Errors](errors.md)).
+
+## Getting a token (invite-only beta)
+
+aex is currently in **invite-only beta**. Workspaces and their initial API
+tokens are provisioned by the aex team — contact <support@aex.dev> for beta
+access. Once your workspace exists, you can create and delete additional tokens
+in the dashboard at <https://aex.dev>.
+
+## Using a token
+
+Pass the token to the SDK constructor, the CLI's `--api-key` flag, or persist
+it once with `aex login`:
+
+```ts
+import { Aex } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_KEY!);
+```
+
+```bash
+npx aex whoami --api-key "$AEX_API_KEY"
+
+# or persist it once, then omit --api-key on later commands:
+npx aex login --api-key "$AEX_API_KEY"
+npx aex whoami
+```
+
+(`new Aex(apiKey)` is the canonical constructor; the equivalent options form is
+documented once in [Credentials](credentials.md).)
+
+The token travels as a standard `Authorization: Bearer` header. Treat it like
+any other secret: keep it in environment variables or a secret manager, never
+in session config, prompts, or committed files.
+
+## Plane routing and the `baseUrl` guard
+
+An aex API key is **self-describing**: it embeds the plane (`dev` / `prd`) and
+region it was minted for. The constructor parses the key and routes accordingly,
+with **zero network**:
+
+- **Omit `baseUrl`** and the key routes to its canonical hosted API plane:
+  `prd` keys route to `https://api.aex.dev`, and `dev` keys route to
+  `https://dev-api.aex.dev`.
+- **Supply a `baseUrl` whose plane disagrees with the key** (e.g. a `dev` key
+  pointed at `https://api.aex.dev`) and the constructor throws
+  `CredentialValidationError` **before any request** — you no longer discover the
+  mismatch as a late `401 token_invalid` after a full round-trip.
+
+```ts
+// prd key → routes to https://api.aex.dev automatically:
+const prd = new Aex(process.env.AEX_PRD_KEY!);
+
+// dev key → routes to https://dev-api.aex.dev automatically:
+const dev = new Aex(process.env.AEX_DEV_KEY!);
+```
+
+## Scopes
+
+A token carries a set of **scopes**; every API route requires one, and a token
+that lacks the route's scope fails with `403 insufficient_scope` naming the
+missing scope. The customer-grantable scopes:
+
+| Scope | Grants |
+| --- | --- |
+| `sessions:read` | Read sessions, their events and event archives, and webhook delivery ledgers. |
+| `sessions:write` | Create sessions, send messages, suspend/resume, redeliver webhooks, reveal the webhook signing secret. |
+| `sessions:cancel` | Cancel a session/run. |
+| `sessions:delete` | Delete a session and its record. |
+| `files:read` | Read captured session files and reusable workspace-file metadata. |
+| `files:write` / `files:delete` | Publish and delete reusable workspace-file resources. |
+| `assets:write` | Upload content-addressed bytes before publishing a typed workspace resource. |
+| `assets:delete` | Delete unreferenced content-addressed bytes. |
+| `skills:read` / `skills:write` / `skills:delete` | Administer workspace skills. |
+| `tools:read` / `tools:write` / `tools:delete` | Administer workspace custom tools. |
+| `instructions:read` / `instructions:write` / `instructions:delete` | Administer workspace instructions. |
+| `secrets:read` | List workspace secrets and read their metadata (never values). |
+| `secrets:write` | Create, rotate, and delete workspace secrets. |
+| `mcp:read` | List and read workspace MCP server configurations. |
+| `mcp:write` | Create workspace MCP server configurations. |
+| `mcp:delete` | Delete workspace MCP server configurations. |
+| `billing:read` | Read billing state and create hosted billing sessions. |
+| `workspaces:delete` | Owner self-service workspace hard-erase. |
+
+A typical automation token carries `sessions:read`, `sessions:write`, and
+`files:read`, plus the resource scopes it publishes. Grant the rest only where the workload needs them — a read-only
+reporting token, for example, needs no `sessions:write`.
+
+## Introspection: `whoami`
+
+`aex.whoami()` (CLI: `aex whoami`) validates the token and returns the
+workspace id, the token's scopes, and — on current platform deployments — a
+`limits` object with the workspace's effective admission caps
+(`maxConcurrentSessions`, `submitRatePerMinute`, `spendCapUsd`, `monthSpendUsd`,
+`balanceUsd`, `balanceGraceFloorUsd`, `paymentMethodStatus`), resolved by the
+same code the submit gates enforce. Use it as a cheap credential check and to
+anticipate `429`/`402` rejections before submitting — see
+[Limits & quotas](limits-and-quotas.md) and [Errors](errors.md).
+
+## Rotation and revocation
+
+- **Rotate** by creating a new token in the dashboard, switching your
+  deployment to it, then deleting the old one. Tokens are independent — both
+  stay valid during the switch, so rotation needs no downtime.
+- **Revoke** by deleting the token in the dashboard; deletion takes effect
+  immediately (allow up to a minute for in-flight caches to expire).
+- Token create/delete are rate-limited per workspace (see
+  [Limits & quotas](limits-and-quotas.md)).
+- If you cannot reach the dashboard (or suspect workspace-level compromise),
+  contact <support@aex.dev>.
+
+Provider keys (`apiKeys`) and runtime secrets are a separate, per-call surface —
+see [Credentials](credentials.md) and [Secrets](secrets.md).
+
+
+
+# Session Config
+
+---
+title: Session configuration
+---
+
+# Session configuration
+
+`aex.sessions.create(...)` accepts the durable session configuration. The
+one-shot `aex.start(...)` accepts the same fields plus `message`,
+`messageIdempotencyKey`, `deleteAfter`, and stream options.
+
+Core fields include:
+
+- `model` and optional `provider`
+- `system`
+- immutable workspace refs grouped under `assets`
+- `builtinTools`
+- `mcpServers`
+- `environment`
+- `fileCapture`
+- `runtime`, `metadata`, and `overrides`
+- `outputMode`, `responseFormat`, `approvalGate`, and `webhook`
+- `apiKeys` and `idempotencyKey`
+
+Secrets are never part of a reusable JSON config. Supply provider credentials
+through `apiKeys` and runtime secrets through `environment.secrets` at the call
+site.
+
+```ts
+const base = {
+  model: Models.CLAUDE_HAIKU_4_5,
+  system: "You are a concise automation agent.",
+  builtinTools: "default" as const,
+  overrides: { idleTtl: "3m", timeout: "30m", maxTurns: 20 }
+};
+
+const session = await aex.sessions.create({
+  ...base,
+  assets: { files: [input], instructions: [rules] },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+`assets` accepts only refs returned by `aex.workspace.files`, `skills`, `tools`,
+and `instructions`. Publish local drafts before create; there is no implicit
+upload or compatibility field.
+
+## CLI
+
+`aex start` accepts a credential-free JSON config through `--config`, or
+explicit flags such as `--model`, `--system`, `--prompt`, `--mcp`,
+`--runtime-size`, and `--session-timeout`. Reusable resources are published and
+attached with repeatable `--skill`, `--tool`, `--instructions`, and `--file`
+flags. The legacy instruction flag is not accepted.
+
+
+
+# Session Record
+
+---
+title: Session archives
+---
+
+# Session archives
+
+`Session` is the one live state model returned by `aex.sessions.get(...)`,
+`session.refresh()`, and finished run results. A session archive is the
+public-safe downloadable bundle of that state, typed events, captured files,
+and versioned manifest metadata.
+
+## Listing sessions
+
+`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API key, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: open a row with `aex.sessions.open(id)`, then use `session.files.list()` / `.read(...)` (see [Files](files.md)) to reach that session's deliverables.
+
+```ts
+let cursor: string | undefined;
+do {
+  const page = await aex.sessions.list({ status: "idle", limit: 25, cursor });
+  for (const session of page.sessions) {
+    console.log(session.id, session.status, session.createdAt, session.costUsd);
+  }
+  cursor = page.nextCursor;
+} while (cursor);
+```
+
+`query` fields are all optional: `status` (single session lifecycle status, e.g. `"idle"`), `since` (ISO-8601 lower bound on `createdAt`), `limit` (an integer from 1 through 100; default 25), and `cursor` (the opaque keyset cursor from a prior page's `nextCursor`, absent on the last page). Invalid values fail before the request. Each page row is a public-safe `SessionSummary` (`id`, `status`, `runtime`, `acceptsMessages`, `createdAt`, `updatedAt`, and `costUsd` once a RUN terminal is committed); it deliberately omits the submission snapshot (model / system / env). Use `aex.sessions.get(id)` or `session.record` for the canonical session read, and the `messages`, `events`, and `files` namespaces for authoritative run data.
+
+## Downloading a session archive
+
+`session.download()` and `aex download <session-id>` return a zip with this layout:
+
+```text
+manifest.json
+metadata/session.json
+metadata/submission.json      # when a public-safe submission snapshot is returned by the read API
+metadata/cost.json            # when public cost telemetry is returned by the read API
+events/events.jsonl
+files/<captured deliverable files>
+```
+
+`manifest.json` is versioned as `SessionRecordManifestV1`:
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | `aex.session-record.manifest.v1`. |
+| `sessionRecordSchemaVersion` | `aex.session-record.v1`. |
+| `sessionId` | The session the archive was assembled for. |
+| `namespaces[]` | The documented top-level namespaces: `metadata`, `events`, `files`. |
+| `files[]` | Inventory of expected and present files with `namespace`, `path`, `role`, and `status`. |
+| `sessionFiles[]` | Session file metadata for entries present under the `files/` namespace. |
+| `errors[]` | Per-artifact byte fetch failures during archive assembly. |
+
+Current v1 downloads always include `metadata/session.json` and `events/events.jsonl`. `events/events.jsonl` contains typed event-channel records only; internal diagnostics and full internal streams are not mixed into that file.
+
+`metadata/submission.json` is present only when the session read shape includes a public-safe submission snapshot. `metadata/cost.json` is present only when the session read shape includes public `costTelemetry`; otherwise cost stays `pending`. `metadata/custody.json` remains `pending` until the custody manifest writer and public read surface land. `events/manifest.json` remains `unavailable` in this client-side slice because there is no public coordinator-manifest download route.
+
+The record boundary is public-safe. It must not contain provider API keys, runner bearers, workspace tokens, signed URLs, raw provider response bodies, object-store keys, Vault ids, raw query strings, secret-shaped values, or internal diagnostic files. Credentials are supplied per session and vaulted separately for the session lifetime.
+
+
+
+# Limits
+
+---
+title: Limits
+---
+
+# Limits
+
+aex sessions autonomous agents on the hosted managed runtime. The SDK opens durable
+sessions, sends turns, streams events, captures files, and exposes auth-gated
+reads and downloads.
+
+For what the product supports, see [Features](https://aex.dev/docs/features/).
+For the current provider/model set, see the generated
+[provider/runtime capability matrix](provider-runtime-capabilities.md).
+
+## Current Defaults
+
+| Area | Default |
+| --- | --- |
+| Workspace storage | 500 GB per workspace for captured files and workspace artifacts. |
+
+## Product Boundaries
+
+| Area | Boundary |
+| --- | --- |
+| Runtime | New submissions run on a managed runtime. `runtime.kind` selects `container` (the default), `spot_container`, or `lambda`; `runtime.size` selects a managed machine-size preset (`Sizes.*`). Both fields are optional. |
+| Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
+| Secrets | Provider keys, MCP credentials, and environment secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
+| MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |
+| Files | Captured files, events, and metadata are stored under the session record and downloaded through auth-gated routes. SessionFile content is customer content. |
+| Human review | Sessions execute after submission. Cancellation is available, but aex does not pause a session for platform-mediated approval or interactive clarification. |
+| Sessions | The durable product primitive is the session record. Sessions can be resumed by id and auto-suspend after the configured idle window; persistent named agent profiles and saved agent definitions are out of scope. |
+| Hosting | The SDK and CLI connect to the hosted aex API. `baseUrl` may also target the localhost development stack; self-hosting is not supported. |
+| Provider cost | BYOK provider-token charges accrue to the selected provider account. Finished results report the cost and provider usage recorded for that run. |
+
+## Provider Policy Links
+
+These links are starting points for provider-owned policy areas; they do not
+create aex guarantees.
+
+- Anthropic API data retention policy: <https://platform.claude.com/docs/en/manage-claude/api-and-data-retention>
+- OpenAI API data controls: <https://platform.openai.com/docs/guides/your-data>
+- Mistral privacy and API data handling: <https://docs.mistral.ai/admin/security-access/privacy>
+- Gemini API data handling: <https://ai.google.dev/gemini-api/docs/logs-policy>
+
+## Unsupported Claims
+
+Do not describe aex as providing self-hosting, provider-wide retention,
+HIPAA/BAA or data-residency guarantees, a general-purpose sandbox for every
+downstream service, human-in-the-loop approval checkpoints, or persistent agent
+identity.
+
+
+
+# Defaults
+
+---
+title: Defaults
+---
+
+# Defaults
+
+These are the public values aex applies when you omit the corresponding option.
+Runtime-size presets are defined in public
+[`runtime-sizes.ts`](https://github.com/aexhq/aex/blob/main/packages/contracts/src/runtime-sizes.ts).
+For hard ceilings and adjustable limits, see
+[Limits & quotas](limits-and-quotas.md).
+
+## Session
+
+| Option | Default | How to override |
+| --- | --- | --- |
+| `timeout` | 8 hours | `overrides.timeout` (minimum 1 minute, maximum 8 hours) |
+| `runtime` | `shared-0.25x-1gb` (0.25 vCPU, 1 GB) | `runtime` or `Sizes.*` |
+| `overrides.maxSpendUsd` | No per-session spend cap | A positive USD amount |
+| `overrides.maxTurns` | 20 iterations | A positive integer, up to 200 |
+
+## Tools and MCP
+
+| Option | Default | How to override |
+| --- | --- | --- |
+| Per-call exec timeout | 30 minutes | Tool call `timeoutMs` |
+| `web_fetch` returned body | 500 KB (UTF-8) | Tool argument `max_bytes` |
+| MCP connect timeout | 30 seconds | MCP server `connectTimeoutMs` |
+| MCP `tools/call` timeout | 30 minutes | MCP server `callTimeoutMs` |
+
+## Links and tickets
+
+| Option | Default | How to override |
+| --- | --- | --- |
+| Signed URL TTL | 300 seconds at the API layer; `session.files.link(...)` defaults to `"1h"` | `expiresSeconds` or the SDK's `expiresIn` |
+| Event-stream ticket TTL | 60 seconds | `ttlMs` |
+
+## Subagents
+
+Subagent breadth and depth use managed budgets rather than fixed public numeric
+entitlements. The service supports high recursive depth and large fan-out;
+contact support before relying on unusually large workloads.
+
+## Workspace
+
+Workspace storage defaults to 500 GB (decimal). Admission, concurrency, and
+other adjustable workspace limits are returned by `aex.whoami()` (CLI:
+`aex whoami`); contact support when the effective value does not fit your
+workload.
+
+
+
+# Limits And Quotas
+
+---
+title: Limits & quotas
+---
+
+# Limits & quotas
+
+These public ceilings bound a session, workspace, or request. Defaults that
+apply when you omit an option are also summarized in [Defaults](defaults.md).
+Your workspace's effective adjustable limits are available from `aex.whoami()`
+(CLI: `aex whoami`); contact support when a documented limit is adjustable but
+your workspace needs a higher value.
+
+## Session scope
+
+| Limit | Value | Adjustable? |
+| --- | --- | --- |
+| Session timeout | 1 minute minimum; 8 hours maximum and default | Per session with `overrides.timeout` |
+| Per-call exec timeout | 30 minutes by default | Per tool call with `timeoutMs` |
+| MCP connect timeout | 30 seconds by default | Per MCP server with `connectTimeoutMs` |
+| MCP call timeout | 30 minutes by default | Per MCP server with `callTimeoutMs` |
+| Per-session spend cap | None by default | Per session with `overrides.maxSpendUsd` |
+| Agent iterations | 20 by default; 200 maximum | Per session with `overrides.maxTurns` |
+
+### SessionFile capture
+
+When a capture cap is reached, remaining files are dropped and counted in the
+capture summary.
+
+| Limit | Value |
+| --- | --- |
+| Capture wall-clock budget | 1 hour |
+| Files captured | 50,000 maximum |
+| Bytes per captured file | 500 GB (decimal) maximum |
+| Total captured bytes | 500 GB (decimal) maximum |
+
+### Tool output
+
+| Limit | Value | Adjustable? |
+| --- | --- | --- |
+| `web_fetch` returned body | 500 KB (UTF-8) by default | Per call with `max_bytes` |
+| `bash_output` per-read body | 1 MB (UTF-8) | No |
+| `grep` maximum file size | 25 MB; use `bash grep` for larger files | No |
+| `head`/`tail` maximum file size | 100 MB; use the equivalent shell commands for larger files | No |
+| `grep`/`glob` files visited per recursive walk | 100,000, then the result is truncated with a notice | No |
+
+### Attached archives
+
+An archive that exceeds any of these bounds is rejected before its contents are
+available to session code; a partial archive is never exposed.
+
+| Limit | Value |
+| --- | --- |
+| Compressed archive bytes | 64 MiB maximum |
+| Expanded archive bytes | 128 MiB maximum |
+| Materialized files and safe symlinks | 1,000 maximum per archive |
+| Fidelity metadata | 8 MiB maximum |
+| Planned entries across attached workspace-file archives | 10,000 maximum |
+
+### Subagents
+
+Subagent breadth and depth use managed budgets rather than fixed numeric
+entitlements. The service supports high recursive depth and workloads ranging
+to hundreds or thousands of live child agents, subject to admission at spawn
+time. Contact support before relying on unusually large fan-out.
+
+## Managed runtime
+
+- Only `/workspace` persists across turns of the same session. Everything else
+  is reset between turns and removed when the session ends.
+- Declare OS and language packages with `environment.packages`. Packages
+  installed ad hoc during a turn are best-effort and do not persist to the next
+  turn. Python environments may enforce PEP 668; prefer declared packages or a
+  virtual environment under `/workspace`.
+- The selected runtime preset's `memoryMb` is the memory ceiling. See the public
+  [`runtime-sizes.ts`](https://github.com/aexhq/aex/blob/main/packages/contracts/src/runtime-sizes.ts)
+  definitions and [Defaults](defaults.md).
+- `overrides.maxTurns` controls the agent-loop limit (20 by default, 200
+  maximum).
+
+## Workspace scope
+
+Workspace storage defaults to 500 GB (decimal). Use `aex.whoami()` to read the
+effective concurrency and submission limits attached to the current workspace.
+Stable admission errors include `workspace_concurrency_exceeded` and
+`workspace_submit_rate_exceeded`.
+
+| Limit | Value | Adjustable? |
+| --- | --- | --- |
+| Runtime asset archive | 64 MiB compressed, 128 MiB expanded, 1,000 materialized entries | No |
+| Skill bundle directory depth | 16 | Contact support |
+| Skill bundle entry path | 512 characters | No |
+| `File.mountPath` | 512 characters | No |
+
+`File.mountPath` names a directory, not a destination filename. The attached
+file retains its source/archive filename below that directory; see
+[Files](files.md).
+
+## Request scope
+
+| Limit | Value | Adjustable? |
+| --- | --- | --- |
+| Signed file URL TTL | 300 seconds at the API layer | Per call with `expiresSeconds` |
+| Event-stream connection ticket TTL | 60 seconds | Per mint with `ttlMs` |
+
+
+
+# Errors
+
+---
+title: Errors
+---
+
+# Errors
+
+Every API error is a JSON body with a machine-readable `error` code; most also
+carry a human `message` and the self-describing fields named below.
+
+## Typed errors in the SDK
+
+The SDK maps every non-2xx response through one factory to a typed exception. All
+inherit `AexApiError`, which carries the HTTP `status`, the redacted parsed
+`body`, the server's stable `apiCode` (a machine-branchable identity distinct
+from the human `message`), and a `requestId` for support correlation. The
+factory dispatches to a subclass by code/status:
+
+| Class | Fires for | Extra fields |
+| --- | --- | --- |
+| `AexAuthError` | `401` / `403` (unauthorized, forbidden, insufficient_scope, token_invalid/revoked/expired, malformed_token) | `requiredScope` (on `insufficient_scope`) |
+| `AexIdempotencyConflictError` | `409` `idempotency_conflict` | — |
+| `AexNotFoundError` | `404` `not_found` | — |
+| `AexRateLimitError` | `429` (rate_limited, workspace_concurrency_exceeded, workspace_submit_rate_exceeded) | `retryAfterMs` (when advertised) |
+| `AexApiError` (base) | every other stable code (session_busy, checkpoint_not_available, session_not_terminal, session_terminal, event_archive_too_large, event_archive_deadline_exceeded, workspace_inactive, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
+
+Branch with the exported guards instead of parsing bodies or matching status
+codes: `isAuthError`, `isInsufficientScope`, `isIdempotencyConflict`,
+`isNotFound`, and `isRateLimited`.
+
+```ts
+import { isInsufficientScope, isIdempotencyConflict } from "@aexhq/sdk";
+
+try {
+  await aex.start(config);
+} catch (err) {
+  if (isInsufficientScope(err)) {
+    // err.requiredScope names the missing scope; mint a key that includes it.
+  } else if (isIdempotencyConflict(err)) {
+    // same key, different body — use a fresh key or resend the byte-identical body.
+  }
+}
+```
+
+The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
+`forbidden`, `insufficient_scope`, `token_invalid`, `token_revoked`,
+`token_expired`, `malformed_token`, `not_found`, `idempotency_conflict`,
+`session_busy`, `checkpoint_not_available`, `session_not_terminal`, `session_terminal`,
+`event_archive_too_large`, `event_archive_deadline_exceeded`, `unknown_workspace`,
+`workspace_inactive`, `workspace_concurrency_exceeded`, `workspace_submit_rate_exceeded`,
+`workspace_spend_cap_exceeded`, `insufficient_balance`, `rate_limited`,
+`upstream_error`, `internal_error`. A code outside this set (e.g. a validation
+`error` a route reports) still surfaces as an `AexApiError` with the `status` and
+`body.error` preserved; `apiCode` is then `undefined`.
+
+Transport failures with no HTTP response (DNS, connection refused, TLS reset)
+surface as `AexNetworkError`; client-side config validation surfaces as
+`SessionConfigValidationError` (`err.code === "SESSION_CONFIG_INVALID"`) before any
+request is sent. Its stable machine-readable payload is exactly
+`err.details = { field }`, where `field` is the rejected public option path such
+as `overrides.timeout`. Branch on `details.field`; the human `message` may change
+and never includes the rejected value.
+
+## 401 — authentication
+
+| Code | Meaning |
+| --- | --- |
+| `unauthorized` | Missing or empty bearer token. |
+| `token_invalid` | Bearer token is structurally valid but does not match a live credential, has a bad signature, or belongs to an inactive workspace. |
+| `token_revoked` | Bearer token matched a revoked credential. |
+| `token_expired` | Short-lived internal writer token is past its expiry. |
+
+Check the token value and that it has not been deleted or revoked. `aex whoami`
+is the cheapest way to validate a credential. See
+[Authentication](authentication.md).
+
+## 403 — authorization
+
+| Code | Meaning |
+| --- | --- |
+| `insufficient_scope` | The token is valid but lacks the route's required scope. The body's `requiredScope` field names the missing scope. |
+| `unknown_workspace` | The token does not route to a known workspace. |
+| `forbidden` | The authenticated workspace does not own the addressed resource. |
+
+```json
+{ "error": "insufficient_scope", "requiredScope": "sessions:write" }
+```
+
+## 400 — validation
+
+| Code | Meaning |
+| --- | --- |
+| `bad_request` | Missing or unparseable request body. |
+| `invalid_submission` | The submission failed shape validation; `message` names the offending field. |
+| `missing_provider_key` | The submission names a provider but carries no BYOK key for it (`apiKeys[provider]`). |
+| `malformed_token` | The bearer value is not a structurally valid aex token. |
+
+400s are permanent for that request — fix the input rather than retrying.
+The SDK's client-side validation (`SessionConfigValidationError`) catches most of
+these before the request is sent.
+
+## 402 — payment required
+
+Two distinct submit gates return 402; both bodies are self-describing.
+
+**`insufficient_balance`** — the workspace prepaid balance is at or below the
+effective submit floor. Top up the balance or bind a payment method.
+
+```json
+{
+  "error": "insufficient_balance",
+  "message": "Workspace balance is depleted; top up your prepaid balance or bind a payment method to submit sessions.",
+  "balanceUsd": 0,
+  "balanceGraceFloorUsd": 0,
+  "paymentMethodStatus": "none",
+  "planKey": "default"
+}
+```
+
+`balanceGraceFloorUsd` is the payment-method-aware floor the gate compared
+against (`paymentMethodStatus: "active"` folds a bounded card overdraft into
+it, so the floor can be negative).
+
+**`workspace_spend_cap_exceeded`** — the workspace's monthly spend cap is
+reached. The cap resets at the start of the next UTC month; contact support to
+raise it.
+
+```json
+{
+  "error": "workspace_spend_cap_exceeded",
+  "message": "Monthly spend cap of $250 reached ($251.13 accrued this month). The cap resets at the start of the next UTC month; contact support to raise it.",
+  "capUsd": 250,
+  "accruedUsd": 251.13
+}
+```
+
+## 429 — rate limits
+
+**`workspace_concurrency_exceeded`** — admitting one more live run would exceed
+the workspace's concurrent-run cap. Wait for a session to finish, or contact
+support to raise the cap.
+
+```json
+{
+  "error": "workspace_concurrency_exceeded",
+  "message": "Workspace concurrency limit reached: 50 live sessions at the cap of 50. Wait for a session to finish, or contact support to raise your workspace limit.",
+  "cap": 50,
+  "observed": 50
+}
+```
+
+**`workspace_submit_rate_exceeded`** — too many submits in the current
+one-minute window. Retry shortly.
+
+```json
+{
+  "error": "workspace_submit_rate_exceeded",
+  "message": "Submit rate limit of 120/minute exceeded. Retry shortly, or contact support to raise your workspace limit.",
+  "perMin": 120,
+  "observed": 121
+}
+```
+
+The `limit`-naming fields (`cap`/`perMin`) and the `observed` window value make
+each deny self-describing, so a client can back off proportionally. To
+anticipate both 429s and both 402s *before* submitting, read the effective caps
+from `aex.whoami().limits` — the values come from the same resolution code the
+gates enforce. See [Limits & quotas](limits-and-quotas.md).
+
+## 404 — not found
+
+`not_found`: the id does not exist **or** belongs to another workspace (aex
+does not distinguish the two). The SDK raises `AexNotFoundError` (guard:
+`isNotFound(err)`).
+
+## 409 — conflicts and inactive workspaces
+
+| Code | Meaning |
+| --- | --- |
+| `idempotency_conflict` | The `idempotencyKey` was already used with a different request body. The SDK raises `AexIdempotencyConflictError` (guard: `isIdempotencyConflict(err)`). |
+| `session_busy` | The session is handling another turn or lifecycle transition. Wait for its current operation to finish. |
+| `checkpoint_not_available` | No committed checkpoint exists yet for a checkpoint-backed read such as `session.files.list()`. Wait for the current run to finish. This remains a base `AexApiError`, not an idempotency conflict. |
+| `session_not_terminal` | The requested operation requires a terminal session state. |
+| `session_terminal` | The session has ended and cannot perform the requested action. |
+| `workspace_inactive` | A workspace deletion fence won the admission race, so the workspace no longer accepts new session work. The body carries `workspaceStatus` (normally `deleting`). Use an active workspace. |
+
+For `idempotency_conflict`, use a fresh idempotency key for a genuinely new request, or resubmit
+the byte-identical body to replay the original result (a matching retry returns
+the existing session rather than conflicting). Note that the SDK validates the
+key client-side first: an empty or whitespace-only `idempotencyKey` throws
+`SessionConfigValidationError` before the request is sent, as does a key longer
+than 255 characters. Never pass `""`.
+
+`workspace_inactive` is not an idempotency conflict and is not transient for
+that workspace. It remains a base `AexApiError`; branch on
+`err.apiCode === "workspace_inactive"` and inspect `err.body.workspaceStatus`
+when the current lifecycle state matters.
+
+## 413/503 — synchronous event archive limits
+
+| Code | Meaning |
+| --- | --- |
+| `event_archive_too_large` (413) | The history exceeds the synchronous archive's source, candidate, or estimated-output limit. |
+| `event_archive_deadline_exceeded` (503) | The synchronous archive could not finish inside its server request budget. |
+
+Both are stable base `AexApiError` codes with `retryable: false`. The SDK does
+not retry `session.events.archiveLink()` automatically. Traverse the history
+with `session.events.iterate()` instead of repeating the bulk export.
+
+## 5xx — server errors
+
+| Code | Meaning |
+| --- | --- |
+| `internal_error` (500) | Unexpected server fault. Retry with backoff; report persistent cases. |
+| `db_resuming` (503) | The database tier is resuming from idle. Transient — retry. |
+
+The SDK retries transient failures automatically: HTTP `429`, `5xx`, `529`, and
+network errors get bounded exponential backoff with full jitter, honoring any
+`Retry-After` header. Tune or disable this with the client `retry` option; use
+`isRateLimited(err)` / `AexRateLimitError` to handle persistent throttling
+without parsing raw bodies. Automatic retries are limited to reads and other
+idempotent HTTP methods, or mutations carrying a stable `Idempotency-Key`.
+Session create/send requests always carry one stable key across transport
+attempts, so a retried request cannot create a second billable run. The SDK
+never retries an entire user scenario or a failed application run.
+
+
+
+# Retries
+
+---
+title: Retries and throttling
+---
+
+# Retries and throttling
+
+The SDK retries transport failures only when repeating the HTTP request is
+provably safe:
+
+- Safe reads (`GET`, `HEAD`, and `OPTIONS`) may retry.
+- A mutation may retry only when it carries a stable `Idempotency-Key`.
+- A `POST`, `PATCH`, `PUT`, or `DELETE` without that key is attempted once.
+
+Eligible requests retry network failures and HTTP `429`, `500`, `502`, `503`,
+`504`, and `529` with bounded exponential backoff and jitter. `Retry-After` is
+honored. Validation, authentication, not-found, and conflict responses fail
+immediately.
+
+```ts
+const aex = new Aex({
+  apiKey: process.env.AEX_API_KEY!,
+  retry: {
+    maxAttempts: 4,
+    initialDelayMs: 500,
+    maxDelayMs: 20_000,
+    maxElapsedMs: 120_000
+  }
+});
+```
+
+Use `retry: false` or `{ maxAttempts: 1 }` for one general transport attempt.
+The client policy applies both to hosted API requests and to direct
+object-storage PUTs performed while publishing file, skill, tool, and
+instruction assets.
+
+`session.files.fetch()` is deliberately lower level: it returns the raw
+`Response` from a signed file URL and does not retry that transfer. The bounded
+`session.files.read()` and `session.files.download()` helpers may repeat a safe
+file GET once only when their per-attempt transfer timeout expires. None of
+these transfer policies repeat an agent run.
+
+## Application runs are not retried
+
+The SDK never reruns a whole user scenario after a terminal failure. A failed
+run is the product result a user would observe. Reliability belongs below that
+boundary, in idempotent transport, checkpointing, and the hosted runtime.
+
+When your application deliberately repeats a create or message mutation, reuse
+its idempotency key:
+
+```ts
+const result = await aex.start({
+  model,
+  message: "Write the report.",
+  idempotencyKey: "report-2026-07-10",
+  apiKeys
+});
+```
+
+`Aex.start` derives a stable message key from the create key, so repeating the
+same call cannot create a second billable run. A changed request under the same
+key fails with an idempotency conflict. Explicit keys may contain at most 255
+characters. For a create key short enough to append `:message`, the derived key
+is readable as `<createKey>:message`; longer valid keys use a deterministic
+SHA-256-derived message key that remains within the same limit.
+
+For an explicit user-driven retry on an existing session, call
+`session.messages.replayLast()` after applying your own policy. It reuses the
+last message key by default.
+
+## Throttling
+
+After eligible transport attempts are exhausted, the SDK throws
+`AexRateLimitError`. Use `isRateLimited(error)` and inspect `status`,
+`attempts`, `retryAfterMs`, `source`, and `providerFault`. Error bodies and
+secrets are redacted.
+
+
+
+# Secrets
+
+---
+title: Secrets
+---
+
+# Secrets
+
+aex supports BYOK provider keys, per-session credentials, and reusable workspace
+secrets. Secret values are excluded from the idempotency fingerprint and do not
+belong in session config.
+
+Runnable examples need both `AEX_API_KEY` for aex and the matching BYOK
+provider key, such as `ANTHROPIC_API_KEY` for Claude.
+
+## Use A Provider Key For One Session
+
+### TypeScript
+
+```ts
+import { Aex, Models } from "@aexhq/sdk";
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+
+await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Write a short report and save it as a file.",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+### CLI
+
+```bash
+aex start \
+  --api-key "$AEX_API_KEY" \
+  --anthropic-api-key "$ANTHROPIC_API_KEY" \
+  --model claude-haiku-4-5 \
+  --prompt "Write a short report and save it as a file."
+```
+
+## Persist An Env Secret
+
+Create durable secrets through the workspace namespace, then reference the
+stored name in later sessions.
+
+```ts
+import { Aex, Models, Providers, Secret } from "@aexhq/sdk";
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+
+await aex.workspace.secrets.set({
+  name: "github-token",
+  value: process.env.GITHUB_TOKEN!
+});
+const githubToken = Secret.ref("github-token");
+
+await aex.start({
+  provider: Providers.ANTHROPIC,
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Inspect the repository issues.",
+  environment: { secrets: { GITHUB_TOKEN: githubToken } },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+## Set Or Rotate A Workspace Secret
+
+Use `client.workspace.secrets.set(...)` to create a named secret directly. Use
+`client.workspace.secrets.rotate(...)` to replace its value while keeping the same name.
+
+```ts
+await aex.workspace.secrets.set({
+  name: "serper-api-key",
+  value: process.env.SERPER_API_KEY!
+});
+
+await aex.workspace.secrets.rotate({
+  name: "serper-api-key",
+  value: process.env.SERPER_API_KEY_NEXT!
+});
+```
+
+## Retrieve Secret Metadata
+
+`list` and `get` return metadata only. They never return the secret value.
+
+```ts
+const secrets = await aex.workspace.secrets.list();
+const metadata = await aex.workspace.secrets.get("serper-api-key");
+```
+
+## Inject A Workspace Secret Into A Session
+
+Reference workspace secrets with `Secret.ref(name)`. The value resolves
+server-side and is injected as the named environment variable.
+
+```ts
+import { Models, Providers, Secret } from "@aexhq/sdk";
+
+await aex.start({
+  provider: Providers.ANTHROPIC,
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Use SERPER_API_KEY for web search.",
+  environment: {
+    secrets: { SERPER_API_KEY: Secret.ref("serper-api-key") }
+  },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+## Delete A Workspace Secret
+
+```ts
+await aex.workspace.secrets.delete("serper-api-key");
+```
+
+The CLI supports per-session provider and MCP credentials. Workspace secret
+administration is exposed through the SDK.
+
+## Redaction Scope And Session Files
+
+Registered secret values are redacted from the session's **event stream** (both tool
+output and model-authored surfaces) — a value you inject via `environment.secrets`
+is masked regardless of its shape. Two surfaces are intentionally *not* scrubbed:
+
+- **Captured session files** (`session.files.download()` / `.read()` / the `aex download`
+  zip) are returned **verbatim**. They are your session's own artifacts, so the platform
+  does not rewrite their bytes — if the agent writes a secret into a deliverable file,
+  that file contains it. Treat downloaded files as unredacted.
+- An **unregistered** secret (a credential the session produces itself and never declared
+  via `environment.secrets`) can only be masked heuristically by shape; register the
+  values you care about so they are masked by value.
+
+
+
+# Credentials
+
+---
+title: Credentials
+---
+
+# Credentials
+
+aex uses explicit, per-session credentials:
+
+- `AEX_API_KEY` authenticates the SDK or CLI to aex.
+- `apiKeys` carries BYOK provider keys for the model provider.
+- `McpServer.remote(..., { headers })` carries MCP auth when a remote MCP server needs it.
+- `environment.secrets` carries runtime secrets for your own code.
+
+Secrets never belong in reusable session config, files, prompts, or examples.
+
+## The client credential
+
+Pass your aex API key directly to the constructor — `new Aex(apiKey)` — or as
+the `apiKey` option:
+
+```ts
+import { Aex } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_KEY!);          // preferred shorthand
+// equivalently:
+// const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+```
+
+See [Authentication](authentication.md) for how keys are scoped, rotated, and
+issued during the beta.
+
+## Provider keys
+
+A session selects one upstream provider and must carry a BYOK key for it. Include
+additional provider keys only when subagents may use those providers.
+
+```ts
+const result = await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Write a short report and save it as a file.",
+  apiKeys: {
+    anthropic: process.env.ANTHROPIC_API_KEY!
+  }
+});
+```
+
+Provider keys are used by the managed runtime for model calls. They are not saved
+as client defaults.
+
+## Runtime secrets
+
+Use `environment.secrets` for credentials your code needs at runtime. The value
+can be ephemeral with `Secret.value(...)` or a workspace secret reference with
+`Secret.ref(...)`.
+
+```ts
+import { Aex, Models, Secret } from "@aexhq/sdk";
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+
+await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Call https://api.example.com/v1/status with INTERNAL_API_TOKEN and summarize it.",
+  environment: {
+    secrets: {
+      INTERNAL_API_TOKEN: Secret.value(process.env.INTERNAL_API_TOKEN!)
+    },
+    networking: {
+      mode: "limited",
+      allowedHosts: ["api.example.com"]
+    }
+  },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+Inside the session, use normal HTTP code for the service:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+  https://api.example.com/v1/status
+```
+
+## Workspace secrets
+
+Store reusable values once, then reference them by name:
+
+```ts
+await aex.workspace.secrets.set({
+  name: "internal-api-token",
+  value: process.env.INTERNAL_API_TOKEN!
+});
+
+await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Use INTERNAL_API_TOKEN for the status request.",
+  environment: {
+    secrets: {
+      INTERNAL_API_TOKEN: Secret.ref("internal-api-token")
+    }
+  },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+Secret reads return metadata only; they never return the stored value.
+
+## Networking
+
+Networking is open by default within the platform's managed egress ceiling. Use
+`environment.networking.mode: "limited"` with `allowedHosts` when you want a
+session's own code to reach only named hosts. See [Networking](networking.md) for
+the two-layer enforcement model.
+
+## Explicit call-site rule
+
+There is no `defaultSecrets` and no client-held secret state. Each
+`aex.sessions.create(...)` or `aex.start(...)` call should show the provider
+keys, MCP auth, and runtime secrets needed for that call.
+
+
+
+# Networking
+
+---
+title: Networking
+---
+
+# Networking
+
+Session networking is managed by aex. Your code can make ordinary outbound HTTP
+requests, subject to the session's `environment.networking` policy and the
+service-wide safety boundary. Private, loopback, link-local, and otherwise
+unsafe destinations remain blocked.
+
+`environment.networking` has two modes:
+
+- `open` is the default and does not require a per-session allowlist.
+- `limited` restricts supported outbound HTTP clients to the hosts you list in
+  `allowedHosts`.
+
+`allowedHosts` is a useful least-privilege control and an auditable statement of
+intent. It is not a security boundary against adversarial code executing inside
+the session; low-level networking that bypasses supported HTTP client behavior
+may fail and remains subject to the service-wide egress policy.
+
+## Paths that always work
+
+These managed capabilities are not subject to `environment.networking`, so you
+do not list their hosts:
+
+- The model/provider call for the session and its subagents.
+- The built-in `web_search` and `web_fetch` tools.
+- Remote MCP servers declared in `mcpServers`; see [MCP](mcp.md).
+- Package registries used by packages declared in `environment.packages`.
+
+`environment.networking` governs other outbound requests made by your code,
+such as `curl` in the `bash` tool, Python `requests`, Node `fetch`, or a
+third-party SDK.
+
+## Restrict a session to an allowlist
+
+Set `mode: "limited"` and list the hosts your code needs. A supported HTTP
+client is refused when it requests a host that is neither listed nor covered by
+one of the managed capabilities above. Package registries implied by
+`environment.packages` are allowed automatically.
+
+### TypeScript
+
+```ts
+import { Aex, Models, Providers } from "@aexhq/sdk";
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+
+await aex.start({
+  provider: Providers.ANTHROPIC,
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Fetch the public status page and summarize it.",
+  environment: {
+    networking: {
+      mode: "limited",
+      allowedHosts: ["api.example.com", "status.example.com"]
+    }
+  },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+`allowedHosts` entries are lowercased host names such as `api.example.com`.
+Include a non-default port when needed (`api.example.com:8443`); a bare host
+covers HTTPS on port 443. Matching is exact, not wildcard or suffix based, so
+list each required host.
+
+Keep the allowlist in your session options so the network policy stays next to
+the code that needs it.
+
+## Open mode
+
+A session that omits `environment.networking` uses `open` mode. Set
+`mode: "open"` explicitly when you want that choice visible in configuration.
+Open mode removes the per-session allowlist, but the service-wide safety
+boundary still applies.
+
+```ts
+await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Research the topic across the open web.",
+  environment: { networking: { mode: "open" } },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+Built-in web research uses the managed `web_search` and `web_fetch` tools and
+does not require an allowlist entry.
+
+## Ordinary HTTP clients work without extra setup
+
+Use normal HTTP clients without configuring a per-request proxy or installing a
+custom certificate. For example, in a limited session that allows
+`api.example.com`:
+
+```bash
+curl -sS https://api.example.com/v1/status   # works
+curl -sS https://other-host.example          # refused (not in allowlist)
+```
+
+Clients that override standard network or certificate behavior, or use a
+non-HTTP protocol, may fail even for a listed host. Let the client use its
+normal defaults whenever possible.
+
+## Limitations
+
+- `allowedHosts` applies only in `limited` mode.
+- A listed host can still be unavailable under the service-wide safety policy.
+- Exact host matching means subdomains must be listed separately.
+- Contact support when a required public host is unavailable.
+
+For credentialed HTTP calls, pass the credential through
+`environment.secrets` and let your code use its normal HTTP client. For remote
+tool servers, see [MCP](mcp.md). For all session configuration fields, see
+[Session configuration](session-config.md).
+
+
+
+# Skills
+
+---
+title: Skills
+---
+
+# Skills
+
+A skill is a `SKILL.md` bundle plus optional supporting files. Build a local
+draft with a `Skill.from*` factory, publish it to the workspace, and attach the
+returned immutable ref under `assets.skills`.
+
+```ts
+import { Skill } from "@aexhq/sdk";
+
+const draft = await Skill.fromDir("./skills/report-writer", {
+  name: "report-writer"
+});
+const reportWriter = await aex.workspace.skills.publish(draft);
+
+const result = await aex.start({
+  model,
+  message: "Write the report.",
+  assets: { skills: [reportWriter] },
+  apiKeys
+});
+```
+
+Available draft factories:
+
+- `Skill.fromDir(path, { name? })`
+- `Skill.fromUrl(url, { name?, sha256?, timeoutMs?, fetch? })`
+- `Skill.fromFiles({ name?, files, meta? })`
+- `Skill.fromContent(skillMd, { name? })`
+- `Skill.fromBytes({ name?, zip })`
+
+Every bundle needs a root `SKILL.md` with a non-empty `description` in YAML
+frontmatter. Names are validated locally, and archives are canonicalized and
+content-hashed before publication.
+
+## Immutable versions
+
+Publication returns a `WorkspaceSkillRecord` containing a stable `resourceId`,
+an immutable `version`, and the exact `assetId`/`contentHash`. Publishing new
+bytes creates another version. Existing session submissions remain pinned to
+their recorded version; they cannot silently observe later edits.
+
+Drafts cannot be submitted or serialized directly. This keeps the only
+promotion path visible and auditable:
+
+```ts
+const published = await aex.workspace.skills.publish(draft);
+```
+
+## Workspace administration
+
+```ts
+const page = await aex.workspace.skills.list({ limit: 100 });
+const exact = await aex.workspace.skills.get(published.resourceId, published.version);
+await aex.workspace.skills.delete(published.resourceId);
+```
+
+List calls return `{ resources, nextCursor? }`. `limit` defaults to 100 and
+must be an integer from 1 through 100.
+
+Skills are distinct from custom tools. The runtime exposes skills through its
+skill-loading capability; executable custom functions belong in
+`assets.tools`.
+
+
+
+# Vision Skills
+
+---
+title: Call a vision API from a skill
+---
+
+# Call a vision API from a skill
+
+aex has no built-in vision tool. The agent's `provider` / `model` selects the
+reasoning model for the session; if a skill needs image understanding mid-session, ship a
+skill that calls the vision provider with normal HTTP and pass that provider key
+as a runtime secret.
+
+The runnable example lives at [`vision-skill/` in aexhq/examples](https://github.com/aexhq/examples/tree/main/vision-skill).
+It captions a frame with ByteDance Doubao Seed Vision (Ark) and returns a
+per-noun "does the frame depict X?" verdict.
+
+## Submit the session
+
+```ts
+import { Aex, Models, Secret, Skill } from "@aexhq/sdk";
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+
+const result = await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Read skills/frame-vision-gate/SKILL.md, then caption and verify the frame.",
+  skills: [await Skill.fromDir("./vision-skill", { name: "frame-vision-gate" })],
+  environment: {
+    secrets: {
+      DOUBAO_API_KEY: Secret.value(process.env.DOUBAO_API_KEY!)
+    },
+    networking: {
+      mode: "limited",
+      allowedHosts: ["ark.ap-southeast.bytepluses.com"]
+    }
+  },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+
+console.log(result.sessionId, result.text);
+```
+
+`Skill.fromDir("./vision-skill", ...)` is resolved relative to the process
+CWD. Run the script from the directory that contains `vision-skill/` (the
+root of the examples repo).
+
+## Call the provider from the skill
+
+Inside the session, the skill reads `DOUBAO_API_KEY` and makes an
+OpenAI-compatible chat-completions request with Python's standard HTTP client.
+The image is base64-inlined as a data URL in the request body:
+
+```python
+import base64, json, os, urllib.request
+
+b64 = base64.b64encode(open("/workspace/files/frame.jpg", "rb").read()).decode()
+request_body = {
+    "model": "doubao-seed-1-6-vision-250815",
+    "temperature": 0,
+    "response_format": {"type": "json_object"},
+    "messages": [
+        {"role": "system", "content": "Describe only what the pixels show."},
+        {"role": "user", "content": [
+            {"type": "text", "text": "Does this frame depict an owlbear? Answer as JSON."},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+        ]}
+    ]
+}
+
+req = urllib.request.Request(
+    "https://ark.ap-southeast.bytepluses.com/api/v3/chat/completions",
+    data=json.dumps(request_body).encode("utf-8"),
+    headers={
+        "Authorization": f"Bearer {os.environ['DOUBAO_API_KEY']}",
+        "Content-Type": "application/json"
+    },
+    method="POST",
+)
+```
+
+The same pattern works for OpenAI, Gemini's OpenAI-compatible endpoint, or any
+other HTTPS model API. Put the key in `environment.secrets`, allow-list the host
+when using limited networking, and use the provider's normal SDK or HTTP API.
+
+## Payload size
+
+Base64 images are larger than their source files. Scale frames before captioning
+when possible, for example:
+
+```bash
+ffmpeg -i source.mp4 -vf fps=1,scale=960:-1 frame_%03d.jpg
+```
+
+This keeps upload size and model cost bounded without losing the signal most
+vision models need.
+
+
+
+# MCP
+
+---
+title: MCP
+---
+
+# MCP
+
+MCP support is remote HTTPS/SSE only. Stdio MCP servers are rejected because aex is a remote session dispatcher, not a local process supervisor.
+
+Rules:
+
+- MCP servers are declared in the session request config (`mcpServers`).
+- Runtime HITL is disabled.
+- Tool policy must be configured before session start.
+- Enabled MCP tools use `always_allow` provider permissions.
+- `always_ask` is not used by aex MVP.
+- Bearer/OAuth-style auth is carried by the `McpServer` instance (its `headers`); the SDK splits it into the vaulted secrets channel server-side.
+
+Use allowlists for sensitive servers whenever possible.
+
+## Large-payload responses
+
+aex is a session dispatcher, not an MCP runtime. We intentionally do
+**not** interpose on the transport between the model and an upstream MCP
+server, so we cannot elide MCP responses or write them to the session
+filesystem on the user's behalf. Anything an MCP tool returns lands
+directly in the model's context.
+
+For ingestion-style MCP servers that return large JSON blobs (search results,
+catalogue dumps, bulk reads), prefer a skill that writes files instead of
+putting the whole response in model context:
+
+1. Package the upstream helper as a Skill (`Skill.fromDir` / `Skill.fromUrl`)
+   and pass it via the top-level `skills` option. The skill can include a CLI
+   binary or script that the agent invokes with its bash tool.
+2. Keep any upstream HTTPS credentials in `environment.secrets`.
+3. Have the CLI write the full payload to the session filesystem. By default,
+   files it creates or modifies are captured automatically; pass
+   `fileCapture.allowedDirs` only when you want to narrow capture to specific roots.
+   Return only a small handle (path, item count, summary) to the model.
+
+The agent sees the handle in context; the bytes ride out through
+`download()` as normal captured files.
+
+If you genuinely want everything in context (small responses, code
+search, etc.), use MCP. If the payload would blow your context budget,
+the CLI-as-skill pattern is the supported answer — there is no platform
+flag to elide MCP responses.
+
+
+
+# Files
+
+---
+title: Files
+---
+
+# Files
+
+There are two different file concepts:
+
+- `aex.workspace.files`: reusable, versioned input resources.
+- `session.files`: files captured from one session checkpoint.
+
+Raw uploaded bytes are assets. A workspace file is a typed resource that pins
+an asset, logical resource ID, version, hash, name, and mount path.
+
+`mountPath` is always a destination directory. The runtime preserves each
+source/archive filename inside that directory, so an `input.csv` published
+with `mountPath: "/workspace/input"` appears at
+`/workspace/input/input.csv`. A `name` passed to `File.fromPath` is only the
+resource's storage slug; it never renames the mounted file. Multiple files can
+intentionally share one mount directory as long as their resulting paths do
+not collide.
+
+## Reusable workspace files
+
+```ts
+import { File } from "@aexhq/sdk";
+
+const source = await aex.workspace.files.publish(
+  await File.fromPath("./data/input.csv", { mountPath: "/workspace/input" })
+);
+
+const session = await aex.sessions.create({
+  model: "claude-haiku-4-5",
+  assets: { files: [source] },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+`publish()` uploads immutable bytes, then creates or versions the workspace
+resource. `list()`, `get(resourceId, version?)`, and `delete(resourceId)` manage
+the catalog. Runs always receive pinned refs; they never resolve a mutable
+"latest" version during execution.
+
+As a run boots, each attached input archive is checked against a separate
+runtime materialization envelope: at most 64 MiB compressed, 128 MiB expanded,
+and 1,000 materialized files or safe symlinks. The runtime may overlap bulk skill extraction with
+the first model call, but it blocks the first tool, any post-run hook, and run
+completion until every promised input is ready. These execution-safety bounds
+are distinct from the broader raw-asset storage quota. The SDK and workspace
+publisher reject known violations before a resource can be pinned, and the
+runtime revalidates the immutable archive before use. An invalid input fails explicitly;
+tools and terminal results never observe a silently partial input tree.
+
+## Session file snapshots
+
+```ts
+const result = await session.messages.send("Create reports/summary.md").finished();
+const snapshot = await session.files.list({
+  checkpointId: result.checkpoint?.checkpointId
+});
+
+console.log(snapshot.revision);
+console.log(snapshot.files);
+```
+
+`SessionFilesSnapshot` contains both `revision` and `files`. Every file carries
+the same `checkpointId` as the revision, plus its exact `sizeBytes` and
+lowercase `sha256` digest. After `RUN_FINISHED`, this is the final committed
+state for that run. During an active run, an older complete checkpoint may
+still be visible.
+
+## Find and read
+
+```ts
+const report = await session.files.findOne({
+  filename: "summary.md",
+  extension: "md"
+});
+
+if (report) {
+  const preview = await session.files.read(report, { maxBytes: 50_000 });
+  console.log(preview.text, preview.truncated);
+}
+```
+
+Use `list(query?)`, `find(query)`, or `findOne(query)`. Cross-session file
+search is not part of the public SDK. Open the owning session and query its
+checkpoint instead.
+
+## Download and links
+
+```ts
+const file = snapshot.files[0];
+if (file) {
+  const bytes = await session.files.download(file);
+  const link = await session.files.link(file, { expiresIn: "15m" });
+  const response = await session.files.fetch(file);
+}
+```
+
+ID selectors must include their checkpoint:
+
+```ts
+await session.files.download({ id: "file_123", checkpointId: "cp_123" });
+```
+
+A string ID alone is intentionally rejected because an ID without a revision
+can resolve inconsistently after a later run.
+
+`download()` resolves the selector against that checkpoint and verifies both
+the byte length and SHA-256 digest before returning. An integrity mismatch
+fails immediately and is not retried. `read()` remains a bounded prefix read
+for large files and verifies integrity when it consumes the complete file.
+`link()` returns the resolved file metadata alongside the direct storage URL;
+`fetch()` returns only the raw one-shot storage `Response`, so retain metadata
+from `list()`, `findOne()`, or `link()` when independently verifying that stream.
+
+Omit the selector from `session.files.download()` to download the files
+namespace archive. `session.download()` returns the complete public session
+archive containing metadata, events, and files.
+
+## Failed runs
+
+A `RUN_ERROR` can occur before any checkpoint exists. In that case the result
+has `files: []` and `checkpoint === undefined`. A `RUN_FINISHED` without a
+checkpoint is a contract error and the SDK fails loudly.
+
+
+
+# Events
+
+---
+title: Events
+---
+
+# Events
+
+Durable event reads use one `AexEventView` shape with CloudEvents identity,
+monotonic `sequence`, real AG-UI `threadId`, and real `runId`.
+
+```ts
+const session = await aex.sessions.open(sessionId);
+for await (const event of session.events.iterate()) {
+  if (event.isTextMessage()) console.log(event.data.text);
+  if (event.isToolCallStart()) console.log(event.data.name);
+}
+```
+
+`iterate()` follows cursor pages lazily and retains at most one API page. Use
+`list()` only when the full history is known to fit comfortably in memory.
+
+## Run lifecycle
+
+The public lifecycle is:
+
+- `RUN_STARTED`: the accepted run began.
+- `RUN_FINISHED`: all run state is committed, including the checkpoint.
+- `RUN_ERROR`: the run failed. It may have no checkpoint when failure happened
+  before a checkpoint could be created.
+
+Runtime execution ending is internal and is not emitted as a public lifecycle
+event. Consumers observe only the committed `RUN_FINISHED` or `RUN_ERROR`
+terminal boundary.
+
+```ts
+const run = session.messages.send("Continue the task.");
+
+for await (const event of run) {
+  if (event.isRunFinished()) {
+    console.log(event.data.checkpoint);
+  }
+}
+
+const result = await run.finished();
+```
+
+Message sends do not accept a historical `from` cursor. Their stream and
+finished result are scoped to the run accepted by that send, so events from an
+earlier run cannot be replayed into the current result. Use
+`session.events.iterate()`, `.list()`, `.stream({ from })`, or
+`.streamEnvelopes({ from })`
+when intentionally reading session history.
+
+`finished()` and `aex.start()` return the same run outcome vocabulary:
+`succeeded`, `failed`, `timed_out`, `cancelled`, or `interrupted`. A run held by
+suspension or approval is `interrupted`; the session lifecycle separately says
+`suspended` or `awaiting_approval`. Only `succeeded` sets `result.ok` to true.
+
+## Live stream
+
+```ts
+for await (const event of session.events.streamEnvelopes({ from: 0 })) {
+  if (event.replayable === false) {
+    console.log("live", event.liveSequence, event.type);
+  } else {
+    console.log("durable", event.sequence, event.type);
+  }
+}
+```
+
+`session.messages.send(...)` and `session.events.streamEnvelopes(...)` yield
+`AexStreamEventView`, a discriminated union:
+
+- Durable events have `sequence` and are replayable. They are the only events
+  returned by `events.iterate()`, `events.list()`, polling streams, archives,
+  and finished results.
+- Provisional live events have `replayable: false`, a per-run `liveSequence`,
+  and no durable `sequence`. They are not replayed from storage.
+
+The SDK mints a short-lived coordinator ticket, reconnects durable events from
+the last sequence after transient transport loss, deduplicates repeated live
+frames by event id, and stops on a durable run terminal. The caller can tune
+transport watchdogs with `idleTimeoutMs`, `pingIntervalMs`, and
+`eventQuietRecheckMs`; these reconnect the event transport and never retry an
+application run.
+
+For a polling snapshot stream, use `session.events.stream()`. At invocation it
+targets the session's current run, or its last completed run when idle. Older
+run terminals cannot end that poll. The inclusive `from` cursor
+(`sequence >= from`) filters yielded history without hiding the target run's
+completion boundary:
+
+```ts
+for await (const event of session.events.stream({ from: 1024 })) {
+  console.log(event.sequence, event.type);
+}
+```
+
+The cursor must be a non-negative safe integer. A session with no runs returns
+one bounded snapshot instead of waiting for a terminal that cannot exist. For
+an explicitly bounded read, use `session.events.list()`.
+
+## Assistant messages
+
+Messages are a separate resource from raw events:
+
+```ts
+const messages = await session.messages.list();
+console.log(messages.at(-1)?.text);
+```
+
+Messages come directly from the messages endpoint. A missing or broken route is
+surfaced as an API failure rather than projected from another resource.
+
+## Output granularity
+
+`outputMode: "buffered"` emits coalesced assistant text. `"stream"` first emits
+provisional live token deltas, then exactly one durable coalesced
+`TEXT_MESSAGE_CONTENT` before the run terminal. Final `result.text`,
+`result.messages`, and `result.events` use the durable coalesced event and do
+not duplicate provisional deltas. Stream mode is rejected before submission
+for providers that do not support it; it is never silently downgraded.
+
+## Archives
+
+```ts
+const link = await session.events.archiveLink({ expiresIn: "1h" });
+const archive = await session.events.download();
+```
+
+The event archive uses the same redacted public events returned by the SDK.
+`archiveLink()` is a bounded convenience export. A session that exceeds the
+bulk-export limits returns a typed `413` API error; an export that cannot finish
+inside the server's request budget returns a typed `503` API error. The SDK does
+not retry either response automatically. Traverse large histories with
+`for await (const event of session.events.iterate())`; iteration follows bounded
+cursor pages without retaining the whole history. `events.list()` and
+`events.download()` are materializing convenience methods.
+
+
+
+# Webhooks
+
+---
+title: Webhooks
+---
+
+# Webhooks
+
+aex can notify your endpoint whenever a run finishes. Register the callback on a
+session and the platform delivers one run-scoped event after each run finalizes:
+`run.finished` for AG-UI `RUN_FINISHED`, or `run.error` for `RUN_ERROR`. Sending
+another message on the same session produces another independently identifiable
+delivery.
+
+## Register a callback
+
+```ts
+import { Aex, Models } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_KEY!);
+
+const session = await aex.sessions.create({
+  model: Models.CLAUDE_HAIKU_4_5,
+  webhook: { url: "https://hooks.example.com/aex" },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+```bash
+aex start \
+  --api-key "$AEX_API_KEY" \
+  --anthropic-api-key "$ANTHROPIC_API_KEY" \
+  --model claude-haiku-4-5 \
+  --prompt "Write the report." \
+  --webhook https://hooks.example.com/aex
+```
+
+The URL must be `https`. The callback URL is an operational concern, not part
+of the submission fingerprint: retrying the same submission with the same
+idempotency key but a different callback URL never conflicts.
+
+## What gets delivered
+
+Each finalized run produces one frozen CloudEvents envelope. A successful
+`run.finished` delivery is sent only after its checkpoint and session-file
+revision are committed and the session read model is consistent. A `run.error`
+delivery represents the corresponding finalized `RUN_ERROR`; `checkpoint` is
+present only when that run committed one. Retries and manual redelivery resend
+the same bytes and `webhook-id`.
+
+```json
+{
+  "specversion": "1.0",
+  "id": "whd_run_01J...",
+  "source": "aex",
+  "type": "run.finished",
+  "subject": "run_01J...",
+  "time": "2026-07-02T12:34:56.000Z",
+  "data": {
+    "sessionId": "session_01J...",
+    "runId": "run_01J...",
+    "turnSeq": 3,
+    "outcome": "succeeded",
+    "terminalAt": "2026-07-02T12:34:56.000Z",
+    "checkpoint": {
+      "checkpointId": "checkpoint_01J...",
+      "runId": "run_01J...",
+      "turnSeq": 3,
+      "committedAt": "2026-07-02T12:34:55.900Z",
+      "throughSeq": 4097
+    },
+    "reason": null,
+    "failureClass": null,
+    "costTelemetry": { "billedCostUsd": 0.42 }
+  }
+}
+```
+
+`subject` and `data.runId` identify the run; `data.sessionId` identifies the
+resumable thread. `outcome` is the terminal run outcome. `reason` and
+`failureClass` carry failure detail for `run.error`; `checkpoint` and
+`costTelemetry` are included when available.
+
+## Verify deliveries
+
+Deliveries are signed [Standard Webhooks](https://www.standardwebhooks.com/)
+style: HMAC-SHA256 over `` `${webhook-id}.${webhook-timestamp}.${rawBody}` ``,
+sent in three headers — `webhook-id` (stable for that run across retries; your dedupe key),
+`webhook-timestamp` (unix seconds), and `webhook-signature` (a space-delimited
+list of `v1,<base64>` entries).
+
+The signing key is a per-workspace secret. Reveal it (it is created on first
+use) with either surface:
+
+```bash
+aex webhooks secret --api-key "$AEX_API_KEY"   # prints whsec_...
+```
+
+```ts
+const { whsec } = await aex.webhookSigningSecret();
+```
+
+Verify inbound requests with the exported `verifyAexWebhook` — pure Web Crypto,
+identical under Bun and Node, and interoperable with the `standardwebhooks`
+reference library:
+
+```ts
+import { verifyAexWebhook } from "@aexhq/sdk";
+
+// In your HTTP handler — use the EXACT raw body bytes, never re-serialize.
+const ok = await verifyAexWebhook({
+  rawBody,
+  headers: request.headers,
+  secret: process.env.AEX_WEBHOOK_SECRET! // the whsec_... value
+});
+if (!ok) return new Response("bad signature", { status: 401 });
+```
+
+`verifyAexWebhook` rejects stale timestamps (default tolerance 300 seconds) and
+compares signatures constant-time. It accepts every `v1` entry in the signature
+list, so it is already rotation-ready — but **server-side rotation of the
+signing secret is not available yet**: `aex webhooks secret` reveals or creates
+the one workspace secret and there is no rotate endpoint today. If your secret
+is compromised, contact <support@aex.dev>.
+
+## Delivery ledger and redelivery
+
+Each session keeps a ledger with one row per finalized run, including its
+`runId`, `turnSeq`, event type, attempts, last status code, and last error:
+
+```ts
+const deliveries = await session.webhooks.list();
+await session.webhooks.redeliver(deliveries[0]!.id);
+```
+
+```bash
+aex deliveries <session-id> --api-key "$AEX_API_KEY"
+```
+
+Redelivery re-sends that run's frozen payload with the **same** `webhook-id`, so
+a consumer that dedupes on `webhook-id` handles retries, redeliveries, and
+at-least-once delivery uniformly. Different runs have different delivery IDs.
+An empty ledger means the session carried no `webhook` or no run has finalized
+yet.
+
+For the terminal-event mechanics behind delivery timing, see
+[Events](events.md).
+
+
+
+# Billing
+
+---
+title: Billing & webhook signing secret
+---
+
+# Billing & webhook signing secret
+
+Workspace-level billing, subscription, and webhook verification calls are
+token-scoped like every other client call — the workspace is derived
+server-side from the API key.
+
+The billing reads — `aex.billing()`, `aex.billingLedger()`, and the CLI
+`aex billing` (and its `ledger` sub-verb) — require the **`billing:read`**
+scope; a token without it fails with `403 insufficient_scope` (see
+[Errors](errors.md)). This is why the [Quickstart](quickstart.md) mints
+`billing:read` alongside `sessions:read` / `sessions:write` / `files:read`.
+
+## Read the billing summary
+
+`aex.billing()` returns the workspace's prepaid balance, current-month spend,
+and the spend cap enforced on new sessions, plus plan fields:
+
+```ts
+import { Aex } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_KEY!);
+const billing = await aex.billing();
+console.log(billing.balanceUsd, billing.monthSpendUsd, billing.spendCapUsd);
+```
+
+The returned `BillingSummary` is additive-tolerant: fields a newer deployment
+reports that this SDK version does not know yet pass through on the object
+instead of being rejected.
+
+CLI equivalent:
+
+```bash
+aex billing            # human-readable balance / month spend / spend cap
+aex billing --json     # the raw wire body for scripting
+```
+
+## Manage the subscription
+
+`aex.billingCheckout({ planKey })` creates a hosted checkout session for a paid
+plan. Open the returned URL in a browser; the workspace plan changes after
+checkout completes and the hosted API confirms the subscription.
+
+```ts
+const { url } = await aex.billingCheckout({
+  planKey: "pro"
+}, {
+  idempotencyKey: crypto.randomUUID()
+});
+console.log(url);
+```
+
+The optional second argument identifies the mutation and is sent only as the
+`Idempotency-Key` header. When omitted, the SDK generates one before transport
+retries begin and reuses it for every attempt.
+
+`aex.billingPortal()` creates a hosted billing portal session for the workspace:
+
+```ts
+const { url } = await aex.billingPortal(
+  { returnUrl: "https://aex.dev/billing" },
+  { idempotencyKey: crypto.randomUUID() }
+);
+console.log(url);
+```
+
+CLI equivalents:
+
+```bash
+aex billing upgrade pro --idempotency-key "$KEY"
+aex billing portal --idempotency-key "$KEY"
+```
+
+## Read the credit ledger
+
+`aex.billingLedger({ limit })` returns recent credit-ledger rows, newest first —
+allowance grants, adjustments, and run charges with signed `amountUsd` (credits
+positive, charges negative). `limit` is clamped server-side to [1, 100] (default
+25); the read is not cursor-paged.
+
+```ts
+const { entries } = await aex.billingLedger({ limit: 50 });
+for (const entry of entries) {
+  console.log(entry.createdAt, entry.entryType, entry.amountUsd);
+}
+```
+
+CLI equivalent:
+
+```bash
+aex billing ledger --limit 50   # JSON rows, newest first
+```
+
+## Reveal the webhook signing secret
+
+Session webhooks are signed Standard-Webhooks style with a per-workspace secret.
+`aex.webhookSigningSecret()` reveals it (creating one on first use) as the
+`whsec_<base64>` string that `verifyAexWebhook` takes as `secret`:
+
+```ts
+import { Aex, verifyAexWebhook } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_KEY!);
+const { whsec } = await aex.webhookSigningSecret();
+
+// In your webhook receiver:
+const verified = await verifyAexWebhook({
+  rawBody,          // the exact request body bytes as a string
+  headers,          // the inbound request headers
+  secret: whsec
+});
+```
+
+Repeat calls return the SAME value — the hosted API does not rotate the
+signing secret. Treat the reveal as sensitive: store it in your secret manager
+and never log it.
+
+CLI equivalent (prints the bare `whsec_...` string, pipeable into a secret
+store; the reveal never goes to stderr or debug traces):
+
+```bash
+aex webhooks secret
+```
+
+
+
+# Cleanup
+
+---
+title: Cleanup
+---
+
+# Cleanup
+
+aex owns runtime cleanup after a run ends. This internal work is not a public
+session lifecycle state and is not represented by a synthetic `cleanupStatus`
+field. A terminal RUN event means the run's checkpoint, files, billing, and
+public read model are consistent; explicit session deletion remains a separate
+operation.
+
+The hosted product uses managed runtimes for all supported providers. Reusable
+provider-session retention is not a supported session option, and the removed
+retention field is rejected if supplied.
+
+```ts
+import { Models } from "@aexhq/sdk";
+
+await aex.start({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "...",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+Session sequencing is exposed only through `currentRun` and `lastRun`. Use
+`session.delete()` when the session itself should be deleted.
+
+
+
+# Provider Runtime Capabilities
+
+---
+title: Provider runtime capabilities
+---
+
+# Provider runtime capabilities
+
+Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`.
+
+Regenerate with `bun run capabilities:generate`; check with `bun run capabilities:check`.
+
+Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`).
+
+All new submissions run on the managed runtime. Public support is expressed as supported providers and supported model ids.
+
+## Supported models
+
+| Provider | Selector | Supported models | Docs | Evidence |
+| --- | --- | --- | --- | --- |
+| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](../../../apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts) |
+| [DeepSeek](#deepseek) | `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
+| [OpenAI](#openai) | `openai` | `gpt-4.1`, `gpt-4o-mini` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| [Gemini](#gemini) | `gemini` | `gemini-2.0-flash`, `gemini-2.5-flash` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| [Mistral](#mistral) | `mistral` | `mistral-large-latest`, `mistral-small-latest` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| [OpenRouter](#openrouter) | `openrouter` | `gpt-4o-mini`, `gpt-4o`, `gemini-2.0-flash` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| [Doubao](#doubao) | `doubao` | `doubao-seed-pro`, `doubao-seed-flash` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+
+## Managed evidence
+
+| Provider | Enforcement path | Evidence |
+| --- | --- | --- |
+| `anthropic` | submission parser + managed execution | [Installed-SDK Anthropic live user test](../../../apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts) |
+| `deepseek` | submission parser + managed execution | [Installed-SDK DeepSeek live user test](../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
+| `openai` | submission parser + managed execution | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| `gemini` | submission parser + managed execution | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| `mistral` | submission parser + managed execution | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| `openrouter` | submission parser + managed execution | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| `doubao` | submission parser + managed execution | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+
+## Skills
+
+Skills are supplied through the top-level `skills` option. Build one with `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles`, `Skill.fromContent`, or `Skill.fromBytes`; each normalizes to a named workspace skill that the platform snapshots into durable session asset storage.
+
+Notes:
+
+- Supported models are the public SDK model ids accepted for each provider.
+- Runtime selection is independent of provider/model selection: `runtime.kind` accepts `container`, `spot_container`, or `lambda`; `runtime.size` accepts the managed size presets.
+
+## Provider anchors
+
+### Anthropic
+
+- Wire provider: `anthropic`
+- Supported models: `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](../../../apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts)
+
+### DeepSeek
+
+- Wire provider: `deepseek`
+- Supported models: `deepseek-v4-flash`, `deepseek-v4-pro`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts)
+
+### OpenAI
+
+- Wire provider: `openai`
+- Supported models: `gpt-4.1`, `gpt-4o-mini`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
+
+### Gemini
+
+- Wire provider: `gemini`
+- Supported models: `gemini-2.0-flash`, `gemini-2.5-flash`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
+
+### Mistral
+
+- Wire provider: `mistral`
+- Supported models: `mistral-large-latest`, `mistral-small-latest`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
+
+### OpenRouter
+
+- Wire provider: `openrouter`
+- Supported models: `gpt-4o-mini`, `gpt-4o`, `gemini-2.0-flash`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
+
+### Doubao
+
+- Wire provider: `doubao`
+- Supported models: `doubao-seed-pro`, `doubao-seed-flash`
+- Docs: [Secrets](secrets.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
