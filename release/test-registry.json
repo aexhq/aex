@@ -1059,7 +1059,11 @@
           "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
         }
       },
-      "unmapped_targets": [],
+      "unmapped_targets": [
+        "admission_laws",
+        "canonical_order",
+        "keys"
+      ],
       "awaiting_owner": true
     },
     "crates/aex-observation-export": {
@@ -1247,7 +1251,9 @@
           "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
         }
       },
-      "unmapped_targets": [],
+      "unmapped_targets": [
+        "decode_bounds"
+      ],
       "awaiting_owner": true
     },
     "crates/aex-payment-contracts": {
