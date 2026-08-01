@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ApiError.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The one error envelope every failing request returns.",
+  "properties": {
+    "error": {
+      "$ref": "aex:schema:ApiErrorBody",
+      "description": "The failure."
+    }
+  },
+  "required": [
+    "error"
+  ],
+  "title": "ApiError",
+  "type": "object"
+}

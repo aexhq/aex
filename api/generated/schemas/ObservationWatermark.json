@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationWatermark.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "How far one stage of the pipeline has advanced.",
+  "properties": {
+    "at": {
+      "description": "The observation time at that position.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "sequence": {
+      "description": "The position.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "at",
+    "sequence"
+  ],
+  "title": "ObservationWatermark",
+  "type": "object"
+}

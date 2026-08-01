@@ -1,0 +1,24 @@
+# The six direct BYOK providers.
+#
+# The order below is the Rust discriminant order. `anthropic` has no alias: the
+# common misspelling `anthrophic` is a mandatory invalid conformance case.
+module: provider
+schemas:
+  ProviderId:
+    doc: The six direct BYOK providers. There is no gateway and no arbitrary base URL.
+    type: enum
+    values:
+      - { value: openai, doc: "The `OpenAI` API." }
+      - { value: anthropic, doc: "Anthropic." }
+      - { value: deepseek, doc: "The `DeepSeek` API." }
+      - { value: zai, doc: "The Z.ai API." }
+      - { value: moonshotai, doc: "The Moonshot AI API." }
+      - { value: google, doc: "Google." }
+
+  ModelSelection:
+    doc: An explicit provider and model pair; a model-only override is rejected.
+    type: object
+    fields:
+      provider: { type: provider_id, doc: "The provider." }
+      model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
+      credentialId: { type: id, of: provider_credential, optional: true, doc: "Which BYOK binding to use." }

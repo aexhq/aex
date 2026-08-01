@@ -1,0 +1,5 @@
+plane: central
+fragment: auth
+operations:
+  - { id: device_authorization_create, method: POST, path: /api/auth/device/authorizations, summary: "Begin the CLI device-authorization flow.", altPrincipal: anonymous, idempotency: idempotency_key, request: DeviceAuthorizationRequest, successStatus: 201, success: DeviceAuthorization, pauseExempt: true, errors: [invalid_request, rate_limited, internal_error] }
+  - { id: device_token_create, method: POST, path: /api/auth/device/tokens, summary: "Exchange an approved device code for an account token.", altPrincipal: anonymous, request: DeviceTokenRequest, successStatus: 200, success: DeviceToken, pauseExempt: true, safeRetry: true, errors: [invalid_request, authorization_pending, slow_down, token_expired, rate_limited, internal_error] }

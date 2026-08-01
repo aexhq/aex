@@ -1,0 +1,21 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UploadCompleteRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Complete a staged upload.",
+  "properties": {
+    "parts": {
+      "description": "Every written part.",
+      "items": {
+        "$ref": "aex:schema:UploadPart"
+      },
+      "maxItems": 10000,
+      "type": "array"
+    }
+  },
+  "required": [
+    "parts"
+  ],
+  "title": "UploadCompleteRequest",
+  "type": "object"
+}

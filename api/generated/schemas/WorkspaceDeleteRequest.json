@@ -1,0 +1,19 @@
+{
+  "$id": "https://schemas.aex.dev/v1/WorkspaceDeleteRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Admit the global workspace-deletion operation.",
+  "properties": {
+    "confirmation": {
+      "description": "The workspace id, restated.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "confirmation"
+  ],
+  "title": "WorkspaceDeleteRequest",
+  "type": "object"
+}

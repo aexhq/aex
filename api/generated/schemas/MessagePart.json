@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessagePart.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One part of a message.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:MessagePartText",
+      "x-aex-discriminator-value": "text"
+    },
+    {
+      "$ref": "aex:schema:MessagePartFile",
+      "x-aex-discriminator-value": "file"
+    }
+  ],
+  "title": "MessagePart",
+  "x-aex-discriminator": "type"
+}

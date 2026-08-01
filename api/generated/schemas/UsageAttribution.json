@@ -1,0 +1,68 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageAttribution.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a rated aggregate is attributed to.",
+  "properties": {
+    "operationId": {
+      "description": "The operation, when attributable.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    },
+    "ratedCents": {
+      "description": "The rated amount.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "region": {
+      "description": "Where the usage happened.",
+      "enum": [
+        "us-east-1",
+        "us-east-2",
+        "us-west-2",
+        "ap-northeast-1",
+        "eu-west-1"
+      ],
+      "type": "string"
+    },
+    "runId": {
+      "description": "The run, when attributable.",
+      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "run"
+    },
+    "serviceTime": {
+      "$ref": "aex:schema:TimeRange",
+      "description": "The service-time interval."
+    },
+    "sessionId": {
+      "description": "The session, when attributable.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    },
+    "source": {
+      "description": "Which authority produced the facts.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "workspaceId": {
+      "description": "The workspace.",
+      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "workspace"
+    }
+  },
+  "required": [
+    "ratedCents",
+    "region",
+    "serviceTime",
+    "source",
+    "workspaceId"
+  ],
+  "title": "UsageAttribution",
+  "type": "object"
+}

@@ -1,0 +1,32 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LiveFileEntryPage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One page of live file entries plus what the read did.",
+  "properties": {
+    "items": {
+      "description": "The page.",
+      "items": {
+        "$ref": "aex:schema:FileEntry"
+      },
+      "maxItems": 1000,
+      "type": "array"
+    },
+    "nextCursor": {
+      "description": "Continuation token.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-cursor": true
+    },
+    "workspaceAccess": {
+      "$ref": "aex:schema:WorkspaceAccess",
+      "description": "What the read did."
+    }
+  },
+  "required": [
+    "items",
+    "workspaceAccess"
+  ],
+  "title": "LiveFileEntryPage",
+  "type": "object"
+}

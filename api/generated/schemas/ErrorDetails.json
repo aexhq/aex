@@ -1,0 +1,41 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetails.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Closed, typed remediation detail; never an untyped bag.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:ErrorDetailsRequiredScope",
+      "x-aex-discriminator-value": "required_scope"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsLimit",
+      "x-aex-discriminator-value": "limit"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsQuota",
+      "x-aex-discriminator-value": "quota"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsRegion",
+      "x-aex-discriminator-value": "region"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsRetry",
+      "x-aex-discriminator-value": "retry"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsOperation",
+      "x-aex-discriminator-value": "operation"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsValidation",
+      "x-aex-discriminator-value": "validation"
+    },
+    {
+      "$ref": "aex:schema:ErrorDetailsGap",
+      "x-aex-discriminator-value": "gap"
+    }
+  ],
+  "title": "ErrorDetails",
+  "x-aex-discriminator": "type"
+}

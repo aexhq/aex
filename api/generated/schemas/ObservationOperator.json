@@ -1,0 +1,16 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ObservationOperator.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The comparison operators a filter leaf may use.",
+  "enum": [
+    "eq",
+    "ne",
+    "lt",
+    "lte",
+    "gt",
+    "gte",
+    "prefix"
+  ],
+  "title": "ObservationOperator",
+  "type": "string"
+}

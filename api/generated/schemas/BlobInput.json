@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BlobInput.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Where a registered value's bytes come from.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:BlobInline",
+      "x-aex-discriminator-value": "inline"
+    },
+    {
+      "$ref": "aex:schema:BlobUpload",
+      "x-aex-discriminator-value": "upload"
+    }
+  ],
+  "title": "BlobInput",
+  "x-aex-discriminator": "type"
+}

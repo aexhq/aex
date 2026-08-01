@@ -1,0 +1,21 @@
+# The adjustable workspace safety limits.
+#
+# This crate owns the identity and the public shape only. Enforcement and the
+# audited override path belong to the regional capacity authority.
+limits:
+  - { id: "query.page", shape: scalar, doc: "Largest accepted collection page size." }
+  - { id: "request.body_bytes", shape: scalar, doc: "Largest accepted encoded JSON request body." }
+  - { id: "otlp.body_bytes", shape: map, doc: "Largest accepted encoded and decoded OTLP body." }
+  - { id: "stream.frame", shape: map, doc: "Largest NDJSON records frame in observations and bytes." }
+  - { id: "session.concurrent", shape: scalar, doc: "Concurrently non-idle sessions in the workspace." }
+  - { id: "session.subagent_depth", shape: scalar, doc: "Deepest subagent nesting inside one run." }
+  - { id: "session.subagent_concurrency", shape: scalar, doc: "Concurrently admitted subagents inside one run." }
+  - { id: "upload.part_bytes", shape: scalar, doc: "Largest single staged upload part." }
+  - { id: "upload.object_bytes", shape: scalar, doc: "Largest staged upload object." }
+  - { id: "download.range_bytes", shape: scalar, doc: "Largest byte range one download grant may sign." }
+  - { id: "registry.value_bytes", shape: scalar, doc: "Largest registered resource value." }
+  - { id: "registry.entries", shape: map, doc: "Registered resource count per kind." }
+  - { id: "secret.value_bytes", shape: scalar, doc: "Largest accepted secret value." }
+  - { id: "telemetry.retention_days", shape: scalar, doc: "Days an admitted observation is retained." }
+  - { id: "telemetry.export_bytes", shape: scalar, doc: "Largest telemetry export artifact." }
+  - { id: "observation.filter", shape: map, doc: "Structural bounds of an observation filter." }

@@ -1,0 +1,29 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredSkillValue.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A registered skill bundle containing `SKILL.md`.",
+  "properties": {
+    "bundle": {
+      "$ref": "aex:schema:BlobInput",
+      "description": "The bundle bytes."
+    },
+    "bundleFormat": {
+      "$ref": "aex:schema:BundleFormat",
+      "description": "The bundle format."
+    },
+    "description": {
+      "description": "What the skill is for.",
+      "maxLength": 4096,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "bundle",
+    "bundleFormat",
+    "description"
+  ],
+  "title": "RegisteredSkillValue",
+  "type": "object"
+}

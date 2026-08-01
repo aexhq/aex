@@ -17,3 +17,11 @@ apps/docs/content/docs/** text eol=lf
 *.rs text eol=lf
 *.toml text eol=lf
 Cargo.lock text eol=lf
+
+# The contract bundle, the published schemas, the two plane documents and the
+# conformance corpus are compared byte-for-byte by
+# `cargo run -p aex-contract-gen -- check`. Same rule, same reason.
+api/generated/** text eol=lf
+api/openapi/** text eol=lf
+api/schemas/** text eol=lf
+conformance/** text eol=lf

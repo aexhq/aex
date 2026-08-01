@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsQuota.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The quota dimension that was exhausted.",
+  "properties": {
+    "attempted": {
+      "description": "What this request would have added.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "dimension": {
+      "description": "Which quota dimension.",
+      "type": "string",
+      "x-aex-registry": "limits"
+    },
+    "used": {
+      "description": "Already consumed.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attempted",
+    "dimension",
+    "used"
+  ],
+  "title": "ErrorDetailsQuota",
+  "type": "object"
+}

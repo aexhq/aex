@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ComputeShape.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One resolved compute dimension.",
+  "properties": {
+    "memoryMiB": {
+      "description": "Memory in mebibytes.",
+      "maximum": 262144,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "vcpus": {
+      "description": "Virtual CPUs; fractional at the smaller shapes.",
+      "type": "number",
+      "x-aex-float": true
+    }
+  },
+  "required": [
+    "memoryMiB",
+    "vcpus"
+  ],
+  "title": "ComputeShape",
+  "type": "object"
+}

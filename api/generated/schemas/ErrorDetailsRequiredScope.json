@@ -1,0 +1,18 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ErrorDetailsRequiredScope.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The scope the credential lacks.",
+  "properties": {
+    "scope": {
+      "description": "The missing scope.",
+      "type": "string",
+      "x-aex-registry": "scopes"
+    }
+  },
+  "required": [
+    "scope"
+  ],
+  "title": "ErrorDetailsRequiredScope",
+  "type": "object"
+}

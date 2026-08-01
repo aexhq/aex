@@ -33,3 +33,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+aex-wire = { path = "../../crates/aex-wire" }
+similar-asserts.workspace = true
