@@ -5527,8 +5527,11 @@ name = "regional-secret-key-admin"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-regional-http",
+ "aex-secret-keystore-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
+ "clap",
  "thiserror",
 ]
 
