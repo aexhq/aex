@@ -77,6 +77,17 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             .map_err(|error| RunError::Runtime(error.to_string()))?,
     };
 
+    // The handler surface is complete for `regional_session_api::Routes::served()`
+    // and is mounted by `mount_unary` in the `served` target. It is **not**
+    // mounted here, and the reason is not this deployable's:
+    // `aex_regional_http::mount::mount_unary` requires an `EdgeAdmission`, whose
+    // only implementation needs an `AssertionSource` and a `KeyVerifier`. The
+    // first has no published `central-authz` request/response shape for a
+    // workspace key and no `aws-sdk-lambda` in `[workspace.dependencies]`; the
+    // second has no parameter-store reader. Mounting a route whose edge cannot
+    // admit anything would answer a permanent failure, which RS-18 forbids, so
+    // the routes stay absent and the process serves its health surface only.
+    let _served = regional_session_api::Routes::served();
     lambda_http::run(aex_regional_http::health::router(readiness))
         .await
         .map_err(|error| RunError::Runtime(error.to_string()))

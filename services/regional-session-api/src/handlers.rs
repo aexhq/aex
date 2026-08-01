@@ -1,0 +1,362 @@
+//! The generated server traits, implemented over the real adapters.
+//!
+//! Two rules shape everything here.
+//!
+//! **A handler never names a status and never invents a code.** The response
+//! type it returns is the status the route declares, and every refusal is one of
+//! the codes the route's descriptor lists — `dispatch::declared` refuses the rest
+//! at the boundary, so a code that slipped through would be `internal_error`
+//! rather than a lie.
+//!
+//! **A route this deployable does not own is [`not_served`].** Two authoring
+//! fragments are split across two deployables, so implementing a trait means
+//! implementing methods for the other half too. Those arms are unreachable
+//! through the router — [`Routes::served`] never offers them — and the
+//! composition test proves it.
+
+use std::sync::Arc;
+
+use aex_regional_http::context::RequestContext;
+use aex_regional_http::cursor::{CursorBinding, CursorKeyRing, Order, SnapshotToken, SortTuple};
+use aex_regional_http::mount::{UnaryDispatch, not_served};
+use aex_regional_http::projection::{
+    self, ProjectionError, authority_failure, entity_tag, position_tuple, tuple_position,
+};
+use aex_regional_http::router::RouteOwner;
+use aex_secret_custody_dynamodb::store::SecretCustodyStore;
+use aex_session_dynamodb::paging::{PageBudget, PagePosition};
+use aex_wire::cursor::Cursor;
+use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
+use aex_wire::error::{ErrorCode, WireError, WireResult};
+use aex_wire::ids::{ProviderCredentialId, ResourceName};
+use aex_wire::models;
+use aex_wire::routes::{RouteId, route};
+use aex_wire::server::{
+    AcceptKind, NoContent, ProviderCredentialsApi, RequestContext as WireContext, RouteGroup,
+    SecretsApi, WithETag, dispatch_provider_credentials, dispatch_secrets,
+};
+use aex_wire::types::Timestamp;
+
+/// The adapters and start-up bindings every request shares.
+///
+/// One value built once by the composition root. Nothing per-request lives here,
+/// which is what lets a handler be constructed for one request by cloning two
+/// `Arc`s.
+pub struct Shared {
+    /// The ciphertext-metadata authority. Reads only on this deployable.
+    pub custody: Arc<dyn SecretCustodyStore>,
+    /// The signing ring every continuation is minted and verified under.
+    pub cursor_keys: Arc<CursorKeyRing>,
+}
+
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Shared").finish_non_exhaustive()
+    }
+}
+
+/// One request's view of the deployable.
+///
+/// The regional context is carried because the wire context does not name a
+/// workspace for an `Account` principal, and every authority read here is
+/// workspace-scoped. Building it per request costs two `Arc` clones.
+pub struct Routes {
+    shared: Arc<Shared>,
+    cx: RequestContext,
+}
+
+impl Routes {
+    /// Binds the shared adapters to one verified request.
+    #[must_use]
+    pub const fn new(shared: Arc<Shared>, cx: RequestContext) -> Self {
+        Self { shared, cx }
+    }
+
+    /// Every route whose handler is complete, in `RouteId` order.
+    ///
+    /// This is the narrowing RS-22 permits and RS-18 requires. It is derived from
+    /// the owned partition rather than written out, so a route that leaves this
+    /// list has to leave the owned set too.
+    #[must_use]
+    pub fn served() -> Vec<RouteId> {
+        RouteOwner::SessionApi
+            .routes()
+            .into_iter()
+            .filter(|id| SERVED.contains(id))
+            .collect()
+    }
+}
+
+/// The routes this deployable can answer completely today.
+///
+/// Everything else it owns is absent from the router. `references/rewrite/regional-services.md`
+/// records, per fragment, exactly what each remaining route is waiting for.
+const SERVED: &[RouteId] = &[
+    RouteId::ProviderCredentialGet,
+    RouteId::ProviderCredentialsList,
+    RouteId::SecretGet,
+    RouteId::SecretsList,
+];
+
+impl std::fmt::Debug for Routes {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Routes")
+            .field("route", &self.cx.route)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The page budget a list request asks for.
+///
+/// A limit above the ceiling is refused rather than clamped: a caller that is
+/// silently given fewer items than it asked for cannot tell a short page from
+/// the end of a collection.
+fn budget(limit: Option<u32>) -> WireResult<PageBudget> {
+    PageBudget::new(limit.unwrap_or(0))
+        .map_err(|_| WireError::new(ErrorCode::InvalidRequest).with_message("page limit"))
+}
+
+impl Routes {
+    fn cursor_binding(&self, route: RouteId, snapshot: &str) -> WireResult<CursorBinding> {
+        Ok(CursorBinding {
+            route,
+            principal_scope: self.cx.auth.credential_binding,
+            region: self.cx.auth.placement,
+            workspace_id: self.cx.auth.workspace_id,
+            session_id: None,
+            // The listings served here take no filter, so the normalized query
+            // is empty and its digest is a constant for the route. A route that
+            // grows a filter must digest it here or a cursor would replay across
+            // two different queries.
+            query_hash: [0; 32],
+            order: Order::Ascending,
+            snapshot: SnapshotToken::new(snapshot)
+                .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?,
+        })
+    }
+
+    fn resume(
+        &self,
+        cursor: Option<&Cursor>,
+        binding: &CursorBinding,
+    ) -> WireResult<Option<PagePosition>> {
+        let Some(cursor) = cursor else {
+            return Ok(None);
+        };
+        let tuple = aex_regional_http::cursor::decode(
+            &self.shared.cursor_keys,
+            cursor,
+            binding,
+            self.now()?,
+        )
+        .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?;
+        Ok(Some(tuple_position(&tuple).map_err(WireError::from)?))
+    }
+
+    fn continuation(
+        &self,
+        next: Option<&PagePosition>,
+        binding: &CursorBinding,
+    ) -> WireResult<Option<Cursor>> {
+        let Some(position) = next else {
+            return Ok(None);
+        };
+        let tuple: SortTuple = position_tuple(position).map_err(WireError::from)?;
+        let cursor = aex_regional_http::cursor::encode(
+            self.shared.cursor_keys.current(),
+            binding,
+            &tuple,
+            self.now()?,
+        )
+        .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?;
+        Ok(Some(cursor))
+    }
+
+    fn now(&self) -> WireResult<Timestamp> {
+        self.cx
+            .now()
+            .map_err(|_| WireError::new(ErrorCode::InternalError))
+    }
+}
+
+impl SecretsApi for Routes {
+    async fn secret_delete(&self, _cx: &WireContext, _name: ResourceName) -> WireResult<NoContent> {
+        Err(not_served(RouteId::SecretDelete))
+    }
+
+    async fn secret_get(
+        &self,
+        _cx: &WireContext,
+        name: ResourceName,
+    ) -> WireResult<WithETag<models::SecretMetadata>> {
+        let stored = self
+            .shared
+            .custody
+            .load_secret(self.cx.auth.workspace_id, &name)
+            .await
+            .map_err(|error| authority_failure(&error))?
+            .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
+        // A tombstone projects to `SecretDeleted`, which maps to `not_found`:
+        // a deleted record is absent, never a `deleted` state on the wire.
+        let value = projection::secret_metadata(&stored).map_err(WireError::from)?;
+        let etag = entity_tag("SecretMetadata", &value).map_err(WireError::from)?;
+        Ok(WithETag { value, etag })
+    }
+
+    async fn secret_put(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::SecretPutRequest,
+    ) -> WireResult<WithETag<models::SecretMetadata>> {
+        Err(not_served(RouteId::SecretPut))
+    }
+
+    async fn secret_revoke(
+        &self,
+        _cx: &WireContext,
+        _name: ResourceName,
+        _body: models::EmptyRequest,
+    ) -> WireResult<models::SecretRevocation> {
+        Err(not_served(RouteId::SecretRevoke))
+    }
+
+    async fn secrets_list(
+        &self,
+        _cx: &WireContext,
+        query: models::SecretsListQuery,
+    ) -> WireResult<models::SecretMetadataPage> {
+        let binding = self.cursor_binding(RouteId::SecretsList, "secrets")?;
+        let after = self.resume(query.cursor.as_ref(), &binding)?;
+        let page = self
+            .shared
+            .custody
+            .page_secrets(
+                self.cx.auth.workspace_id,
+                budget(query.limit)?,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?;
+        let next = self.continuation(page.next.as_ref(), &binding)?;
+        projection::secret_metadata_page(&page.items, next).map_err(WireError::from)
+    }
+}
+
+impl ProviderCredentialsApi for Routes {
+    async fn provider_credential_get(
+        &self,
+        _cx: &WireContext,
+        provider_credential_id: ProviderCredentialId,
+    ) -> WireResult<WithETag<models::ProviderCredential>> {
+        let stored = self
+            .shared
+            .custody
+            .load_provider_credential(self.cx.auth.workspace_id, provider_credential_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+            .ok_or_else(|| WireError::new(ErrorCode::ProviderCredentialNotFound))?;
+        let value = projection::provider_credential(&stored);
+        let etag = entity_tag("ProviderCredential", &value).map_err(WireError::from)?;
+        Ok(WithETag { value, etag })
+    }
+
+    async fn provider_credential_register(
+        &self,
+        _cx: &WireContext,
+        _body: models::ProviderCredentialRegisterRequest,
+    ) -> WireResult<aex_wire::server::Created<models::ProviderCredential>> {
+        Err(not_served(RouteId::ProviderCredentialRegister))
+    }
+
+    async fn provider_credential_revoke(
+        &self,
+        _cx: &WireContext,
+        _provider_credential_id: ProviderCredentialId,
+        _body: models::EmptyRequest,
+    ) -> WireResult<models::ProviderCredential> {
+        Err(not_served(RouteId::ProviderCredentialRevoke))
+    }
+
+    async fn provider_credentials_list(
+        &self,
+        _cx: &WireContext,
+        query: models::ProviderCredentialsListQuery,
+    ) -> WireResult<models::ProviderCredentialPage> {
+        let binding =
+            self.cursor_binding(RouteId::ProviderCredentialsList, "provider-credentials")?;
+        let after = self.resume(query.cursor.as_ref(), &binding)?;
+        let page = self
+            .shared
+            .custody
+            .page_provider_credentials(
+                self.cx.auth.workspace_id,
+                budget(query.limit)?,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?;
+        let next = self.continuation(page.next.as_ref(), &binding)?;
+        // The declared `provider` filter is applied after the page is read, so a
+        // filtered page can be shorter than the budget while still naming a
+        // continuation. That is why the cursor is minted from the authority's
+        // own position and never from the filtered item count.
+        let items: Vec<_> = match query.provider {
+            None => page.items,
+            Some(provider) => page
+                .items
+                .into_iter()
+                .filter(|row| row.provider == provider)
+                .collect(),
+        };
+        Ok(projection::provider_credential_page(&items, next))
+    }
+}
+
+#[async_trait::async_trait]
+impl UnaryDispatch for Routes {
+    fn owner(&self) -> RouteOwner {
+        RouteOwner::SessionApi
+    }
+
+    fn served(&self) -> Vec<RouteId> {
+        Self::served()
+    }
+
+    async fn dispatch(
+        &self,
+        cx: &RequestContext,
+        accept: AcceptKind,
+        raw: RawRequest<'_>,
+        limits: RequestLimits,
+    ) -> WireResult<RawResponse> {
+        let wire = cx.to_wire(accept);
+        // The group comes from the generated table, so a new fragment is a
+        // non-exhaustive-match compile error rather than a runtime 404.
+        let outcome = match route(raw.route).fragment {
+            "secrets" => dispatch_secrets(self, &wire, raw, limits).await?,
+            "provider-credentials" => {
+                dispatch_provider_credentials(self, &wire, raw, limits).await?
+            }
+            _ => return Err(not_served(raw.route)),
+        };
+        match outcome {
+            aex_wire::dispatch::DispatchOutcome::Unary(response) => Ok(response),
+            // Neither group declares an NDJSON route, so `NoStream` is
+            // uninhabited and this arm is unconstructible.
+            aex_wire::dispatch::DispatchOutcome::Ndjson(never) => match never.0 {},
+        }
+    }
+}
+
+/// The groups this deployable draws served routes from.
+#[must_use]
+pub fn served_groups() -> Vec<RouteGroup> {
+    let served = Routes::served();
+    RouteGroup::ALL
+        .iter()
+        .copied()
+        .filter(|group| group.routes().iter().any(|id| served.contains(id)))
+        .collect()
+}

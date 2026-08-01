@@ -440,3 +440,174 @@ file path on one command line and Windows refuses it with
 run as `cargo fmt -p <package>` over each owned package, all exiting `0`. Linux
 CI is unaffected; this is the same class of host condition as the NASM note in
 the orchestrator conventions.
+
+## Projection
+
+Branch `rw/projection`, off `main`. This closes "The one blocking gap" above: a
+regional authority value can now become an `aex_wire::models` value, and both
+finite APIs mount routes.
+
+### Where the projection lives, and why
+
+`aex_regional_http::projection`. Three placements were possible and two are
+wrong:
+
+- **in `aex-session-app` or a domain crate** — a port that returned wire models
+  makes the domain depend on the wire, which inverts the dependency direction the
+  whole rewrite is built on;
+- **in each deployable** — `regional:secrets` and `regional:provider-credentials`
+  are each split across two deployables, so one representation would have two
+  spellings and they would drift;
+- **in `aex-regional-http`** — the crate that already owns the wire boundary for
+  every regional deployable, and the only place both vocabularies may meet.
+
+Its inputs are the **decoded authority rows** rather than a third view type. Any
+other choice adds one type and one conversion per model, which is exactly the
+drift a single projection exists to prevent (RS-28).
+
+Two rules carry real weight and are asserted rather than described:
+
+- **A secret's public `state` is read from the comparison the admission path
+  uses, not from the stored `state` column.** An emergency revoke is one
+  conditional update that raises `revokedThroughRevision` to the current revision
+  and leaves the column alone — that is what makes it `O(1)` in the generation
+  count — so a projection that copied the column would tell a customer `ready`
+  about a record nothing may use.
+- **An entity tag is derived from the projected representation**, canonicalized
+  through the one JCS canonicalizer and domain-separated by model name. It
+  therefore moves on a revoke, which advances no revision at all; a tag derived
+  from a revision column would not have.
+
+A tombstone has no public representation: it is `404`, never a `deleted` state on
+the wire. A listing skips one rather than failing the whole page.
+
+### What is mounted
+
+| Deployable | Owns | Served today |
+| --- | --- | --- |
+| `regional-session-api` | 61 | **4** — `secret_get`, `secrets_list`, `provider_credential_get`, `provider_credentials_list` |
+| `regional-secret-api` | 4 | **2** — `secret_delete`, `secret_revoke` |
+
+`UnaryDispatch::served()` is the narrowing, derived by filtering the owned
+partition rather than written as a second list. Every other owned route is
+**absent from the router**, not mounted and answering a permanent failure
+(RS-18), and `an_owned_but_unserved_route_is_absent_from_the_router` proves it on
+both deployables.
+
+Each served route is driven end to end in the `served` target: the router is
+built by `mount_unary` over the real `UnaryDispatch`, a real HTTP request goes in,
+and the published body, status and `ETag` come back. The two mutating routes
+additionally assert the **expression** they committed, so a tombstone that
+stopped conditioning on the observed revision would fail even though its body
+would still be right.
+
+### Idempotency without a receipt, where that is exact
+
+`secret_revoke` and `provider_credential_revoke` declare an `Idempotency-Key` and
+need no durable receipt. Their scope subject is the resource, their body is
+`EmptyRequest`, and revocation is terminal, so one scope plus one key can only
+ever carry one intent: `idempotency_conflict` is **unreachable** rather than
+undetected, and a replay is answered from the stored row without a second write.
+`a_replayed_revoke_answers_the_stored_receipt_and_writes_nothing` asserts both
+halves.
+
+`secret_delete` declares no `not_found`, which is deliberate: deleting an absent
+or already-tombstoned name is a completed request. Both answer `204` **without a
+write**, so a retry never advances the revision a concurrent editor is fencing
+on.
+
+### Adapter fields added
+
+| Adapter | Field | Why it is persisted rather than derived |
+| --- | --- | --- |
+| `aex-secret-custody-dynamodb::ProviderCredential` | `fingerprint: ContentHash` | It cannot be recomputed without the plaintext, which no read path may hold. Minted once at registration by `SecretPlaintext::credential_fingerprint`: a domain-separated SHA-256 over length-prefixed `(workspace, credential)` then the value, so it is one-way and salted by the binding — the same key in another workspace does not fingerprint alike, and one precomputed table cannot cover the fleet. |
+| | `name: ResourceName` | The human label the caller registered under. Nothing else stores it. |
+| | `revision: u64` | A concurrency token a reader invented would be useless as one. |
+| | `updated_at`, `revoked_at` | The wire publishes both; the row carried neither. |
+| | `provider: ProviderId`, `state: CredentialState` | Were free `String`s. A stored value outside either closed set is now a decode failure rather than a value the projection has to guess at. |
+
+`aex-secret-domain` gains `sha2` for the fingerprint. Nothing else changed there.
+
+### Adapter behaviour added
+
+- **`expressions::delete`** — the conditional custody delete `secret_delete`
+  commits, which the previous pass recorded as missing. It **tombstones** the
+  fence row rather than removing it: the row is what every use path conditions
+  on, and deleting it would make a revoked-then-deleted name read as "never
+  existed" instead of "deleted". Conditional three ways — the record must exist,
+  be at the observed revision, and not already be a tombstone — and it clears the
+  generation pointer so a later reader cannot resolve a name the customer
+  believes is gone.
+- **`expressions::revoke_provider_credential`** — one conditional update from
+  `ready` only, the same shape as the secret revoke and for the same reason.
+- **`expressions::set` now carries `REMOVE revokedAt`.** `aex_secret_domain::set`
+  produces `revoked_at: None`, and the expression did not clear it, so a secret
+  replaced after a revoke would publish a revocation date while being admissible
+  again. This was a live divergence between a domain transition and the
+  expression that commits it.
+- **`store::load_provider_credential`** — a bounded point read. The sort key
+  carries the provider, so an identity alone names a suffix; `ProviderId` is
+  closed at six, so the read is six strongly consistent point reads and never a
+  scan or an unbounded query.
+- **`store::page_secrets` / `page_provider_credentials`** — listings that return
+  the authority's own continuation. `list_secrets` could not name one, so a full
+  page was indistinguishable from the end of a collection.
+- **The receipt row codec moved to `aex_session_dynamodb::replay`**, which is
+  always-on, so every regional table that holds a receipt stores the one shape.
+  `codec::{encode_receipt, decode_receipt, receipt_is_live}` now delegate.
+
+### Interface changes for peers
+
+- `UnaryDispatch::dispatch` takes `&aex_regional_http::context::RequestContext`
+  plus an `AcceptKind` instead of the wire context. The wire context carries no
+  workspace for an `Account` principal, so a handler given only it could not
+  scope an authority read at all. The implementor calls `cx.to_wire(accept)`.
+- `RequestContext::now()` converts the edge receipt instant to `Timestamp` once,
+  at the boundary, rather than in each handler.
+- `CursorKeyRing::current()` names the key a new cursor is signed under.
+  Rotation-overlap keys verify and never sign.
+- `aex_regional_http::projection::authority_failure` is the one `StoreError` to
+  `ErrorCode` mapping, exhaustive over the store vocabulary.
+
+### What remains unmounted, and exactly why
+
+| Route(s) | Blocker |
+| --- | --- |
+| `secret_put`, `provider_credential_register` | `SecretCrypto::seal` takes the **wrapped branch key** as an argument, and no port exposes it: `aex_secret_keystore_dynamodb::ActiveBranchKey` publishes `version`, `create_time`, `kms_arn` and `hierarchy_version` but not `BranchKeyRecord::enc`. Nothing can seal a plaintext until it does. `provider_credential_register` is blocked a second time: the request carries a human label plus plaintext but no workspace-secret binding, and OD-23 requires the `pcr_` row to reference one — which secret name a registration mints, and what happens when that name already exists, is decided by no accepted record, and the route declares no error code for the collision. |
+| the 15 `sessions` routes | `aex-session-dynamodb`'s stored `SessionHead` cannot decode into `aex_session_domain::Session`: it holds no `initial_root`, `persisted_root`, `persist_revision`, `last_persisted_at`, `generation`, `work_admission`, `mutation_guard` or `lineage`, so `aex_session_app::ports::SessionReader` has nothing to build a snapshot from, and **no adapter implements any `aex-session-app` port** — a grep for `SessionReader` outside `aex-session-app` finds nothing. `session_get` and `sessions_list` are blocked twice over: the head stores only a `resolvedConfigDigest`, while `Session.resolvedConfig` and `SessionListItem.{model, provider}` need the resolved configuration itself. `session_create` is blocked a third time — `aex-session-app` declares `create_session` as an unwritten use case. |
+| `session_message_send`, `session_messages_list` | **Contract gap.** `aex_wire::models::MessagePart` is `Text` or `File`; `aex_session_domain::MessagePart` is `Text`, `ToolCall` or `ToolResult`. The two vocabularies intersect only at `Text`, so neither direction is total: a wire `File` part has no domain arm and a domain tool part has no wire arm. No adapter work can close this. |
+| the 21 `registry`, 6 `files`, 4 `uploads`, 3 `approvals`, 3 `operations`, 1 `usage` and 3 `workspace` routes | Their adapters exist but no projection was written for them in this pass. They are mechanically the same shape as the four served here — read the row, project, tag, page — and are unblocked. |
+| `provider_credential_revoke` | Servable: the expression, the store method and the projection all exist. It is left unmounted only because the directory cannot be populated until `provider_credential_register` lands, so nothing would exercise it end to end. |
+
+### The listener is still health-only
+
+Neither `main.rs` calls `mount_unary`, and the reason is not the projection.
+`mount_unary` requires an `EdgeAdmission`, whose only implementation
+(`RegionalEdge`) needs an `AssertionSource` and a `KeyVerifier`:
+
+- `AssertionSource` has no published `central-authz` request/response shape for a
+  **workspace key** (`aex_internal_contracts::assertion` publishes
+  `ResolveSessionForWorkspace`/`ResolvedSessionAssertion` for a browser session
+  only) and no `aws-sdk-lambda` in `[workspace.dependencies]`;
+- `KeyVerifier` has no parameter-store reader for `AEX_AUTHZ_VERIFY_KEYS_PARAM`
+  and no `aws-sdk-ssm` in `[workspace.dependencies]`;
+- `AEX_CURSOR_SIGNING_KEY_REF` resolves to a reference, and nothing turns it into
+  the `CursorKeyRing` the listings sign continuations with.
+
+All three are peer or infrastructure inputs, all three were already raised in
+"Cross-stream requirements this pass raises", and none can be written here
+without inventing a cross-plane contract. Mounting a route whose edge can admit
+nothing would answer a permanent failure, which RS-18 forbids — so the handler
+surface is complete and proved by `mount_unary` in the `served` targets, and the
+listener keeps serving health until an edge can be built.
+
+### Decisions taken beyond the sections above
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| RS-28 | `aex-regional-http` depends on `aex-secret-custody-dynamodb`, `aex-secret-domain` and `aex-session-dynamodb`, and the projection's inputs are the decoded authority rows | The alternatives are a third view type per model (one extra type and one extra conversion each, both drift sites) or a copy of the projection in every deployable. Reversible: the dependency edge is the only cost, and the three other regional deployables link DynamoDB anyway. |
+| RS-29 | An entity tag is a domain-separated SHA-256 over the JCS bytes of the **projected representation**, rendered quoted | Makes "the tag changed" and "the body changed" the same statement by construction, and gives one derivation for every `WithETag` route instead of one per resource. A revision-derived tag would not move on a revoke. |
+| RS-30 | The public `SecretState` is derived from `revoked_through_revision < revision`, not from the stored `state` column | The column is deliberately untouched by the `O(1)` emergency revoke. Reading the fence is the only projection that agrees with the admission path. |
+| RS-31 | `secret_revoke` and `provider_credential_revoke` honour their `Idempotency-Key` by terminal state rather than by a durable receipt | Their scope subject is the resource and their body is empty, so one scope plus one key carries exactly one intent. A receipt would add a row and a failure mode to make an unreachable conflict detectable. |
+| RS-32 | `secret_delete` answers `204` without a write for an absent or already-tombstoned name | The route declares no `not_found`. A repeated delete that advanced the revision would break a concurrent editor's precondition for no reason. |
+| RS-33 | The provider-credential fingerprint is salted by `(workspace, credential)` and minted once at registration | A bare digest of the key would let one precomputed table cover the fleet and would tell two customers they hold the same key. Per-binding salting removes both without making the value non-deterministic for its own binding. |

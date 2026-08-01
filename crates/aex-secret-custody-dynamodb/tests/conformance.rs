@@ -2,9 +2,7 @@
 
 mod support;
 
-use aex_secret_custody_dynamodb::expressions::{
-    self, AUTHORIZE_ORDER, REVOKE_CREDENTIAL_ORDER, SET_ORDER,
-};
+use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER, SET_ORDER};
 use aex_secret_custody_dynamodb::keys;
 use aex_secret_custody_dynamodb::store::{CustodyStore, SecretCustodyStore};
 use aex_secret_domain::revocation::RevocationEpoch;
@@ -14,8 +12,8 @@ use aex_session_dynamodb::plan::Participant;
 
 use support::{
     DEFINITION, TABLE, authorization, captured_body, capturing_client, credential_id, custody_head,
-    generation, metadata, now, provider_credential, receipt, replaying_client, secret_name,
-    session, workspace,
+    generation, metadata, now, provider_credential, replaying_client, secret_name, session,
+    workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -294,19 +292,18 @@ fn a_delete_of_an_unadvanceable_revision_is_refused_rather_than_wrapped() {
 }
 
 #[tokio::test]
-async fn a_credential_revocation_commits_its_receipt_in_the_same_transaction() {
+async fn a_credential_revocation_is_one_conditional_update_from_ready_only() {
     let (client, receiver) = capturing_client();
     let store = CustodyStore::new(client, TABLE);
-    let plan =
-        expressions::revoke_provider_credential(TABLE, &provider_credential(), &receipt(), now())
-            .expect("compiles");
-    assert_eq!(plan.participants(), REVOKE_CREDENTIAL_ORDER);
-    let _ignored = store.commit(&plan).await;
+    let builder = expressions::revoke_provider_credential(TABLE, &provider_credential(), now())
+        .expect("builds");
+    let _ignored = store
+        .commit_update(builder, Participant::CUSTODY_PROVIDER_CREDENTIAL)
+        .await;
 
     let body = captured_body(receiver);
-    let actions = body["TransactItems"].as_array().expect("two actions");
-    assert_eq!(actions.len(), 2);
-    let condition = actions[0]["Update"]["ConditionExpression"]
+    assert!(body["TransactItems"].is_null(), "a revocation is one item");
+    let condition = body["ConditionExpression"]
         .as_str()
         .expect("a conditional revocation");
     assert!(condition.contains("#state = :ready"), "{condition}");
@@ -314,23 +311,17 @@ async fn a_credential_revocation_commits_its_receipt_in_the_same_transaction() {
         condition.contains("revision = :expectedRevision"),
         "{condition}"
     );
-    assert_eq!(
-        actions[1]["Put"]["Item"]["itemType"]["S"].as_str(),
-        Some("idempotency_receipt"),
-        "the receipt is a participant, so a revocation without a receipt cannot commit"
-    );
-    assert_eq!(
-        actions[1]["Put"]["ConditionExpression"].as_str(),
-        Some("attribute_not_exists(pk)")
-    );
+    let update = body["UpdateExpression"].as_str().expect("an update");
+    assert!(update.contains("#state = :revoked"), "{update}");
+    assert!(update.contains("revokedAt = :now"), "{update}");
 }
 
 #[test]
-fn a_revocation_plan_cannot_be_compiled_from_an_already_revoked_binding() {
+fn a_revocation_cannot_be_compiled_from_an_already_revoked_binding() {
     let mut revoked = provider_credential();
     revoked.state = aex_secret_custody_dynamodb::CredentialState::Revoked;
     assert!(
-        expressions::revoke_provider_credential(TABLE, &revoked, &receipt(), now()).is_err(),
+        expressions::revoke_provider_credential(TABLE, &revoked, now()).is_err(),
         "a terminal binding is answered from the stored row, never revoked twice"
     );
 }

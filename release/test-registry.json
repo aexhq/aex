@@ -8,13 +8,13 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 54,
-    "capacity_gates": 15,
+    "awaiting_owner": 53,
+    "capacity_gates": 19,
     "live_targets": 34,
     "packages": 140,
     "seams_claimed": 32,
     "seams_declared": 34,
-    "workloads": 1
+    "workloads": 8
   },
   "packages": {
     "apps/dashboard": {
@@ -378,7 +378,9 @@
         ],
         "scenarios": [],
         "targets": {
-          "expressions": "unit"
+          "adapters": "unit",
+          "expressions": "unit",
+          "plans": "unit"
         },
         "not_applicable": {
           "integration": "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
@@ -1485,7 +1487,8 @@
         "scenarios": [],
         "targets": {
           "mount": "unit",
-          "primitives": "unit"
+          "primitives": "unit",
+          "projection": "unit"
         },
         "not_applicable": {
           "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
@@ -2760,7 +2763,8 @@
         "targets": {
           "composition": "unit",
           "performance_contract": "e2e",
-          "secrets": "unit"
+          "secrets": "unit",
+          "served": "unit"
         },
         "not_applicable": {}
       },
@@ -2803,7 +2807,8 @@
         "targets": {
           "admission": "unit",
           "composition": "unit",
-          "performance_contract": "e2e"
+          "performance_contract": "e2e",
+          "served": "unit"
         },
         "not_applicable": {}
       },
@@ -2972,13 +2977,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "load": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-authz": {
       "name": "aex-live-central-authz",
@@ -4875,7 +4881,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -4952,7 +4958,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],
@@ -4990,7 +4996,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
+          "targets": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
         }
       },
       "unmapped_targets": [],

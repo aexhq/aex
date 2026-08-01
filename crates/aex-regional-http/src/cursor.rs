@@ -180,6 +180,22 @@ impl CursorKeyRing {
         }
         Ok(Self { keys })
     }
+
+    /// The key every newly minted cursor is signed under.
+    ///
+    /// Rotation-overlap keys verify but never sign, so a ring cannot keep
+    /// issuing under a key that is on its way out.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`CursorKeyRing::new`] takes the current key by value, so the ring
+    /// cannot be constructed empty.
+    #[must_use]
+    pub fn current(&self) -> &CursorKey {
+        self.keys
+            .first()
+            .expect("a ring always holds its current key")
+    }
 }
 
 /// Why a cursor could not be issued or consumed.

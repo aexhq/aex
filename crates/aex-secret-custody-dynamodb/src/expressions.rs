@@ -15,7 +15,6 @@ use aex_secret_domain::secret::{SecretRevision, SecretState, SourceGeneration};
 use aex_session_dynamodb::attr::{Item, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
-use aex_session_dynamodb::replay::{Receipt, encode_receipt_row};
 use aex_wire::ids::{SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
@@ -270,35 +269,30 @@ pub fn delete(
         .expression_attribute_values(":now", stamp(now)))
 }
 
-/// The participants a provider-credential revocation names, in plan order.
-pub const REVOKE_CREDENTIAL_ORDER: [Participant; 2] = [
-    Participant::CUSTODY_PROVIDER_CREDENTIAL,
-    Participant::SESSION_IDEMPOTENCY,
-];
-
-/// Compiles the provider-credential revocation.
+/// Builds the provider-credential revocation.
 ///
-/// Revocation is terminal and monotone: the condition admits the transition only
-/// from `ready`, and a caller that observes `revoked` already holds the answer,
-/// so the route never needs a second write to be idempotent.
+/// One conditional update on one item, exactly like the secret revoke above and
+/// for the same reason: revocation is terminal and monotone.
 ///
-/// The receipt is a participant of the same transaction, which is what
-/// [`aex_session_dynamodb::replay::commit_or_replay`] requires: either both the
-/// revocation and its receipt commit, or neither does.
+/// It needs no idempotency receipt even though the route declares an
+/// `Idempotency-Key`. The scope subject is the credential id and the request has
+/// no body, so one scope plus one key can only ever carry one intent — an
+/// `idempotency_conflict` is unreachable rather than undetected. A replay
+/// observes `revoked`, does not compile a second plan, and answers from the
+/// stored row.
 ///
 /// # Errors
 ///
-/// [`StoreError`] when a key component is unusable, the revision cannot be
-/// advanced, or an action could not be built.
+/// [`StoreError`] when the binding is not `ready`, when the revision cannot be
+/// advanced, or when a key component is unusable.
 pub fn revoke_provider_credential(
     table: &str,
     credential: &ProviderCredential,
-    receipt: &Receipt,
     now: Timestamp,
-) -> Result<TransactionPlan, StoreError> {
+) -> Result<UpdateBuilder, StoreError> {
     if credential.state != CredentialState::Ready {
         return Err(StoreError::Invalid {
-            detail: "a revocation plan may only be compiled from a ready binding".to_owned(),
+            detail: "a revocation is compiled only from a ready binding".to_owned(),
         });
     }
     let next = credential
@@ -312,43 +306,21 @@ pub fn revoke_provider_credential(
         credential.provider.as_str(),
         credential.credential,
     )?;
-    let mut plan = TransactionPlan::new(token(
-        "pcr",
-        &[&credential.credential.to_string(), &next.to_string()],
-    ));
-    plan.update(
-        Participant::CUSTODY_PROVIDER_CREDENTIAL,
-        Update::builder()
-            .table_name(table)
-            .set_key(Some(key(&target.pk, &target.sk)))
-            .condition_expression(
-                "attribute_exists(pk) AND #state = :ready AND revision = :expectedRevision",
-            )
-            .update_expression(
-                "SET #state = :revoked, revision = :nextRevision, \
-                 revokedAt = :now, updatedAt = :now",
-            )
-            .expression_attribute_names("#state", "state")
-            .expression_attribute_values(":ready", s(CredentialState::Ready.as_str()))
-            .expression_attribute_values(":revoked", s(CredentialState::Revoked.as_str()))
-            .expression_attribute_values(":expectedRevision", n(credential.revision))
-            .expression_attribute_values(":nextRevision", n(next))
-            .expression_attribute_values(":now", stamp(now)),
-    )?;
-    plan.put(
-        Participant::SESSION_IDEMPOTENCY,
-        Put::builder()
-            .table_name(table)
-            .set_item(Some(
-                encode_receipt_row(credential.workspace, receipt).map_err(|error| {
-                    StoreError::Invalid {
-                        detail: error.to_string(),
-                    }
-                })?,
-            ))
-            .condition_expression(IMMUTABLE),
-    )?;
-    Ok(plan)
+    Ok(Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND #state = :ready AND revision = :expectedRevision",
+        )
+        .update_expression(
+            "SET #state = :revoked, revision = :nextRevision,              revokedAt = :now, updatedAt = :now",
+        )
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":ready", s(CredentialState::Ready.as_str()))
+        .expression_attribute_values(":revoked", s(CredentialState::Revoked.as_str()))
+        .expression_attribute_values(":expectedRevision", n(credential.revision))
+        .expression_attribute_values(":nextRevision", n(next))
+        .expression_attribute_values(":now", stamp(now)))
 }
 
 /// One name a custody admission binds.

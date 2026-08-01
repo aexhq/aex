@@ -99,6 +99,44 @@ impl From<ProjectionError> for WireError {
     }
 }
 
+// --- authority failures ----------------------------------------------------------
+
+/// Renders one authority failure as a published code.
+///
+/// Exhaustive over the store vocabulary, so a new failure mode is a compile
+/// error here rather than an unclassified `500` in production. Three groups:
+///
+/// * a lost condition is the caller's `precondition_failed`;
+/// * contention, throttling and an unavailable service are transient and are
+///   reported as such;
+/// * everything else — a corrupt row, an unusable key, an oversized item, an
+///   absent table, a denied role — is this system's fault and is never dressed
+///   up as a customer condition.
+///
+/// A route that declares none of the transient codes turns the transient answer
+/// into `internal_error` at the dispatch boundary. That is the route table's
+/// gap, and it is visible in the message rather than hidden.
+#[must_use]
+pub fn authority_failure(error: &aex_session_dynamodb::error::StoreError) -> WireError {
+    use aex_session_dynamodb::error::StoreError;
+
+    let code = match error {
+        StoreError::PreconditionFailed { .. } => ErrorCode::PreconditionFailed,
+        StoreError::Contended | StoreError::Throttled { .. } => ErrorCode::RateLimited,
+        StoreError::Unavailable { .. } | StoreError::CommitAmbiguous { .. } => {
+            ErrorCode::UpstreamError
+        }
+        StoreError::IdempotencyConflict => ErrorCode::IdempotencyConflict,
+        StoreError::Invalid { .. }
+        | StoreError::Misconfigured { .. }
+        | StoreError::Denied
+        | StoreError::Corrupt(_)
+        | StoreError::Key(_)
+        | StoreError::ItemTooLarge { .. } => ErrorCode::InternalError,
+    };
+    WireError::new(code)
+}
+
 // --- secrets -------------------------------------------------------------------
 
 /// Whether a stored record is still admissible.
