@@ -25,13 +25,20 @@ risk = ["sql"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the central-finance stream; the cases land with the binary's own implementation"
 
 [[bin]]
 name = "central-schema-admin"
 path = "src/main.rs"
 
 [dependencies]
+aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+zeroize.workspace = true
