@@ -70,22 +70,47 @@ export interface Resource<T> {
 }
 
 /**
+ * The complete identity of one panel request, by value.
+ *
+ * A panel builds its `parameters` and `body` as fresh object literals on every
+ * render, so referential identity is useless as an effect dependency — depending on
+ * it would re-fire the request, set the loading state, re-render, and start again.
+ * This value is the only dependency the request effect has, and it is equal for
+ * equal inputs no matter how many objects were allocated to express them.
+ */
+export function requestKey(
+  routeId: RouteId,
+  options: ReadOptions,
+  nonce: number,
+): string {
+  return JSON.stringify([
+    routeId,
+    options.region ?? null,
+    Object.entries(options.parameters ?? {}).filter(([, value]) => value !== undefined).sort(),
+    options.body ?? null,
+    options.enabled ?? true,
+    options.deadlineMs ?? DEADLINE_MS.control,
+    nonce,
+  ]);
+}
+
+/**
  * One panel, one request, one deadline, one abort. `useResource` covers both the
  * GET collection reads and the POST-shaped bounded queries; the descriptor decides
  * the method, so a panel names an operation and its parameters and nothing else.
  */
 export function useResource<T>(routeId: RouteId, options: ReadOptions = {}): Resource<T> {
-  const { region, parameters, body, enabled = true } = options;
-  const deadlineMs = options.deadlineMs ?? DEADLINE_MS.control;
   const [state, setState] = useState<PanelState<T>>({ kind: "loading" });
   const [nonce, setNonce] = useState(0);
-  const key = JSON.stringify([routeId, region ?? null, parameters ?? {}, body ?? null, enabled, nonce]);
-  const latest = useRef(key);
+  const key = requestKey(routeId, options, nonce);
+  const current = useRef({ key, routeId, options });
+  current.current = { key, routeId, options };
 
   useEffect(() => {
-    latest.current = key;
-    if (!enabled) return undefined;
+    const { options: input } = current.current;
+    if (input.enabled === false) return undefined;
     const descriptor = ROUTES[routeId];
+    const deadlineMs = input.deadlineMs ?? DEADLINE_MS.control;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort("deadline"), deadlineMs);
     setState({ kind: "loading" });
@@ -97,17 +122,17 @@ export function useResource<T>(routeId: RouteId, options: ReadOptions = {}): Res
           headers["content-type"] = "application/json";
           headers["x-aex-csrf"] = csrfToken();
         }
-        const response = await fetch(panelUrl(routeId, parameters ?? {}, region), {
+        const response = await fetch(panelUrl(routeId, input.parameters ?? {}, input.region), {
           method: descriptor.method,
           headers,
           credentials: "same-origin",
-          ...(descriptor.method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
+          ...(descriptor.method === "GET" ? {} : { body: JSON.stringify(input.body ?? {}) }),
           signal: controller.signal,
         });
         const next = await readResponse<T>(response);
-        if (latest.current === key) setState(next);
+        if (current.current.key === key) setState(next);
       } catch {
-        if (latest.current === key) {
+        if (current.current.key === key) {
           setState(controller.signal.aborted ? { kind: "timeout", deadlineMs } : unreachable());
         }
       } finally {
@@ -119,8 +144,11 @@ export function useResource<T>(routeId: RouteId, options: ReadOptions = {}): Res
       clearTimeout(timer);
       controller.abort("superseded");
     };
-    // `key` is the complete identity of this request; nothing else may re-fire it.
-  }, [key, routeId, region, parameters, body, enabled, deadlineMs]);
+    // `key` is the complete identity of this request, by value. It is deliberately
+    // the ONLY dependency: a panel rebuilds its parameters and body as fresh
+    // literals every render, so any referential dependency here would re-fire the
+    // request forever. `test/client.test.ts` pins both halves of that invariant.
+  }, [key, routeId]);
 
   const reload = useCallback(() => setNonce((value) => value + 1), []);
   return { state, reload };

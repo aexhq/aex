@@ -54,6 +54,11 @@ export default async function AppLayout({ children }: Readonly<{ children: React
       </header>
       <AccountBanner account={bootstrap.account} organizations={bootstrap.organizations} />
       {children}
+      <footer className="frame small muted" style={{ paddingBlock: "var(--aex-space-6)" }}>
+        <a href="https://aex.dev/docs">Documentation</a>
+        <span aria-hidden="true"> · </span>
+        <span>Shell read at {bootstrap.generatedAt}</span>
+      </footer>
     </>
   );
 }
