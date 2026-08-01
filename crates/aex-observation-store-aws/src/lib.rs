@@ -33,7 +33,9 @@ pub use expressions::{DENSE_INDEX_PROJECTION, ExpressionBuilder, Index, is_safe_
 pub use health::{HEALTHZ, Probe, READYZ, Readiness, readiness};
 pub use segments::{Segment, SegmentDirectory};
 pub use spool::{GateEvidence, GateState, Pending, SpoolChunk};
-pub use store::{AdmissionPlan, StagedRecord, StoreError, TransactionEnvelope};
+pub use store::{
+    AdmissionPlan, PageSpan, StagedRecord, StoreError, TransactionEnvelope, pack_pages,
+};
 
 /// The `DynamoDB` Streams wake contract `regional-stream` consumes.
 ///

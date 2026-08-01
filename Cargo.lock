@@ -1732,6 +1732,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-secretsmanager"
+version = "1.111.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d77f840fd8a79900661ca05e9af1f4e2b3c74386e9fc1b4a9dd58745faf689f0"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-sqs"
 version = "1.105.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5474,10 +5500,32 @@ dependencies = [
 name = "regional-otlp"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
+ "aex-observation-domain",
  "aex-observation-store-aws",
+ "aex-otlp-admission",
  "aex-platform-telemetry",
+ "aex-regional-http",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-lc-rs",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "aws-sdk-secretsmanager",
+ "axum",
+ "base64 0.23.0",
+ "http 1.5.0",
+ "lambda_http",
+ "reqwest",
+ "serde",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

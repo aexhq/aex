@@ -168,6 +168,67 @@ pub const PAGE_DIGEST_BYTES: usize = 72;
 /// `BatchWriteItem`'s per-call action ceiling.
 pub const DDB_BATCH_WRITE_MAX: usize = 25;
 
+/// The half-open record range one staged page carries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageSpan {
+    /// Index of the first record in the page.
+    pub start: usize,
+    /// Index one past the last record in the page.
+    pub end: usize,
+    /// Canonical bytes the page carries.
+    pub bytes: usize,
+}
+
+/// Packs records into staged pages.
+///
+/// A page is bounded by both the record count and the byte budget, and the byte
+/// budget is the binding one at the maximum batch. G7 measured that a count-only
+/// bound produces an item three times the provider ceiling, so the protocol
+/// packs by bytes as well as by count. There is exactly one packing rule and it
+/// is this function: the planner and the writer both call it, so a page the
+/// envelope was proven over is the page that is actually written.
+///
+/// # Errors
+///
+/// Returns [`StoreError::ItemTooLarge`] when one record alone exceeds the page
+/// byte budget, which cannot be packed at all.
+pub fn pack_pages(records: &[StagedRecord]) -> Result<Vec<PageSpan>, StoreError> {
+    let mut pages: Vec<PageSpan> = Vec::new();
+    let mut open = PageSpan {
+        start: 0,
+        end: 0,
+        bytes: 0,
+    };
+    let mut open_records = 0usize;
+    for (index, record) in records.iter().enumerate() {
+        let size = record.canonical.len();
+        if size > limits::OBS_PAGE_MAX_BYTES {
+            return Err(StoreError::ItemTooLarge {
+                observed: size,
+                limit: limits::OBS_PAGE_MAX_BYTES,
+            });
+        }
+        let full = open_records == limits::OBS_PAGE_RECORDS
+            || open.bytes + size > limits::OBS_PAGE_MAX_BYTES;
+        if full {
+            pages.push(open);
+            open = PageSpan {
+                start: index,
+                end: index,
+                bytes: 0,
+            };
+            open_records = 0;
+        }
+        open_records += 1;
+        open.end = index + 1;
+        open.bytes += size;
+    }
+    if open_records > 0 {
+        pages.push(open);
+    }
+    Ok(pages)
+}
+
 /// What one batch will write, before anything durable happens.
 #[derive(Clone, Debug)]
 pub struct AdmissionPlan {
@@ -202,34 +263,10 @@ impl AdmissionPlan {
             .iter()
             .map(|record| record.canonical.len() as u64)
             .sum();
-        // A page is bounded by both the record count and the byte budget, and
-        // the byte budget is the binding one at the maximum batch. G7 measured
-        // that a count-only bound produces an item three times the provider
-        // ceiling, so the protocol packs by bytes as well as by count.
-        let mut page_bytes: Vec<usize> = Vec::new();
-        let mut open_records = 0usize;
-        let mut open_bytes = 0usize;
-        for record in records {
-            let size = record.canonical.len();
-            if size > limits::OBS_PAGE_MAX_BYTES {
-                return Err(StoreError::ItemTooLarge {
-                    observed: size,
-                    limit: limits::OBS_PAGE_MAX_BYTES,
-                });
-            }
-            let full = open_records == limits::OBS_PAGE_RECORDS
-                || open_bytes + size > limits::OBS_PAGE_MAX_BYTES;
-            if full {
-                page_bytes.push(open_bytes);
-                open_records = 0;
-                open_bytes = 0;
-            }
-            open_records += 1;
-            open_bytes += size;
-        }
-        if open_records > 0 {
-            page_bytes.push(open_bytes);
-        }
+        let page_bytes = pack_pages(records)?
+            .into_iter()
+            .map(|span| span.bytes)
+            .collect();
         Ok(Self {
             scope,
             signals,
