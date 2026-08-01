@@ -288,3 +288,281 @@ Recorded in the stream report. All five gates pass:
 `cargo fmt --all`, `cargo clippy` over the five owned crates with `-D warnings`,
 `cargo nextest run` over the five owned crates, `cargo check --workspace
 --all-targets`, and `cargo run -p aex-workspace-check`.
+
+## 7. Second pass — closing the seven contract gaps
+
+Branch `rw/contracts-2`, off `main` after the first pass landed. Six peer streams
+implemented against the generated wire and reported seven gaps; each one was
+found by a stream that could not write correct code without it. All seven are
+closed. Nothing is aliased, deprecated or shimmed.
+
+The public operation count is now **146** — 27 central, 119 regional — up from
+144, because R-DELETE replaces two routes with four.
+
+### 7.1 `Materialize` and `Persist` carry a Brain-issued presigned plan
+
+**Was:** `OperationRequest::Materialize { root: ContentHash }` and
+`::Persist { include, exclude }`. The Hands guest is credential-free by
+H-BOUNDARY, so it cannot resolve a hash to bytes and neither arm was
+implementable. The Hands stream shipped both as *not implemented*.
+
+**Now:** both carry a `PresignedPlan`, and `root` survives only as the identity
+the call hash is over.
+
+```rust
+// crates/aex-hands-protocol/src/operation.rs
+pub struct ContentEndpoint(String);                 // https://host[:port], normalized
+pub enum ContentEndpointError { NotAnHttpsOrigin, NotBareOrigin, Host }
+pub enum TransferDirection { Fetch, Store }
+pub enum PersistPhase { Survey, Upload }
+impl PersistPhase { pub const fn grant_direction(self) -> TransferDirection; }
+
+pub struct PresignedPlan {
+    url: HttpsUrl,                                  // private
+    pub direction: TransferDirection,
+    pub expires_at: Timestamp,
+    pub max_bytes: u64,
+    pub expected_digest: Option<ContentHash>,
+}
+impl PresignedPlan {
+    pub const MAX_PLAN_BYTES: u64 = 16 * 1024 * 1024;   // content.bundle_expand
+    pub fn fetch(url, expires_at, digest, max_bytes) -> Self;
+    pub fn store(url, expires_at, max_bytes) -> Self;
+    pub fn origin(&self) -> &str;
+    pub fn authorize(&self, endpoint: &ContentEndpoint, now: Timestamp,
+                     performing: TransferDirection) -> Result<&HttpsUrl, PlanRejection>;
+}
+pub enum PlanRejection { ForeignOrigin { expected, found }, Expired { expires_at, now },
+    WrongDirection { expected, found }, MissingDigest, UnexpectedDigest,
+    Unbounded { max_bytes, limit } }
+
+OperationRequest::Materialize { root: ContentHash, plan: PresignedPlan }
+OperationRequest::Persist { include, exclude, phase: PersistPhase, plan: PresignedPlan }
+```
+
+Two properties carry the security argument, and each has a test.
+
+The guest needs no AWS credential because the grant *is* the credential, bounded
+to one object, one direction, one five-minute window and one byte ceiling
+(OD-17). It cannot be pointed at an arbitrary host because `url` is private and
+`authorize` is the only way out of the type: the accessor demands the
+`ContentEndpoint` the guest was launched with. That endpoint deliberately does
+**not** travel on the request — a plan that named its own trust anchor would
+authorize whichever host it chose, which is the entire failure mode. A userinfo
+authority such as `https://trusted@evil.test/` fails the same comparison, so the
+usual URL-parsing trick does not get past it either.
+
+`Debug` names the origin and the bounds and never the signature; `Serialize`
+emits the URL, because the guest genuinely needs it. A presigned URL is bearer
+material for one object, so logging a request must not thereby log the
+capability.
+
+### 7.2 `OperationRequest::Browser`
+
+**Was:** absent. `aex_hands_agent::session::requires_browser` existed, was
+evaluated before any spawn, and could never fire.
+
+**Now:**
+
+```rust
+OperationRequest::Browser { session: Option<GuestProcessId>, command: BrowserCommand }
+
+pub struct BrowserViewport { pub width: u32, pub height: u32 }
+pub enum BrowserCommand { Open { url, viewport, timeout_ms }, Navigate { url },
+    Click { selector }, Type { selector, text }, Key { key },
+    Scroll { selector, delta_y }, Wait { ms }, Screenshot,
+    ReadText { selector }, Evaluate { expression }, Close }
+impl BrowserCommand {
+    pub const MAX_SELECTOR_BYTES: usize = 1024;
+    pub const MAX_TEXT_BYTES: usize = 32_768;
+    pub const MAX_EXPRESSION_BYTES: usize = 32_768;
+    pub const MAX_KEY_BYTES: usize = 64;
+    pub const MAX_WAIT_MS: u32 = 30_000;
+    pub const OPEN_TIMEOUT_MS: RangeInclusive<u32> = 1_000..=120_000;
+    pub const VIEWPORT_WIDTH: RangeInclusive<u32> = 320..=3_840;
+    pub const VIEWPORT_HEIGHT: RangeInclusive<u32> = 240..=2_160;
+    pub const fn needs_session(&self) -> bool;
+    pub fn is_bounded(&self) -> bool;
+}
+impl OperationRequest {
+    pub const fn requires_browser(&self) -> bool;
+    pub const fn browser_target_is_coherent(&self) -> bool;
+}
+```
+
+The command set is the union of plan 10 section 5.4's verbs and plan 09 section
+3.6's action kinds, with plan 09's bounds. `Evaluate` is present deliberately:
+the customer is root and can attach to the same debugging port regardless, so
+forbidding it would be theatre. Only `Open` mints a session and every other
+command names one, which `browser_target_is_coherent` decides rather than leaving
+to a convention.
+
+`requires_browser` moved onto the contract type. The exhaustive match that forces
+a new arm to declare its side of the gate now lives in one place instead of two
+that can disagree.
+
+### 7.3 Windowed background-process output
+
+**Was:** `ProcessStatus { process }`. Only a tail was expressible, so a caller
+that stopped looking could never recover the backlog.
+
+**Now:** `ProcessStatus { process, from_offset: u64, max_bytes: u32 }` with
+`OperationRequest::MAX_OUTPUT_WINDOW_BYTES = 1_000_000` (plan 10 section 5.2).
+The old spelling no longer decodes, so a stale sender is a typed failure rather
+than a silent tail read. The guest-side paging already existed on
+`Journal::read_output`.
+
+### 7.4 R-DELETE: `clone` / `trash` / `restore` / `purge`
+
+**Was:** `RouteId::SessionFork` and `RouteId::SessionDelete`.
+
+**Now**, renamed rather than aliased — the old `operationId`s resolve to nothing
+and a test asserts it, because an alias would let a generated client keep calling
+a verb whose semantics no longer exist:
+
+| Method | Path | operationId | pause-exempt |
+| --- | --- | --- | --- |
+| POST | `/api/sessions/{sessionId}/clones` | `session_clone` | no |
+| POST | `/api/sessions/{sessionId}/trashes` | `session_trash` | yes |
+| POST | `/api/sessions/{sessionId}/restores` | `session_restore` | no |
+| POST | `/api/sessions/{sessionId}/purges` | `session_purge` | yes |
+
+All four are `Aex-Operation-Id` admissions returning `202 Operation`; `clone`
+also accepts `If-Match`. Trash starts the recovery window and purge is
+irreversible, so both stay reachable while an account is paused (plan 04's exempt
+set); restore is an ordinary mutation and is not. `clone` additionally declares
+`session_not_idle`, which it can hit and `fork` never declared.
+
+Schemas moved with the routes:
+
+| Was | Now |
+| --- | --- |
+| `ForkFiles` | `CloneFiles` |
+| `ForkCredentials` | `CloneCredentials` |
+| `SessionForkRequest` | `SessionCloneRequest` |
+| `SessionForkResult` | `SessionCloneResult` |
+| `SessionDeleteRequest { cascade: boolean }` | `SessionPurgeRequest { cascade: PurgeCascade }` |
+| — | `PurgeCascade { detach_descendants, purge_closure }` |
+| — | `SessionTrashResult { sessionId, trashedAt, recoveryDeadline, sessionRevision }` |
+| — | `SessionRestoreResult { sessionId, restoredAt, status, sessionRevision }` |
+| `SessionLineage { parentSessionId, forkedAtPersistRevision, forkOperationId }` | `SessionLineage { originSessionId, clonedAtPersistRevision, cloneOperationId }` |
+
+`PurgeCascade` replaces a boolean because the domain distinguishes detaching
+descendants from purging the closure, and a boolean cannot carry that.
+
+`OperationKind` loses `session_fork` and `session_delete` and gains
+`session_clone`, `session_trash`, `session_restore`, `session_purge`;
+`OperationResult` follows, with `session_purge` carrying the existing
+`SessionTombstone`. `workspace_delete` is untouched — it is the central route and
+is not in R-DELETE's scope.
+
+`DeletingSession`, `SessionTombstone` and the `session_deleting` /
+`session_deleted` / `deletion_in_progress` error codes are deliberately **kept**.
+They name states, not verbs, and the regional-domains stream already maps its
+rejections onto them.
+
+Counts are pinned in `api/schemas/registries/routes-meta.yaml` (`regional: 119`)
+and asserted independently by `tools/aex-contract-gen/tests/determinism.rs` and
+`crates/aex-wire/tests/errors_and_routes.rs`, so the change is visible in a diff
+rather than absorbed. `conformance/routes/bindings.jsonl` regenerated to 146
+golden bindings.
+
+### 7.5 `approval_binding_changed`
+
+Added to `api/schemas/registries/errors.yaml` and therefore to `ErrorCode`:
+
+| Field | Value |
+| --- | --- |
+| code | `approval_binding_changed` |
+| status | `409` |
+| class | `conflict` |
+| retryable | `false` |
+| precedence stage | `domain_state` |
+| remedy | re-read the approval and decide against its current bound call |
+
+409 / `conflict` / `domain_state` rather than 412 / `precondition`: the drift is
+detected at decision time and the approval is auto-cancelled, so it is a state
+conflict, not a failed caller-supplied precondition — and it sits beside
+`approval_already_resolved`, the other way a decision can arrive too late.
+Declared on `session_approval_respond`. `conformance/errors/cases.jsonl` gains
+its case; the corpus floor is one case per code, so the case had to exist before
+the code did.
+
+### 7.6 `OutboxEvent` moved to `aex-internal-contracts`
+
+**Was:** `aex_session_domain::terminal::OutboxEvent`, with no `Serialize` at all
+— which made "both `regional-stream` and the observation materializer decode it"
+a claim nothing could satisfy.
+
+**Now:** `aex_internal_contracts::outbox`, carrying a `schema_version` and
+rejecting unknown members like every other internal envelope.
+
+```rust
+pub struct OutboxEvent { pub schema_version: SchemaVersion, pub session: SessionId,
+    pub run: RunId, pub status: RunStatus, pub session_revision: SessionRevision,
+    pub usage_closure: UsageClosureId, pub at: Timestamp }
+pub enum RunStatus { Queued, Running, Succeeded, Failed, TimedOut, Cancelled, Interrupted }
+pub struct SessionRevision(pub u64);      // canonical decimal string on the wire
+pub struct UsageClosureId(pub Uuid7);
+```
+
+`RunStatus`, `SessionRevision` and `UsageClosureId` moved with it: an envelope
+whose members live in a crate the readers do not depend on is not decodable,
+which is the whole point of moving it. `aex-session-domain` re-exports all four
+from their original paths, so no call site changed.
+
+`aex_internal_contracts::outbox::RunStatus` and the public
+`aex_wire::models::RunStatus` remain two types — one internal envelope, one
+customer rendering — exactly as before the move. What must never drift is their
+spelling, so `tests/boundaries.rs` asserts the two agree value for value.
+
+### 7.7 `ObservationCoverage` watermarks are `DecimalU128`
+
+O-04 requires all four watermarks to be accepted-time positions in epoch
+milliseconds. `snapshot` already was; `accepted` and `indexed` were composite
+`ObservationWatermark` objects and `earliestReplay` was an RFC 3339 instant, so
+the observation stream had to reconstruct a scalar it was never given. All four
+are now `decimal`. `ObservationWatermark` has no remaining referent and is
+**deleted**, not left orphaned.
+
+That deletion exposed a generator hole worth recording: `check` compared only the
+files the generator still produces, so
+`api/generated/schemas/ObservationWatermark.json` would have kept serving
+forever. `GeneratedTree` gained `stale_files`; a directory holding a generated
+file is owned by the generator, so `build` now removes and `check` now reports
+anything in it the generator no longer produces. `README.md` is the one permitted
+authored companion.
+
+### 7.8 Peer call sites touched
+
+Three peer crates, all mechanical. Re-run these suites:
+
+| Crate | What changed | Why |
+| --- | --- | --- |
+| `aex-session-domain` | `src/ids.rs`, `src/run.rs`, `src/terminal.rs`: the local `SessionRevision`, `UsageClosureId`, `RunStatus` and `OutboxEvent` declarations become `pub use` of the contract crate; `claim_terminal` sets `schema_version` | 7.6 |
+| `aex-hands-agent` | `src/session.rs`: `requires_browser` delegates to `OperationRequest::requires_browser` instead of keeping a second exhaustive match | 7.2 |
+| `aex-session-app` | `src/error.rs`: a `TODO(cross-stream)` note only, no behaviour change | 7.5 |
+
+### 7.9 What a peer still owes
+
+| `TODO(cross-stream)` | Owner |
+| --- | --- |
+| `AppError::code` must map `ApprovalRejection::BindingChanged` onto `ErrorCode::ApprovalBindingChanged` and surface the drifted field list, instead of falling through to `precondition_failed`. The code exists; nothing produces it yet. | regional domains |
+| The guest browser executor is still absent. The gate now has an arm to reject, so every `Browser` operation fails closed with `capability_unavailable` until the executor lands. | hands |
+| `aex-hands-tools` can now implement `Materialize` and `Persist` against `PresignedPlan::authorize`, threading the launch-time `ContentEndpoint` through the guest supervisor. Nothing implements them yet. | hands |
+| The regional session API must bind the four new routes; `aex-session-app` already has `trash_session`, `restore_session`, `purge_session` and the clone plan, so this is wiring, not new logic. | regional services |
+| `OperationFailure.reason` is still a free `String`. The Hands stream emits plan 10 section 3.7's stable codes but nothing enforces the closed set. Not in this pass's scope; recorded so it is not lost. | contracts, next pass |
+| The three observation error codes (`unsupported_media_type`, `telemetry_query_budget_exhausted`, `export_capacity`) and a published `ExportManifest` / `ExportMember` schema were requested by the observations stream and are **not** in this pass — only the two gaps assigned here were. | contracts, next pass |
+
+### 7.10 Decisions taken in this pass
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| C-46 | The presigned URL is a private field and `authorize(endpoint, now, direction)` is the only accessor | A guest that can read the URL without presenting its pinned origin and the current instant can be pointed anywhere by a forged frame and can use a dead grant. Making the checks unavoidable is stronger than documenting them. |
+| C-47 | `ContentEndpoint` is pinned at guest launch and never travels on a request | A plan that carried its own trust anchor would authorize whichever host it named, which is not a check at all. |
+| C-48 | Coherence rules live in `authorize` rather than in `Deserialize` | The decoder stays a pure shape check on the hostile boundary, and an incoherent plan is simply unusable — fail-closed without a second validation pass. |
+| C-49 | `PersistPhase` decides its own grant direction | Phase one stores a survey manifest and phase two fetches the blob list; letting the phase name the direction makes presenting the wrong grant a typed rejection rather than a runtime surprise. |
+| C-50 | `SessionTrashResult` and `SessionRestoreResult` are new result shapes rather than a shared receipt | `OperationResult` is a tagged union over `OperationKind`; two kinds sharing one payload would make the tag non-informative, and trash genuinely carries a recovery deadline that restore does not. |
+| C-51 | `DeletingSession`, `SessionTombstone` and the `session_deleting` / `session_deleted` / `deletion_in_progress` codes survive R-DELETE unrenamed | They name states, not verbs. R-DELETE renames the verbs; the regional-domains stream already maps its rejections onto these codes, and renaming them would be churn with no reader-visible gain. |
+| C-52 | The generator owns whole directories, not just the files it wrote last | Comparing file by file cannot see an output whose input was deleted. `ObservationWatermark.json` was that case, and it would have kept serving from `api/generated/schemas/` indefinitely. |
+| C-53 | `aex_internal_contracts::outbox::RunStatus` stays distinct from `aex_wire::models::RunStatus`, with a test pinning their spellings equal | Unifying them would put a customer-rendering type inside an internal envelope; leaving them unlinked would let a rename on one side silently break the materializer. The test is the cheap half of both. |
