@@ -92,19 +92,31 @@ async fn a_set_writes_the_generation_before_the_metadata_that_names_it() {
         actions[1]["Update"]["ConditionExpression"].as_str(),
         Some("attribute_not_exists(pk)")
     );
+    assert_eq!(
+        actions[1]["Update"]["ExpressionAttributeValues"][":itemType"]["S"].as_str(),
+        Some("workspace_secret"),
+        "an Update that creates metadata must write its discriminator"
+    );
+    assert!(
+        actions[1]["Update"]["UpdateExpression"]
+            .as_str()
+            .expect("an update expression")
+            .contains("revision = if_not_exists(revision, :zero) + :one"),
+        "the authority, not a caller-supplied target value, advances the revision"
+    );
 }
 
 #[tokio::test]
 async fn a_replacement_set_conditions_on_the_revision_the_caller_read() {
     let (client, receiver) = capturing_client();
     let store = CustodyStore::new(client, TABLE);
-    let plan = expressions::set(
-        TABLE,
-        &generation(),
-        &metadata(),
-        Some(SecretRevision::FIRST),
-    )
-    .expect("compiles");
+    let mut replacement = metadata();
+    replacement.revision = SecretRevision(2);
+    replacement.generation = aex_secret_domain::secret::SourceGeneration(2);
+    let mut next = generation();
+    next.generation = replacement.generation;
+    let plan = expressions::set(TABLE, &next, &replacement, Some(SecretRevision::FIRST))
+        .expect("compiles");
     let _ignored = store.commit(&plan).await;
 
     let body = captured_body(receiver);
