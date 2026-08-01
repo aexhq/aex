@@ -5,6 +5,7 @@
 //! round-trip alone.
 
 use aex_wire::canonical::{CanonicalJson, to_jcs_bytes};
+use aex_wire::models::ObservationCoverage;
 use aex_wire::types::{
     ByteRange, Cents, ComputeSize, DecimalU128, ETag, HttpMethod, HttpsUrl, JsonPointer, Region,
     RequestId, Timestamp,
@@ -181,4 +182,43 @@ fn jcs_rejects_a_non_finite_or_fractional_ambiguous_number() {
         "{\"a\":2,\"b\":1}"
     );
     assert!(CanonicalJson::parse("{").is_err());
+}
+
+#[test]
+fn observation_coverage_watermarks_are_decimal_epoch_millisecond_scalars() {
+    // O-04: every coverage watermark is an accepted-time position in epoch
+    // milliseconds carried as a canonical decimal string. A composite
+    // `{sequence, at}` object or an RFC 3339 instant would force the reader to
+    // reconstruct a scalar it was never given, which is exactly the information
+    // loss the decision removes.
+    let document = r#"{
+        "snapshot": "1754006400000",
+        "accepted": "1754006400123",
+        "indexed": "1754006399000",
+        "earliestReplay": "1753920000000",
+        "caughtUp": false,
+        "complete": true,
+        "missingIntervals": [],
+        "unboundedGaps": []
+    }"#;
+    let coverage: ObservationCoverage = parse(document).expect("coverage decodes");
+    assert_eq!(coverage.snapshot, DecimalU128::new(1_754_006_400_000));
+    assert_eq!(coverage.accepted, DecimalU128::new(1_754_006_400_123));
+    assert_eq!(coverage.indexed, DecimalU128::new(1_754_006_399_000));
+    assert_eq!(
+        coverage.earliest_replay,
+        DecimalU128::new(1_753_920_000_000)
+    );
+
+    // The old shapes are refused rather than silently coerced.
+    let composite = document.replace(
+        "\"accepted\": \"1754006400123\"",
+        "\"accepted\": {\"sequence\": \"1754006400123\", \"at\": \"2026-08-01T00:00:00.123Z\"}",
+    );
+    assert!(parse::<ObservationCoverage>(&composite).is_err());
+    let instant = document.replace(
+        "\"earliestReplay\": \"1753920000000\"",
+        "\"earliestReplay\": \"2026-07-31T00:00:00.000Z\"",
+    );
+    assert!(parse::<ObservationCoverage>(&instant).is_err());
 }

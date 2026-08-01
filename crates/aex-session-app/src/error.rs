@@ -69,6 +69,11 @@ impl AppError {
                 ErrorCode::ApprovalAlreadyResolved
             }
             Self::Deletion(DeletionRejection::PurgeInProgress(_)) => ErrorCode::DeletionInProgress,
+            // TODO(cross-stream): `ErrorCode::ApprovalBindingChanged` now exists in
+            // `aex-wire` (409, conflict, `domain_state`). Map
+            // `ApprovalRejection::BindingChanged` onto it and surface the drifted
+            // field list, rather than letting it fall through to
+            // `precondition_failed` below. Owner: regional domains.
             Self::Session(_)
             | Self::Run(_)
             | Self::Terminal(_)

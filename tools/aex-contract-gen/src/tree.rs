@@ -4,7 +4,7 @@
 //! path and differ only in what they do with the finished tree, which is what
 //! makes the drift test meaningful instead of incidental.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Every generated file, keyed by workspace-relative path with `/` separators.
@@ -44,7 +44,11 @@ impl GeneratedTree {
         self.files.is_empty()
     }
 
-    /// Writes the tree to disk, creating parent directories.
+    /// The one authored file permitted to sit inside a generated directory.
+    const AUTHORED_COMPANION: &'static str = "README.md";
+
+    /// Writes the tree to disk, creating parent directories and removing any
+    /// generated file the tree no longer produces.
     ///
     /// # Errors
     ///
@@ -59,7 +63,50 @@ impl GeneratedTree {
             std::fs::write(&target, contents)
                 .map_err(|error| format!("cannot write `{path}`: {error}"))?;
         }
+        for path in self.stale_files(root) {
+            std::fs::remove_file(root.join(&path))
+                .map_err(|error| format!("cannot remove stale `{path}`: {error}"))?;
+        }
         Ok(())
+    }
+
+    /// Every file sitting in a generated directory that this tree does not
+    /// produce.
+    ///
+    /// A directory that holds a generated file is owned by the generator, so an
+    /// unrecognized file in it is a leftover from an input that has since been
+    /// deleted — the one drift class a file-by-file comparison cannot see.
+    #[must_use]
+    pub fn stale_files(&self, root: &Path) -> Vec<String> {
+        let mut directories: BTreeSet<&str> = BTreeSet::new();
+        for path in self.files.keys() {
+            if let Some((directory, _)) = path.rsplit_once('/') {
+                directories.insert(directory);
+            }
+        }
+        let mut stale = Vec::new();
+        for directory in directories {
+            let Ok(entries) = std::fs::read_dir(root.join(directory)) else {
+                continue;
+            };
+            let mut names: Vec<String> = entries
+                .flatten()
+                .filter(|entry| entry.path().is_file())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            for name in names {
+                if name == Self::AUTHORED_COMPANION {
+                    continue;
+                }
+                let path = format!("{directory}/{name}");
+                if !self.files.contains_key(&path) {
+                    stale.push(path);
+                }
+            }
+        }
+        stale.sort();
+        stale
     }
 
     /// Compares the tree against what is on disk.
@@ -67,7 +114,11 @@ impl GeneratedTree {
     /// Returns one line per drifting file: missing, unreadable, or different.
     #[must_use]
     pub fn diff_against_disk(&self, root: &Path) -> Vec<String> {
-        let mut drift = Vec::new();
+        let mut drift: Vec<String> = self
+            .stale_files(root)
+            .into_iter()
+            .map(|path| format!("{path}: on disk but no longer generated"))
+            .collect();
         for (path, expected) in &self.files {
             match std::fs::read(root.join(path)) {
                 Err(error) => drift.push(format!("{path}: not on disk ({error})")),

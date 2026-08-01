@@ -465,25 +465,16 @@ impl Supervisor {
 
 /// Whether an operation needs the browser capability.
 ///
-/// `TODO(cross-stream) plan 01`: `OperationRequest` carries no `Browser` arm yet.
-/// When it lands this stays the single place the gate is evaluated, and it is
-/// evaluated before anything is spawned. The exhaustive match is deliberate: a new
-/// arm will not compile until someone decides which side of the gate it is on.
+/// This stays the single place the gate is evaluated, and it is evaluated before
+/// anything is spawned. The exhaustive match that forces a new arm to declare
+/// which side of the gate it is on now lives on the contract type, so the two
+/// cannot disagree about what needs a browser.
+///
+/// `TODO(cross-stream)`: the browser executor itself is still absent; the gate
+/// rejects every `Browser` operation with `capability_unavailable` until it
+/// lands. Owner: hands.
 const fn requires_browser(request: &OperationRequest) -> bool {
-    match request {
-        OperationRequest::Exec { .. }
-        | OperationRequest::ReadFile { .. }
-        | OperationRequest::WriteFile { .. }
-        | OperationRequest::EditFile { .. }
-        | OperationRequest::ListDir { .. }
-        | OperationRequest::StatPath { .. }
-        | OperationRequest::Search { .. }
-        | OperationRequest::ProcessStatus { .. }
-        | OperationRequest::ProcessStop { .. }
-        | OperationRequest::Materialize { .. }
-        | OperationRequest::Persist { .. }
-        | OperationRequest::RegisteredTool { .. } => false,
-    }
+    request.requires_browser()
 }
 
 /// One rung of the cancel ladder.

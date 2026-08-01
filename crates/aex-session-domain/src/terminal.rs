@@ -12,12 +12,12 @@
 //! after-commit hints and can never gate the barrier.
 
 use aex_operation_domain::DeletionState;
-use aex_wire::ids::{AgentId, MessageId, RunId, SessionId};
+use aex_wire::ids::{AgentId, MessageId, RunId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::{AgentFence, CancellationEpoch, ReservationId, SessionRevision, UsageClosureId};
 use crate::message::{Message, MessageDelta, seal};
-use crate::run::{Run, RunOutcome, RunStatus};
+use crate::run::{Run, RunOutcome};
 use crate::session::{Session, SessionStatus};
 
 /// One attempt to settle a run.
@@ -39,25 +39,11 @@ pub struct TerminalAttempt {
     pub usage_closure: UsageClosureId,
 }
 
-/// The native outbox event a terminal barrier emits.
-///
-/// Regional and internal: it is the one durable notification the barrier writes,
-/// and nothing outside the transaction can prevent it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutboxEvent {
-    /// The owning session.
-    pub session: SessionId,
-    /// The run that settled.
-    pub run: RunId,
-    /// The status it settled at.
-    pub status: RunStatus,
-    /// The session revision after the barrier.
-    pub session_revision: SessionRevision,
-    /// The usage closure the run is billed under.
-    pub usage_closure: UsageClosureId,
-    /// When the barrier committed.
-    pub at: Timestamp,
-}
+// The one durable notification the barrier writes, and nothing outside the
+// transaction can prevent it. `regional-stream` and the observation materializer
+// both decode it, so the envelope itself lives in `aex-internal-contracts` and
+// this crate builds it rather than declaring it.
+pub use aex_internal_contracts::outbox::OutboxEvent;
 
 /// Everything the winning terminal commit contains.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,6 +183,7 @@ pub fn claim_terminal(
         sealed_messages,
         agent_fence: current_fence,
         outbox: OutboxEvent {
+            schema_version: aex_internal_contracts::SchemaVersion::V1,
             session: session.id,
             run: run.id,
             status: attempt.outcome.status(),
