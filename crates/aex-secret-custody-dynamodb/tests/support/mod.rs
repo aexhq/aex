@@ -4,21 +4,28 @@
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
 use aex_secret_custody_dynamodb::codec::{
-    CallAuthorization, CustodyHead, ProviderCredential, RedactionManifest, SecretMetadata,
-    StoredGeneration,
+    CallAuthorization, CredentialState, CustodyHead, ProviderCredential, RedactionManifest,
+    SecretMetadata, StoredGeneration,
 };
 use aex_secret_domain::custody::{CustodyEntry, CustodyRevision, CustodyState, OwnerKeyEdgeId};
+use aex_secret_domain::plaintext::SecretPlaintext;
 use aex_secret_domain::revocation::RevocationEpoch;
 use aex_secret_domain::secret::{
     CiphertextRef, SecretName, SecretRevision, SecretState, SourceGeneration,
 };
+use aex_session_dynamodb::replay::{Receipt, ReceiptBody};
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{
     PrefixedId, ProviderCredentialId, ResourceName, SessionId, Uuid7, WorkspaceId,
 };
+use aex_wire::models::ProviderId;
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
-use aws_smithy_http_client::test_util::{CaptureRequestReceiver, capture_request};
+use aws_smithy_http_client::test_util::{
+    CaptureRequestReceiver, ReplayEvent, StaticReplayClient, capture_request,
+};
+use aws_smithy_types::body::SdkBody;
 
 pub const TABLE: &str = "dev-eu-west-1-regional-secret-custody";
 
@@ -41,6 +48,44 @@ pub fn capturing_client() -> (Client, CaptureRequestReceiver) {
         .http_client(http_client)
         .build();
     (Client::from_conf(config), receiver)
+}
+
+/// A client that answers a scripted sequence and records every request.
+///
+/// The capture fixture answers exactly one request, so a bounded multi-read path
+/// needs this instead: it proves *how many* requests a read costs, which is the
+/// property under test.
+#[must_use]
+pub fn replaying_client(responses: usize) -> (Client, StaticReplayClient) {
+    let events: Vec<ReplayEvent> = (0..responses)
+        .map(|_| {
+            ReplayEvent::new(
+                http::Request::builder()
+                    .method("POST")
+                    .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                    .body(SdkBody::empty())
+                    .expect("a request"),
+                http::Response::builder()
+                    .status(200)
+                    .body(SdkBody::from("{}"))
+                    .expect("a response"),
+            )
+        })
+        .collect();
+    let replay = StaticReplayClient::new(events);
+    let config = aws_sdk_dynamodb::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("eu-west-1"))
+        .credentials_provider(Credentials::new(
+            "AKIDTESTTESTTESTTEST",
+            "test-secret",
+            None,
+            None,
+            "aex-tests",
+        ))
+        .http_client(replay.clone())
+        .build();
+    (Client::from_conf(config), replay)
 }
 
 /// The captured request body, parsed as JSON.
@@ -178,14 +223,39 @@ pub fn manifest() -> RedactionManifest {
 }
 
 #[must_use]
+pub fn credential_id() -> ProviderCredentialId {
+    ProviderCredentialId::from_uuid7(Uuid7::compose(1_754_051_696_789, [6; 10]))
+}
+
+#[must_use]
 pub fn provider_credential() -> ProviderCredential {
     ProviderCredential {
-        credential: ProviderCredentialId::from_uuid7(Uuid7::compose(1_754_051_696_789, [6; 10])),
+        credential: credential_id(),
         workspace: workspace(),
-        provider: "openai".to_owned(),
+        name: ResourceName::parse("primary-openai").expect("an ASCII resource name"),
+        provider: ProviderId::Openai,
         secret_name: secret_name(),
         source_generation: SourceGeneration::FIRST,
-        state: "active".to_owned(),
+        fingerprint: SecretPlaintext::new(b"sk-live-fixture".to_vec())
+            .expect("a bounded plaintext")
+            .credential_fingerprint(workspace(), credential_id()),
+        revision: 1,
+        state: CredentialState::Ready,
         created_at: now(),
+        updated_at: now(),
+        revoked_at: None,
+    }
+}
+
+#[must_use]
+pub fn receipt() -> Receipt {
+    Receipt {
+        scope: "secret:credential:primary-openai".to_owned(),
+        key_sha256: "d".repeat(64),
+        intent: IntentDigest::from_bytes([5; 32]),
+        response_kind: "ProviderCredential".to_owned(),
+        response: ReceiptBody::Inline(b"{}".to_vec()),
+        committed_at: now(),
+        expires_at: Timestamp::parse("2026-08-02T12:34:56.789Z").expect("the pinned spelling"),
     }
 }

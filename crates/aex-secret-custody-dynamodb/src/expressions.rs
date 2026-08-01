@@ -15,12 +15,16 @@ use aex_secret_domain::secret::{SecretRevision, SecretState, SourceGeneration};
 use aex_session_dynamodb::attr::{Item, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
+use aex_session_dynamodb::replay::{Receipt, encode_receipt_row};
 use aex_wire::ids::{SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 use aws_sdk_dynamodb::types::{ConditionCheck, Put, Update};
 
-use crate::codec::{self, CallAuthorization, SecretMetadata, StoredGeneration, secret_state_str};
+use crate::codec::{
+    self, CallAuthorization, CredentialState, ProviderCredential, SecretMetadata, StoredGeneration,
+    secret_state_str,
+};
 use crate::keys;
 
 /// A transport deduplication identity inside the provider's 36-character
@@ -211,6 +215,139 @@ pub fn revoke(
         .expression_attribute_values(":expectedEpoch", n(expected_epoch.0))
         .expression_attribute_values(":one", n(1))
         .expression_attribute_values(":now", stamp(now)))
+}
+
+/// Builds the conditional secret tombstone.
+///
+/// `aex_secret_domain::delete` bumps the revision to a tombstone, mints no
+/// source generation and disturbs no session's custody. This is its one
+/// expression, and it is conditional in three ways: the record must exist, must
+/// be at the revision the caller read, and must not already be a tombstone. A
+/// `DeleteItem` would be wrong here — the row is the fence every use path
+/// conditions on, and removing it would make a revoked-then-deleted name read as
+/// "never existed" instead of "deleted".
+///
+/// The sealed generations are deliberately left in place: `delete` is not a
+/// revocation, and an in-flight session that already holds custody of an earlier
+/// generation must keep working until it is explicitly revoked or rebound.
+///
+/// # Errors
+///
+/// [`StoreError`] when the name could not enter a key, or when the observed
+/// revision cannot be advanced.
+pub fn delete(
+    table: &str,
+    workspace: WorkspaceId,
+    name: &str,
+    expected_revision: SecretRevision,
+    now: Timestamp,
+) -> Result<UpdateBuilder, StoreError> {
+    let target = keys::secret(workspace, name)?;
+    let next = expected_revision
+        .0
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "the observed secret revision cannot be advanced".to_owned(),
+        })?;
+    Ok(Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND revision = :expectedRevision AND #state <> :deleted",
+        )
+        .update_expression(
+            "SET #state = :deleted, revision = :nextRevision, \
+             activeSourceGeneration = :none, updatedAt = :now",
+        )
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":deleted", s(secret_state_str(SecretState::Deleted)))
+        .expression_attribute_values(":expectedRevision", n(expected_revision.0))
+        .expression_attribute_values(":nextRevision", n(next))
+        // A tombstone points at no generation. Leaving the pointer would let a
+        // later reader resolve a name the customer believes is gone.
+        .expression_attribute_values(":none", n(0))
+        .expression_attribute_values(":now", stamp(now)))
+}
+
+/// The participants a provider-credential revocation names, in plan order.
+pub const REVOKE_CREDENTIAL_ORDER: [Participant; 2] = [
+    Participant::CUSTODY_PROVIDER_CREDENTIAL,
+    Participant::SESSION_IDEMPOTENCY,
+];
+
+/// Compiles the provider-credential revocation.
+///
+/// Revocation is terminal and monotone: the condition admits the transition only
+/// from `ready`, and a caller that observes `revoked` already holds the answer,
+/// so the route never needs a second write to be idempotent.
+///
+/// The receipt is a participant of the same transaction, which is what
+/// [`aex_session_dynamodb::replay::commit_or_replay`] requires: either both the
+/// revocation and its receipt commit, or neither does.
+///
+/// # Errors
+///
+/// [`StoreError`] when a key component is unusable, the revision cannot be
+/// advanced, or an action could not be built.
+pub fn revoke_provider_credential(
+    table: &str,
+    credential: &ProviderCredential,
+    receipt: &Receipt,
+    now: Timestamp,
+) -> Result<TransactionPlan, StoreError> {
+    if credential.state != CredentialState::Ready {
+        return Err(StoreError::Invalid {
+            detail: "a revocation plan may only be compiled from a ready binding".to_owned(),
+        });
+    }
+    let next = credential
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "the observed credential revision cannot be advanced".to_owned(),
+        })?;
+    let target = keys::provider_credential(
+        credential.workspace,
+        credential.provider.as_str(),
+        credential.credential,
+    )?;
+    let mut plan = TransactionPlan::new(token(
+        "pcr",
+        &[&credential.credential.to_string(), &next.to_string()],
+    ));
+    plan.update(
+        Participant::CUSTODY_PROVIDER_CREDENTIAL,
+        Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&target.pk, &target.sk)))
+            .condition_expression(
+                "attribute_exists(pk) AND #state = :ready AND revision = :expectedRevision",
+            )
+            .update_expression(
+                "SET #state = :revoked, revision = :nextRevision, \
+                 revokedAt = :now, updatedAt = :now",
+            )
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_values(":ready", s(CredentialState::Ready.as_str()))
+            .expression_attribute_values(":revoked", s(CredentialState::Revoked.as_str()))
+            .expression_attribute_values(":expectedRevision", n(credential.revision))
+            .expression_attribute_values(":nextRevision", n(next))
+            .expression_attribute_values(":now", stamp(now)),
+    )?;
+    plan.put(
+        Participant::SESSION_IDEMPOTENCY,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(
+                encode_receipt_row(credential.workspace, receipt).map_err(|error| {
+                    StoreError::Invalid {
+                        detail: error.to_string(),
+                    }
+                })?,
+            ))
+            .condition_expression(IMMUTABLE),
+    )?;
+    Ok(plan)
 }
 
 /// One name a custody admission binds.

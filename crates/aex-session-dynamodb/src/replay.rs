@@ -16,6 +16,7 @@ use aex_wire::ids::WorkspaceId;
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 
+use crate::attr::{CodecError, Item, ItemBuilder, Row, b, s, stamp};
 use crate::component::{Component, KeyError};
 use crate::error::{Resolution, RetryPolicy, StoreError};
 use crate::plan::Participant;
@@ -167,6 +168,127 @@ pub struct Receipt {
     /// Checked explicitly by the reader. TTL reclaims the row afterwards but is
     /// never the fence: AWS deletes within 48 hours, not at the instant (D-24).
     pub expires_at: Timestamp,
+}
+
+/// The `itemType` of an idempotency receipt.
+///
+/// Every regional table that holds receipts holds this one shape. The row codec
+/// lives here rather than beside one table's own codecs because a second
+/// spelling of a receipt would be a second, subtly different idempotency
+/// implementation — exactly what this module exists to prevent.
+pub const IDEMPOTENCY_RECEIPT: &str = "idempotency_receipt";
+
+/// The composite key of one receipt: `IDEM#{workspace}#{scope}#{digest}` /
+/// `RECEIPT`.
+///
+/// # Errors
+///
+/// [`KeyError`] when the rendered scope or the key digest could not enter a key.
+pub fn receipt_key(
+    workspace: WorkspaceId,
+    scope: &str,
+    key_sha256_hex: &str,
+) -> Result<(String, String), KeyError> {
+    let scope = Component::parse(scope)?;
+    let digest = Component::parse(key_sha256_hex)?;
+    Ok((
+        format!("IDEM#{workspace}#{scope}#{digest}"),
+        "RECEIPT".to_owned(),
+    ))
+}
+
+/// Encodes one idempotency receipt.
+///
+/// The row carries both the epoch-seconds TTL attribute and the explicit
+/// `expiresAt` the reader checks. TTL reclaims space where a table enables it;
+/// it is never the fence (D-24), which is why a table with TTL disabled — such
+/// as `regional-secret-custody` — stores exactly the same row.
+///
+/// # Errors
+///
+/// [`KeyError`] when the rendered scope or the key digest could not enter a key.
+pub fn encode_receipt_row(workspace: WorkspaceId, receipt: &Receipt) -> Result<Item, KeyError> {
+    let (pk, sk) = receipt_key(workspace, &receipt.scope, &receipt.key_sha256)?;
+    let builder = ItemBuilder::new(IDEMPOTENCY_RECEIPT)
+        .set(crate::attr::PK, s(pk))
+        .set(crate::attr::SK, s(sk))
+        .set("scope", s(receipt.scope.clone()))
+        .set("keySha256", s(receipt.key_sha256.clone()))
+        .set("intentHash", s(receipt.intent.to_string()))
+        .set("responseKind", s(receipt.response_kind.clone()))
+        .set("committedAt", stamp(receipt.committed_at))
+        .set("expiresAt", stamp(receipt.expires_at))
+        .set(
+            "expiresAtEpochSeconds",
+            crate::attr::n_i64(receipt.expires_at.unix_millis().div_euclid(1_000)),
+        );
+    Ok(match &receipt.response {
+        ReceiptBody::Inline(bytes) => builder.set("responseInline", b(bytes.clone())),
+        ReceiptBody::Digest(digest) => builder.set("responseDigest", s(digest.clone())),
+    }
+    .build())
+}
+
+/// Decodes one idempotency receipt.
+///
+/// # Errors
+///
+/// [`CodecError`] for any missing, mistyped or malformed attribute.
+pub fn decode_receipt_row(item: &Item) -> Result<Receipt, CodecError> {
+    let row = Row::bind(item, IDEMPOTENCY_RECEIPT)?;
+    let intent = parse_intent(row.string("intentHash")?).ok_or(CodecError::Malformed {
+        item_type: IDEMPOTENCY_RECEIPT,
+        attribute: "intentHash",
+        reason: "an intent hash is 64 lowercase hex characters".to_owned(),
+    })?;
+    let response = match (
+        row.opt_bytes("responseInline")?,
+        row.opt_string("responseDigest")?,
+    ) {
+        (Some(bytes), _) => ReceiptBody::Inline(bytes.to_vec()),
+        (None, Some(digest)) => ReceiptBody::Digest(digest.to_owned()),
+        (None, None) => {
+            return Err(CodecError::Missing {
+                item_type: IDEMPOTENCY_RECEIPT,
+                attribute: "responseInline",
+            });
+        }
+    };
+    Ok(Receipt {
+        scope: row.string("scope")?.to_owned(),
+        key_sha256: row.string("keySha256")?.to_owned(),
+        intent,
+        response_kind: row.string("responseKind")?.to_owned(),
+        response,
+        committed_at: row.timestamp("committedAt")?,
+        expires_at: row.timestamp("expiresAt")?,
+    })
+}
+
+/// Whether a receipt is still readable at `now`.
+///
+/// This is the fence, not the TTL attribute: AWS deletes a TTL'd row within 48
+/// hours, not at the instant, so a reader that trusted TTL would replay an
+/// expired receipt for up to two days.
+#[must_use]
+pub fn receipt_is_live(receipt: &Receipt, now: Timestamp) -> bool {
+    now.unix_millis() < receipt.expires_at.unix_millis()
+}
+
+/// Parses a 64-character lowercase-hex intent digest.
+///
+/// One parser, shared by every row that stores an `intentHash`: a second one
+/// could accept a spelling the first rejects.
+#[must_use]
+pub fn parse_intent(text: &str) -> Option<IntentDigest> {
+    if text.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(text.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(IntentDigest::from_bytes(bytes))
 }
 
 /// How long a receipt is retained (OD-16).

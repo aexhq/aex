@@ -15,7 +15,10 @@ use aex_secret_domain::secret::{
 };
 use aex_session_dynamodb::attr::{CodecError, Item, ItemBuilder, PK, Row, SK, b, n, s, stamp};
 use aex_session_dynamodb::component::KeyError;
-use aex_wire::ids::{ProviderCredentialId, ResourceName, SessionId, Uuid7, WorkspaceId};
+use aex_wire::ids::{
+    ContentHash, ProviderCredentialId, ResourceName, SessionId, Uuid7, WorkspaceId,
+};
+use aex_wire::models::ProviderId;
 use aex_wire::types::Timestamp;
 
 use crate::keys;
@@ -526,27 +529,77 @@ pub fn decode_manifest(
     })
 }
 
+/// Whether a BYOK binding may still be selected.
+///
+/// Closed and typed rather than a free string: the wire publishes a closed set,
+/// and a stored value outside it must be a decode failure rather than a value
+/// the projection has to guess at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CredentialState {
+    /// Selectable.
+    Ready,
+    /// Revoked; sessions holding it fail closed.
+    Revoked,
+}
+
+impl CredentialState {
+    /// Every state, in canonical order.
+    pub const ALL: [Self; 2] = [Self::Ready, Self::Revoked];
+
+    /// The stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    /// Resolves a stored spelling. There is no alias table.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|state| state.as_str() == text)
+    }
+}
+
 /// One provider-credential binding in the BYOK directory (OD-23).
 ///
 /// The record is a **reference** to a workspace secret. A BYOK key is a
 /// workspace secret, and a second copy here would be a second encryption
 /// authority for the same material.
+///
+/// Every field the public `ProviderCredential` model needs is persisted here.
+/// `fingerprint`, `name`, `revision` and `updated_at` are stored rather than
+/// derived at read time: the fingerprint cannot be recomputed without the
+/// plaintext, which no read path may hold, and a revision that a reader invented
+/// would be useless as a concurrency token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderCredential {
     /// Its identity.
     pub credential: ProviderCredentialId,
     /// The workspace.
     pub workspace: WorkspaceId,
+    /// The human label the caller registered it under.
+    pub name: ResourceName,
     /// Which provider it is for.
-    pub provider: String,
+    pub provider: ProviderId,
     /// The workspace secret holding the key.
     pub secret_name: SecretName,
     /// The generation bound at registration.
     pub source_generation: SourceGeneration,
+    /// The one-way fingerprint of the key material, minted at registration by
+    /// the only component that ever held the plaintext.
+    pub fingerprint: ContentHash,
+    /// The monotone concurrency token.
+    pub revision: u64,
     /// Whether the binding is usable.
-    pub state: String,
+    pub state: CredentialState,
     /// When it was registered.
     pub created_at: Timestamp,
+    /// When it last changed.
+    pub updated_at: Timestamp,
+    /// When it was revoked.
+    pub revoked_at: Option<Timestamp>,
 }
 
 /// Encodes one provider-credential binding.
@@ -557,7 +610,7 @@ pub struct ProviderCredential {
 pub fn encode_provider_credential(credential: &ProviderCredential) -> Result<Item, EncodeError> {
     let key = keys::provider_credential(
         credential.workspace,
-        &credential.provider,
+        credential.provider.as_str(),
         credential.credential,
     )?;
     Ok(ItemBuilder::new(PROVIDER_CREDENTIAL)
@@ -565,11 +618,16 @@ pub fn encode_provider_credential(credential: &ProviderCredential) -> Result<Ite
         .set(SK, s(key.sk))
         .set("credentialId", s(credential.credential.to_string()))
         .set("workspaceId", s(credential.workspace.to_string()))
-        .set("provider", s(credential.provider.clone()))
+        .set("name", s(credential.name.as_str().to_owned()))
+        .set("provider", s(credential.provider.as_str()))
         .set("secretName", s(credential.secret_name.as_str().to_owned()))
         .set("sourceGeneration", n(credential.source_generation.0))
-        .set("state", s(credential.state.clone()))
+        .set("fingerprint", s(credential.fingerprint.to_wire()))
+        .set("revision", n(credential.revision))
+        .set("state", s(credential.state.as_str()))
         .set("createdAt", stamp(credential.created_at))
+        .set("updatedAt", stamp(credential.updated_at))
+        .set_opt("revokedAt", credential.revoked_at.map(stamp))
         .build())
 }
 
@@ -590,10 +648,24 @@ pub fn decode_provider_credential(
         PROVIDER_CREDENTIAL,
         "a credential binding references a workspace secret",
     )?;
+    let provider = provider_of(row.enumerated("provider", &keys::providers())?).ok_or(
+        CodecError::Malformed {
+            item_type: PROVIDER_CREDENTIAL,
+            attribute: "provider",
+            reason: "outside the closed BYOK provider vocabulary".to_owned(),
+        },
+    )?;
+    let fingerprint =
+        ContentHash::parse(row.string("fingerprint")?).map_err(|error| CodecError::Malformed {
+            item_type: PROVIDER_CREDENTIAL,
+            attribute: "fingerprint",
+            reason: error.to_string(),
+        })?;
     Ok(ProviderCredential {
         credential: row.id::<ProviderCredentialId>("credentialId")?,
         workspace: asserted,
-        provider: row.string("provider")?.to_owned(),
+        name: name_of(&row, PROVIDER_CREDENTIAL)?,
+        provider,
         secret_name: ResourceName::parse(row.string("secretName")?).map_err(|error| {
             CodecError::Malformed {
                 item_type: PROVIDER_CREDENTIAL,
@@ -602,9 +674,28 @@ pub fn decode_provider_credential(
             }
         })?,
         source_generation: SourceGeneration(row.u64("sourceGeneration")?),
-        state: row.string("state")?.to_owned(),
+        fingerprint,
+        revision: row.u64("revision")?,
+        state: CredentialState::parse(row.enumerated("state", keys::CREDENTIAL_STATES)?).ok_or(
+            CodecError::Malformed {
+                item_type: PROVIDER_CREDENTIAL,
+                attribute: "state",
+                reason: "outside the credential state vocabulary".to_owned(),
+            },
+        )?,
         created_at: row.timestamp("createdAt")?,
+        updated_at: row.timestamp("updatedAt")?,
+        revoked_at: row.opt_timestamp("revokedAt")?,
     })
+}
+
+/// Resolves a stored provider spelling against the closed generated set.
+#[must_use]
+pub fn provider_of(text: &str) -> Option<ProviderId> {
+    ProviderId::ALL
+        .iter()
+        .copied()
+        .find(|provider| provider.as_str() == text)
 }
 
 fn refuse_sealed(item: &Item, item_type: &'static str, reason: &str) -> Result<(), CodecError> {

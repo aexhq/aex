@@ -27,7 +27,7 @@ pub mod keys;
 pub mod store;
 
 pub use codec::{
-    CallAuthorization, CustodyHead, ProviderCredential, RedactionManifest, SecretMetadata,
-    StoredGeneration,
+    CallAuthorization, CredentialState, CustodyHead, ProviderCredential, RedactionManifest,
+    SecretMetadata, StoredGeneration,
 };
-pub use store::{CustodyStore, SecretCustodyStore};
+pub use store::{CustodyStore, Page, SecretCustodyStore};

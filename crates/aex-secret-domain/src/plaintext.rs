@@ -9,7 +9,11 @@
 
 use core::fmt;
 
+use aex_wire::ids::{ContentHash, ProviderCredentialId, WorkspaceId};
 use zeroize::Zeroizing;
+
+/// Domain separation for the provider-credential fingerprint.
+const FINGERPRINT_DOMAIN: &[u8] = b"aex.provider-credential.fingerprint.v1";
 
 /// The redaction marker every rendering of a plaintext produces.
 pub const REDACTED: &str = "<redacted>";
@@ -56,6 +60,55 @@ impl SecretPlaintext {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// The published one-way fingerprint of a BYOK provider credential.
+    ///
+    /// This is the value the wire's `ProviderCredential.fingerprint` carries, and
+    /// it is derived **once, at registration, by the only component that ever
+    /// holds the plaintext**. It is persisted, never recomputed at read time: a
+    /// read path that could recompute it would need the plaintext, which is the
+    /// whole property the custody boundary exists to prevent.
+    ///
+    /// The construction is a domain-separated SHA-256 over length-prefixed
+    /// identifiers followed by the value:
+    ///
+    /// ```text
+    /// sha256( "aex.provider-credential.fingerprint.v1"
+    ///         ‖ len(workspace) ‖ workspace
+    ///         ‖ len(credential) ‖ credential
+    ///         ‖ plaintext )
+    /// ```
+    ///
+    /// Two properties follow, and both are asserted:
+    ///
+    /// * it is **not derivable back to the secret** — SHA-256 is one-way, and no
+    ///   byte, length hint or substring of the value survives into the digest;
+    /// * it is **salted by the binding it describes** — the same key registered
+    ///   in another workspace, or under another credential id, produces a
+    ///   different fingerprint, so one precomputed table cannot cover the fleet
+    ///   and two customers cannot learn they hold the same key.
+    ///
+    /// The length prefixes stop `(workspace ‖ credential)` being ambiguous, which
+    /// would let a crafted pair collide with another binding's salt.
+    #[must_use]
+    pub fn credential_fingerprint(
+        &self,
+        workspace: WorkspaceId,
+        credential: ProviderCredentialId,
+    ) -> ContentHash {
+        use sha2::Digest as _;
+
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(FINGERPRINT_DOMAIN);
+        for identifier in [workspace.to_string(), credential.to_string()] {
+            let bytes = identifier.as_bytes();
+            let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+            hasher.update(length.to_be_bytes());
+            hasher.update(bytes);
+        }
+        hasher.update(&self.0);
+        ContentHash::from_bytes(hasher.finalize().into())
     }
 }
 

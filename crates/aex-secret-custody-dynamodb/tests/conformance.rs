@@ -2,7 +2,9 @@
 
 mod support;
 
-use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER, SET_ORDER};
+use aex_secret_custody_dynamodb::expressions::{
+    self, AUTHORIZE_ORDER, REVOKE_CREDENTIAL_ORDER, SET_ORDER,
+};
 use aex_secret_custody_dynamodb::keys;
 use aex_secret_custody_dynamodb::store::{CustodyStore, SecretCustodyStore};
 use aex_secret_domain::revocation::RevocationEpoch;
@@ -11,8 +13,9 @@ use aex_session_dynamodb::paging::PageBudget;
 use aex_session_dynamodb::plan::Participant;
 
 use support::{
-    DEFINITION, TABLE, authorization, captured_body, capturing_client, custody_head, generation,
-    metadata, now, secret_name, session, workspace,
+    DEFINITION, TABLE, authorization, captured_body, capturing_client, credential_id, custody_head,
+    generation, metadata, now, provider_credential, receipt, replaying_client, secret_name,
+    session, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -225,4 +228,183 @@ async fn a_list_reads_the_metadata_partition_and_never_the_generation_partition(
         body["ExpressionAttributeValues"][":prefix"]["S"].as_str(),
         Some(keys::secret_prefix())
     );
+}
+
+#[tokio::test]
+async fn a_delete_tombstones_the_fence_row_rather_than_removing_it() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let builder = expressions::delete(
+        TABLE,
+        workspace(),
+        secret_name().as_str(),
+        SecretRevision::FIRST,
+        now(),
+    )
+    .expect("builds");
+    let _ignored = store
+        .commit_update(builder, Participant::SECRET_METADATA)
+        .await;
+
+    let body = captured_body(receiver);
+    assert!(
+        body["TransactItems"].is_null(),
+        "a delete is one conditional update on one item"
+    );
+    let condition = body["ConditionExpression"]
+        .as_str()
+        .expect("a conditional delete");
+    assert!(
+        condition.contains("attribute_exists(pk)"),
+        "a delete of an absent record must not create a tombstone: {condition}"
+    );
+    assert!(
+        condition.contains("revision = :expectedRevision"),
+        "a delete must lose to a concurrent editor: {condition}"
+    );
+    assert!(
+        condition.contains("#state <> :deleted"),
+        "a second delete must be refused rather than advance the revision again: {condition}"
+    );
+    let update = body["UpdateExpression"].as_str().expect("an update");
+    assert!(update.contains("#state = :deleted"), "{update}");
+    assert!(
+        update.contains("activeSourceGeneration = :none"),
+        "a tombstone must point at no generation: {update}"
+    );
+    assert_eq!(
+        body["ExpressionAttributeValues"][":nextRevision"]["N"].as_str(),
+        Some("2"),
+        "the tombstone advances the revision a concurrent editor fences on"
+    );
+}
+
+#[test]
+fn a_delete_of_an_unadvanceable_revision_is_refused_rather_than_wrapped() {
+    assert!(
+        expressions::delete(
+            TABLE,
+            workspace(),
+            secret_name().as_str(),
+            SecretRevision(u64::MAX),
+            now(),
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_credential_revocation_commits_its_receipt_in_the_same_transaction() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let plan =
+        expressions::revoke_provider_credential(TABLE, &provider_credential(), &receipt(), now())
+            .expect("compiles");
+    assert_eq!(plan.participants(), REVOKE_CREDENTIAL_ORDER);
+    let _ignored = store.commit(&plan).await;
+
+    let body = captured_body(receiver);
+    let actions = body["TransactItems"].as_array().expect("two actions");
+    assert_eq!(actions.len(), 2);
+    let condition = actions[0]["Update"]["ConditionExpression"]
+        .as_str()
+        .expect("a conditional revocation");
+    assert!(condition.contains("#state = :ready"), "{condition}");
+    assert!(
+        condition.contains("revision = :expectedRevision"),
+        "{condition}"
+    );
+    assert_eq!(
+        actions[1]["Put"]["Item"]["itemType"]["S"].as_str(),
+        Some("idempotency_receipt"),
+        "the receipt is a participant, so a revocation without a receipt cannot commit"
+    );
+    assert_eq!(
+        actions[1]["Put"]["ConditionExpression"].as_str(),
+        Some("attribute_not_exists(pk)")
+    );
+}
+
+#[test]
+fn a_revocation_plan_cannot_be_compiled_from_an_already_revoked_binding() {
+    let mut revoked = provider_credential();
+    revoked.state = aex_secret_custody_dynamodb::CredentialState::Revoked;
+    assert!(
+        expressions::revoke_provider_credential(TABLE, &revoked, &receipt(), now()).is_err(),
+        "a terminal binding is answered from the stored row, never revoked twice"
+    );
+}
+
+#[tokio::test]
+async fn a_credential_point_read_costs_one_read_per_provider_and_never_scans() {
+    // The sort key is `CRED#{provider}#{credential}`, so an identity alone names
+    // a suffix. `ProviderId` is closed at six, so the read is a bounded fan of
+    // strongly consistent point reads — never a Scan, and never an unbounded
+    // Query over a directory that has no ceiling of its own.
+    let providers = aex_wire::models::ProviderId::ALL.len();
+    let (client, replay) = replaying_client(providers);
+    let store = CustodyStore::new(client, TABLE);
+    let found = store
+        .load_provider_credential(workspace(), credential_id())
+        .await
+        .expect("the empty directory answers");
+    assert_eq!(found, None);
+
+    let requests: Vec<serde_json::Value> = replay
+        .actual_requests()
+        .map(|request| {
+            serde_json::from_slice(
+                request
+                    .body()
+                    .bytes()
+                    .expect("the DynamoDB request body is always in memory"),
+            )
+            .expect("the DynamoDB request body is JSON")
+        })
+        .collect();
+    assert_eq!(
+        requests.len(),
+        providers,
+        "the read is bounded by the closed provider set"
+    );
+    let mut seen: Vec<String> = Vec::new();
+    for body in &requests {
+        assert_eq!(body["ConsistentRead"].as_bool(), Some(true));
+        assert!(body["FilterExpression"].is_null(), "never a scan");
+        let sort = body["Key"]["sk"]["S"].as_str().expect("a sort key");
+        assert!(sort.starts_with("CRED#"), "{sort}");
+        assert!(
+            sort.ends_with(&credential_id().to_string()),
+            "every read names the requested identity: {sort}"
+        );
+        assert!(!seen.contains(&sort.to_owned()), "no key is read twice");
+        seen.push(sort.to_owned());
+    }
+}
+
+#[tokio::test]
+async fn a_page_resumes_from_the_continuation_it_was_given() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let position = aex_session_dynamodb::paging::PagePosition {
+        pk: keys::secret_partition(workspace()),
+        sk: "NAME#openai-key".to_owned(),
+        index_pk: None,
+        index_sk: None,
+    };
+    let _ignored = store
+        .page_secrets(
+            workspace(),
+            PageBudget::new(25).expect("a page"),
+            Some(&position),
+        )
+        .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(
+        body["ExclusiveStartKey"]["sk"]["S"].as_str(),
+        Some("NAME#openai-key"),
+        "a continuation that is not sent would replay the first page for ever"
+    );
+    assert_eq!(body["Limit"].as_u64(), Some(25));
 }

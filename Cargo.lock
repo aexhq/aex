@@ -1027,6 +1027,7 @@ dependencies = [
  "aws-smithy-http-client",
  "aws-smithy-types",
  "hex",
+ "http 1.5.0",
  "proptest",
  "serde_json",
  "sha2 0.11.0",
@@ -1041,6 +1042,7 @@ dependencies = [
  "aex-wire",
  "blake3",
  "proptest",
+ "sha2 0.11.0",
  "thiserror",
  "zeroize",
 ]
