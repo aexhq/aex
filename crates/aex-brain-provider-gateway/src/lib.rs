@@ -69,4 +69,36 @@ pub(crate) mod golden {
             "provider body differs from its golden\n  actual: {actual}\nexpected: {expected}"
         );
     }
+
+    /// Re-serialises a JSON document with every object member in key order.
+    ///
+    /// The goldens below are written in sorted order because that is readable.
+    /// Whether a serialised body actually comes out sorted depends on
+    /// `serde_json::Map`, which is a `BTreeMap` only while `preserve_order` is
+    /// off — and `aws-smithy-http-client` turns it on, so a workspace-wide test
+    /// run flips it. Sorting here lets a substring golden assert content
+    /// without asserting an order the build does not fix.
+    #[must_use]
+    pub(crate) fn sorted(document: &str) -> String {
+        fn walk(value: &serde_json::Value) -> serde_json::Value {
+            match value {
+                serde_json::Value::Object(members) => {
+                    let mut keys: Vec<&String> = members.keys().collect();
+                    keys.sort_unstable();
+                    let mut out = serde_json::Map::new();
+                    for key in keys {
+                        out.insert(key.clone(), walk(&members[key]));
+                    }
+                    serde_json::Value::Object(out)
+                }
+                serde_json::Value::Array(items) => {
+                    serde_json::Value::Array(items.iter().map(walk).collect())
+                }
+                other => other.clone(),
+            }
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(document).expect("a provider body is JSON");
+        serde_json::to_string(&walk(&parsed)).expect("re-serialising cannot fail")
+    }
 }

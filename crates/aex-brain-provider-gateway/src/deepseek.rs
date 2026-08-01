@@ -1798,7 +1798,7 @@ mod tests {
                 }],
             },
         ];
-        let json = draft.json(&entry());
+        let json = crate::golden::sorted(&draft.json(&entry()));
         assert!(
             json.contains(r#""reasoning_content":"the echoed reasoning""#),
             "{json}"
