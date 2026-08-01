@@ -15,13 +15,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-central-http",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-central-test-support",
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
@@ -106,27 +99,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "services/central-authz",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/central-control-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "services/central-identity-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "services/finance-ingest",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -148,31 +120,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-authz",
-    "owner": "central-identity",
+    "subject": "tests/live/aex-live-brain-mux",
+    "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-control-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-control-worker",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-identity-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; live evidence cannot be earned before deployment (OD-07)"
+    "detail": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
   },
   {
     "reason_class": "awaiting_owner",
@@ -358,13 +309,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "workers/central-control-worker",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "workers/finance-reconcile",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -417,7 +361,7 @@
     "subject": "workers/usage-compute-worker",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
-    "detail": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -431,14 +375,14 @@
     "subject": "workers/usage-storage-worker",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
-    "detail": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
     "subject": "workers/usage-transfer-worker",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
-    "detail": "DEFERRED, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications and the sibling-authority link proofs are covered by this binary's own unit module. The smoke, e2e and load targets need the DynamoDB and SQS AuthorityStore implementation, which observations-usage still owes; the handler above that seam is complete and tested against in-memory ports in aex-usage-application."
+    "detail": "awaiting the observations-usage stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "pending_authority",
@@ -449,10 +393,52 @@
   },
   {
     "reason_class": "pending_workload",
+    "subject": "LEAK-SOAK-12H",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LEAK-SOAK-24H",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
     "subject": "LEAK-USAGE-PROBE-12H",
     "owner": "observations-usage",
     "blocking_rule": "aex-workload-unowned",
     "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-usage-compute-worker`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-100-BUDGETS",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-100-COMPLETE",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-200-SAFE",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
+  },
+  {
+    "reason_class": "pending_workload",
+    "subject": "LOAD-500-BOUNDED",
+    "owner": "brain-core",
+    "blocking_rule": "aex-workload-unowned",
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
   },
   {
     "reason_class": "pending_workload",
@@ -2122,6 +2108,13 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "services/central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "services/central-identity-api",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
@@ -2490,6 +2483,13 @@
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-control-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

@@ -153,6 +153,13 @@ pub fn encode_cursor(secret: &CursorSecret, claims: &CursorClaims, now_ms: i64) 
 
 /// Decodes a cursor and checks every binding.
 ///
+/// A *binding* is a field the query fixes and the caller therefore already
+/// knows: the endpoint, the principal, the scope, the region and the filter
+/// digest. `snapshot_ms` and `last` are **carried state** — they are what a
+/// cursor exists to transport — so they are returned rather than compared.
+/// Comparing them would make this function unusable for its only purpose, since
+/// a caller that already knew the position would not need the cursor.
+///
 /// # Errors
 ///
 /// Returns [`CursorError::Malformed`] for a shape failure,
@@ -187,10 +194,19 @@ pub fn decode_cursor(
     if now_ms.saturating_sub(decoded.issued_at_ms) > CURSOR_TTL_MS {
         return Err(CursorError::Expired);
     }
-    if decoded.claims != *expected {
+    if !bindings_match(&decoded.claims, expected) {
         return Err(CursorError::ScopeMismatch);
     }
     Ok(decoded.claims.last)
+}
+
+/// Whether two claim sets agree on every field the query fixes.
+fn bindings_match(decoded: &CursorClaims, expected: &CursorClaims) -> bool {
+    decoded.endpoint == expected.endpoint
+        && decoded.principal_id == expected.principal_id
+        && decoded.scope_id == expected.scope_id
+        && decoded.region == expected.region
+        && decoded.filter_hash == expected.filter_hash
 }
 
 /// A decoded payload.
@@ -341,6 +357,23 @@ mod tests {
                 "{field}"
             );
         }
+    }
+
+    #[test]
+    fn a_continuation_is_readable_without_knowing_the_position_it_carries() {
+        // The whole point of a cursor is that the caller does not know where the
+        // previous page ended. A decoder that compared `last` could only ever be
+        // called by somebody who already had the answer.
+        let raw = encode_cursor(&secret(), &claims(), 0);
+        let unknown = CursorClaims {
+            last: (0, Uuid::nil()),
+            snapshot_ms: 0,
+            ..claims()
+        };
+        assert_eq!(
+            decode_cursor(&secret(), &raw, &unknown, 0),
+            Ok(claims().last)
+        );
     }
 
     #[test]

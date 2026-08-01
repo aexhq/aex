@@ -24,14 +24,30 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the central-identity stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+conformance = "unit"
+faults = "unit"
+security = "unit"
+resource_envelope = "e2e"
 
 [[bin]]
 name = "central-authz"
 path = "src/main.rs"
 
 [dependencies]
+aex-central-http = { path = "../../crates/aex-central-http" }
+aex-control-app = { path = "../../crates/aex-control-app" }
+aex-control-domain = { path = "../../crates/aex-control-domain" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+axum.workspace = true
+lambda_http.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tower.workspace = true

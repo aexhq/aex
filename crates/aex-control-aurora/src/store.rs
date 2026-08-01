@@ -87,14 +87,45 @@ impl AuroraControlStore {
             .map_or(SqlValue::Null, SqlValue::I64)
     }
 
-    fn page_limit(page: &PageRequest) -> Result<i64, StoreError> {
-        if page.cursor.is_some() {
-            return Err(StoreError::Decode(
-                "a signed cursor must be decoded before the Aurora port".to_owned(),
-            ));
+    /// The bounded row count one page may return.
+    fn page_limit(page: &PageRequest) -> i64 {
+        let limit = page.limit.clamp(1, aex_control_app::ports::MAX_PAGE_LIMIT);
+        i64::from(limit)
+    }
+
+    /// Binds the keyset continuation, which is `NULL` on a first page.
+    ///
+    /// The position arrives already decoded and authenticated: this adapter
+    /// holds no cursor secret and must never be handed an opaque token.
+    fn bind_page<'a>(statement: Statement<'a>, page: &PageRequest) -> Statement<'a> {
+        let (created, id) = page
+            .after
+            .map_or((SqlValue::Null, SqlValue::Null), |(created, id)| {
+                (SqlValue::I64(created), SqlValue::Uuid(id))
+            });
+        statement
+            .bind("after_created_ms", created)
+            .bind("after_id", id)
+            .bind("limit", SqlValue::I64(Self::page_limit(page)))
+    }
+
+    /// The continuation position, when the read filled its limit.
+    ///
+    /// A short page has no continuation: minting one would tell a caller to make
+    /// a request that can only ever come back empty.
+    fn continuation<T>(
+        page: &PageRequest,
+        items: &[T],
+        position: impl Fn(&T) -> (OffsetDateTime, Uuid),
+    ) -> Option<(i64, Uuid)> {
+        let limit = usize::try_from(Self::page_limit(page)).unwrap_or(usize::MAX);
+        if items.len() < limit {
+            return None;
         }
-        let limit = page.limit.min(aex_control_app::ports::MAX_PAGE_LIMIT);
-        Ok(i64::from(limit))
+        items.last().map(|last| {
+            let (created_at, id) = position(last);
+            (Self::millis(created_at), id)
+        })
     }
 
     fn required_scope(spelling: &str) -> ScopeSet {
@@ -781,20 +812,18 @@ impl ControlStore for AuroraControlStore {
         &self,
         query: &ListOrganizations,
     ) -> Result<Page<Organization>, StoreError> {
-        let limit = Self::page_limit(&query.page)?;
         let rows = self
             .client
-            .query::<OrganizationRow>(
+            .query::<OrganizationRow>(Self::bind_page(
                 Statement::new(sql::LIST_ORGANIZATIONS)
-                    .bind("user_id", SqlValue::Uuid(query.user_id))
-                    .bind("limit", SqlValue::I64(limit)),
-            )
+                    .bind("user_id", SqlValue::Uuid(query.user_id)),
+                &query.page,
+            ))
             .await
             .map_err(map_store_error)?;
-        Ok(Page {
-            items: rows.into_iter().map(|row| row.0).collect(),
-            next_cursor: None,
-        })
+        let items: Vec<Organization> = rows.into_iter().map(|row| row.0).collect();
+        let next = Self::continuation(&query.page, &items, |item| (item.created_at, item.id));
+        Ok(Page { items, next })
     }
 
     async fn get_organization(&self, id: Uuid) -> Result<Option<Organization>, StoreError> {
@@ -812,20 +841,18 @@ impl ControlStore for AuroraControlStore {
         organization_id: Uuid,
         page: &PageRequest,
     ) -> Result<Page<Membership>, StoreError> {
-        let limit = Self::page_limit(page)?;
         let rows = self
             .client
-            .query::<MembershipRow>(
+            .query::<MembershipRow>(Self::bind_page(
                 Statement::new(sql::LIST_MEMBERSHIPS)
-                    .bind("organization_id", SqlValue::Uuid(organization_id))
-                    .bind("limit", SqlValue::I64(limit)),
-            )
+                    .bind("organization_id", SqlValue::Uuid(organization_id)),
+                page,
+            ))
             .await
             .map_err(map_store_error)?;
-        Ok(Page {
-            items: rows.into_iter().map(|row| row.0).collect(),
-            next_cursor: None,
-        })
+        let items: Vec<Membership> = rows.into_iter().map(|row| row.0).collect();
+        let next = Self::continuation(page, &items, |item| (item.created_at, item.id));
+        Ok(Page { items, next })
     }
 
     async fn create_invitation(
@@ -1202,24 +1229,22 @@ impl ControlStore for AuroraControlStore {
     }
 
     async fn list_workspaces(&self, query: &ListWorkspaces) -> Result<Page<Workspace>, StoreError> {
-        let limit = Self::page_limit(&query.page)?;
         let rows = self
             .client
-            .query::<WorkspaceRow>(
+            .query::<WorkspaceRow>(Self::bind_page(
                 Statement::new(sql::LIST_WORKSPACES)
                     .bind("user_id", SqlValue::Uuid(query.user_id))
                     .bind(
                         "organization_id",
                         Self::optional_uuid(query.organization_id),
-                    )
-                    .bind("limit", SqlValue::I64(limit)),
-            )
+                    ),
+                &query.page,
+            ))
             .await
             .map_err(map_store_error)?;
-        Ok(Page {
-            items: rows.into_iter().map(|row| row.0).collect(),
-            next_cursor: None,
-        })
+        let items: Vec<Workspace> = rows.into_iter().map(|row| row.0).collect();
+        let next = Self::continuation(&query.page, &items, |item| (item.created_at, item.id));
+        Ok(Page { items, next })
     }
 
     async fn get_workspace(&self, id: Uuid) -> Result<Option<Workspace>, StoreError> {
@@ -1503,20 +1528,18 @@ impl ControlStore for AuroraControlStore {
     }
 
     async fn list_api_keys(&self, query: &ListApiKeys) -> Result<Page<ApiKey>, StoreError> {
-        let limit = Self::page_limit(&query.page)?;
         let rows = self
             .client
-            .query::<ApiKeyRow>(
+            .query::<ApiKeyRow>(Self::bind_page(
                 Statement::new(sql::LIST_API_KEYS)
-                    .bind("workspace_id", SqlValue::Uuid(query.workspace_id))
-                    .bind("limit", SqlValue::I64(limit)),
-            )
+                    .bind("workspace_id", SqlValue::Uuid(query.workspace_id)),
+                &query.page,
+            ))
             .await
             .map_err(map_store_error)?;
-        Ok(Page {
-            items: rows.into_iter().map(|row| row.0).collect(),
-            next_cursor: None,
-        })
+        let items: Vec<ApiKey> = rows.into_iter().map(|row| row.0).collect();
+        let next = Self::continuation(&query.page, &items, |item| (item.created_at, item.id));
+        Ok(Page { items, next })
     }
 
     async fn revoke_api_key(&self, command: &RevokeApiKeyTx) -> Result<TxOutcome<()>, StoreError> {
@@ -1590,20 +1613,18 @@ impl ControlStore for AuroraControlStore {
     }
 
     async fn list_operations(&self, query: &ListOperations) -> Result<Page<Operation>, StoreError> {
-        let limit = Self::page_limit(&query.page)?;
         let rows = self
             .client
-            .query::<OperationRow>(
+            .query::<OperationRow>(Self::bind_page(
                 Statement::new(sql::LIST_OPERATIONS)
-                    .bind("organization_id", SqlValue::Uuid(query.organization_id))
-                    .bind("limit", SqlValue::I64(limit)),
-            )
+                    .bind("organization_id", SqlValue::Uuid(query.organization_id)),
+                &query.page,
+            ))
             .await
             .map_err(map_store_error)?;
-        Ok(Page {
-            items: rows.into_iter().map(|row| row.0).collect(),
-            next_cursor: None,
-        })
+        let items: Vec<Operation> = rows.into_iter().map(|row| row.0).collect();
+        let next = Self::continuation(&query.page, &items, |item| (item.created_at, item.id));
+        Ok(Page { items, next })
     }
 
     async fn claim_due_operations(

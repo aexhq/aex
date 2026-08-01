@@ -35,8 +35,14 @@ pub struct RequestContext {
 pub struct Page<T> {
     /// The rows, in `(created_at, id)` order.
     pub items: Vec<T>,
-    /// The cursor for the next page, when there is one.
-    pub next_cursor: Option<String>,
+    /// The `(created_at_ms, id)` to continue from, when the page filled its
+    /// limit. `None` means the read reached the end, so no continuation exists.
+    ///
+    /// A keyset **position**, not an opaque cursor: this port holds no signing
+    /// secret, and a store that minted its own token would be a second cursor
+    /// authority. The `HTTP` boundary signs the position into the `cur_`
+    /// envelope and is the only place that can.
+    pub next: Option<(i64, Uuid)>,
 }
 
 /// The largest page any control read may return.
@@ -278,10 +284,16 @@ pub struct RevokeApiKeyTx {
 }
 
 /// A bounded keyset page request.
+///
+/// The continuation is a **decoded, already authenticated** `(created_at_ms,
+/// id)` position rather than the opaque token the caller sent. Passing the raw
+/// token would leave the store with two bad options: ignore it, which silently
+/// repeats the first page, or decode it without the signing secret, which
+/// accepts attacker-controlled ordering state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageRequest {
-    /// The opaque cursor, when continuing.
-    pub cursor: Option<String>,
+    /// The `(created_at_ms, id)` the previous page ended at.
+    pub after: Option<(i64, Uuid)>,
     /// How many rows, capped at [`MAX_PAGE_LIMIT`].
     pub limit: u32,
 }

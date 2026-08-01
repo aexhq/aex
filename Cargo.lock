@@ -170,17 +170,25 @@ dependencies = [
 name = "aex-central-http"
 version = "0.1.0"
 dependencies = [
+ "aex-control-app",
+ "aex-control-domain",
  "aex-wire",
+ "async-trait",
  "axum",
  "http 1.5.0",
+ "http-body-util",
  "lambda_http",
  "lambda_runtime",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
+ "tokio",
  "tower",
  "tower-http 0.7.0",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2569,36 +2577,79 @@ dependencies = [
 name = "central-authz"
 version = "0.1.0"
 dependencies = [
+ "aex-central-http",
+ "aex-control-app",
+ "aex-control-domain",
+ "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "axum",
+ "lambda_http",
  "thiserror",
+ "tokio",
+ "tower",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
 name = "central-control-api"
 version = "0.1.0"
 dependencies = [
+ "aex-central-http",
+ "aex-control-app",
+ "aex-control-aurora",
+ "aex-control-domain",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "axum",
+ "lambda_http",
  "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "uuid",
 ]
 
 [[package]]
 name = "central-control-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-central-http",
+ "aex-control-domain",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "axum",
+ "lambda_http",
  "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
 name = "central-identity-api"
 version = "0.1.0"
 dependencies = [
+ "aex-central-http",
+ "aex-control-app",
+ "aex-control-domain",
+ "aex-identity-app",
+ "aex-identity-aurora",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "axum",
+ "lambda_http",
  "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "uuid",
 ]
 
 [[package]]
