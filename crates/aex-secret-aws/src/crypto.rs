@@ -66,7 +66,9 @@ impl SealedSecret {
     }
 }
 
-// TODO(cross-stream): replaced by aex_secret_domain::ports::SecretCrypto
+// TODO(cross-stream): `aex-secret-domain` has no `ports` module and publishes no
+// traits. Its modules are `context`, `custody`, `plaintext`, `revocation` and
+// `secret`, all data and decisions; this port has no peer to be replaced by.
 /// Sealing, rewrapping and revealing a workspace secret.
 #[async_trait]
 pub trait SecretCrypto: Send + Sync + 'static {

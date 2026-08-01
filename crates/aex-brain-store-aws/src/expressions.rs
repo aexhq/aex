@@ -230,7 +230,9 @@ pub fn stop_conditions(observed_fence: u64) -> Vec<Condition> {
 
 /// Cross-stream seam for the `regional-work` item shape.
 ///
-/// `TODO(cross-stream): replaced by aex_work_dynamodb`'s pure expression builders at merge.
+/// `TODO(cross-stream)`: `aex-work-dynamodb` publishes no expression builders. Its
+/// modules are `claim`, `codec`, `keys` and `store`, and the item shape is reachable only
+/// through the `store::WorkAuthority` trait, which performs its own call.
 /// The Brain writes wake and due items **inside its own transaction**, so it needs the
 /// expressions as data rather than a store that performs its own call. Owning the trait
 /// here rather than forking the item shape means the swap is one impl, not a rewrite.

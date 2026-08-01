@@ -1,14 +1,23 @@
 //! Temporary peer-owned type declarations.
 //!
-//! Items are added here only when the owning Brain stream has not yet landed
-//! the generated/domain type required by this crate.
+//! Items are added here only when the owning Brain stream has not landed the
+//! domain type required by this crate. Both remaining items are now blocked on a
+//! divergence rather than on an absence: `aex-brain-domain` has landed, and it
+//! publishes neither concept in the shape this crate needs. Each marker names the
+//! real path it was measured against, so no marker here names a path that does
+//! not resolve.
 
 use serde::{Deserialize, Serialize};
 
 pub use aex_brain_domain::EffectClass;
 
 /// The executor selected before any tool I/O.
-// TODO(cross-stream): replaced by aex_brain_domain::tool::ExecutorRoute at merge
+// TODO(cross-stream): `aex-brain-domain` has no `tool` module. It publishes
+// `aex_brain_domain::journal::ExecutorRoute`, which records where a call *ran*
+// with four arms — `BrainInline`, `ManagedWeb`, `Mcp`, `Hands` — where routing
+// needs nine to select one. Journal granularity and routing granularity are
+// different questions; adopting the peer enum would lose the distinction
+// between the three Hands surfaces, the park and the subagent scheduler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorRoute {
@@ -33,7 +42,12 @@ pub enum ExecutorRoute {
 }
 
 /// Whether the recovery loop may query a durable operation identity.
-// TODO(cross-stream): replaced by aex_brain_domain::effect::DurableOperationSupport at merge
+// TODO(cross-stream): `aex-brain-domain` has no such type in its `effect` module.
+// The only one it has is `aex_brain_domain::wire_pending::DurableOperationSupport`,
+// which is itself a stand-in and spells the second arm `Proven`, not `Query`.
+// The type that will settle this is `aex_model_catalog::document::DurableOperationSupport`,
+// whose arms carry the retention window (`ResultLookup { ttl_ms }`,
+// `ResumableStream { .. }`) rather than a bare yes/no.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DurableOperationSupport {

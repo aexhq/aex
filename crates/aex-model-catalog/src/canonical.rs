@@ -5,9 +5,12 @@
 //! `blake3` — so `aex-brain-domain` and `aex-brain-provider-gateway` can both
 //! depend on it without acquiring Tokio, HTTP or AWS.
 //!
-//! `TODO(cross-stream): aex-brain-domain adds aex-model-catalog as a dependency
-//! and re-exports aex_model_catalog::canonical::* rather than redefining any of
-//! it (00-orchestrator-conventions.md §8a).`
+//! `TODO(cross-stream)`: `aex-brain-domain` has **not** taken the dependency. It
+//! defines its own `aex_brain_domain::wire_pending` copies of `CanonicalBlock`,
+//! `NormalizedUsage`, `StopReason`, `CompleteAssistantMessage`, `CanonicalModelRequest`
+//! and `ProviderReceipt`, and every one of them has since diverged from the definitions
+//! here. Two authorities exist for one vocabulary today; the markers in that module
+//! record what each divergence costs to close.
 //!
 //! Two separations are structural rather than conventional:
 //!

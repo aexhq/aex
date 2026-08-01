@@ -46,7 +46,10 @@ pub fn frontier_key() -> (String, String) {
 /// Every placement status value.
 pub const PLACEMENT_STATUSES: &[&str] = &["active", "paused", "deleting"];
 
-// TODO(cross-stream): replaced by aex_workspace_domain::AuthorizationProjection
+// TODO(cross-stream): `aex-workspace-domain` publishes no authorization projection. Its
+// modules are `grant`, `persist`, `registry` and `upload`; the nearest thing to an
+// authorization decision there is `aex_workspace_domain::grant::DownloadGrant`, which is a
+// per-object grant rather than a workspace projection.
 /// The read-only authorization projection.
 #[async_trait]
 pub trait AuthorizationProjection: Send + Sync + 'static {

@@ -1,4 +1,7 @@
-// TODO(cross-stream): replaced by aex-payment-contracts::PaymentCommandEnvelope at merge
+// TODO(cross-stream): aex-payment-contracts defines this envelope in Rust
+// (command::PaymentCommandEnvelope), but nothing generates TypeScript from it, so there
+// is nothing this file can import. The contracts stream owes the generator, not the
+// type.
 export interface PaymentCommandEnvelope {
   readonly schemaVersion: string;
   readonly providerIdempotencyKey: string;
@@ -68,7 +71,10 @@ export interface Succeeded {
   readonly apiVersion: string;
 }
 
-// TODO(cross-stream): replaced by aex-payment-contracts::PaymentCommandResult at merge
+// TODO(cross-stream): aex-payment-contracts has no PaymentCommandResult. Its outcome
+// type is result::PaymentResult, whose failure half is result::PaymentFailure carrying a
+// result::PaymentFailureClass, and whose ambiguous half is result::UnknownEvidence. As
+// above, no TypeScript is generated from any of it.
 export type PaymentCommandFailure = Rejected | Indeterminate;
 
 export interface Rejected {

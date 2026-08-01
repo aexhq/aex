@@ -4,8 +4,10 @@
 //! running interval. A vCPU count is therefore carried as millicpu and a memory
 //! size as bytes; there is no fractional vCPU anywhere.
 //!
-//! `TODO(cross-stream)`: [`ComputeShape`] and [`HandsShape`] are replaced by
-//! `aex_runtime_control::{ComputeShape, ComputeSize}` at merge. The golden
+//! `TODO(cross-stream)`: `aex-runtime-control` defines neither. It consumes
+//! `aex_wire::types::ComputeSize`, which is the workspace's one size vocabulary, and
+//! nothing anywhere publishes a `ComputeShape`. Adopting `ComputeSize` here would make
+//! this crate depend on `aex-wire`. The golden
 //! table below is derived from `references/limits-and-ceilings-decision-2026-07-30.md`
 //! row `microvm.shape`, and the evidence class that pins it
 //! (`hands-compute-shape-golden-table`) is owned by `aex-runtime-control`, not

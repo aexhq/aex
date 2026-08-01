@@ -111,6 +111,11 @@ pub enum CommitResolution {
 
 /// Resolves an outcome-unknown commit without a second transaction identity.
 ///
+/// `unknown` is the whole precondition. It cannot be constructed except from
+/// [`CommitFailure::Unknown`], so holding one is the proof that this is answering
+/// an ambiguous commit rather than a rolled-back one, and `probe` is the answer
+/// the caller already got by re-querying the original business key.
+///
 /// # Errors
 /// Returns [`UnknownCommitError::IntentConflict`] if durable state has the same
 /// business key but a different intent hash.
@@ -119,9 +124,8 @@ pub fn resolve_unknown_commit(
     probe: CommitProbe,
     expected_intent: [u8; 32],
 ) -> Result<CommitResolution, UnknownCommitError> {
-    // The transport identity is a construction invariant of `UnknownCommit`;
-    // reading it here keeps the reconciliation bound to the exact transaction
-    // that became ambiguous rather than to whatever the caller passed alongside.
+    // Re-checks the construction invariant, so a second mint site added later
+    // fails a test rather than silently reconciling an unnameable transaction.
     debug_assert!(!unknown.transaction().as_str().is_empty());
     match probe {
         CommitProbe::Committed(receipt) if receipt.intent_hash == expected_intent => {

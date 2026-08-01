@@ -51,7 +51,10 @@ pub struct DueEntry {
     pub lease_expires_at: Option<Timestamp>,
 }
 
-// TODO(cross-stream): replaced by aex_session_app::ports::WorkAuthority
+// TODO(cross-stream): `aex-session-app` publishes no work authority. Its ports are
+// readers plus `aex_session_app::ports::AuthorityCommitter`, and the runnable-work
+// vocabulary lives in `aex_operation_domain::lease` (`WorkItem`, `Lease`,
+// `ClaimOutcome`, `WorkCommit`) as data rather than as a trait.
 /// The runnable-work authority.
 #[async_trait]
 pub trait WorkAuthority: Send + Sync + 'static {

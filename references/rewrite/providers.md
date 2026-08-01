@@ -215,6 +215,21 @@ aex_model_catalog::document::{ModelEntry, ModelLimits, CapabilitySet, Capability
 
 ## 5. Changes needed from peers
 
+> **Status correction, 2026-08-01.** Every peer named below has landed, and none of
+> these requests was honoured. `aex-brain-domain` did **not** take the
+> `aex-model-catalog` dependency; it defines its own `wire_pending` copies of the
+> canonical vocabulary and every one of them has since diverged from
+> `aex_model_catalog::canonical`. `aex-brain-application` landed `ProviderPort` and
+> friends bound to *those* copies, so the gateway's restatement is no longer verbatim
+> and the two sides of the port name different request, message, usage and receipt
+> types. `aex-brain-application::pressure` is an empty placeholder, so
+> `MemoryReservation` and `ReservationClass` exist nowhere. `aex-secret-domain`'s
+> `CiphertextRef` and `EncryptionContext` are different designs from the gateway's,
+> not different spellings. The per-item markers in
+> `aex_brain_domain::wire_pending` and `aex_brain_provider_gateway::wire_pending`
+> now record each divergence against a path that resolves; the list below is the
+> original ask, kept for provenance.
+
 - `TODO(cross-stream): aex-brain-domain adds aex-model-catalog as a dependency and
   re-exports aex_model_catalog::canonical::* — CanonicalBlock, CanonicalMessage,
   CanonicalModelRequest, CompleteAssistantMessage, CompleteProof, StopReason,

@@ -9,7 +9,11 @@ use aex_wire::ids::{
 };
 use aex_wire::types::Timestamp;
 
-// TODO(cross-stream): replaced by aex_content_domain::Blake3Digest at merge.
+// TODO(cross-stream): `aex-content-domain` publishes no `Blake3Digest`. Its body
+// digest is `aex_content_domain::digest::ContentDigest`, which is an alias for
+// `aex_wire::ids::ContentHash` and is SHA-256, and its `BLAKE3` Merkle page digest
+// is the separate `aex_content_domain::digest::PageDigest`. Two digests, two types
+// there; one type here.
 /// A `BLAKE3` digest, rendered `b3:<64 lowercase hex>`.
 ///
 /// The Merkle page and root digest is `BLAKE3` while the body digest is
@@ -107,7 +111,10 @@ pub fn body_hex(digest: &ContentHash) -> String {
     hex::encode(digest.as_bytes())
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::SealedBytes at merge.
+// TODO(cross-stream): `aex-content-domain` publishes no sealed-bytes type — it is
+// pure and never holds ciphertext. What it publishes is the identity of the
+// ciphertext, `aex_content_domain::descriptor::CiphertextIdentity`, carried on a
+// `descriptor::ContentDescriptor`.
 /// AEAD ciphertext plus the digest of the encryption context it is bound to.
 ///
 /// The crate never sees a plaintext body: the content crypto adapter seals
@@ -136,7 +143,9 @@ impl std::fmt::Debug for SealedBytes {
     }
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::PinOwner at merge.
+// TODO(cross-stream): `aex-content-domain` publishes no `PinOwner`. A pin is
+// `aex_content_domain::pin::Pin` inside a `pin::PinSet`, and who holds it is a
+// `pin::PinSubject` reached through a `pin::OwnerEdge`.
 /// Who holds a pin.
 ///
 /// The pin identity is the owning identifier, so removing a pin is a
@@ -198,7 +207,11 @@ impl PinOwner {
     }
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::GrantPlan at merge.
+// TODO(cross-stream): the marker named the wrong crate. `aex-content-domain` has no
+// grant vocabulary at all; the grant is `aex_workspace_domain::grant::DownloadGrant`
+// with an `aex_workspace_domain::grant::GrantSubject`, a `grant::GrantPlacement` and a
+// `grant::ByteRange`. This crate already decodes that type in `codec`, so the plan
+// below and the real grant coexist.
 /// What a download grant authorises.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantPlan {
@@ -223,7 +236,10 @@ pub struct GrantPlan {
     pub expires_at: Timestamp,
 }
 
-// TODO(cross-stream): replaced by aex_content_domain::GcSweepPlan at merge.
+// TODO(cross-stream): `aex-content-domain` publishes no sweep *plan*. It publishes the
+// decision — `aex_content_domain::gc::SweepDecision` over a `gc::SweepCandidate` under
+// a `gc::GcCondition`, fenced by a `gc::GcEpoch` — and leaves the write plan to the
+// adapter, which is this struct.
 /// One fenced sweep decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GcSweepPlan {

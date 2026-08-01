@@ -1,6 +1,7 @@
 /**
- * TODO(cross-stream): replaced by `packages/sdk/src/generated/index.ts` at merge.
- * The contracts stream owns the generated TypeScript route and error vocabulary.
+ * TODO(cross-stream): `packages/sdk/src/generated/` does not exist. The contracts
+ * stream owes the generated TypeScript route and error vocabulary; until it lands this
+ * file is the only definition.
  */
 
 export type RouteId =
