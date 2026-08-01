@@ -32,7 +32,7 @@ in `aex-session-app` (D-01).
 | `aex-secret-domain` | `plaintext, context, secret, revocation, custody` | complete |
 | `aex-workspace-domain` | `registry, upload, grant, persist` | complete |
 | `aex-session-domain` | `ids, budget, session, message, run, agent, journal, approval, terminal, deletion, pause, lineage, idempotency, testing` | complete |
-| `aex-session-app` | `plan, ports, error, use_cases, testing` | plan and ports complete; 7 of 13 use cases |
+| `aex-session-app` | `plan, ports, error, use_cases, testing` | plan and ports landed; 8 of 14 declared use cases |
 
 The interrupted stream's `wire_pending` and `canonical` stand-in modules are
 **deleted**. `aex-wire` and `aex-internal-contracts` now supply those types, and
@@ -40,14 +40,22 @@ The interrupted stream's `wire_pending` and `canonical` stand-in modules are
 
 ## 2. Deferred, as tracked gaps
 
-1. **Six use cases.** `create_session`, `persist_workspace`, `clone_session`,
-   `discard_workspace`, `rebind_credentials`, `respond_approval` and
-   `continue_operation` are not written. Every domain function and every plan
-   vocabulary item they need **is** implemented and tested — `plan_clone`,
-   `plan_persist`, `replay_receipt`, `rebind`, `clone_custody`, `respond`,
-   `claim`/`renew`/`complete` — so each remaining use case is assembly over
-   finished parts, not new domain work. Nothing is stubbed with `todo!()`: the
-   functions simply do not exist yet, so no caller can reach a panic.
+1. **Six use cases.** Plan 04 declares 14 functions, not 13. Eight now exist:
+   the seven originally landed functions plus `rebind_credentials`. The six
+   unwritten functions and their exact independent blockers are:
+
+   | Function | Exact blocker outside `aex-session-app`'s implementable assembly |
+   | --- | --- |
+   | `create_session` | No accepted application command or domain planner binds the generated create request's resolved configuration, initial registry root, first custody row, root-agent budget and idempotency receipt into one replayable projection. |
+   | `persist_workspace` | `ContentRoot` does not retain a root-page identity from which `ContentReader::load_page` can materialize the durable `TreeView`; `Write` also has no tree-page or persist-receipt write. The public `rootHash: ContentHash` and the domain's BLAKE3 root bytes additionally lack a specified conversion. |
+   | `clone_session` | A first admission can mint the target, but an exact operation replay cannot recover that target session from the specified `OperationResult`; no accepted internal result/projection seam records it. Inventing a target-id payload would be a new wire contract. |
+   | `discard_workspace` | No domain planner or transaction `Hint` carries the runtime generation-termination intent/receipt. Clearing `Session::generation` alone would acknowledge discard before the runtime authority accepts termination. |
+   | `respond_approval` | The reader ports expose neither the stored approval nor its current 11-field binding, and `Condition` has no pending-approval compare-and-set condition. `ItemPresent` cannot preserve first-decision-wins. |
+   | `continue_operation` | No port reads the `WorkItem`, and the operation domain has no total transition consuming `StepOutcome`: cursor persistence, retryable-step state and `Running -> Cancelled` after a worker observes cancellation are unowned. |
+
+   No `wire_pending` module or callable stub was added for these six gaps. The
+   functions remain absent and unreachable until their named owner contracts
+   land; this is the exact blocked marker, not a fallback implementation.
 2. **Property rows 11–14** (idempotency) are satisfied against
    `aex_wire::canonical::intent_digest` rather than a local hash, because the
    contract crate now owns the canonicalizer and the cross-language corpus.
@@ -59,6 +67,27 @@ The interrupted stream's `wire_pending` and `canonical` stand-in modules are
    `validate_append` returns exactly what the fold would for every state, and the
    plan-condition table in `aex-session-app` names each command's required
    conditions explicitly.
+
+### Credential rebind continuation
+
+`rebind_credentials(&AppContext, &Rebind)` now assembles the landed custody
+domain and plan vocabulary without a committer or external mutation:
+
+- account gating precedes operation replay;
+- an exact replay returns the stored operation with an empty, validated plan and
+  performs no idle, secret or custody read, so it cannot advance custody twice;
+- first admission requires command-idle plus runtime true-idle, conditions on
+  session/deletion/custody revisions and every selected revocation epoch, writes
+  the operation, custody and session head together, and emits the old owner-key
+  edge only as `Hint::DestroyKeyEdge` after commit;
+- the durable operation result is the canonical generated
+  `CredentialRebindResult`, not an ad-hoc payload;
+- a clone that started with `CloneCredentials::None` admits its first custody
+  row through the existing `admit_custody` transition.
+
+`AppError` now carries `CustodyRejection` and canonical-result errors, maps a
+true-idle rejection to `session_not_idle`, and maps the landed
+`ApprovalRejection::BindingChanged` arm to `approval_binding_changed`.
 
 ## 3. Exact types and port traits published
 
@@ -132,22 +161,16 @@ uses `aex_secret_domain::{set, delete, revoke, SecretPlaintext}`;
 
 ## 4. Changes needed from peers
 
-1. **`aex-wire` has no `approval_binding_changed` error code.** Binding drift
-   currently maps to `precondition_failed`, which loses the reason. The contracts
-   stream should add the code; `ApprovalRejection::BindingChanged` already carries
-   the drifted field list.
-2. **`aex-wire` still generates `RouteId::SessionFork` and
-   `RouteId::SessionDelete`.** D-11 supersedes both: the public vocabulary is
-   `clone` and `trash`/`restore`/`purge`, with no alias. Prelaunch clean cut means
-   these should be renamed, not aliased.
+1. **Resolved:** `aex-wire` now publishes `approval_binding_changed`, and
+   `AppError::code` maps `ApprovalRejection::BindingChanged` onto it.
+2. **Resolved:** the generated route table now uses `clone` and
+   `trash`/`restore`/`purge`; no `fork` or `delete` alias remains.
 3. **`aex-wire::limits` has no `session.materialized_agents` row.** Read as
    `session.subagent_concurrency`, which is exactly the right semantics — see
    D-27. No new row is needed unless the root agent is meant to consume budget,
    which D-22 says it is not.
-4. **`aex-internal-contracts` has no `OutboxEvent`.** The terminal outbox event
-   is declared in `aex-session-domain::terminal` for now. If `regional-stream`
-   and the observation stream both need to decode it, it belongs in the contract
-   crate; moving it is a re-export change here, nothing more.
+4. **Resolved:** `OutboxEvent` lives in `aex-internal-contracts` and
+   `aex-session-domain` re-exports it.
 5. **`aex-wire` mints no `GrantId`, `CursorId`, `WorkId`, `OwnerId`,
    `ReservationId`, `UsageClosureId` or `OwnerKeyEdgeId`.** All seven are internal
    identities and are declared locally (`aex-content-domain::identity`,
@@ -191,6 +214,23 @@ cargo check --workspace --all-targets
     (clean)
 cargo run -p aex-workspace-check
     133 member(s) and 139 package(s) satisfy every structural and registry rule
+```
+
+Continuation verification for the credential-rebind increment (`9e44049d`),
+with `CARGO_BUILD_JOBS=4`:
+
+```
+cargo fmt --all -- --check
+    (clean)
+cargo clippy -p aex-session-app --all-targets -- -D warnings
+    (clean)
+cargo nextest run -p aex-session-app
+    Summary [ 37.937s] 25 tests run: 25 passed, 0 skipped
+cargo check --workspace --all-targets
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12m 30s
+cargo run -p aex-workspace-check
+    133 member(s) and 139 package(s) satisfy every structural and registry rule
+    542 unearned-evidence row(s) recorded in the source-rewrite phase
 ```
 
 No `#[ignore]`, no environment self-skip, no empty target, no retry-to-green.
