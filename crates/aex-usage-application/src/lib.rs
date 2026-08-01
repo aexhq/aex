@@ -18,6 +18,7 @@ pub mod ports;
 #[cfg(feature = "probe")]
 pub mod probe;
 pub mod projection;
+pub mod shadow;
 pub mod use_cases;
 pub mod worker;
 
