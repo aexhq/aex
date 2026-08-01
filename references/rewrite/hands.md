@@ -425,7 +425,7 @@ the clock.
 | Claim | State |
 | --- | --- |
 | Guest cross-build to `aarch64-unknown-linux-musl` | **Earned.** `file` reports `ELF 64-bit LSB executable, ARM aarch64, statically linked, stripped`, 2 059 448 bytes. The target was installed and linked with `rust-lld`; no C toolchain is in the inputs, because the guest takes the pure-Rust `blake3` on that target. |
-| Local `arm64` image build | Run locally through `docker buildx --platform linux/arm64` under emulation. No registry push, no `CreateMicrovmImage`, no credential. |
+| Local `arm64` image build | **Not earned in this run.** The generated `Containerfile` is checked against the rootfs contract by test, the base digest and the `releasever` were both read from the real registry and the real base image, and `docker buildx --platform linux/arm64` was launched and was still resolving the package transaction under QEMU emulation when the wave closed. Nothing was pushed, no `CreateMicrovmImage` was called and no credential was read. The completed build belongs to `aex-live-hands-image` alongside the boot assertions. |
 | Everything needing a real `MicroVM` | Unearned and declared, unchanged from §5 and §9. |
 
 ### 11.5 Decisions taken in this wave
