@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 128,
+    "awaiting_owner": 125,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
@@ -1053,18 +1053,17 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "admission_laws": "unit",
+          "canonical_order": "unit",
+          "keys": "unit"
+        },
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
-      "unmapped_targets": [
-        "admission_laws",
-        "canonical_order",
-        "keys"
-      ],
-      "awaiting_owner": true
+      "unmapped_targets": [],
+      "awaiting_owner": false
     },
     "crates/aex-observation-export": {
       "name": "aex-observation-export",
@@ -1158,13 +1157,14 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "g7_staged_commit_envelope": "integration",
+          "properties": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-observation-test-support": {
       "name": "aex-observation-test-support",
@@ -1246,15 +1246,14 @@
           "untrusted_input"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-        }
+        "targets": {
+          "decode_bounds": "integration",
+          "properties": "unit"
+        },
+        "not_applicable": {}
       },
-      "unmapped_targets": [
-        "decode_bounds"
-      ],
-      "awaiting_owner": true
+      "unmapped_targets": [],
+      "awaiting_owner": false
     },
     "crates/aex-payment-contracts": {
       "name": "aex-payment-contracts",
