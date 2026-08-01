@@ -1296,9 +1296,11 @@
         "enum": [
           "session_stop",
           "session_persist",
-          "session_fork",
+          "session_clone",
           "workspace_discard",
-          "session_delete",
+          "session_trash",
+          "session_restore",
+          "session_purge",
           "credential_rebind",
           "telemetry_export",
           "workspace_delete"
@@ -1364,16 +1366,24 @@
             "x-aex-discriminator-value": "session_persist"
           },
           {
-            "$ref": "aex:schema:SessionForkResult",
-            "x-aex-discriminator-value": "session_fork"
+            "$ref": "aex:schema:SessionCloneResult",
+            "x-aex-discriminator-value": "session_clone"
           },
           {
             "$ref": "aex:schema:WorkspaceDiscardResult",
             "x-aex-discriminator-value": "workspace_discard"
           },
           {
+            "$ref": "aex:schema:SessionTrashResult",
+            "x-aex-discriminator-value": "session_trash"
+          },
+          {
+            "$ref": "aex:schema:SessionRestoreResult",
+            "x-aex-discriminator-value": "session_restore"
+          },
+          {
             "$ref": "aex:schema:SessionTombstone",
-            "x-aex-discriminator-value": "session_delete"
+            "x-aex-discriminator-value": "session_purge"
           },
           {
             "$ref": "aex:schema:CredentialRebindResult",
@@ -1751,12 +1761,12 @@
         ],
         "type": "object"
       },
-      "SessionForkResult": {
+      "SessionCloneResult": {
         "additionalProperties": false,
         "properties": {
           "session": {
             "$ref": "aex:schema:Session",
-            "description": "The new session."
+            "description": "The new, independent session."
           }
         },
         "required": [
@@ -1767,20 +1777,20 @@
       "SessionLineage": {
         "additionalProperties": false,
         "properties": {
-          "forkOperationId": {
-            "description": "The operation that forked it.",
+          "cloneOperationId": {
+            "description": "The operation that cloned it.",
             "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "operation"
           },
-          "forkedAtPersistRevision": {
-            "description": "The parent revision forked from.",
+          "clonedAtPersistRevision": {
+            "description": "The source revision cloned from.",
             "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
           },
-          "parentSessionId": {
-            "description": "The session this was forked from.",
+          "originSessionId": {
+            "description": "The session this was cloned from.",
             "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "session"
@@ -1905,6 +1915,40 @@
         "required": [],
         "type": "object"
       },
+      "SessionRestoreResult": {
+        "additionalProperties": false,
+        "properties": {
+          "restoredAt": {
+            "description": "When the restore committed.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after the restore.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "aex:schema:SessionStatus",
+            "description": "What the session is doing now."
+          }
+        },
+        "required": [
+          "restoredAt",
+          "sessionId",
+          "sessionRevision",
+          "status"
+        ],
+        "type": "object"
+      },
       "SessionStatus": {
         "enum": [
           "idle",
@@ -1979,6 +2023,42 @@
           "id",
           "operationId",
           "workspaceId"
+        ],
+        "type": "object"
+      },
+      "SessionTrashResult": {
+        "additionalProperties": false,
+        "properties": {
+          "recoveryDeadline": {
+            "description": "After this instant restore is refused.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after the trash.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trashedAt": {
+            "description": "When the trash committed.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          }
+        },
+        "required": [
+          "recoveryDeadline",
+          "sessionId",
+          "sessionRevision",
+          "trashedAt"
         ],
         "type": "object"
       },
