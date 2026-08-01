@@ -15,7 +15,7 @@ use std::sync::Arc;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::routes::{Plane, RouteId, match_route, route};
-use aex_wire::server::{AcceptKind, RequestContext as WireContext};
+use aex_wire::server::AcceptKind;
 use aex_wire::types::{HttpMethod, RequestId};
 use axum::Router;
 use axum::body::Bytes;
@@ -80,13 +80,22 @@ pub trait UnaryDispatch: Send + Sync + 'static {
 
     /// Decodes, calls and encodes one request through the generated dispatchers.
     ///
+    /// The **regional** context is passed rather than the wire context alone.
+    /// The wire context deliberately carries only what a handler may reason
+    /// about — who is asking and what it may replay — and for an `Account`
+    /// principal that does not include a workspace, so a handler given only the
+    /// wire context could not scope an authority read at all. The implementor
+    /// derives the wire context with [`RequestContext::to_wire`] and hands it to
+    /// the generated `dispatch_*`.
+    ///
     /// # Errors
     ///
     /// Returns the handler's own declared failure, or a decode failure the route
     /// declares.
     async fn dispatch(
         &self,
-        cx: &WireContext,
+        cx: &RequestContext,
+        accept: AcceptKind,
         raw: RawRequest<'_>,
         limits: RequestLimits,
     ) -> WireResult<RawResponse>;
@@ -270,7 +279,6 @@ where
         Ok(context) => context,
         Err(failure) => return render_error(&request_id, None, failure),
     };
-    let wire = context.to_wire(accept_kind(&headers));
     let query = query.unwrap_or_default();
     let raw = RawRequest {
         route: id,
@@ -278,7 +286,11 @@ where
         query: &query,
         body: &body,
     };
-    match state.api.dispatch(&wire, raw, state.limits).await {
+    match state
+        .api
+        .dispatch(&context, accept_kind(&headers), raw, state.limits)
+        .await
+    {
         Ok(response) => render(response),
         Err(failure) => render_error(&context.request_id, context.operation_id, failure),
     }

@@ -43,6 +43,21 @@ pub const SECRET_STATES: &[&str] = &["ready", "revoked", "deleted"];
 /// Every session-custody state, as the domain spells them.
 pub const CUSTODY_STATES: &[&str] = &["active", "deleted"];
 
+/// Every provider-credential state, as the wire spells them.
+pub const CREDENTIAL_STATES: &[&str] = &["ready", "revoked"];
+
+/// Every BYOK provider, as the generated `ProviderId` spells them.
+///
+/// Derived from the generated enum rather than written out, so a seventh
+/// provider cannot be admitted here without appearing in the contract first.
+#[must_use]
+pub fn providers() -> Vec<&'static str> {
+    aex_wire::models::ProviderId::ALL
+        .iter()
+        .map(|provider| provider.as_str())
+        .collect()
+}
+
 /// The metadata partition of one workspace.
 #[must_use]
 pub fn secret_partition(workspace: WorkspaceId) -> String {
@@ -223,16 +238,16 @@ pub const fn provider_credential_prefix() -> &'static str {
 
 /// One idempotency receipt.
 ///
+/// Delegates to [`aex_session_dynamodb::replay::receipt_key`]: the receipt row
+/// shape is shared by every regional table that holds one, and a second key
+/// template here would be a second idempotency guarantee.
+///
 /// # Errors
 ///
 /// [`KeyError`] when the scope or the key digest could not enter a key.
 pub fn receipt(workspace: WorkspaceId, scope: &str, key_sha256_hex: &str) -> Result<Key, KeyError> {
-    let scope = Component::parse(scope)?;
-    let digest = Component::parse(key_sha256_hex)?;
-    Ok(Key {
-        pk: format!("IDEM#{workspace}#{scope}#{digest}"),
-        sk: "RECEIPT".to_owned(),
-    })
+    let (pk, sk) = aex_session_dynamodb::replay::receipt_key(workspace, scope, key_sha256_hex)?;
+    Ok(Key { pk, sk })
 }
 
 #[cfg(test)]

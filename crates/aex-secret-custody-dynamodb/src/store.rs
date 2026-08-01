@@ -11,9 +11,10 @@ use aex_session_dynamodb::attr::{Item, s};
 use aex_session_dynamodb::error::{
     Idempotence, Resolution, StoreError, classify, decode_cancellation,
 };
-use aex_session_dynamodb::paging::PageBudget;
+use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan, key};
-use aex_wire::ids::{SessionId, WorkspaceId};
+use aex_session_dynamodb::replay::{Receipt, decode_receipt_row, receipt_is_live};
+use aex_wire::ids::{ProviderCredentialId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
@@ -24,6 +25,18 @@ use crate::codec::{
     self, CustodyHead, ProviderCredential, RedactionManifest, SecretMetadata, StoredGeneration,
 };
 use crate::keys;
+
+/// One bounded page and the position a continuation resumes from.
+///
+/// `next` is `Some` exactly when the authority reported more rows behind this
+/// page, so a caller can never mistake a full page for the end of a collection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page<T> {
+    /// The rows, in key order.
+    pub items: Vec<T>,
+    /// Where the next page starts, when there is one.
+    pub next: Option<PagePosition>,
+}
 
 // TODO(cross-stream): replaced by aex_secret_domain::ports::SecretCustodyStore
 /// The `regional-secret-custody` authority.
@@ -97,6 +110,63 @@ pub trait SecretCustodyStore: Send + Sync + 'static {
         budget: PageBudget,
     ) -> Result<Vec<ProviderCredential>, StoreError>;
 
+    /// Reads one provider-credential binding by identity.
+    ///
+    /// The identity alone does not name a key — the sort key carries the
+    /// provider — so this walks the workspace's directory partition under a
+    /// bounded budget rather than scanning the table.
+    ///
+    /// # Errors
+    ///
+    /// As [`SecretCustodyStore::load_secret`].
+    async fn load_provider_credential(
+        &self,
+        workspace: WorkspaceId,
+        credential: ProviderCredentialId,
+    ) -> Result<Option<ProviderCredential>, StoreError>;
+
+    /// Lists one workspace's secrets from a continuation.
+    ///
+    /// Returns the page plus the position a continuation resumes from, which is
+    /// `None` exactly when the page is the last one. A list that could not name
+    /// its own continuation would silently truncate.
+    ///
+    /// # Errors
+    ///
+    /// As [`SecretCustodyStore::load_secret`].
+    async fn page_secrets(
+        &self,
+        workspace: WorkspaceId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<Page<SecretMetadata>, StoreError>;
+
+    /// Lists one workspace's provider-credential bindings from a continuation.
+    ///
+    /// # Errors
+    ///
+    /// As [`SecretCustodyStore::page_secrets`].
+    async fn page_provider_credentials(
+        &self,
+        workspace: WorkspaceId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<Page<ProviderCredential>, StoreError>;
+
+    /// Reads one durable idempotency receipt, or `None` when it is absent or
+    /// expired.
+    ///
+    /// # Errors
+    ///
+    /// As [`SecretCustodyStore::load_secret`].
+    async fn load_receipt(
+        &self,
+        workspace: WorkspaceId,
+        scope: &str,
+        key_sha256_hex: &str,
+        now: Timestamp,
+    ) -> Result<Option<Receipt>, StoreError>;
+
     /// Commits one compiled transaction.
     ///
     /// # Errors
@@ -160,6 +230,16 @@ impl CustodyStore {
         prefix: &str,
         budget: PageBudget,
     ) -> Result<Vec<Item>, StoreError> {
+        Ok(self.query_page(partition, prefix, budget, None).await?.0)
+    }
+
+    async fn query_page(
+        &self,
+        partition: &str,
+        prefix: &str,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<(Vec<Item>, Option<PagePosition>), StoreError> {
         let output = self
             .client
             .query()
@@ -171,10 +251,27 @@ impl CustodyStore {
             .expression_attribute_values(":prefix", s(prefix.to_owned()))
             .consistent_read(true)
             .limit(budget.limit())
+            .set_exclusive_start_key(after.map(|position| position.to_exclusive_start(None, None)))
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
-        Ok(output.items.unwrap_or_default())
+        // The table has no index, so a continuation is the base key alone.
+        let next = match output.last_evaluated_key {
+            None => None,
+            Some(key) => Some(PagePosition::from_last_evaluated(&key, None, None).map_err(
+                |error| {
+                    // A continuation the authority returned that this adapter
+                    // cannot resume is corruption, not a customer condition:
+                    // answering the page without it would silently truncate.
+                    StoreError::Corrupt(aex_session_dynamodb::attr::CodecError::Malformed {
+                        item_type: "page_continuation",
+                        attribute: "lastEvaluatedKey",
+                        reason: error.to_string(),
+                    })
+                },
+            )?),
+        };
+        Ok((output.items.unwrap_or_default(), next))
     }
 }
 
@@ -265,6 +362,89 @@ impl SecretCustodyStore for CustodyStore {
                 codec::decode_provider_credential(item, workspace).map_err(StoreError::from)
             })
             .collect()
+    }
+
+    async fn load_provider_credential(
+        &self,
+        workspace: WorkspaceId,
+        credential: ProviderCredentialId,
+    ) -> Result<Option<ProviderCredential>, StoreError> {
+        // The sort key is `CRED#{provider}#{credential}`, so the identity alone
+        // names a suffix rather than a key. Six providers is a closed set, so the
+        // read is six bounded point reads and never a scan.
+        for provider in aex_wire::models::ProviderId::ALL {
+            let target = keys::provider_credential(workspace, provider.as_str(), credential)?;
+            if let Some(item) = self.get(&target.pk, &target.sk).await? {
+                return Ok(Some(codec::decode_provider_credential(&item, workspace)?));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn page_secrets(
+        &self,
+        workspace: WorkspaceId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<Page<SecretMetadata>, StoreError> {
+        let (items, next) = self
+            .query_page(
+                &keys::secret_partition(workspace),
+                keys::secret_prefix(),
+                budget,
+                after,
+            )
+            .await?;
+        Ok(Page {
+            items: items
+                .iter()
+                .map(|item| codec::decode_secret(item, workspace).map_err(StoreError::from))
+                .collect::<Result<Vec<_>, _>>()?,
+            next,
+        })
+    }
+
+    async fn page_provider_credentials(
+        &self,
+        workspace: WorkspaceId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<Page<ProviderCredential>, StoreError> {
+        let (items, next) = self
+            .query_page(
+                &format!("PCR#{workspace}"),
+                keys::provider_credential_prefix(),
+                budget,
+                after,
+            )
+            .await?;
+        Ok(Page {
+            items: items
+                .iter()
+                .map(|item| {
+                    codec::decode_provider_credential(item, workspace).map_err(StoreError::from)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            next,
+        })
+    }
+
+    async fn load_receipt(
+        &self,
+        workspace: WorkspaceId,
+        scope: &str,
+        key_sha256_hex: &str,
+        now: Timestamp,
+    ) -> Result<Option<Receipt>, StoreError> {
+        let target = keys::receipt(workspace, scope, key_sha256_hex)?;
+        let Some(item) = self.get(&target.pk, &target.sk).await? else {
+            return Ok(None);
+        };
+        let receipt = decode_receipt_row(&item)?;
+        // `regional-secret-custody` disables TTL deliberately, so the explicit
+        // expiry is the only fence. An expired receipt is absent, never a stale
+        // hit.
+        Ok(receipt_is_live(&receipt, now).then_some(receipt))
     }
 
     async fn commit(&self, plan: &TransactionPlan) -> Result<(), StoreError> {

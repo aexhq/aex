@@ -5,7 +5,7 @@ use aex_wire::ids::{OperationId, OrganizationId, WorkspaceId};
 use aex_wire::routes::RouteId;
 use aex_wire::scopes::ScopeSet;
 use aex_wire::server::{AcceptKind, RequestContext as WireContext};
-use aex_wire::types::{ETag, Region, RequestId};
+use aex_wire::types::{ETag, Region, RequestId, Timestamp};
 use time::OffsetDateTime;
 
 use crate::idempotency::IdempotencyIdentity;
@@ -108,6 +108,22 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    /// The edge receipt time as the workspace timestamp type.
+    ///
+    /// One conversion, at the boundary where the edge's clock becomes the value
+    /// every handler and every authority row shares. A receipt instant outside
+    /// the representable range is a broken clock, not a customer condition, so
+    /// it is reported rather than clamped.
+    ///
+    /// # Errors
+    ///
+    /// [`aex_wire::types::ValueError`] when the instant is outside the
+    /// representable range.
+    pub fn now(&self) -> Result<Timestamp, aex_wire::types::ValueError> {
+        let millis = self.received_at.unix_timestamp_nanos() / 1_000_000;
+        Timestamp::from_unix_millis(i64::try_from(millis).unwrap_or(i64::MAX))
+    }
+
     /// Projects the richer regional record onto the context the generated
     /// dispatchers take.
     ///

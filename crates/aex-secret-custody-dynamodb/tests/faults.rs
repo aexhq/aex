@@ -3,7 +3,8 @@
 mod support;
 
 use aex_secret_custody_dynamodb::codec::{
-    decode_manifest, decode_secret, encode_manifest, encode_secret,
+    decode_manifest, decode_provider_credential, decode_secret, encode_manifest,
+    encode_provider_credential, encode_secret,
 };
 use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER};
 use aex_secret_domain::revocation::RevocationEpoch;
@@ -15,7 +16,9 @@ use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::CancellationReason;
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 
-use support::{TABLE, authorization, manifest, metadata, now, secret_name, workspace};
+use support::{
+    TABLE, authorization, manifest, metadata, now, provider_credential, secret_name, workspace,
+};
 
 fn cancelled(codes: &[&str]) -> TransactWriteItemsError {
     TransactWriteItemsError::TransactionCanceledException(
@@ -145,4 +148,41 @@ fn a_set_plan_refuses_a_revision_jump_and_mismatched_generation_identity() {
     let error = expressions::set(TABLE, &wrong_generation, &metadata(), None)
         .expect_err("metadata cannot point at a different generation identity");
     assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
+}
+
+/// A stored provider or state outside the closed set is corruption, and must be
+/// a decode failure rather than a value a projection has to guess at.
+#[test]
+fn a_credential_row_outside_the_closed_vocabularies_is_refused() {
+    for (attribute, corrupt) in [("provider", "openrouter"), ("state", "active")] {
+        let mut row = encode_provider_credential(&provider_credential()).expect("encodes");
+        row.insert(
+            attribute.to_owned(),
+            aex_session_dynamodb::attr::s(corrupt.to_owned()),
+        );
+        let refusal = decode_provider_credential(&row, workspace()).expect_err("refused");
+        assert!(
+            matches!(refusal, CodecError::Malformed { attribute: found, .. } if found == attribute),
+            "`{corrupt}` on `{attribute}` decoded instead of failing: {refusal:?}"
+        );
+    }
+}
+
+/// The fingerprint is persisted, so a row without one cannot be answered with a
+/// synthesised value: the read path has no plaintext to recompute it from.
+#[test]
+fn a_credential_row_without_a_fingerprint_is_refused_rather_than_defaulted() {
+    let mut row = encode_provider_credential(&provider_credential()).expect("encodes");
+    row.remove("fingerprint");
+    let refusal = decode_provider_credential(&row, workspace()).expect_err("refused");
+    assert!(
+        matches!(
+            refusal,
+            CodecError::Missing {
+                attribute: "fingerprint",
+                ..
+            }
+        ),
+        "{refusal:?}"
+    );
 }

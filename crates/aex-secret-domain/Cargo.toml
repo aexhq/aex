@@ -32,8 +32,10 @@ live_suite = "pure domain crate; Area 9's registry declares no independent live 
 [dependencies]
 aex-wire = { path = "../aex-wire" }
 blake3.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+sha2.workspace = true

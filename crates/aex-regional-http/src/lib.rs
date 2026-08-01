@@ -26,6 +26,7 @@ pub mod idempotency;
 pub mod limits;
 pub mod mount;
 pub mod page;
+pub mod projection;
 pub mod router;
 pub mod stream;
 
@@ -42,4 +43,5 @@ pub use mount::{
     AdmissionRequest, EdgeAdmission, MountError, Mounted, UnaryDispatch, mount_unary, not_served,
     render, render_error,
 };
+pub use projection::ProjectionError as WireProjectionError;
 pub use router::{EdgeStack, RouteOwner, route_owner};

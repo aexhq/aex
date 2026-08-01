@@ -96,6 +96,14 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             .map_err(|error| RunError::Runtime(error.to_string()))?,
     };
 
+    // As on `regional-session-api`: the handler surface for
+    // `regional_secret_api::Routes::served()` is complete and is mounted by
+    // `mount_unary` in the `served` target, but the listener cannot mount it
+    // until an `EdgeAdmission` can be built. That needs an `AssertionSource` and
+    // a `KeyVerifier`, and neither has a published peer contract yet. RS-18
+    // forbids mounting a route the edge could never admit, so the routes stay
+    // absent and the process serves its health surface only.
+    let _served = regional_secret_api::Routes::served();
     lambda_http::run(aex_regional_http::health::router(readiness))
         .await
         .map_err(|error| RunError::Runtime(error.to_string()))

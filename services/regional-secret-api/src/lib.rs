@@ -1,6 +1,7 @@
 //! Plaintext admission boundary for secrets and provider credentials.
 
 pub mod config;
+pub mod handlers;
 
 use std::sync::Arc;
 
@@ -8,6 +9,8 @@ use aex_regional_http::router::RouteOwner;
 use aex_wire::routes::RouteId;
 
 use crate::config::Config;
+
+pub use handlers::{Routes, Shared};
 
 /// The composed secret edge: the custody authority plus the envelope crypto over
 /// the secret `KMS` key, and nothing else.
