@@ -276,6 +276,29 @@ impl GraphInputs {
             .collect()
     }
 
+    /// Resolve a `release/units.toml` `package` to the node that holds it.
+    ///
+    /// A deployable's owning package is usually a Cargo member, but the two
+    /// Stripe edges are `TypeScript` Lambdas whose package is an npm member. The
+    /// unit registry names a package, not a node namespace, so the resolution
+    /// happens here rather than being spelled out in every row: writing
+    /// `npm:@aexhq/stripe-command-edge` into the registry would make the file
+    /// carry the graph's internal encoding.
+    ///
+    /// An unknown name resolves to the Cargo namespace so that graph
+    /// construction reports the dangling edge, and `registry_reference_violations`
+    /// reports the row, exactly as it did before npm packages could be named.
+    #[must_use]
+    pub fn package_node(&self, package: &str) -> NodeId {
+        if self.cargo.iter().any(|member| member.name == package) {
+            return NodeId::cargo(package);
+        }
+        if self.npm.iter().any(|member| member.name == package) {
+            return NodeId::npm(package);
+        }
+        NodeId::cargo(package)
+    }
+
     /// Every edge the authorities declare, in a stable order.
     #[must_use]
     pub fn edges(&self) -> Vec<RawEdge> {
@@ -316,7 +339,7 @@ impl GraphInputs {
         for unit in &self.units.units {
             edges.push(RawEdge {
                 from: NodeId::artifact(&unit.id),
-                to: NodeId::cargo(&unit.package),
+                to: self.package_node(&unit.package),
                 kind: EdgeKind::ArtifactInput,
             });
             for extra in &unit.extra_inputs {
@@ -478,6 +501,17 @@ fn parse_npm(root: &Path, violations: &mut Vec<Violation>) -> Result<Vec<NpmPack
     {
         for glob in globs.iter().filter_map(serde_json::Value::as_str) {
             expand_workspace_glob(root, glob, &mut dirs);
+        }
+    }
+    // Three npm packages no `workspaces` glob reaches: the lint plugin, which is
+    // referenced by path, and the two Stripe edges, which live under `services/`
+    // beside Cargo members. The list is `aex-workspace-check`'s, not a second
+    // copy: if the two authorities read different package sets they derive
+    // different live targets from the same tree, which is precisely what
+    // `live-target-disagreement` exists to catch.
+    for explicit in aex_workspace_check::collect::NPM_EXPLICIT {
+        if root.join(explicit).join("package.json").is_file() {
+            dirs.insert((*explicit).to_owned());
         }
     }
     let mut parsed = Vec::new();

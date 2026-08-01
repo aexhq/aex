@@ -224,6 +224,10 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
         ],
     ),
     ("regional-stream", &["regional-stream"]),
+    // The agent is its own stage and it comes first, because `hands-image`
+    // embeds the agent binary: publishing them together would let an image whose
+    // rootfs holds the previous agent reach a plane as if it held the new one.
+    ("runtime-agent", &["hands-agent"]),
     ("runtime", &["brain-mux", "hands-image"]),
     ("web", &["dashboard", "site"]),
 ];
@@ -356,6 +360,160 @@ impl CompositionManifest {
     pub fn with_unit(mut self, id: &str, entry: ManifestUnit) -> Result<Self> {
         self.units.insert(id.to_owned(), entry);
         self.seal()
+    }
+}
+
+impl ManifestUnit {
+    /// The manifest entry an envelope describes.
+    ///
+    /// Every field is copied from the envelope rather than recomputed, because
+    /// the envelope is the thing that was verified: a manifest entry that
+    /// re-derived a digest would be a second opinion about bytes nobody re-read.
+    #[must_use]
+    pub fn from_envelope(envelope: &crate::artifact::ArtifactEnvelope) -> Self {
+        Self {
+            kind: envelope.unit.kind.clone(),
+            envelope_digest: envelope.envelope_digest.clone(),
+            artifact_digest: envelope.output.digest.clone(),
+            size_bytes: envelope.output.size_bytes,
+            location: envelope.output.location.clone(),
+            target: envelope.output.target.clone(),
+            oci_index_digest: envelope.output.oci_index_digest.clone(),
+            oci_child_digest: envelope.output.oci_child_digest.clone(),
+            config_schema_version: envelope.identities.config_schema_version,
+            required_central_head: envelope
+                .identities
+                .migration
+                .as_ref()
+                .and_then(|migration| migration.required_central_head.clone()),
+            adjacent: envelope.composition.adjacent.clone(),
+        }
+    }
+}
+
+/// Assemble a complete composition from a set of envelopes.
+///
+/// The unit set is the envelopes' own, and the order is derived from
+/// [`DEFAULT_ORDER`], so a unit nobody described cannot appear and a unit no
+/// stage places is a refusal rather than an unordered entry. Completeness
+/// against the deployable registry is checked by the caller, which is the only
+/// layer that knows which absences are recorded and which are holes.
+///
+/// # Errors
+/// Returns [`Exit::CompositionIncompatible`] when a unit belongs to no stage,
+/// and propagates canonicalization failure.
+pub fn new_manifest(
+    contract_digest: String,
+    envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
+    packages: BTreeMap<String, BTreeMap<String, PackageRef>>,
+    migrations: Migrations,
+    infra: Infra,
+    catalogs: BTreeMap<String, String>,
+    policy: Policy,
+) -> Result<CompositionManifest> {
+    let units: BTreeMap<String, ManifestUnit> = envelopes
+        .iter()
+        .map(|(id, envelope)| (id.clone(), ManifestUnit::from_envelope(envelope)))
+        .collect();
+    let order = order_for(&units.keys().cloned().collect::<Vec<_>>())?;
+    CompositionManifest {
+        schema: "aex.composition-manifest.v1".to_owned(),
+        release_id: "sha256:0".to_owned(),
+        contract_digest,
+        units,
+        packages,
+        migrations,
+        infra,
+        catalogs,
+        order,
+        policy,
+        annotations: None,
+    }
+    .seal()
+}
+
+/// What changed between two compositions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManifestDiff {
+    /// Schema discriminator.
+    pub schema: &'static str,
+    /// The release compared from.
+    pub from: String,
+    /// The release compared to.
+    pub to: String,
+    /// Units only the newer manifest holds.
+    pub added: Vec<String>,
+    /// Units only the older manifest holds.
+    pub removed: Vec<String>,
+    /// Units whose artifact digest changed.
+    pub changed: Vec<UnitChange>,
+    /// Whether the contract bundle changed.
+    pub contract_changed: bool,
+    /// Whether the central migration head or bundle changed.
+    pub central_migrations_changed: bool,
+    /// Whether the infrastructure module bundle changed.
+    pub infra_changed: bool,
+}
+
+/// One unit whose bytes differ between two compositions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnitChange {
+    /// Unit id.
+    pub unit: String,
+    /// The older artifact digest.
+    pub from: String,
+    /// The newer artifact digest.
+    pub to: String,
+    /// Whether the newer entry permits rolling back to the older one.
+    pub rollback_eligible: bool,
+}
+
+/// Compare two compositions.
+///
+/// A diff is a description, never a decision: it reports that a unit's bytes
+/// changed and whether the newer entry says a rollback is permitted, and leaves
+/// the promotion question to `admit`.
+#[must_use]
+pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDiff {
+    let added: Vec<String> = to
+        .units
+        .keys()
+        .filter(|id| !from.units.contains_key(*id))
+        .cloned()
+        .collect();
+    let removed: Vec<String> = from
+        .units
+        .keys()
+        .filter(|id| !to.units.contains_key(*id))
+        .cloned()
+        .collect();
+    let changed: Vec<UnitChange> = to
+        .units
+        .iter()
+        .filter_map(|(id, entry)| {
+            let previous = from.units.get(id)?;
+            (previous.artifact_digest != entry.artifact_digest).then(|| UnitChange {
+                unit: id.clone(),
+                from: previous.artifact_digest.clone(),
+                to: entry.artifact_digest.clone(),
+                rollback_eligible: entry.adjacent.rollback_eligible,
+            })
+        })
+        .collect();
+    ManifestDiff {
+        schema: "aex.composition-diff.v1",
+        from: from.release_id.clone(),
+        to: to.release_id.clone(),
+        added,
+        removed,
+        changed,
+        contract_changed: from.contract_digest != to.contract_digest,
+        central_migrations_changed: from.migrations.central.bundle_digest
+            != to.migrations.central.bundle_digest
+            || from.migrations.central.head != to.migrations.central.head,
+        infra_changed: from.infra.module_bundle_digest != to.infra.module_bundle_digest,
     }
 }
 
@@ -584,8 +742,117 @@ pub fn rollback_candidates(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_semver_range, looks_like_mutable_reference, order_for, scan_environment};
+    use super::{DEFAULT_ORDER, is_semver_range, looks_like_mutable_reference, order_for};
+    use super::{diff, scan_environment};
     use serde_json::json;
+
+    fn manifest(release: &str, units: &[(&str, &str)]) -> super::CompositionManifest {
+        let mut document = json!({
+            "schema": "aex.composition-manifest.v1",
+            "releaseId": release,
+            "contractDigest": "sha256:aa",
+            "units": {},
+            "migrations": {
+                "central": { "bundleDigest": "sha256:bb", "head": "0007", "adminImageDigest": "sha256:cc" },
+                "regional": { "bundleDigest": "sha256:dd", "generation": 1 }
+            },
+            "infra": {
+                "moduleBundleDigest": "sha256:ee",
+                "sourceArchiveUri": "s3://bucket/modules.tar.gz",
+                "terraformVersion": "1.14.0",
+                "providerVersions": {}
+            },
+            "order": [{
+                "name": "regional-stream",
+                "units": [],
+                "mode": "parallel",
+                "rationale": "the fixture's only stage"
+            }],
+            "policy": {
+                "toolchainChannel": "1.97.1",
+                "artifactPolicyDigest": "sha256:ff",
+                "freshnessPolicyDigest": "sha256:01",
+                "sourcePolicyVersion": 1
+            }
+        });
+        for (id, digest) in units {
+            document["units"][*id] = json!({
+                "kind": "rust-lambda",
+                "envelopeDigest": "sha256:02",
+                "artifactDigest": digest,
+                "sizeBytes": 1,
+                "location": { "kind": "s3", "uri": "lambda/x/y.zip", "immutable": true },
+                "target": { "os": "linux", "architecture": "arm64", "triple": "aarch64-unknown-linux-gnu" },
+                "configSchemaVersion": 1,
+                "adjacent": {
+                    "storageCompatible": true,
+                    "protocolCompatible": true,
+                    "rollbackEligible": true
+                }
+            });
+            document["order"][0]["units"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(id));
+        }
+        serde_json::from_value(document).expect("a fixture manifest")
+    }
+
+    #[test]
+    fn the_agent_is_ordered_before_the_image_that_embeds_it() {
+        let position = |unit: &str| {
+            DEFAULT_ORDER
+                .iter()
+                .position(|(_, members)| members.contains(&unit))
+                .unwrap_or_else(|| panic!("`{unit}` belongs to no stage"))
+        };
+        assert!(
+            position("hands-agent") < position("hands-image"),
+            "the image embeds the agent, so publishing them in one stage would let an \
+             image carrying the previous agent reach a plane as if it carried the new one"
+        );
+    }
+
+    #[test]
+    fn every_shipped_unit_belongs_to_a_stage() {
+        // A deployable the default order cannot place makes a complete
+        // composition impossible, and the failure would only appear at the point
+        // somebody tried to build one.
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../release/units.toml"),
+        )
+        .expect("release/units.toml");
+        let units: crate::graph::inputs::Units = toml::from_str(&text).expect("the unit registry");
+        let ids: Vec<String> = units.units.iter().map(|unit| unit.id.clone()).collect();
+        assert!(!ids.is_empty());
+        order_for(&ids).expect("every registry unit must belong to a default stage");
+    }
+
+    #[test]
+    fn a_diff_names_what_changed_and_leaves_the_decision_alone() {
+        let from = manifest("sha256:from", &[("regional-stream", "sha256:10")]);
+        let to = manifest(
+            "sha256:to",
+            &[
+                ("regional-stream", "sha256:11"),
+                ("regional-otlp", "sha256:12"),
+            ],
+        );
+        let report = diff(&from, &to);
+        assert_eq!(report.added, vec!["regional-otlp"]);
+        assert!(report.removed.is_empty());
+        assert_eq!(report.changed.len(), 1);
+        assert_eq!(report.changed[0].unit, "regional-stream");
+        assert_eq!(report.changed[0].from, "sha256:10");
+        assert_eq!(report.changed[0].to, "sha256:11");
+        assert!(!report.contract_changed);
+        assert!(!report.central_migrations_changed);
+        assert!(!report.infra_changed);
+
+        let reverse = diff(&to, &from);
+        assert_eq!(reverse.removed, vec!["regional-otlp"]);
+        assert!(reverse.added.is_empty());
+    }
 
     #[test]
     fn an_account_identifier_is_an_environment_identity() {

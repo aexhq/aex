@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane};
 use aex_release_tool::artifact::{self, ArtifactEnvelope, Form};
 use aex_release_tool::canon;
+use aex_release_tool::describe;
 use aex_release_tool::error::{Exit, Result, ToolError, Violation, io, usage};
 use aex_release_tool::evidence::{self, DeclaredJobs, FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::GraphInputs;
@@ -219,6 +220,32 @@ enum ArtifactCommand {
         #[arg(long, default_value_t = 0)]
         source_date_epoch: u64,
     },
+    /// Assemble an envelope from a build that happened here.
+    ///
+    /// Every field a local build establishes is read from the tree; every field
+    /// only a workflow run can establish is marked unearned and listed, so the
+    /// envelope is refused by `artifact verify` rather than passing on a claim
+    /// nothing backs.
+    Describe {
+        /// The unit.
+        #[arg(long)]
+        unit: String,
+        /// The packaged artifact bytes.
+        #[arg(long)]
+        file: PathBuf,
+        /// Where to write the envelope.
+        #[arg(long)]
+        out: PathBuf,
+        /// Where to write the ledger of fields no local build can fill.
+        #[arg(long)]
+        unearned_out: Option<PathBuf>,
+        /// The generated contract bundle digest this build was compiled against.
+        #[arg(long)]
+        contract_digest: String,
+        /// Envelope creation time, RFC 3339. Defaults to now.
+        #[arg(long)]
+        now: Option<String>,
+    },
     /// Verify an envelope, and optionally the bytes it describes.
     Verify {
         /// The envelope.
@@ -241,6 +268,33 @@ enum ArtifactCommand {
 
 #[derive(Debug, Subcommand)]
 enum ManifestCommand {
+    /// Assemble a complete composition from a set of envelopes.
+    New {
+        /// Envelope files, one per unit.
+        #[arg(long = "envelope")]
+        envelopes: Vec<PathBuf>,
+        /// The composition inputs no envelope carries: packages, migrations,
+        /// infrastructure, catalogues and the pinned policy digests.
+        #[arg(long)]
+        composition: PathBuf,
+        /// A ledger accounting for every registry unit with no envelope. A unit
+        /// that is neither described nor recorded here is a hole, and refusing
+        /// is the only way it stays visible.
+        #[arg(long)]
+        unearned: Option<PathBuf>,
+        /// Where to write the manifest.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Compare two compositions.
+    Diff {
+        /// The older manifest.
+        #[arg(long)]
+        from: PathBuf,
+        /// The newer manifest.
+        #[arg(long)]
+        to: PathBuf,
+    },
     /// Recompute a manifest's digest.
     Digest {
         /// The manifest.
@@ -278,6 +332,36 @@ enum ManifestCommand {
 
 #[derive(Debug, Subcommand)]
 enum EvidenceCommand {
+    /// Build a receipt from a run's context and its `JUnit` report.
+    New {
+        /// The run context: identity, source, selection and hygiene.
+        #[arg(long)]
+        context: PathBuf,
+        /// The `JUnit` report the run produced.
+        #[arg(long)]
+        junit: PathBuf,
+        /// Where to write the receipt.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Hash a file and record it on a receipt.
+    Attach {
+        /// The receipt.
+        #[arg(long)]
+        receipt: PathBuf,
+        /// What kind of artefact this is.
+        #[arg(long)]
+        kind: String,
+        /// The file to hash.
+        #[arg(long)]
+        file: PathBuf,
+        /// Where the file is stored.
+        #[arg(long)]
+        uri: String,
+        /// Where to write the resealed receipt. Defaults to the input path.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Verify one receipt.
     Verify {
         /// The receipt.
@@ -315,6 +399,39 @@ enum EvidenceCommand {
 
 #[derive(Debug, Subcommand)]
 enum VerificationCommand {
+    /// Build a statement from a manifest, a binding and a receipt set.
+    New {
+        /// The manifest the statement is about.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Which plane it ran against.
+        #[arg(long)]
+        plane: String,
+        /// Digest of the environment binding that supplied the plane's values.
+        #[arg(long)]
+        binding_digest: String,
+        /// The private-repository commit that produced the binding.
+        #[arg(long)]
+        binding_ref: String,
+        /// Regions covered.
+        #[arg(long = "region")]
+        regions: Vec<String>,
+        /// A JSON array of per-unit post-apply readbacks.
+        #[arg(long)]
+        deployed: PathBuf,
+        /// Receipt files.
+        #[arg(long = "receipt")]
+        receipts: Vec<PathBuf>,
+        /// The ledger fence this statement is anchored to.
+        #[arg(long)]
+        fence: u64,
+        /// Where to write the statement.
+        #[arg(long)]
+        out: PathBuf,
+        /// Statement time, RFC 3339. Defaults to now.
+        #[arg(long)]
+        now: Option<String>,
+    },
     /// Verify a statement against a manifest.
     Verify {
         /// The statement.
@@ -518,9 +635,9 @@ fn run(cli: &Cli) -> Result<()> {
     match &cli.command {
         Command::Graph(command) => run_graph(cli, &root, command),
         Command::Artifact(command) => run_artifact(cli, &root, command),
-        Command::Manifest(command) => run_manifest(cli, command),
+        Command::Manifest(command) => run_manifest(cli, &root, command),
         Command::Evidence(command) => run_evidence(cli, command),
-        Command::Verification(command) => run_verification(command),
+        Command::Verification(command) => run_verification(cli, command),
         Command::Admit(args) => run_admit(cli, &root, args),
         Command::Plan(command) => run_plan(cli, command),
         Command::Ledger(command) => run_ledger(cli, command),
@@ -691,7 +808,12 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                     _ => Form::Tarball,
                 },
             };
-            let bytes = artifact::package(form, input, *source_date_epoch)?;
+            let bytes = artifact::package(
+                form,
+                input,
+                *source_date_epoch,
+                found.entrypoint.as_deref().unwrap_or("bootstrap"),
+            )?;
             std::fs::write(out, &bytes).map_err(|err| io(&out.display().to_string(), &err))?;
             emit(
                 cli,
@@ -703,6 +825,23 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 }),
             )
         }
+        ArtifactCommand::Describe {
+            unit,
+            file,
+            out,
+            unearned_out,
+            contract_digest,
+            now,
+        } => run_describe(
+            cli,
+            root,
+            unit,
+            file,
+            out,
+            unearned_out.as_deref(),
+            contract_digest,
+            now.as_deref(),
+        ),
         ArtifactCommand::Verify {
             envelope,
             file,
@@ -722,8 +861,150 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
     }
 }
 
-fn run_manifest(cli: &Cli, command: &ManifestCommand) -> Result<()> {
+/// Assemble an envelope for a unit built on this machine.
+///
+/// Everything the tree can establish is read from it; the ledger the call
+/// returns names every field only a workflow run can fill.
+#[allow(clippy::too_many_arguments)]
+fn run_describe(
+    cli: &Cli,
+    root: &Path,
+    unit: &str,
+    file: &Path,
+    out: &Path,
+    unearned_out: Option<&Path>,
+    contract_digest: &str,
+    now: Option<&str>,
+) -> Result<()> {
+    let units = read_units(root)?;
+    let found = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == unit)
+        .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+    let plan = artifact::plan(found)?;
+    let inputs = GraphInputs::load(root)?;
+    let built = verify::build(&inputs)?;
+    let local = describe::LocalBuild {
+        unit: found,
+        plan: &plan,
+        artifact: file,
+        repository: "aexhq/aex".to_owned(),
+        commit_sha: git_output(root, &["rev-parse", "HEAD"])?,
+        tree_clean: git_output(root, &["status", "--porcelain"])?.is_empty(),
+        git_ref: None,
+        toolchain: local_toolchain(&found.target)?,
+        lockfile_digest: file_digest(&root.join(lockfile_for(&found.kind)))?,
+        contract_digest: contract_digest.to_owned(),
+        closure: input_closure(root, &inputs, &built, unit)?,
+        location_uri: relative_to(root, file),
+        receipts: Vec::new(),
+        created_at: parse_now(now)?
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|err| usage(format!("cannot format the timestamp: {err}")))?,
+    };
+    let (envelope, unearned) = describe::describe(&local)?;
+    write_canonical(out, &envelope)?;
+    if let Some(path) = unearned_out {
+        write_canonical(path, &unearned)?;
+    }
+    emit(
+        cli,
+        &serde_json::json!({
+            "unit": unit,
+            "envelopeDigest": envelope.envelope_digest,
+            "artifactDigest": envelope.output.digest,
+            "sizeBytes": envelope.output.size_bytes,
+            "inputClosureCount": envelope.inputs.input_closure_count,
+            "unearned": unearned,
+        }),
+    )
+}
+
+/// Assemble a complete composition, refusing any deployable that is neither
+/// described nor recorded as unearned.
+fn run_manifest_new(
+    cli: &Cli,
+    root: &Path,
+    envelopes: &[PathBuf],
+    composition: &Path,
+    unearned: Option<&Path>,
+    out: &Path,
+) -> Result<()> {
+    let described: BTreeMap<String, ArtifactEnvelope> = envelopes
+        .iter()
+        .map(|path| {
+            let envelope: ArtifactEnvelope = read_json(path)?;
+            Ok((envelope.unit.id.clone(), envelope))
+        })
+        .collect::<Result<_>>()?;
+    let inputs: CompositionInputs = read_json(composition)?;
+    let recorded: Vec<aex_workspace_check::registry::UnearnedRow> = match unearned {
+        Some(path) => read_json(path)?,
+        None => Vec::new(),
+    };
+    let registry = read_units(root)?;
+    let holes: Vec<Violation> = registry
+        .units
+        .iter()
+        .filter(|unit| {
+            !described.contains_key(&unit.id) && !recorded.iter().any(|row| row.subject == unit.id)
+        })
+        .map(|unit| {
+            Violation::new(
+                "manifest-unit-unaccounted",
+                format!(
+                    "deployable `{}` has no envelope and no row in the unearned ledger; a \
+                     composition that simply omits it is a release nobody can tell is incomplete",
+                    unit.id
+                ),
+            )
+        })
+        .collect();
+    if !holes.is_empty() {
+        return Err(ToolError::many(Exit::CompositionIncompatible, holes));
+    }
+    let manifest = aex_release_tool::manifest::new_manifest(
+        inputs.contract_digest,
+        &described,
+        inputs.packages,
+        inputs.migrations,
+        inputs.infra,
+        inputs.catalogs,
+        inputs.policy,
+    )?;
+    write_canonical(out, &manifest)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "releaseId": manifest.release_id,
+            "units": manifest.units.len(),
+            "stages": manifest.order.len(),
+            "unearned": recorded.iter().map(|row| &row.subject).collect::<Vec<_>>(),
+        }),
+    )
+}
+
+fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
     match command {
+        ManifestCommand::New {
+            envelopes,
+            composition,
+            unearned,
+            out,
+        } => run_manifest_new(
+            cli,
+            root,
+            envelopes,
+            composition,
+            unearned.as_deref(),
+            out,
+        ),
+        ManifestCommand::Diff { from, to } => {
+            let from: CompositionManifest = read_json(from)?;
+            let to: CompositionManifest = read_json(to)?;
+            emit(cli, &aex_release_tool::manifest::diff(&from, &to))
+        }
         ManifestCommand::Digest { file } => {
             let manifest: CompositionManifest = read_json(file)?;
             println!("{}", manifest.digest()?);
@@ -763,6 +1044,45 @@ fn run_manifest(cli: &Cli, command: &ManifestCommand) -> Result<()> {
 
 fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
     match command {
+        EvidenceCommand::New {
+            context,
+            junit,
+            out,
+        } => {
+            let context: evidence::RunContext = read_json(context)?;
+            let xml = std::fs::read_to_string(junit)
+                .map_err(|err| io(&junit.display().to_string(), &err))?;
+            let receipt = evidence::new_receipt(context, &evidence::parse_junit(&xml))?;
+            write_canonical(out, &receipt)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "receiptId": receipt.receipt_id,
+                    "receiptDigest": receipt.receipt_digest,
+                    "conclusion": receipt.conclusion,
+                    "inventory": receipt.inventory,
+                }),
+            )
+        }
+        EvidenceCommand::Attach {
+            receipt,
+            kind,
+            file,
+            uri,
+            out,
+        } => {
+            let loaded: Receipt = read_json(receipt)?;
+            let attached = evidence::attach(loaded, kind, file, uri)?;
+            write_canonical(out.as_deref().unwrap_or(receipt.as_path()), &attached)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "receiptId": attached.receipt_id,
+                    "receiptDigest": attached.receipt_digest,
+                    "attachments": attached.attachments,
+                }),
+            )
+        }
         EvidenceCommand::Verify { receipt } => {
             let receipt: Receipt = read_json(receipt)?;
             receipt.verify()?;
@@ -804,8 +1124,51 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
     }
 }
 
-fn run_verification(command: &VerificationCommand) -> Result<()> {
+fn run_verification(cli: &Cli, command: &VerificationCommand) -> Result<()> {
     match command {
+        VerificationCommand::New {
+            manifest,
+            plane,
+            binding_digest,
+            binding_ref,
+            regions,
+            deployed,
+            receipts,
+            fence,
+            out,
+            now,
+        } => {
+            let manifest: CompositionManifest = read_json(manifest)?;
+            let deployed: Vec<aex_release_tool::verification::Deployed> = read_json(deployed)?;
+            let receipts: Vec<Receipt> = receipts
+                .iter()
+                .map(|path| read_json(path))
+                .collect::<Result<_>>()?;
+            let now = parse_now(now.as_deref())?
+                .format(&time::format_description::well_known::Rfc3339)
+                .map_err(|err| usage(format!("cannot format the timestamp: {err}")))?;
+            let statement = aex_release_tool::verification::new_statement(
+                &manifest,
+                plane,
+                binding_digest,
+                binding_ref,
+                regions.clone(),
+                deployed,
+                &receipts,
+                *fence,
+                &now,
+            )?;
+            write_canonical(out, &statement)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "releaseId": statement.release_id,
+                    "statementDigest": statement.statement_digest,
+                    "conclusion": statement.conclusion,
+                    "deployed": statement.deployed.len(),
+                }),
+            )
+        }
         VerificationCommand::Verify {
             statement,
             manifest,
@@ -1080,6 +1443,136 @@ fn run_janitor(cli: &Cli, command: &JanitorCommand) -> Result<()> {
             }
         }
     }
+}
+
+/// The composition inputs no artifact envelope carries.
+///
+/// They are read from one document rather than from a dozen flags because they
+/// are a single decision — which contract, which migrations, which modules,
+/// which policy digests this release is — and splitting a decision across flags
+/// is how half of it gets forgotten.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompositionInputs {
+    contract_digest: String,
+    #[serde(default)]
+    packages: BTreeMap<String, BTreeMap<String, aex_release_tool::manifest::PackageRef>>,
+    migrations: aex_release_tool::manifest::Migrations,
+    infra: aex_release_tool::manifest::Infra,
+    #[serde(default)]
+    catalogs: BTreeMap<String, String>,
+    policy: aex_release_tool::manifest::Policy,
+}
+
+/// Which lockfile pins a unit kind's dependency versions.
+fn lockfile_for(kind: &str) -> &'static str {
+    if kind == "ts-lambda" || kind == "build-output" {
+        "bun.lock"
+    } else {
+        "Cargo.lock"
+    }
+}
+
+fn file_digest(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).map_err(|err| io(&path.display().to_string(), &err))?;
+    Ok(canon::digest_bytes(&bytes))
+}
+
+fn relative_to(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|err| usage(format!("`git {}` could not be run: {err}", args.join(" "))))?;
+    if !output.status.success() {
+        return Err(usage(format!(
+            "`git {}` failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// The toolchain that produced the bytes, read from `rustc` rather than
+/// declared. A declared toolchain is a claim; `rustc -vV` is a fact.
+fn local_toolchain(target: &str) -> Result<artifact::Toolchain> {
+    let output = std::process::Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .map_err(|err| usage(format!("`rustc -vV` could not be run: {err}")))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let field = |name: &str| -> String {
+        text.lines()
+            .find_map(|line| line.strip_prefix(&format!("{name}: ")))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let release = field("release");
+    Ok(artifact::Toolchain {
+        channel: release.clone(),
+        rustc_version: release,
+        rustc_commit_hash: field("commit-hash"),
+        host: field("host"),
+        target: target.to_owned(),
+        components: Vec::new(),
+        packager_version: None,
+    })
+}
+
+/// Every repository file the graph attributes to a unit's input closure.
+///
+/// The closure is the forward-reachable set from the artifact node — its owning
+/// package and every workspace dependency of it — plus every file the path map
+/// classifies as repo-wide, because a change to the lockfile or the toolchain
+/// pin shapes the bytes of everything.
+fn input_closure(
+    root: &Path,
+    inputs: &GraphInputs,
+    built: &verify::BuiltGraph,
+    unit: &str,
+) -> Result<BTreeMap<String, String>> {
+    let start = built
+        .graph
+        .slot(&NodeId::artifact(unit))
+        .ok_or_else(|| usage(format!("`{unit}` has no artifact node")))?;
+    let mut reachable = built
+        .graph
+        .forward_closure(&[start], aex_release_tool::graph::EdgeKind::in_deploy_graph);
+    reachable.push(start);
+    let owned: std::collections::BTreeSet<&str> = reachable
+        .iter()
+        .map(|slot| built.graph.node(*slot).id.as_str())
+        .collect();
+    let npm_dirs = inputs.npm_dirs();
+    let mut closure = BTreeMap::new();
+    for file in &inputs.files {
+        let include = match inputs.path_map.classify(file, &npm_dirs) {
+            aex_release_tool::graph::pathmap::Classification::Owned { node, .. } => {
+                owned.contains(node.as_str())
+            }
+            aex_release_tool::graph::pathmap::Classification::RepoWide { .. }
+            | aex_release_tool::graph::pathmap::Classification::Router { .. } => true,
+            _ => false,
+        };
+        if !include {
+            continue;
+        }
+        let path = root.join(file);
+        if !path.is_file() {
+            continue;
+        }
+        closure.insert(file.clone(), file_digest(&path)?);
+    }
+    Ok(closure)
 }
 
 fn emit<T: serde::Serialize>(cli: &Cli, value: &T) -> Result<()> {

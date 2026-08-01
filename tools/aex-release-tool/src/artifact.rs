@@ -109,6 +109,10 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
             ],
             "tarball",
         ),
+        // The entry is the module that exports the Lambda handler symbol, which
+        // is `handler.ts` in both edges. `--minify=false` keeps the bundle
+        // readable in a stack trace, and the output directory is the package's
+        // own so two edges built in one job cannot overwrite each other.
         "ts-lambda" => (
             vec![
                 "bun".to_owned(),
@@ -116,8 +120,8 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
                 "--target=node".to_owned(),
                 "--minify=false".to_owned(),
                 "--outdir".to_owned(),
-                "dist".to_owned(),
-                format!("services/{}/src/index.ts", unit.id),
+                format!("services/{}/dist", unit.id),
+                format!("services/{}/src/handler.ts", unit.id),
             ],
             "lambda-zip",
         ),
@@ -174,15 +178,26 @@ pub fn recipes(units: &Units) -> Result<Vec<BuildPlan>> {
 
 /// Package a built input into its artifact bytes.
 ///
+/// `entrypoint` is the archive member name for [`Form::LambdaZip`] and is
+/// ignored by every other form. It comes from the unit's own `entrypoint`
+/// field, because the custom runtime loads `bootstrap` and a Node runtime loads
+/// the file its handler symbol names: one hard-coded name would produce an
+/// archive one of the two runtimes cannot start.
+///
 /// # Errors
 /// Returns [`Exit::Usage`] when the input cannot be read, and for the two forms
 /// that cannot be produced without a registry.
-pub fn package(form: Form, input: &Path, source_date_epoch: u64) -> Result<Vec<u8>> {
+pub fn package(
+    form: Form,
+    input: &Path,
+    source_date_epoch: u64,
+    entrypoint: &str,
+) -> Result<Vec<u8>> {
     match form {
         Form::LambdaZip => {
             let data =
                 std::fs::read(input).map_err(|err| io(&input.display().to_string(), &err))?;
-            pack::write_zip(&[pack::Entry::executable("bootstrap", data)])
+            pack::write_zip(&[pack::Entry::executable(entrypoint, data)])
         }
         Form::Tarball | Form::BuildOutput => {
             let entries = if input.is_dir() {
@@ -1066,7 +1081,7 @@ alarm_spec = "regional-session-api"
         let input = temp.path().join("bin");
         std::fs::write(&input, b"x").unwrap();
         for form in [Form::Oci, Form::Rootfs] {
-            let err = package(form, &input, 0).unwrap_err();
+            let err = package(form, &input, 0, "bootstrap").unwrap_err();
             assert_eq!(err.rules(), vec!["artifact-form-requires-registry"]);
         }
     }
@@ -1078,8 +1093,8 @@ alarm_spec = "regional-session-api"
         std::fs::create_dir_all(tree.join("static")).unwrap();
         std::fs::write(tree.join("index.html"), b"<!doctype html>").unwrap();
         std::fs::write(tree.join("static/app.js"), b"console.log(1)").unwrap();
-        let first = package(Form::BuildOutput, &tree, 0).unwrap();
-        let second = package(Form::BuildOutput, &tree, 0).unwrap();
+        let first = package(Form::BuildOutput, &tree, 0, "bootstrap").unwrap();
+        let second = package(Form::BuildOutput, &tree, 0, "bootstrap").unwrap();
         assert_eq!(first, second);
     }
 }

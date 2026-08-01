@@ -46,13 +46,52 @@ fn recipes_are_byte_stable_across_runs() {
 }
 
 #[test]
+fn every_ts_lambda_recipe_names_a_source_entry_that_exists() {
+    // The recipe is the only record of how the bytes were produced, so a path
+    // in it that nobody can `bun build` is a recipe that documents nothing.
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let units = shipped_units();
+    let mut checked = 0;
+    for unit in units.units.iter().filter(|unit| unit.kind == "ts-lambda") {
+        let recipe = plan(unit).unwrap();
+        let entry = recipe.argv.last().expect("an entry path");
+        assert!(
+            repo.join(entry).is_file(),
+            "unit `{}` builds `{entry}`, which is not a file",
+            unit.id
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "the registry declares no ts-lambda unit");
+}
+
+#[test]
 fn a_lambda_archive_is_byte_identical_across_packagings() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("bootstrap");
     std::fs::write(&input, b"\x7fELF fixture payload").unwrap();
-    let first = package(Form::LambdaZip, &input, 0).unwrap();
-    let second = package(Form::LambdaZip, &input, 0).unwrap();
+    let first = package(Form::LambdaZip, &input, 0, "bootstrap").unwrap();
+    let second = package(Form::LambdaZip, &input, 0, "bootstrap").unwrap();
     assert_eq!(canon::digest_bytes(&first), canon::digest_bytes(&second));
+}
+
+#[test]
+fn a_lambda_archive_carries_the_entrypoint_the_unit_declares() {
+    // A Node runtime loads `handler.js`; the custom runtime loads `bootstrap`.
+    // Packaging every ZIP under one hard-coded name would ship an archive the
+    // runtime cannot start and would only be found on a live plane.
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("build-output");
+    std::fs::write(&input, b"export const handler = () => {};").unwrap();
+
+    let node = package(Form::LambdaZip, &input, 0, "handler.js").unwrap();
+    let rust = package(Form::LambdaZip, &input, 0, "bootstrap").unwrap();
+    assert!(
+        node.windows(10).any(|window| window == b"handler.js"),
+        "the archive must name the declared entrypoint"
+    );
+    assert!(!node.windows(9).any(|window| window == b"bootstrap"));
+    assert!(rust.windows(9).any(|window| window == b"bootstrap"));
 }
 
 #[test]

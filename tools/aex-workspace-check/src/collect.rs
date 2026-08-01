@@ -16,14 +16,24 @@ use crate::registry::{
 
 /// npm manifest globs, relative to the workspace root.
 ///
-/// `tools/eslint-plugin-aex` is not inside the root `workspaces` globs - it is
-/// referenced by path - so it is named here explicitly rather than being
-/// silently exempt from declaring its ownership.
-const NPM_ROOTS: &[&str] = &["packages", "apps"];
-const NPM_EXPLICIT: &[&str] = &[
-    "tools/eslint-plugin-aex",
+/// These mirror the root `package.json` `workspaces` array. They are public
+/// because `aex-release-tool` classifies the same directories and a second
+/// hand-written copy of this list is exactly the drift both crates exist to
+/// prevent.
+pub const NPM_ROOTS: &[&str] = &["packages", "apps"];
+
+/// npm packages that no `workspaces` glob reaches.
+///
+/// `tools/eslint-plugin-aex` is referenced by path, and the two Stripe edges
+/// live under `services/` beside Cargo members, so each is named here
+/// explicitly rather than being silently exempt from declaring its ownership.
+/// Public for the same reason as [`NPM_ROOTS`]: the delivery graph must see the
+/// same package set this crate does, or the two authorities derive different
+/// live targets from the same tree.
+pub const NPM_EXPLICIT: &[&str] = &[
     "services/stripe-command-edge",
     "services/stripe-webhook-edge",
+    "tools/eslint-plugin-aex",
 ];
 
 /// File names that must never exist.

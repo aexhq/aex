@@ -78,7 +78,15 @@ observes = ["artifact:finance-api", "artifact:finance-settlement-worker"]
 [[scenario]]
 id = "SC-FINANCE-PAYMENT"
 owner = "central-finance"
-observes = ["artifact:finance-ingest"]
+# Both ends of one payment: the webhook edge is where a Stripe event enters and
+# `finance-ingest` is where it becomes a finance transition, and the command edge
+# is where an admitted effect leaves. A scenario that watched only the middle
+# would pass while either edge was broken.
+observes = [
+  "artifact:finance-ingest",
+  "artifact:stripe-command-edge",
+  "artifact:stripe-webhook-edge",
+]
 
 [scenario.prd]
 rule = "money_path"
