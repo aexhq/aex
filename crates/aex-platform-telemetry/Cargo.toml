@@ -11,6 +11,24 @@ publish = false
 [lints]
 workspace = true
 
+[package.metadata.aex]
+owner = "observations-usage"
+role = "adapter"
+artifact = "none"
+live_suite = "aex-live-brain-mux"
+layers = ["unit", "integration"]
+concerns = ["contract", "property", "fault", "security"]
+seams = ["aws.cloudwatch.export"]
+security_tier = "diagnostic"
+risk = ["concurrency"]
+scenarios = []
+
+[package.metadata.aex.targets]
+facade = "unit"
+
+[package.metadata.aex.not_applicable]
+integration = "awaiting the observations-usage stream; the real-collector integration target lands with the OTLP pipeline"
+
 [dependencies]
 aex-telemetry-schema = { path = "../aex-telemetry-schema" }
 parking_lot.workspace = true

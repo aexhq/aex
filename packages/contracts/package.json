@@ -7,6 +7,29 @@
     "directory": "packages/contracts"
   },
   "description": "Public aex wire contracts, SDK transport helpers, and conformance-facing schemas.",
+  "aex": {
+    "owner": "contracts",
+    "role": "client",
+    "artifact": "npm_package",
+    "layers": [
+      "unit",
+      "user"
+    ],
+    "concerns": [
+      "contract",
+      "compatibility"
+    ],
+    "seams": [],
+    "security_tier": "public_edge",
+    "risk": [
+      "generated_code"
+    ],
+    "scenarios": [],
+    "not_applicable": {
+      "targets": "awaiting the contracts stream; OD-08 deletes this package in favour of the generated bundle",
+      "live_suite": "generated contract package; no deployed endpoint of its own"
+    }
+  },
   "license": "Apache-2.0",
   "keywords": [
     "aex",
