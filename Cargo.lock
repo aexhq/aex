@@ -627,6 +627,7 @@ name = "aex-observation-store-aws"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
+ "aex-wire",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
@@ -634,6 +635,7 @@ dependencies = [
  "aws-smithy-types",
  "bytes",
  "futures",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",

@@ -56,8 +56,21 @@ pub const OBS_CLOCK_SKEW_MAX_MS: i64 = 1_000;
 /// How long a `preparing` receipt survives before the reconciler aborts it.
 pub const OBS_PREPARE_TTL_MS: i64 = 15 * 60 * 1_000;
 
-/// Normalized observations packed into one staged page item.
+/// Maximum normalized observations packed into one staged page item.
+///
+/// A page is bounded by **both** this count and [`OBS_PAGE_MAX_BYTES`], and the
+/// byte bound is the binding one at the maximum batch. G7 measured that a
+/// count-only bound of 100 produces an 819 KiB page at the 2,000-point / 16 MiB
+/// maximum, three times the 256 KiB `DynamoDB` item ceiling. The protocol
+/// changed here rather than the public 2,000-point limit.
 pub const OBS_PAGE_RECORDS: usize = 100;
+
+/// Maximum canonical bytes packed into one staged page item.
+///
+/// 192 KiB leaves 64 KiB of the 256 KiB item ceiling for the page's own
+/// attributes, and it is three times [`OBSERVATION_NORMALIZED_MAX`], so a page
+/// always holds at least one observation however large that observation is.
+pub const OBS_PAGE_MAX_BYTES: usize = 192 * 1024;
 
 /// Spool chunk attempts before the reconciler escalates to a `pipeline_loss` gap.
 pub const OBS_SPOOL_MAX_ATTEMPTS: u32 = 12;
@@ -148,6 +161,22 @@ mod tests {
             assert!(
                 OBS_INDEX_SETTLE_MS > OBS_CLOCK_SKEW_MAX_MS,
                 "the snapshot contract requires the settle window to dominate skew"
+            );
+        }
+    }
+
+    #[test]
+    fn a_staged_page_always_holds_at_least_one_maximal_observation() {
+        const {
+            assert!(
+                super::OBS_PAGE_MAX_BYTES >= super::OBSERVATION_NORMALIZED_MAX,
+                "a page that cannot hold one maximal observation could never make progress"
+            );
+        }
+        const {
+            assert!(
+                super::OBS_PAGE_MAX_BYTES < super::DDB_ITEM_MAX_BYTES,
+                "a page must leave room for its own attributes"
             );
         }
     }
