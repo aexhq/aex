@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aex.dev/schemas/regional-table.v1.json",
+  "title": "aex.regional-table.v1",
+  "description": "One regional DynamoDB table generation definition. Terraform consumes the generated bundle, never a hand-written table resource.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "table",
+    "owner",
+    "purpose",
+    "billingMode",
+    "deletionProtection",
+    "pointInTimeRecovery",
+    "serverSideEncryption",
+    "attributes",
+    "keySchema",
+    "globalSecondaryIndexes",
+    "stream",
+    "timeToLive",
+    "itemTypes",
+    "iam",
+    "tags"
+  ],
+  "properties": {
+    "schema": { "const": "aex.regional-table.v1" },
+    "table": {
+      "description": "Logical table name. The physical name is `{plane}-{region}-{table}` and is composed by the infrastructure stream.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$"
+    },
+    "owner": { "enum": ["regional-stores", "observations-usage"] },
+    "purpose": { "type": "string", "minLength": 16 },
+    "billingMode": { "const": "PAY_PER_REQUEST" },
+    "deletionProtection": { "const": true },
+    "pointInTimeRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "retentionDays"],
+      "properties": {
+        "enabled": { "const": true },
+        "retentionDays": { "const": 35 }
+      }
+    },
+    "serverSideEncryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "keyAlias", "rationale"],
+      "properties": {
+        "type": { "const": "KMS" },
+        "keyAlias": { "type": "string", "pattern": "^alias/aex-regional-[a-z-]+$" },
+        "rationale": { "type": "string", "minLength": 8 }
+      }
+    },
+    "attributes": {
+      "description": "Only key and index attributes are declared; DynamoDB is schemaless for everything else.",
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "type": { "enum": ["S", "N", "B"] }
+        }
+      }
+    },
+    "keySchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["partition", "sort"],
+      "properties": {
+        "partition": { "type": "string" },
+        "sort": { "type": "string" }
+      }
+    },
+    "globalSecondaryIndexes": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "partition", "sort", "projection", "sparse", "rationale"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^gsi_[a-z_]+$" },
+          "partition": { "type": "string" },
+          "sort": { "type": "string" },
+          "sparse": { "const": true },
+          "rationale": { "type": "string", "minLength": 8 },
+          "projection": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "attributes"],
+            "properties": {
+              "type": {
+                "description": "ALL is never permitted: D-29. A list query must not be able to start returning a prompt, a body or a receipt.",
+                "const": "INCLUDE"
+              },
+              "attributes": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "viewType", "consumers", "rationale"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "viewType": { "enum": ["KEYS_ONLY", "NEW_IMAGE", "NONE"] },
+        "consumers": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "rationale": { "type": "string", "minLength": 8 }
+      }
+    },
+    "timeToLive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "attribute", "appliesTo", "rationale"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "attribute": {
+          "description": "Always `expiresAtEpochSeconds` when enabled, and never a fence: D-24.",
+          "enum": ["expiresAtEpochSeconds", ""]
+        },
+        "appliesTo": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "rationale": { "type": "string", "minLength": 8 }
+      }
+    },
+    "itemTypes": {
+      "description": "The closed `itemType` discriminator vocabulary. Decoding an unlisted value is StoreError::Corrupt.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$|^branch_key_record$" }
+    },
+    "iam": {
+      "description": "Least-privilege action lists per role, emitted so the infrastructure stream generates policies mechanically.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "actions", "resources"],
+        "properties": {
+          "role": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "dynamodb:GetItem",
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:TransactWriteItems",
+                "dynamodb:TransactGetItems",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:DescribeTable",
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+                "dynamodb:DescribeStream",
+                "dynamodb:ListStreams"
+              ]
+            }
+          },
+          "resources": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["table", "index/*", "stream"] }
+          }
+        }
+      }
+    },
+    "tags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aex:plane", "aex:component", "aex:data-class"],
+      "properties": {
+        "aex:plane": { "const": "regional" },
+        "aex:component": { "type": "string", "minLength": 1 },
+        "aex:data-class": { "enum": ["authority", "secret", "projection"] }
+      }
+    }
+  }
+}
