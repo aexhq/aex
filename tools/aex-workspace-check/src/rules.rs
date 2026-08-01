@@ -99,10 +99,19 @@ pub fn is_application_crate(name: &str) -> bool {
     name.ends_with("-app") || name.ends_with("-application")
 }
 
-/// Whether a workspace crate name denotes a test-support crate.
+/// Whether a workspace crate name denotes test-only code.
+///
+/// Four kinds qualify: the per-area `*-test-support` fixture crates, the shared
+/// `aex-test-harness`, the shared `aex-load-harness`, and every `aex-live-*`
+/// companion. All four are `publish = false` and may only ever appear in
+/// `[dev-dependencies]`, which is the mechanical half of "no fault hook in a
+/// production binary".
 #[must_use]
 pub fn is_test_support_crate(name: &str) -> bool {
     name.ends_with("-test-support")
+        || name == "aex-test-harness"
+        || name == "aex-load-harness"
+        || name.starts_with("aex-live-")
 }
 
 /// Runs every rule and returns the violations, sorted.
@@ -251,6 +260,12 @@ pub fn test_support_is_dev_only(workspace: &Workspace) -> Vec<Violation> {
     const RULE: &str = "test-support-is-dev-only";
     let mut violations = Vec::new();
     for package in workspace.metadata.members() {
+        if is_test_support_crate(&package.name) {
+            // Test-only code may compose with test-only code: the harness is a
+            // normal dependency of the load harness and of every companion.
+            // The rule exists to keep test code out of *production* graphs.
+            continue;
+        }
         for dependency in &package.dependencies {
             if !is_test_support_crate(&dependency.name) {
                 continue;
@@ -640,6 +655,31 @@ mod tests {
         let violations = test_support_is_dev_only(&workspace);
         assert_eq!(rules(&violations), vec!["test-support-is-dev-only"]);
         assert!(violations[0].detail.contains("outside [dev-dependencies]"));
+    }
+
+    #[test]
+    fn test_only_packages_may_compose_with_each_other() {
+        let workspace = workspace(
+            &[
+                package(
+                    "aex-load-harness",
+                    "tests/load/aex-load-harness",
+                    r#"{ "name": "aex-test-harness", "kind": null }"#,
+                    r#"{ "name": "aex_load_harness", "kind": ["lib"] }"#,
+                ),
+                package(
+                    "aex-live-brain-mux",
+                    "tests/live/aex-live-brain-mux",
+                    r#"{ "name": "aex-test-harness", "kind": null }"#,
+                    r#"{ "name": "aex_live_brain_mux", "kind": ["lib"] }"#,
+                ),
+            ],
+            listing(&[
+                ("tests/load", &["aex-load-harness"]),
+                ("tests/live", &["aex-live-brain-mux"]),
+            ]),
+        );
+        assert!(test_support_is_dev_only(&workspace).is_empty());
     }
 
     #[test]

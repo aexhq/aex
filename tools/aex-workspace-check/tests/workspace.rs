@@ -46,6 +46,13 @@ fn no_production_package_depends_on_a_test_support_crate() {
         aex_workspace_check::WorkspaceMetadata::parse(&metadata_json()).expect("metadata parses");
     let mut offenders = Vec::new();
     for package in metadata.members() {
+        if aex_workspace_check::rules::is_test_support_crate(&package.name) {
+            // Test-only code composes with test-only code: the load harness
+            // takes `aex-test-harness` as a normal dependency, as every live
+            // companion will. What must never happen is a *production* package
+            // reaching any of them.
+            continue;
+        }
         for dependency in &package.dependencies {
             if aex_workspace_check::rules::is_test_support_crate(&dependency.name)
                 && dependency.kind() != aex_workspace_check::metadata::DependencyKind::Development
