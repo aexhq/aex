@@ -16,6 +16,22 @@
 //! - retry policy: `aex-rds-data` classifies, the application decides
 
 pub mod error;
+pub mod rows;
 pub mod sql;
+pub mod store;
 
 pub use error::map_store_error;
+pub use store::AuroraIdentityStore;
+
+#[cfg(test)]
+mod tests {
+    use super::AuroraIdentityStore;
+    use aex_identity_app::ports::IdentityStore;
+
+    fn implements_identity_store<T: IdentityStore>() {}
+
+    #[test]
+    fn the_aurora_adapter_implements_every_identity_store_method() {
+        implements_identity_store::<AuroraIdentityStore>();
+    }
+}

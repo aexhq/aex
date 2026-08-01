@@ -44,11 +44,13 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-control-aurora = { path = "../aex-control-aurora" }
+aex-control-domain = { path = "../aex-control-domain" }
 aex-identity-app = { path = "../aex-identity-app" }
 aex-identity-domain = { path = "../aex-identity-domain" }
 aex-rds-data = { path = "../aex-rds-data" }
 
 [dev-dependencies]
+aws-sdk-rdsdata.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [[test]]

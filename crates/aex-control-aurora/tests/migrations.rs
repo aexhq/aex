@@ -537,7 +537,7 @@ async fn only_one_signing_key_can_be_active() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_two_authorization_statements_are_valid_sql_against_the_real_schema() {
+async fn every_authorization_statement_is_valid_sql_against_the_real_schema() {
     let fixture = Fixture::start().await;
     let mut connection = fixture.as_role("aex_authz_login").await;
 
@@ -561,6 +561,18 @@ async fn the_two_authorization_statements_are_valid_sql_against_the_real_schema(
                 .replace(":credential_id", "$1")
                 .replace(":workspace_id", "$2")
                 .replace(":now_ms", "$3"),
+        ),
+        (
+            "central_account_token",
+            aex_control_aurora::sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL
+                .replace(":credential_id", "$1")
+                .replace(":now_ms", "$2"),
+        ),
+        (
+            "central_session",
+            aex_control_aurora::sql::RESOLVE_SESSION_CENTRAL
+                .replace(":credential_id", "$1")
+                .replace(":now_ms", "$2"),
         ),
     ] {
         // `execute` wants a `'static` statement, and every input here is a

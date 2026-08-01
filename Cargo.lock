@@ -424,10 +424,12 @@ name = "aex-identity-aurora"
 version = "0.1.0"
 dependencies = [
  "aex-control-aurora",
+ "aex-control-domain",
  "aex-identity-app",
  "aex-identity-domain",
  "aex-rds-data",
  "async-trait",
+ "aws-sdk-rdsdata",
  "futures",
  "serde",
  "serde_json",

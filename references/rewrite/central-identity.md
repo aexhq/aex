@@ -19,8 +19,9 @@ related:
 
 # Central identity, control and authorization — stream handoff
 
-Branch `rw/central-identity`. Nothing is pushed. Three commits, each green at the
-point it was made.
+Branch `rw/central-identity`. Nothing is pushed. The continuation starts from
+`main` at `54c2d572` and has four logical implementation commits, each green at
+the point it was made: `f76d116e`, `9747a218`, `3cbbe1b7` and `9e76e887`.
 
 ## 1. What is implemented
 
@@ -124,11 +125,24 @@ an unknown or unavailable region leaves the workspace hidden and the same
 
 ### The Aurora adapters
 
-- The three pinned authorization statements, including
+- The five pinned authorization statements, including
   `resolve_session_for_workspace`, which is byte-for-byte the account-token
   statement apart from the credential table. One credential path, not two.
 - The pinned I/O budget is **counted**: resolving a key or a session is exactly
   one statement and zero transactions, asserted against a counting stub.
+- `AuroraIdentityStore` implements all fourteen `IdentityStore` units of work.
+  Credential verification failures roll back open transactions, single-use
+  guards live in the write predicate, and a lost commit returns the preassigned
+  reconciliation identity rather than minting another credential.
+- `AuroraControlStore` implements all twenty-two `ControlStore` units of work:
+  replay identity, organization/finance creation, invitations, fenced workspace
+  provisioning and deletion, atomic API-key revocation plus epoch advance,
+  operation/outbox claims and bounded GC. Replay attachment/completion and
+  operation fences require exactly one affected row before commit.
+- The two central actor reads are now one bounded statement each. Active
+  memberships are a JSON array of fixed three-field tuples, capped at 1,001 so
+  the row decoder can fail closed above the public 1,000-row bound. A dashboard
+  session receives only the generated bootstrap route's `account:read` scope.
 - Source discipline is asserted rather than asked for: no format placeholder, no
   positional parameter, no bare `timestamptz` projection, every millisecond
   parameter through the cast, every ordered read bounded, every single-use
@@ -147,7 +161,7 @@ column exists, that the two constraint triggers fire, that only one signing key
 can be active, that an epoch advances only through its wrapper and that
 `control.bump_epoch` is unreachable — and, most importantly, the **role-denial
 matrix**: `aex_authz` holds no write privilege on any table in either schema, its
-write probe really fails, and the three authorization statements `PREPARE`
+write probe really fails, and the five authorization statements `PREPARE`
 successfully as that role.
 
 ## 2. What I deliberately left undone
@@ -156,10 +170,9 @@ Each is a tracked gap with a named blocker, not an oversight.
 
 | Gap | Why, and what it costs |
 | --- | --- |
-| **The `IdentityStore` and `ControlStore` implementations.** The ports, the commands, the statements, the row decoders and the error mapping are all landed; what is missing is the ~30 methods that sequence them inside transactions. | The load-bearing decisions — statement text, transaction shape, guard placement, constraint mapping, the unknown-commit rule — are all landed and tested. What remains is mechanical binding, and doing it half-tested would have been worse than leaving it named. |
-| **`aex-central-http`.** Still the skeleton from `main`. | It needs `aex-wire`'s generated server traits, which the contracts stream deliberately did not emit (their §2). Binding handlers against `ROUTES` by hand would be a second route table. |
-| **The four deployables' bodies.** Their config parsing, startup denial and unit tests are the scaffolds from `main`; their Lambda shapes are now declared. | They compose crates that are not finished. Their `run()` still returns `NotImplemented`, which is honest. |
-| **`resolve_account_token_central` / `resolve_dashboard_session_central`.** Typed `Fatal` with a pointer to this document. | The central-plane actor statement returns an `array_agg` of memberships in one row, and `aex-rds-data` decodes `text[]` but not a composite array. Choosing between a JSON projection and a second statement is a schema decision the dashboard-bootstrap route's shape settles, and that route's body is not authored. |
+| **`aex-central-http`.** Still the skeleton from `main`. | A fresh feasibility check at `3cbbe1b7` found that `aex_wire::server` still publishes only request/response shapes. There are no generated fragment server traits or mount functions, and contracts handoff §2 explicitly records the omitted eighteen traits. Binding handlers against `ROUTES` by hand would be a second route table. |
+| **The four deployables' bodies.** Their config parsing, startup denial and unit tests are the scaffolds from `main`; their Lambda shapes are declared. | `central-identity-api`, `central-control-api`, `central-authz` and `central-control-worker` still return `NotImplemented`. The first three cannot mount the absent generated server surface, and composing only the worker while its public peers remain unmountable would not produce a runnable central plane. |
+| **Continuation cursors in `AuroraControlStore`.** First pages are bounded and work; a non-empty opaque cursor fails closed with `StoreError::Decode`. | `PageRequest` carries only the opaque string, while the adapter needs authenticated `(created_at, id)` claims and has no cursor secret. The HTTP/application boundary must decode the signed cursor and pass typed keyset fields; silently ignoring or locally decoding an unauthenticated string would be wrong. |
 | **The four live companions.** Untouched. | `OD-07`: nothing is deployed or credentialed in this run, so no live receipt is earnable. |
 | **`api/schemas/authorization-scopes.v1.json`.** Not created. | The contracts stream already landed the 28-scope registry at `api/schemas/registries/scopes.yaml`, generated into `aex_wire::ScopeId`. Creating a second scope file would be exactly the drift this stream exists to remove. Decision D-27 below. |
 
@@ -234,9 +247,9 @@ use aex_control_app::ports::{ControlStore, AuthorizationReader, RegionalControlP
     WorkspaceKeyState, AccountActorState, CentralActorState, SigningKeyRecord,
     ProvisionWorkspaceRequest, ProvisionWorkspaceResponse,
     DeleteWorkspaceRequest, DeleteWorkspaceResponse, InvitationEmail};
-use aex_control_aurora::{AuroraAuthorizationReader, sql as control_sql,
-    map_store_error, map_commit_failure};
-use aex_identity_aurora::sql as identity_sql;
+use aex_control_aurora::{AuroraAuthorizationReader, AuroraControlStore,
+    CentralActorRow, sql as control_sql, map_store_error, map_commit_failure};
+use aex_identity_aurora::{AuroraIdentityStore, sql as identity_sql};
 ```
 
 Also published for the finance stream: `control.bump_account_epoch(uuid)` — call
@@ -248,6 +261,7 @@ bounded only by the thirty-second expiry.
 | `TODO(cross-stream)` | Owner |
 | --- | --- |
 | `aex-test-harness` must expose a container builder (e.g. `containers::postgres() -> GenericImage`). The `data-image-literal` rule bans the container library's only constructor in every path under `/tests/` and exempts one directory — the harness — so **no product crate can start a container at all** today. My migration suite therefore takes a lane-supplied database through `required_env!("AEX_CENTRAL_PG_URL")` instead. It fails loudly when absent and never skips, but it is not the self-contained fixture the plan asks for. | test-architecture |
+| `aex-wire` must emit the eighteen generated fragment server traits and their mount functions. `aex_wire::server` currently has only common request/response shapes, so `aex-central-http` cannot bind the generated central route set without inventing a second route table. | contracts |
 | `aex-wire` needs six error codes the central plane returns and the registry lacks: `workspace_provision_pending`, `idempotency_in_flight`, `commit_outcome_unknown`, `last_owner_required`, `resource_conflict` and `invalid_scope`. `resource_deleted` maps onto the existing `gone`. Until they exist the HTTP layer cannot render those failures with their own code. | contracts |
 | `aex-wire` must expose the canonical route-template string on the generated server trait. My replay identity binds it, and today it comes from `RouteDescriptor::template`, which works but is not the trait-level fact the plan names. | contracts |
 | The generated route table does **not** admit a workspace key on `workspaces_list`, `workspace_get`, `central_operations_list`, `central_operation_get` or `central_operation_cancel`, though plan §5.3 marks all five `K ✔ own`. I followed the generated table, because admitting access the contract does not advertise is worse than a missing capability. Confirm which is intended. | contracts |
@@ -278,11 +292,14 @@ fill.
 | D-35 | An invitation may never offer the `owner` role, enforced by a domain check and an `inv_role_ck` that admits only `admin` and `member`. | Ownership is transferred deliberately. Handing it out by email makes the last-owner invariant depend on a mailbox. |
 | D-36 | The audit `detail` document is built from an eleven-key closed set, and `detail_is_permitted` refuses anything else. | A detail assembled from a request body eventually carries a secret, and an append-only table is the worst place to discover that. |
 | D-37 | The migration suite takes a lane-supplied PostgreSQL through `required_env!` rather than starting a container. | Forced by the `data-image-literal` rule; see §4. The suite fails loudly on an absent prerequisite and never skips, so the no-skip policy holds either way. |
+| D-38 | Central actor memberships are projected as bounded JSON tuples, not a PostgreSQL composite array and not a second query. | `aex-rds-data` already has strict JSON decoding, while a composite-array decoder would enlarge the transport vocabulary for one schema. One statement preserves the pinned authorization I/O budget; requesting 1,001 rows lets the decoder refuse an actor above the public 1,000-row bound instead of truncating authority. |
+| D-39 | Every time-bounded `AuthorizationReader` credential method receives the request's `OffsetDateTime`. | The old skeleton substituted `UNIX_EPOCH`, making every modern credential appear unexpired. Reading a process or database clock inside the adapter would also split one request across instants. The request edge owns the instant and passes it through. |
+| D-40 | The Aurora control adapter refuses opaque continuation cursors until the port carries decoded, authenticated keyset claims. | Ignoring a cursor repeats the first page; decoding it without the cursor secret accepts attacker-controlled ordering state. A typed refusal is the only honest current behavior. |
 
 ## 6. Gate output
 
 ```
-$ cargo fmt --all
+$ cargo fmt --all -- --check
 (no output)
 
 $ cargo clippy -p aex-identity-domain -p aex-identity-app -p aex-identity-aurora \
@@ -294,13 +311,28 @@ $ cargo clippy -p aex-identity-domain -p aex-identity-app -p aex-identity-aurora
 $ cargo clippy -p aex-control-aurora --all-targets --features integration-engines -- -D warnings
 (no output)
 
+$ cargo nextest run <the twelve owned packages> --all-targets
+Summary [88.537s] 368 tests run: 368 passed, 0 skipped
+
+$ cargo check --workspace --all-targets
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 19s
+
+$ cargo run -p aex-workspace-check -- registry build
+aex-workspace-check: wrote release/test-registry.json and release/unearned-evidence.json
+(the generated registries were unchanged)
+
 $ cargo run -p aex-workspace-check
 aex-workspace-check: 133 member(s) and 139 package(s) satisfy every structural and registry rule
-aex-workspace-check: 569 unearned-evidence row(s) recorded in the source-rewrite phase
+aex-workspace-check: 542 unearned-evidence row(s) recorded in the source-rewrite phase
+
+$ git diff --check
+(no errors)
 ```
 
-`cargo nextest run` over the twelve owned packages and `cargo check --workspace
---all-targets` are recorded in the stream report.
+The PostgreSQL migration suite is compile- and lint-covered by
+`integration-engines`, but was not executed locally because
+`AEX_CENTRAL_PG_URL` was absent. Its lane prerequisite remains explicit and the
+suite does not skip when invoked.
 
 ## 7. The assertion format as landed
 

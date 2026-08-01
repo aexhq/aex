@@ -19,7 +19,22 @@ pub mod authz;
 pub mod error;
 pub mod rows;
 pub mod sql;
+pub mod store;
 
 pub use authz::AuroraAuthorizationReader;
 pub use error::{map_commit_failure, map_store_error};
-pub use rows::{AccountActorRow, SigningKeyRow, WorkspaceKeyRow};
+pub use rows::{AccountActorRow, CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
+pub use store::AuroraControlStore;
+
+#[cfg(test)]
+mod store_contract {
+    use super::AuroraControlStore;
+    use aex_control_app::ports::ControlStore;
+
+    fn implements_control_store<T: ControlStore>() {}
+
+    #[test]
+    fn the_aurora_adapter_implements_every_control_store_method() {
+        implements_control_store::<AuroraControlStore>();
+    }
+}
