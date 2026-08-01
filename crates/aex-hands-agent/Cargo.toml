@@ -24,9 +24,6 @@ scenarios = []
 
 [package.metadata.aex.targets]
 hostile_frames = "unit"
-journal_ordering = "unit"
-start_identity = "unit"
-output_bounds = "unit"
 no_cloud_authority = "unit"
 no_guest_billing = "unit"
 

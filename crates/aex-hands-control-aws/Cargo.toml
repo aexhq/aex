@@ -23,11 +23,8 @@ security_tier = "internal"
 risk = ["concurrency"]
 scenarios = []
 
-[package.metadata.aex.targets]
-run_request_golden = "unit"
-provider_error_classification = "unit"
-transition_await = "unit"
-endpoint_token_redaction = "unit"
+[package.metadata.aex.not_applicable]
+targets = "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
 aex-hands-protocol = { path = "../aex-hands-protocol" }

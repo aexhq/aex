@@ -23,11 +23,8 @@ security_tier = "guest"
 risk = ["untrusted_input"]
 scenarios = []
 
-[package.metadata.aex.targets]
-path_containment = "unit"
-environment_hardening = "unit"
-edit_revision_check = "unit"
-search_bounds = "unit"
+[package.metadata.aex.not_applicable]
+targets = "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
 aex-hands-protocol = { path = "../aex-hands-protocol" }

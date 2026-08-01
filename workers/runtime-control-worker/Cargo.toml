@@ -24,14 +24,13 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.targets]
-config_validation = "unit"
-health_endpoints = "unit"
-work_domains = "unit"
 
 [[bin]]
 name = "runtime-control-worker"
 path = "src/main.rs"
+
+[package.metadata.aex.not_applicable]
+targets = "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }

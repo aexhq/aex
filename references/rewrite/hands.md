@@ -120,8 +120,22 @@ cargo check --workspace --all-targets
   Finished `dev` profile [unoptimized + debuginfo] target(s)
 
 cargo run -p aex-workspace-check
-  aex-workspace-check: <structural check passed>
+  aex-workspace-check: 133 member(s) and 139 package(s) satisfy every structural
+                       and registry rule
+  aex-workspace-check: 573 unearned-evidence row(s) recorded in the
+                       source-rewrite phase
+
+cargo run -p aex-workspace-check -- registry build
+  aex-workspace-check: wrote release/test-registry.json and
+                       release/unearned-evidence.json
 ```
+
+Only `aex-hands-agent` declares `[package.metadata.aex.targets]`, because it is
+the only owned crate with separate `[[test]]` targets (`hostile_frames`,
+`no_cloud_authority`, `no_guest_billing`). Every other owned crate keeps its
+evidence in inline unit modules, which the declared `unit` layer already
+collects, and says so in `not_applicable.targets` rather than naming a target
+that does not exist.
 
 Zero `#[ignore]`, zero environment-conditional self-skips, zero retries. The
 default nextest profile already excludes `aex-live-*` by `default-filter`, so the
