@@ -925,13 +925,6 @@
   },
   {
     "reason_class": "pending_workload",
-    "subject": "LOAD-STREAM-SOCKETS",
-    "owner": "regional-services",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-stream`"
-  },
-  {
-    "reason_class": "pending_workload",
     "subject": "OTLP-STAGED-COMMIT",
     "owner": "observations-usage",
     "blocking_rule": "aex-workload-unowned",

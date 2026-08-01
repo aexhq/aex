@@ -1,0 +1,42 @@
+id = "stream-sockets"
+owner = "regional-services"
+target = "aex-live-regional-stream"
+tier = "t3"
+duration = "30m"
+ttl = "2h"
+
+[arrival]
+mode = "closed"
+concurrency = 1000
+
+[arrival.mix]
+listen = 1.0
+
+[[gate]]
+id = "LOAD-STREAM-SOCKETS"
+kind = "budget"
+blocking = true
+assert = "1000 sustained sockets on a 1 vCPU / 2 GiB task within the 4 MiB per-connection budget && residual_tasks == 0 && residual_bytes == 0 after a disconnect storm && reconnect from the durable cursor is frame-equivalent"
+source = "PERF-11; 06-regional-services.md section 5"
+
+[report]
+metrics = [
+  "completed_per_s",
+  "queue_delay_ms",
+  "time_to_first_token_ms",
+  "end_to_end_ms",
+  "provider_wait_ms",
+  "local_cpu_ms",
+  "rss_peak_bytes",
+  "open_fds",
+  "tokio_tasks",
+  "sockets",
+  "journal_bytes",
+  "checkpoint_bytes",
+  "affinity_hit_rate",
+  "scale_event_s",
+  "recovery_s",
+  "duplicate_effects",
+  "gaps",
+  "cost_micro_usd_per_completed_turn",
+]

@@ -14,7 +14,7 @@
     "packages": 139,
     "seams_claimed": 32,
     "seams_declared": 34,
-    "workloads": 0
+    "workloads": 1
   },
   "packages": {
     "apps/docs": {
