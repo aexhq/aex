@@ -37,6 +37,13 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                             | ("regional-work", "session-operation-worker")
                             | ("regional-content", "content-lifecycle-worker")
                             | ("regional-registry", "regional-session-api")
+                            // Each usage worker deletes exactly one row shape:
+                            // its own OUTBOX# marker, once the SendMessage is
+                            // confirmed. No fact, claim, receipt, frontier or
+                            // cursor is deletable by any of them.
+                            | ("usage-storage-authority", "usage-storage-worker")
+                            | ("usage-compute-authority", "usage-compute-worker")
+                            | ("usage-transfer-authority", "usage-transfer-worker")
                     ),
                     "`{}` grants DeleteItem to `{}`, which is not on the deletion allow list",
                     table.table,

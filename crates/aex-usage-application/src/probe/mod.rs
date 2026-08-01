@@ -19,8 +19,10 @@
 //!   rather than a plausible number. An unbilled byte is a cost; an invented one
 //!   is a false invoice.
 
+pub mod body;
 pub mod clock;
 pub mod cpu;
+pub mod drain;
 pub mod egress;
 pub mod memory;
 pub mod reconciler;
@@ -41,6 +43,7 @@ use aex_usage_domain::wire_pending::{
 };
 use time::OffsetDateTime;
 
+pub use body::CountingBody;
 pub use clock::{
     CGROUP_V2_CPU_STAT, CGROUP_V2_MEMORY_CURRENT, CgroupV2Cpu, CgroupV2Memory, CpuInstant,
     CpuMicros, PhysicalCpuSource, PhysicalMemorySource, RustixThreadCpuClock, SystemWallClock,
@@ -50,6 +53,7 @@ pub use cpu::{
     ActivationKey, ActivationMeter, ActivationScope, ActivationScoped, CpuJob,
     MAX_ATTRIBUTED_POLL_US,
 };
+pub use drain::{CancelToken, FactDrain, Pacer};
 pub use egress::{BoundaryReceipt, EgressCounter, egress_from_receipt};
 pub use memory::{MemoryBudget, MemoryReport, MemoryReservation};
 pub use reconciler::{CpuIntervalReport, CpuReconciler};

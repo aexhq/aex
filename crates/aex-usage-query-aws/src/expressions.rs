@@ -1,242 +1,277 @@
-//! Read-only key expressions for `usage-query-projection`.
+//! The read side of `usage-query-projection`.
 //!
-//! The projection is generation-keyed, so a rebuild is a normal operation rather
-//! than an outage: generation `n+1` is written under its own prefix and the
-//! pointer flips only once the rebuild has been verified. A cursor binds the
-//! generation it was issued against, so a stale cursor expires instead of
-//! silently mixing two generations.
+//! The key grammar itself lives in [`aex_usage_domain::projection`] because the
+//! writer and the reader must agree about where a row lives, and a second copy
+//! is exactly how they would stop agreeing. This module re-exports it and adds
+//! the bounded read expressions: a keyset page over one partition, the coverage
+//! vector, and the generation pointer.
 //!
 //! Nothing here writes. That is proved rather than asserted — see
 //! `tests/write_incapability.rs` for the source-conformance and link-graph
 //! halves of `U-20`.
 
-use std::fmt;
+pub use aex_usage_domain::projection::{
+    Generation, MAX_GENERATION, ProjectionKey, ProjectionKeyError, ProjectionKeys,
+};
 
+use aex_usage_domain::frontier::{AcceptedSequence, FrontierState, PoisonReason};
 use aex_usage_domain::meter::PublicCategory;
-use aex_usage_domain::wire_pending::WorkspaceId;
+use aex_usage_domain::quantity::Quantity;
+use aex_usage_domain::wire_pending::{Timestamp, WorkspaceId};
 
-/// A projection generation.
+/// The largest number of rows one page may read.
 ///
-/// Rendered `G{gen:04}` so the prefix is fixed width and a range query cannot
-/// straddle two generations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Generation(u16);
+/// A read that cannot answer inside this budget returns a cursor rather than a
+/// bigger scan: an unbounded group-by over a busy workspace is the one way this
+/// table can turn a customer request into an outage.
+pub const MAX_PAGE_ROWS: usize = 500;
 
-/// The largest generation the `G{gen:04}` prefix can render at fixed width.
-///
-/// Above this the prefix would grow a fifth digit and a range query could
-/// straddle two generations, so the ceiling is enforced at construction rather
-/// than discovered by a mis-scoped read.
-pub const MAX_GENERATION: u16 = 9_999;
-
-impl Generation {
-    /// The generation a fresh projection starts at.
-    pub const FIRST: Self = Self(0);
-
-    /// Builds a generation.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::GenerationExhausted`] above [`MAX_GENERATION`].
-    pub const fn new(value: u16) -> Result<Self, QueryError> {
-        if value > MAX_GENERATION {
-            return Err(QueryError::GenerationExhausted);
-        }
-        Ok(Self(value))
-    }
-
-    /// The underlying number.
-    #[must_use]
-    pub const fn get(self) -> u16 {
-        self.0
-    }
-
-    /// The next generation a rebuild writes into.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::GenerationExhausted`] at `u16::MAX`.
-    pub const fn next(self) -> Result<Self, QueryError> {
-        match self.0.checked_add(1) {
-            Some(value) => Self::new(value),
-            None => Err(QueryError::GenerationExhausted),
-        }
-    }
-
-    /// The fixed-width key prefix.
-    #[must_use]
-    pub fn prefix(self) -> String {
-        format!("G{:04}", self.0)
-    }
-}
-
-impl fmt::Display for Generation {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.prefix())
-    }
-}
-
-/// Why a read could not be built.
+/// Why a read could not be built or decoded.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QueryError {
-    /// The generation counter reached its ceiling.
-    #[error("the projection generation counter is exhausted at {MAX_GENERATION}")]
-    GenerationExhausted,
-    /// A key component could forge the separator.
-    #[error("`{component}` contains the `#` key separator")]
-    Separator {
-        /// The offending component.
-        component: String,
+    /// A key could not be built.
+    #[error(transparent)]
+    Key(#[from] ProjectionKeyError),
+    /// The requested page size exceeded the hard budget.
+    #[error("page size {requested} exceeds the {MAX_PAGE_ROWS} row budget")]
+    PageBudget {
+        /// What the caller asked for.
+        requested: usize,
     },
-    /// A bucket string was not the expected fixed width.
-    #[error("`{value}` is not a `{expected}` bucket")]
-    MalformedBucket {
-        /// The value that was refused.
-        value: String,
-        /// The shape that was expected.
+    /// The half-open range was inverted or empty.
+    #[error("the requested range ends at or before it starts")]
+    InvertedRange,
+    /// A row was missing an attribute the projected set declares.
+    #[error("projected row is missing required attribute `{attribute}`")]
+    MissingAttribute {
+        /// The attribute that was absent.
+        attribute: &'static str,
+    },
+    /// A row could not be decoded.
+    #[error("attribute `{attribute}` is malformed: {reason}")]
+    MalformedAttribute {
+        /// The attribute that was refused.
+        attribute: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
+    /// A row carried an item type this reader does not serve.
+    #[error("expected item type `{expected}` but the row carries `{actual}`")]
+    ItemTypeMismatch {
+        /// What was asked for.
         expected: &'static str,
+        /// What the row says it is.
+        actual: String,
     },
 }
 
-/// Rejects a component that could forge the separator.
-fn component(value: &str) -> Result<&str, QueryError> {
-    if value.contains('#') {
-        return Err(QueryError::Separator {
-            component: value.to_owned(),
-        });
+/// How a page is bucketed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Granularity {
+    /// One row per hour per dimension tuple.
+    Hourly,
+    /// One row per day per dimension tuple.
+    Daily,
+}
+
+impl Granularity {
+    /// The sort-key prefix this granularity occupies.
+    #[must_use]
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Hourly => "H#",
+            Self::Daily => "D#",
+        }
     }
-    Ok(value)
 }
 
-/// A composite key into the projection.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProjectionKey {
-    /// The partition key.
-    pub pk: String,
-    /// The sort key, absent for a prefix query.
-    pub sk: Option<String>,
+/// A bounded keyset read over one aggregate partition.
+///
+/// The partition is always fully qualified — generation, workspace, public
+/// category and month — so a read can never straddle two workspaces or two
+/// generations however the caller builds its query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregatePage {
+    /// The partition to read.
+    pub partition: String,
+    /// The inclusive lower sort-key bound.
+    pub from: String,
+    /// The exclusive upper sort-key bound.
+    pub until: String,
+    /// The largest number of rows this read may return.
+    pub limit: usize,
+    /// Where the previous page stopped, when there was one.
+    pub after: Option<String>,
 }
 
-/// Read-only key expressions.
+/// Everything one bounded aggregate read needs.
+///
+/// Grouped into a struct rather than passed positionally: a caller cannot
+/// transpose the two bucket bounds, or the workspace and the month, without the
+/// type system noticing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregateRequest<'a> {
+    /// The generation the read is pinned to.
+    pub generation: Generation,
+    /// The workspace being read.
+    pub workspace: &'a WorkspaceId,
+    /// The public category being read.
+    pub category: PublicCategory,
+    /// The `YYYY-MM` partition.
+    pub month: &'a str,
+    /// Hourly or daily rollups.
+    pub granularity: Granularity,
+    /// The inclusive lower bucket bound.
+    pub from_bucket: &'a str,
+    /// The exclusive upper bucket bound.
+    pub until_bucket: &'a str,
+    /// The row budget.
+    pub limit: usize,
+    /// Where the previous page stopped.
+    pub after: Option<String>,
+}
+
+/// Read-only expression builders.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct ProjectionKeys;
+pub struct ProjectionReads {
+    keys: ProjectionKeys,
+}
 
-impl ProjectionKeys {
-    /// The aggregate partition for one workspace, category and month.
+impl ProjectionReads {
+    /// A fresh builder.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            keys: ProjectionKeys,
+        }
+    }
+
+    /// The key grammar this reader is built on.
+    #[must_use]
+    pub const fn keys(self) -> ProjectionKeys {
+        self.keys
+    }
+
+    /// A bounded page over one month of aggregates.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::Separator`] for a forging component and
-    /// [`QueryError::MalformedBucket`] when `month` is not `YYYY-MM`.
-    pub fn aggregate_partition(
+    /// Returns [`QueryError::PageBudget`] above [`MAX_PAGE_ROWS`],
+    /// [`QueryError::InvertedRange`] for an empty or inverted range, and
+    /// [`QueryError::Key`] when the partition cannot be built.
+    pub fn aggregate_page(
         self,
-        generation: Generation,
-        workspace: &WorkspaceId,
-        category: PublicCategory,
-        month: &str,
-    ) -> Result<String, QueryError> {
-        if month.len() != 7 || month.as_bytes()[4] != b'-' {
-            return Err(QueryError::MalformedBucket {
-                value: month.to_owned(),
-                expected: "YYYY-MM",
+        request: &AggregateRequest<'_>,
+    ) -> Result<AggregatePage, QueryError> {
+        if request.limit == 0 || request.limit > MAX_PAGE_ROWS {
+            return Err(QueryError::PageBudget {
+                requested: request.limit,
             });
         }
-        Ok(format!(
-            "{}#{}#{}#{}",
-            generation.prefix(),
-            component(workspace.as_str())?,
-            category.id(),
-            component(month)?
-        ))
-    }
-
-    /// The hourly aggregate key.
-    ///
-    /// # Errors
-    ///
-    /// As [`ProjectionKeys::aggregate_partition`].
-    pub fn hourly(
-        self,
-        generation: Generation,
-        workspace: &WorkspaceId,
-        category: PublicCategory,
-        month: &str,
-        hour: &str,
-        dimension_hash: &str,
-    ) -> Result<ProjectionKey, QueryError> {
-        Ok(ProjectionKey {
-            pk: self.aggregate_partition(generation, workspace, category, month)?,
-            sk: Some(format!(
-                "H#{}#{}",
-                component(hour)?,
-                component(dimension_hash)?
-            )),
+        if request.until_bucket <= request.from_bucket {
+            return Err(QueryError::InvertedRange);
+        }
+        let partition = self.keys.aggregate_partition(
+            request.generation,
+            request.workspace,
+            request.category,
+            request.month,
+        )?;
+        Ok(AggregatePage {
+            partition,
+            from: format!("{}{}", request.granularity.prefix(), request.from_bucket),
+            until: format!("{}{}", request.granularity.prefix(), request.until_bucket),
+            limit: request.limit,
+            after: request.after.clone(),
         })
     }
 
-    /// The daily aggregate key.
+    /// The coverage vector key for one workspace and category.
     ///
     /// # Errors
     ///
-    /// As [`ProjectionKeys::aggregate_partition`].
-    pub fn daily(
-        self,
-        generation: Generation,
-        workspace: &WorkspaceId,
-        category: PublicCategory,
-        month: &str,
-        day: &str,
-        dimension_hash: &str,
-    ) -> Result<ProjectionKey, QueryError> {
-        Ok(ProjectionKey {
-            pk: self.aggregate_partition(generation, workspace, category, month)?,
-            sk: Some(format!(
-                "D#{}#{}",
-                component(day)?,
-                component(dimension_hash)?
-            )),
-        })
-    }
-
-    /// The coverage vector key.
-    ///
-    /// This is the row that lets a customer read distinguish "you used nothing"
-    /// from "we have not folded your facts yet". A page that omitted it would be
-    /// confidently empty rather than honestly incomplete.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::Separator`] for a forging component.
+    /// Returns [`QueryError::Key`] when the key cannot be built.
     pub fn coverage(
         self,
         generation: Generation,
         workspace: &WorkspaceId,
         category: PublicCategory,
     ) -> Result<ProjectionKey, QueryError> {
-        Ok(ProjectionKey {
-            pk: format!(
-                "{}#{}#{}",
-                generation.prefix(),
-                component(workspace.as_str())?,
-                category.id()
-            ),
-            sk: Some("COVERAGE".to_owned()),
-        })
+        Ok(self.keys.coverage(generation, workspace, category)?)
     }
 
     /// The generation pointer key.
     #[must_use]
     pub fn generation_pointer(self) -> ProjectionKey {
-        ProjectionKey {
-            pk: "GENERATION".to_owned(),
-            sk: Some("CURRENT".to_owned()),
+        self.keys.generation_pointer()
+    }
+}
+
+/// One decoded aggregate row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregateRow {
+    /// Which public category the quantity belongs to.
+    pub public_category: PublicCategory,
+    /// The meter identifier, absent for a zero-dollar observability rollup.
+    pub meter: Option<String>,
+    /// The half-open bucket start.
+    pub bucket_start: String,
+    /// The half-open bucket end.
+    pub bucket_end: String,
+    /// The accumulated quantity.
+    pub quantity: Quantity,
+    /// How many facts contributed.
+    pub fact_count: u64,
+    /// The declared dimension tuple, stored so a reader never inverts the hash.
+    pub dimensions: Vec<(String, String)>,
+    /// The highest accepted sequence folded into this row.
+    pub highest_sequence: AcceptedSequence,
+}
+
+/// The copied frontier one category's page reports.
+///
+/// This is what lets a customer read distinguish "you used nothing" from "we
+/// have not folded your facts yet". A page without it would be confidently empty
+/// rather than honestly incomplete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageRow {
+    /// Which public category this coverage is for.
+    pub public_category: PublicCategory,
+    /// The last fact admitted by the authority.
+    pub accepted: AcceptedSequence,
+    /// The last fact folded into this projection.
+    pub projected: AcceptedSequence,
+    /// The last fact delivered to central settlement.
+    pub published: AcceptedSequence,
+    /// The last fact covered by a committed settlement receipt.
+    pub settled: AcceptedSequence,
+    /// How far service time is known to be complete.
+    pub service_through: Option<Timestamp>,
+    /// Whether the frontier is advancing or parked.
+    pub state: FrontierState,
+}
+
+impl CoverageRow {
+    /// Whether this category's fold is parked behind a poisoned record.
+    #[must_use]
+    pub const fn is_stalled(&self) -> bool {
+        matches!(self.state, FrontierState::Quarantined { .. })
+    }
+
+    /// Why the fold is parked, when it is.
+    #[must_use]
+    pub const fn stall_reason(&self) -> Option<PoisonReason> {
+        match self.state {
+            FrontierState::Quarantined { reason, .. } => Some(reason),
+            FrontierState::Advancing => None,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Generation, MAX_GENERATION, ProjectionKeys, QueryError};
+    use super::{Generation, Granularity, MAX_PAGE_ROWS, ProjectionReads, QueryError};
+    use aex_usage_domain::frontier::{AcceptedSequence, FrontierState, PoisonReason};
     use aex_usage_domain::meter::PublicCategory;
     use aex_usage_domain::wire_pending::WorkspaceId;
 
@@ -244,178 +279,115 @@ mod tests {
         WorkspaceId::parse("ws-1").expect("workspace")
     }
 
-    #[test]
-    fn the_generation_prefix_is_fixed_width_so_a_range_cannot_straddle_two() {
-        assert_eq!(Generation::FIRST.prefix(), "G0000");
-        assert_eq!(Generation::new(7).expect("in range").prefix(), "G0007");
-        assert_eq!(Generation::new(1_234).expect("in range").prefix(), "G1234");
-
-        // Every prefix is the same length, so lexical ordering never mixes them.
-        let widths: Vec<usize> = [0u16, 1, 99, 1_000, MAX_GENERATION]
-            .map(|value| Generation::new(value).expect("in range").prefix().len())
-            .to_vec();
-        assert!(widths.windows(2).all(|pair| pair[0] == pair[1]));
+    fn page(limit: usize) -> Result<super::AggregatePage, QueryError> {
+        ProjectionReads::new().aggregate_page(&super::AggregateRequest {
+            generation: Generation::FIRST,
+            workspace: &workspace(),
+            category: PublicCategory::Compute,
+            month: "2026-08",
+            granularity: Granularity::Hourly,
+            from_bucket: "2026-08-01T00",
+            until_bucket: "2026-08-02T00",
+            limit,
+            after: None,
+        })
     }
 
     #[test]
-    fn a_rebuild_writes_into_the_next_generation() {
-        assert_eq!(
-            Generation::FIRST.next().expect("advances"),
-            Generation::new(1).expect("in range")
+    fn a_page_is_fully_qualified_so_it_cannot_straddle_a_workspace_or_a_generation() {
+        let page = page(100).expect("builds");
+        assert_eq!(page.partition, "G0000#ws-1#compute#2026-08");
+        assert_eq!(page.from, "H#2026-08-01T00");
+        assert_eq!(page.until, "H#2026-08-02T00");
+        assert_eq!(page.limit, 100);
+        assert!(page.after.is_none());
+    }
+
+    #[test]
+    fn the_two_granularities_occupy_disjoint_sort_key_space() {
+        let hourly = Granularity::Hourly.prefix();
+        let daily = Granularity::Daily.prefix();
+        assert_ne!(hourly, daily);
+        assert!(
+            !hourly.starts_with(daily) && !daily.starts_with(hourly),
+            "an hourly range must never pick up a daily rollup and double-count"
         );
-        assert!(matches!(
-            Generation::new(u16::MAX),
-            Err(QueryError::GenerationExhausted)
-        ));
-        assert!(matches!(
-            Generation::new(MAX_GENERATION)
-                .expect("the ceiling is in range")
-                .next(),
-            Err(QueryError::GenerationExhausted)
-        ));
     }
 
     #[test]
-    fn aggregates_partition_by_generation_workspace_category_and_month() {
-        let keys = ProjectionKeys;
-        let hourly = keys
-            .hourly(
-                Generation::new(2).expect("in range"),
-                &workspace(),
-                PublicCategory::Compute,
-                "2026-08",
-                "2026-08-01T12",
-                "abcd1234",
-            )
-            .expect("builds");
-        assert_eq!(hourly.pk, "G0002#ws-1#compute#2026-08");
-        assert_eq!(hourly.sk.as_deref(), Some("H#2026-08-01T12#abcd1234"));
-
-        let daily = keys
-            .daily(
-                Generation::new(2).expect("in range"),
-                &workspace(),
-                PublicCategory::Compute,
-                "2026-08",
-                "2026-08-01",
-                "abcd1234",
-            )
-            .expect("builds");
-        assert_eq!(
-            daily.pk, hourly.pk,
-            "hourly and daily rollups share one partition, so one query reads both"
-        );
-        assert_eq!(daily.sk.as_deref(), Some("D#2026-08-01#abcd1234"));
+    fn a_page_beyond_the_row_budget_is_refused_rather_than_scanned() {
+        assert!(matches!(
+            page(MAX_PAGE_ROWS + 1),
+            Err(QueryError::PageBudget { .. })
+        ));
+        assert!(matches!(page(0), Err(QueryError::PageBudget { .. })));
+        assert!(page(MAX_PAGE_ROWS).is_ok());
     }
 
     #[test]
-    fn the_four_public_categories_each_get_their_own_partition() {
-        let keys = ProjectionKeys;
-        let mut partitions: Vec<String> = PublicCategory::ALL
-            .into_iter()
-            .map(|category| {
-                keys.aggregate_partition(Generation::FIRST, &workspace(), category, "2026-08")
-                    .expect("builds")
+    fn an_inverted_or_empty_range_is_refused() {
+        let build = |from: &str, until: &str| {
+            ProjectionReads::new().aggregate_page(&super::AggregateRequest {
+                generation: Generation::FIRST,
+                workspace: &workspace(),
+                category: PublicCategory::Storage,
+                month: "2026-08",
+                granularity: Granularity::Daily,
+                from_bucket: from,
+                until_bucket: until,
+                limit: 10,
+                after: None,
             })
-            .collect();
-        let count = partitions.len();
-        partitions.sort();
-        partitions.dedup();
-        assert_eq!(
-            count,
-            partitions.len(),
-            "no two categories share a partition"
-        );
-    }
-
-    #[test]
-    fn a_malformed_month_bucket_is_refused() {
-        let keys = ProjectionKeys;
-        for bad in ["2026", "2026-8", "2026-08-01", "26-08"] {
-            assert!(
-                keys.aggregate_partition(
-                    Generation::FIRST,
-                    &workspace(),
-                    PublicCategory::Storage,
-                    bad,
-                )
-                .is_err(),
-                "`{bad}` is not a YYYY-MM bucket"
-            );
-        }
-    }
-
-    #[test]
-    fn a_component_that_could_forge_a_separator_is_refused() {
-        let keys = ProjectionKeys;
+        };
         assert!(matches!(
-            keys.hourly(
-                Generation::FIRST,
-                &workspace(),
-                PublicCategory::Storage,
-                "2026-08",
-                "2026-08-01T12",
-                "ab#cd",
-            ),
-            Err(QueryError::Separator { .. })
+            build("2026-08-02", "2026-08-01"),
+            Err(QueryError::InvertedRange)
         ));
+        assert!(matches!(
+            build("2026-08-01", "2026-08-01"),
+            Err(QueryError::InvertedRange)
+        ));
+        assert!(build("2026-08-01", "2026-08-02").is_ok());
     }
 
     #[test]
-    fn the_coverage_vector_has_one_row_per_workspace_and_category() {
-        let keys = ProjectionKeys;
-        let coverage = keys
-            .coverage(
-                Generation::new(1).expect("in range"),
-                &workspace(),
-                PublicCategory::Memory,
-            )
-            .expect("builds");
-        assert_eq!(coverage.pk, "G0001#ws-1#memory");
-        assert_eq!(coverage.sk.as_deref(), Some("COVERAGE"));
+    fn coverage_reports_a_stall_rather_than_an_empty_page() {
+        let advancing = super::CoverageRow {
+            public_category: PublicCategory::Memory,
+            accepted: AcceptedSequence::new(9).expect("positive"),
+            projected: AcceptedSequence::new(9).expect("positive"),
+            published: AcceptedSequence::new(9).expect("positive"),
+            settled: AcceptedSequence::new(4).expect("positive"),
+            service_through: None,
+            state: FrontierState::Advancing,
+        };
+        assert!(!advancing.is_stalled());
+        assert!(advancing.stall_reason().is_none());
 
-        // The coverage row sits outside every month partition, so it is readable
-        // without knowing which months a workspace has data in.
-        let aggregate = keys
-            .aggregate_partition(
-                Generation::new(1).expect("in range"),
-                &workspace(),
-                PublicCategory::Memory,
-                "2026-08",
-            )
-            .expect("builds");
-        assert_ne!(coverage.pk, aggregate);
+        let parked = super::CoverageRow {
+            state: FrontierState::Quarantined {
+                at: AcceptedSequence::new(10).expect("positive"),
+                reason: PoisonReason::Undecodable,
+            },
+            ..advancing
+        };
+        assert!(parked.is_stalled());
+        assert_eq!(parked.stall_reason(), Some(PoisonReason::Undecodable));
     }
 
     #[test]
-    fn the_generation_pointer_is_a_single_fixed_row() {
-        let pointer = ProjectionKeys.generation_pointer();
-        assert_eq!(pointer.pk, "GENERATION");
-        assert_eq!(pointer.sk.as_deref(), Some("CURRENT"));
-    }
-
-    #[test]
-    fn two_generations_never_share_a_key() {
-        let keys = ProjectionKeys;
-        let first = keys
-            .aggregate_partition(
-                Generation::new(1).expect("in range"),
-                &workspace(),
-                PublicCategory::Storage,
-                "2026-08",
-            )
-            .expect("builds");
-        let second = keys
-            .aggregate_partition(
-                Generation::new(2).expect("in range"),
-                &workspace(),
-                PublicCategory::Storage,
-                "2026-08",
-            )
-            .expect("builds");
-        assert_ne!(
-            first, second,
-            "a rebuild must write generation n+1 without touching n"
-        );
+    fn a_malformed_month_still_fails_through_the_shared_grammar() {
+        let outcome = ProjectionReads::new().aggregate_page(&super::AggregateRequest {
+            generation: Generation::FIRST,
+            workspace: &workspace(),
+            category: PublicCategory::Storage,
+            month: "2026-8",
+            granularity: Granularity::Daily,
+            from_bucket: "2026-08-01",
+            until_bucket: "2026-08-02",
+            limit: 10,
+            after: None,
+        });
+        assert!(matches!(outcome, Err(QueryError::Key(_))));
     }
 }

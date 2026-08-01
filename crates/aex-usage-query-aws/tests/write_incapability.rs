@@ -1,16 +1,18 @@
 //! Proof that the query adapter cannot write.
 //!
 //! "Read-only" has to be a test result, not a convention (`U-20`). Four controls
-//! are required and two of them are provable here without an account:
+//! are required and three of them are provable here without an account:
 //!
 //! 1. **Source conformance** — no write operation name appears anywhere in this
 //!    crate's sources, in either the SDK's `snake_case` or its `PascalCase` form.
 //! 2. **Link graph** — this crate does not depend on any of the three authority
 //!    adapters, so no write expression builder is even reachable from it.
+//! 3. **IAM shape** — the generation definition for `usage-query-projection`
+//!    grants the reading role `GetItem` and `Query` and nothing else, and grants
+//!    a write action to no role outside the three usage workers.
 //!
-//! The other two are the IAM policy shape and a live `AccessDeniedException`
-//! assertion, both of which need a deployed plane and live in
-//! `tests/live/aex-live-usage-*-worker`.
+//! The fourth is a live `AccessDeniedException` assertion against a real table,
+//! which needs a deployed plane and lives in `tests/live/aex-live-usage-*-worker`.
 
 use std::path::{Path, PathBuf};
 
@@ -112,4 +114,143 @@ fn the_projection_is_generation_keyed_so_a_rebuild_is_a_normal_operation() {
     let pointer = keys.generation_pointer();
     assert_ne!(pointer.pk, live.pk);
     assert_ne!(pointer.pk, rebuilt.pk);
+}
+
+/// The `usage-query-projection` generation definition.
+fn projection_definition() -> serde_json::Value {
+    let path = crate_dir()
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/<name> always has two ancestors")
+        .join("migrations/regional/tables/usage-query-projection.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+    serde_json::from_str(&text).expect("the definition is valid JSON")
+}
+
+/// Every action that can change a row.
+const WRITE_ACTIONS: [&str; 6] = [
+    "dynamodb:PutItem",
+    "dynamodb:UpdateItem",
+    "dynamodb:DeleteItem",
+    "dynamodb:BatchWriteItem",
+    "dynamodb:TransactWriteItems",
+    "dynamodb:ExecuteStatement",
+];
+
+/// The only roles that may write the projection.
+const WRITERS: [&str; 3] = [
+    "usage-storage-worker",
+    "usage-compute-worker",
+    "usage-transfer-worker",
+];
+
+#[test]
+fn the_reading_role_holds_read_actions_and_nothing_else() {
+    let definition = projection_definition();
+    let grants = definition["iam"]
+        .as_array()
+        .expect("the definition declares IAM grants");
+    let reader = grants
+        .iter()
+        .find(|grant| grant["role"] == "regional-session-api")
+        .expect("the customer read path holds a grant");
+
+    let actions: Vec<&str> = reader["actions"]
+        .as_array()
+        .expect("actions are a list")
+        .iter()
+        .map(|action| action.as_str().expect("an action is a string"))
+        .collect();
+    assert_eq!(
+        actions,
+        vec!["dynamodb:GetItem", "dynamodb:Query"],
+        "the API role reads the projection and does nothing else to it"
+    );
+    assert_eq!(
+        reader["resources"]
+            .as_array()
+            .expect("resources are a list"),
+        &vec![serde_json::Value::from("table")],
+        "no index grant either: the projection has no index to read"
+    );
+}
+
+#[test]
+fn only_the_three_usage_workers_may_write_the_projection() {
+    // The projection is shared by three categories, so the IAM shape is what
+    // keeps a fourth principal out. A cross-category write here is repairable
+    // by a rebuild; a write by anything else is not accounted for at all.
+    for grant in projection_definition()["iam"]
+        .as_array()
+        .expect("the definition declares IAM grants")
+    {
+        let role = grant["role"].as_str().expect("a role is a string");
+        for action in grant["actions"].as_array().expect("actions are a list") {
+            let action = action.as_str().expect("an action is a string");
+            if WRITE_ACTIONS.contains(&action) {
+                assert!(
+                    WRITERS.contains(&role),
+                    "`{role}` holds `{action}` on usage-query-projection"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_projection_exposes_no_change_feed_and_no_index() {
+    // A stream would let a write fan out into another system before the
+    // authority had settled it, and an index would widen what one customer read
+    // can observe. The projection needs neither.
+    let definition = projection_definition();
+    assert_eq!(
+        definition["stream"]["enabled"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(definition["stream"]["viewType"], "NONE");
+    assert_eq!(
+        definition["globalSecondaryIndexes"]
+            .as_array()
+            .expect("indexes are a list")
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn only_detail_rows_expire_and_the_authorities_expire_nothing() {
+    let definition = projection_definition();
+    assert_eq!(
+        definition["timeToLive"]["enabled"],
+        serde_json::Value::Bool(true)
+    );
+    assert_eq!(
+        definition["timeToLive"]["appliesTo"]
+            .as_array()
+            .expect("appliesTo is a list"),
+        &vec![serde_json::Value::from("usage_detail")],
+        "aggregates and the coverage vector must never expire underneath a read"
+    );
+
+    for authority in [
+        "usage-storage-authority",
+        "usage-compute-authority",
+        "usage-transfer-authority",
+    ] {
+        let path = crate_dir()
+            .parent()
+            .and_then(Path::parent)
+            .expect("crates/<name> always has two ancestors")
+            .join(format!("migrations/regional/tables/{authority}.json"));
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        let definition: serde_json::Value =
+            serde_json::from_str(&text).expect("the definition is valid JSON");
+        assert_eq!(
+            definition["timeToLive"]["enabled"],
+            serde_json::Value::Bool(false),
+            "every row in `{authority}` is money evidence and must not expire"
+        );
+    }
 }

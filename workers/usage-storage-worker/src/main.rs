@@ -1,25 +1,45 @@
 //! `usage-storage-worker` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: storage fact projection, the frontier and the central
-//! storage-category outbox.
+//! Exclusive responsibility: `storage.byte_min.v1` fact projection, the storage
+//! frontier and the central storage-category outbox. One binary serves three
+//! event modes under one role (`U-09`) — `stream` from this authority's own
+//! `DynamoDB` stream, `sweep` from a one-minute schedule, and `receipt` from the
+//! storage settlement queue. All three need identical credentials and sit inside
+//! the identical category boundary, so a fourth deployable would buy nothing and
+//! would break Area 9's frozen inventory.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! The behaviour lives in `aex_usage_application::worker`, which is
+//! category-generic over ports. This binary is the only place that names a
+//! table, and it names exactly one: `aex-usage-storage-aws`. That is what makes
+//! "this worker cannot write a sibling authority" a link-graph fact rather than
+//! a review promise — see `src/main.rs` tests and the adapter's own
+//! `tests/isolation.rs`.
+
+use aex_usage_application::worker::{BillingMode, WorkerLimits};
 
 /// Validated start-up configuration for `usage-storage-worker`.
 ///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
+/// Nothing here has a default. A defaulted resource identifier silently binds
+/// the process to the wrong plane, region or table, and a defaulted money-
+/// relevant limit is a policy decision nobody made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Deployment plane this process belongs to (`dev` or `prd`).
     pub plane: String,
     /// `AWS` region this process is bound to.
     pub region: String,
-    /// The usage-storage-authority `DynamoDB` table.
-    pub resource: String,
+    /// The `usage-storage-authority` `DynamoDB` table.
+    pub authority_table: String,
+    /// The shared `usage-query-projection` table.
+    pub projection_table: String,
+    /// The central settlement `FIFO` queue.
+    pub rating_queue: String,
+    /// This category's settlement receipt queue.
+    pub receipt_queue: String,
+    /// Whether this deployment may produce a chargeable rating request.
+    pub billing_mode: BillingMode,
+    /// The named limits the worker runs under.
+    pub limits: WorkerLimits,
     /// Maximum stream records processed per invocation.
     pub budget: u32,
 }
@@ -41,6 +61,21 @@ pub enum ConfigError {
         /// Why the supplied value was rejected.
         reason: String,
     },
+    /// The charging gate was configured in a state it must never occupy.
+    ///
+    /// `A11-METER` makes shadow versus active a gate a deployment cannot half
+    /// satisfy. A shadow deployment pointed at the live rating queue would post
+    /// real money while every dashboard said it was shadowing, so the two halves
+    /// are checked against each other rather than trusted separately.
+    #[error("billing mode `{mode}` disagrees with rating queue `{queue}`: {reason}")]
+    ChargingGate {
+        /// The declared mode.
+        mode: &'static str,
+        /// The queue it was pointed at.
+        queue: String,
+        /// What the disagreement is.
+        reason: &'static str,
+    },
 }
 
 /// Why `usage-storage-worker` stopped.
@@ -49,31 +84,135 @@ pub enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`usage-storage-worker` has no implementation yet")]
-    NotImplemented,
+    /// An incoming event could not be classified.
+    #[error(transparent)]
+    Dispatch(#[from] DispatchError),
+    /// The `DynamoDB` and `SQS` port implementations have not landed yet.
+    ///
+    /// A typed gap rather than a stub that appears to work: the use cases, the
+    /// fold and the three event modes are complete and tested against in-memory
+    /// ports, and what is missing is `aex-usage-storage-aws`'s `AuthorityStore`
+    /// implementation over the real client.
+    #[error("`aex-usage-storage-aws` does not yet implement `AuthorityStore` over `DynamoDB`")]
+    StoreUnimplemented,
+}
+
+/// Which trigger delivered an invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventMode {
+    /// The authority table's own change feed.
+    Stream,
+    /// The one-minute outbox sweep.
+    Sweep,
+    /// This category's settlement receipt queue.
+    Receipt,
+}
+
+impl EventMode {
+    /// The stable identifier a log line and a metric carry.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Stream => "stream",
+            Self::Sweep => "sweep",
+            Self::Receipt => "receipt",
+        }
+    }
+
+    /// Classifies one incoming event envelope.
+    ///
+    /// Strict by design. An event this worker does not recognise is a wiring
+    /// defect, and guessing a mode would run the wrong handler over money
+    /// evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatchError`] for an envelope that names no known source or
+    /// mixes two.
+    pub fn classify(event: &serde_json::Value) -> Result<Self, DispatchError> {
+        if let Some(records) = event.get("Records").and_then(serde_json::Value::as_array) {
+            let mut sources: Vec<&str> = records
+                .iter()
+                .filter_map(|record| {
+                    record
+                        .get("eventSource")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .collect();
+            sources.sort_unstable();
+            sources.dedup();
+            return match sources.as_slice() {
+                ["aws:dynamodb"] => Ok(Self::Stream),
+                ["aws:sqs"] => Ok(Self::Receipt),
+                [] => Err(DispatchError::Unrecognised),
+                _ => Err(DispatchError::MixedSources {
+                    sources: sources.join(", "),
+                }),
+            };
+        }
+        if event.get("detail-type").and_then(serde_json::Value::as_str) == Some("Scheduled Event") {
+            return Ok(Self::Sweep);
+        }
+        Err(DispatchError::Unrecognised)
+    }
+}
+
+/// Why an event could not be classified.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DispatchError {
+    /// The envelope named no source this worker serves.
+    #[error("event envelope names no trigger this worker serves")]
+    Unrecognised,
+    /// One batch mixed two triggers.
+    #[error("event batch mixes sources `{sources}`; one invocation serves one mode")]
+    MixedSources {
+        /// The sources that appeared together.
+        sources: String,
+    },
 }
 
 /// Environment variable naming the deployment plane.
 pub const PLANE_VAR: &str = "AEX_PLANE";
 /// Environment variable naming the bound `AWS` region.
 pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the usage-storage-authority `DynamoDB` table.
-pub const RESOURCE_VAR: &str = "AEX_USAGE_STORAGE_TABLE";
+/// Environment variable naming the authority table.
+pub const AUTHORITY_TABLE_VAR: &str = aex_usage_storage_aws::TABLE_ENV;
+/// Environment variable naming the shared query projection table.
+pub const PROJECTION_TABLE_VAR: &str = "AEX_USAGE_QUERY_TABLE";
+/// Environment variable naming the central settlement queue.
+pub const RATING_QUEUE_VAR: &str = aex_usage_storage_aws::RATING_QUEUE_ENV;
+/// Environment variable naming this category's receipt queue.
+pub const RECEIPT_QUEUE_VAR: &str = aex_usage_storage_aws::RECEIPT_QUEUE_ENV;
+/// Environment variable naming the charging gate.
+pub const BILLING_MODE_VAR: &str = "AEX_USAGE_BILLING_MODE";
+/// Environment variable naming the outbox republish threshold.
+pub const REPUBLISH_AFTER_VAR: &str = "AEX_USAGE_OUTBOX_REPUBLISH_AFTER_MS";
+/// Environment variable naming the sweep page budget.
+pub const SWEEP_PAGE_VAR: &str = "AEX_USAGE_SWEEP_PAGE";
+/// Environment variable naming the outbox attempt alarm threshold.
+pub const ATTEMPT_ALARM_VAR: &str = "AEX_USAGE_OUTBOX_ATTEMPT_ALARM";
+/// Environment variable naming the outbox age alarm threshold.
+pub const AGE_ALARM_VAR: &str = "AEX_USAGE_OUTBOX_AGE_ALARM_MS";
+/// Environment variable naming the outbox backlog ceiling.
+pub const BACKLOG_CEILING_VAR: &str = "AEX_USAGE_OUTBOX_BACKLOG_CEILING";
 /// Environment variable naming maximum stream records processed per invocation.
 pub const BUDGET_VAR: &str = "AEX_MAX_BATCH_SIZE";
+
+/// The suffix a shadow rating queue must carry.
+pub const SHADOW_QUEUE_SUFFIX: &str = "-shadow.fifo";
 
 /// Planes this deployable may be bound to.
 const PLANES: [&str; 2] = ["dev", "prd"];
 
 impl Config {
-    /// Reads and validates the configuration of `usage-storage-worker` from the process environment.
+    /// Reads and validates the configuration from the process environment.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
+    /// [`ConfigError::Missing`] for an absent or blank variable,
+    /// [`ConfigError::Invalid`] for one that does not parse, and
+    /// [`ConfigError::ChargingGate`] when the billing mode and the rating queue
+    /// disagree.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
@@ -98,26 +237,78 @@ impl Config {
             });
         }
         let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
+        let authority_table = required(&lookup, AUTHORITY_TABLE_VAR)?;
+        let projection_table = required(&lookup, PROJECTION_TABLE_VAR)?;
+        let rating_queue = required(&lookup, RATING_QUEUE_VAR)?;
+        let receipt_queue = required(&lookup, RECEIPT_QUEUE_VAR)?;
+        let billing_mode = billing_mode(&required(&lookup, BILLING_MODE_VAR)?)?;
+        check_charging_gate(billing_mode, &rating_queue)?;
+
+        let limits = WorkerLimits {
+            outbox_republish_after_ms: positive(&lookup, REPUBLISH_AFTER_VAR)?,
+            sweep_page: usize::try_from(positive(&lookup, SWEEP_PAGE_VAR)?).map_err(|error| {
+                ConfigError::Invalid {
+                    name: SWEEP_PAGE_VAR,
+                    reason: error.to_string(),
+                }
+            })?,
+            outbox_attempt_alarm: u32::try_from(positive(&lookup, ATTEMPT_ALARM_VAR)?).map_err(
+                |error| ConfigError::Invalid {
+                    name: ATTEMPT_ALARM_VAR,
+                    reason: error.to_string(),
+                },
+            )?,
+            outbox_age_alarm_ms: positive(&lookup, AGE_ALARM_VAR)?,
+            outbox_backlog_ceiling: positive(&lookup, BACKLOG_CEILING_VAR)?,
+        };
+        let budget = u32::try_from(positive(&lookup, BUDGET_VAR)?).map_err(|error| {
+            ConfigError::Invalid {
                 name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
+                reason: error.to_string(),
+            }
+        })?;
+
         Ok(Self {
             plane,
             region,
-            resource,
+            authority_table,
+            projection_table,
+            rating_queue,
+            receipt_queue,
+            billing_mode,
+            limits,
             budget,
         })
+    }
+}
+
+/// Parses the charging gate.
+fn billing_mode(value: &str) -> Result<BillingMode, ConfigError> {
+    match value {
+        "shadow" => Ok(BillingMode::Shadow),
+        "active" => Ok(BillingMode::Active),
+        other => Err(ConfigError::Invalid {
+            name: BILLING_MODE_VAR,
+            reason: format!("expected `shadow` or `active`, got `{other}`"),
+        }),
+    }
+}
+
+/// Refuses a deployment whose declared mode and rating queue disagree.
+fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), ConfigError> {
+    let shadow_queue = queue.ends_with(SHADOW_QUEUE_SUFFIX);
+    match (mode, shadow_queue) {
+        (BillingMode::Shadow, true) | (BillingMode::Active, false) => Ok(()),
+        (BillingMode::Shadow, false) => Err(ConfigError::ChargingGate {
+            mode: mode.id(),
+            queue: queue.to_owned(),
+            reason: "a shadow deployment must publish to the shadow rating queue",
+        }),
+        (BillingMode::Active, true) => Err(ConfigError::ChargingGate {
+            mode: mode.id(),
+            queue: queue.to_owned(),
+            reason: "an active deployment must not publish to the shadow rating queue",
+        }),
     }
 }
 
@@ -131,12 +322,32 @@ where
     }
 }
 
+fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let raw = required(lookup, name)?;
+    let value = raw.parse::<u64>().map_err(|error| ConfigError::Invalid {
+        name,
+        reason: format!("expected a positive integer, got `{raw}`: {error}"),
+    })?;
+    if value == 0 {
+        return Err(ConfigError::Invalid {
+            name,
+            reason: "expected a positive integer, got `0`".to_owned(),
+        });
+    }
+    Ok(value)
+}
+
 /// Runs `usage-storage-worker` until it stops.
 ///
 /// # Errors
 ///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
+/// Returns [`RunError::StoreUnimplemented`] until `aex-usage-storage-aws`
+/// implements `AuthorityStore` over the real `DynamoDB` client. Everything above
+/// that seam — the fold, the three event modes, the frontier advances, the
+/// partial-batch rule and the poison path — is implemented and tested.
 pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
@@ -151,7 +362,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             config.region.clone(),
         ),
     );
-    Err(RunError::NotImplemented)
+    Err(RunError::StoreUnimplemented)
 }
 
 fn main() -> std::process::ExitCode {
@@ -181,15 +392,44 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
+    use super::{
+        AGE_ALARM_VAR, ATTEMPT_ALARM_VAR, AUTHORITY_TABLE_VAR, BACKLOG_CEILING_VAR,
+        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, ConfigError, DispatchError, EventMode,
+        PLANE_VAR, PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR,
+        REPUBLISH_AFTER_VAR, SWEEP_PAGE_VAR,
+    };
     use std::collections::BTreeMap;
+
+    /// The category this binary is bound to, and the only one it may name.
+    const CATEGORY: aex_usage_domain::meter::Category = aex_usage_storage_aws::CATEGORY;
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
             (PLANE_VAR, "dev".to_owned()),
             (REGION_VAR, "eu-west-1".to_owned()),
-            (RESOURCE_VAR, "aex-usage_storage_worker-fixture".to_owned()),
-            (BUDGET_VAR, "8".to_owned()),
+            (
+                AUTHORITY_TABLE_VAR,
+                "dev-eu-west-1-usage-storage".to_owned(),
+            ),
+            (
+                PROJECTION_TABLE_VAR,
+                "dev-eu-west-1-usage-query-projection".to_owned(),
+            ),
+            (
+                RATING_QUEUE_VAR,
+                "aex-dev-usage-rating-shadow.fifo".to_owned(),
+            ),
+            (
+                RECEIPT_QUEUE_VAR,
+                "aex-dev-usage-receipt-storage".to_owned(),
+            ),
+            (BILLING_MODE_VAR, "shadow".to_owned()),
+            (REPUBLISH_AFTER_VAR, "60000".to_owned()),
+            (SWEEP_PAGE_VAR, "200".to_owned()),
+            (ATTEMPT_ALARM_VAR, "10".to_owned()),
+            (AGE_ALARM_VAR, "900000".to_owned()),
+            (BACKLOG_CEILING_VAR, "100000".to_owned()),
+            (BUDGET_VAR, "100".to_owned()),
         ])
     }
 
@@ -202,13 +442,16 @@ mod tests {
         let config = read(&complete()).expect("complete environment is accepted");
         assert_eq!(config.plane, "dev");
         assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-usage_storage_worker-fixture");
-        assert_eq!(config.budget, 8);
+        assert_eq!(config.billing_mode, BillingMode::Shadow);
+        assert_eq!(config.limits.outbox_republish_after_ms, 60_000);
+        assert_eq!(config.limits.sweep_page, 200);
+        assert_eq!(config.limits.outbox_attempt_alarm, 10);
+        assert_eq!(config.budget, 100);
     }
 
     #[test]
     fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
+        for name in complete().keys() {
             let mut vars = complete();
             vars.remove(name);
             assert_eq!(
@@ -222,10 +465,12 @@ mod tests {
     #[test]
     fn rejects_a_blank_variable_as_missing() {
         let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
+        vars.insert(AUTHORITY_TABLE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
+            Err(ConfigError::Missing {
+                name: AUTHORITY_TABLE_VAR
+            })
         );
     }
 
@@ -233,50 +478,178 @@ mod tests {
     fn rejects_an_unknown_plane() {
         let mut vars = complete();
         vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: PLANE_VAR,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn no_money_relevant_limit_may_be_zero_or_non_numeric() {
+        for name in [
+            REPUBLISH_AFTER_VAR,
+            SWEEP_PAGE_VAR,
+            ATTEMPT_ALARM_VAR,
+            AGE_ALARM_VAR,
+            BACKLOG_CEILING_VAR,
+            BUDGET_VAR,
+        ] {
+            for value in ["0", "lots", "-1"] {
+                let mut vars = complete();
+                vars.insert(name, value.to_owned());
+                assert!(
+                    matches!(read(&vars), Err(ConfigError::Invalid { .. })),
+                    "`{name}` accepted `{value}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_charging_gate_cannot_be_half_satisfied() {
+        // Shadow pointed at the live queue would post real money while every
+        // dashboard said it was shadowing.
+        let mut live_queue_shadow_mode = complete();
+        live_queue_shadow_mode.insert(RATING_QUEUE_VAR, "aex-dev-usage-rating.fifo".to_owned());
+        assert!(matches!(
+            read(&live_queue_shadow_mode),
+            Err(ConfigError::ChargingGate { .. })
+        ));
+
+        // And active pointed at the shadow queue would silently bill nothing.
+        let mut shadow_queue_active_mode = complete();
+        shadow_queue_active_mode.insert(BILLING_MODE_VAR, "active".to_owned());
+        assert!(matches!(
+            read(&shadow_queue_active_mode),
+            Err(ConfigError::ChargingGate { .. })
+        ));
+
+        // The two consistent combinations are the only ones that start.
+        let mut active = complete();
+        active.insert(BILLING_MODE_VAR, "active".to_owned());
+        active.insert(RATING_QUEUE_VAR, "aex-dev-usage-rating.fifo".to_owned());
+        assert_eq!(
+            read(&active).expect("starts").billing_mode,
+            BillingMode::Active
+        );
+        assert_eq!(
+            read(&complete()).expect("starts").billing_mode,
+            BillingMode::Shadow
         );
     }
 
     #[test]
-    fn rejects_a_non_numeric_budget() {
+    fn an_unknown_billing_mode_is_refused_rather_than_defaulted() {
         let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
+        vars.insert(BILLING_MODE_VAR, "maybe".to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: BILLING_MODE_VAR,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
+    fn each_trigger_classifies_to_exactly_one_mode() {
+        let stream = serde_json::json!({
+            "Records": [{ "eventSource": "aws:dynamodb", "eventName": "INSERT" }]
+        });
+        let receipt = serde_json::json!({
+            "Records": [{ "eventSource": "aws:sqs", "body": "{}" }]
+        });
+        let sweep = serde_json::json!({ "detail-type": "Scheduled Event", "detail": {} });
+
+        assert_eq!(
+            EventMode::classify(&stream).expect("classifies"),
+            EventMode::Stream
         );
+        assert_eq!(
+            EventMode::classify(&receipt).expect("classifies"),
+            EventMode::Receipt
+        );
+        assert_eq!(
+            EventMode::classify(&sweep).expect("classifies"),
+            EventMode::Sweep
+        );
+        assert_eq!(EventMode::Stream.id(), "stream");
+        assert_eq!(EventMode::Sweep.id(), "sweep");
+        assert_eq!(EventMode::Receipt.id(), "receipt");
+    }
+
+    #[test]
+    fn an_unrecognised_or_mixed_envelope_is_refused_never_guessed() {
+        // Guessing a mode would run the wrong handler over money evidence.
+        for unrecognised in [
+            serde_json::json!({}),
+            serde_json::json!({ "Records": [] }),
+            serde_json::json!({ "Records": [{ "eventSource": "aws:s3" }] }),
+            serde_json::json!({ "detail-type": "Something Else" }),
+        ] {
+            assert!(
+                EventMode::classify(&unrecognised).is_err(),
+                "{unrecognised} was classified"
+            );
+        }
+
+        let mixed = serde_json::json!({
+            "Records": [
+                { "eventSource": "aws:dynamodb" },
+                { "eventSource": "aws:sqs" }
+            ]
+        });
+        assert!(matches!(
+            EventMode::classify(&mixed),
+            Err(DispatchError::MixedSources { .. })
+        ));
+    }
+
+    #[test]
+    fn this_binary_is_bound_to_exactly_one_authority() {
+        assert_eq!(CATEGORY.id(), "storage");
+        // The three environment bindings all come from this binary's one
+        // adapter, so a second table cannot be introduced by editing a string.
+        assert_eq!(AUTHORITY_TABLE_VAR, "AEX_USAGE_STORAGE_TABLE");
+        assert_eq!(RECEIPT_QUEUE_VAR, "AEX_USAGE_RECEIPT_STORAGE_QUEUE");
+    }
+
+    #[test]
+    fn this_binary_links_no_sibling_authority_adapter() {
+        // The link graph is the control that survives a mistaken IAM grant: a
+        // worker that cannot reach a sibling's expression builder cannot write
+        // its table even with the wrong credentials.
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("the crate's own manifest is readable");
+        for sibling in ["aex-usage-compute-aws", "aex-usage-transfer-aws"] {
+            assert!(
+                !manifest.contains(sibling),
+                "`{sibling}` must not be reachable from this worker"
+            );
+        }
+        assert!(manifest.contains("aex-usage-storage-aws"));
+    }
+
+    #[test]
+    fn no_source_in_this_binary_names_a_sibling_authority() {
+        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("the crate's own source is readable");
+        let body = source.split("#[cfg(test)]").next().unwrap_or_default();
+        for forbidden in [
+            "usage-compute-authority",
+            "usage-transfer-authority",
+            "AEX_USAGE_COMPUTE_TABLE",
+            "AEX_USAGE_TRANSFER_TABLE",
+            "AEX_USAGE_RECEIPT_COMPUTE_QUEUE",
+            "AEX_USAGE_RECEIPT_TRANSFER_QUEUE",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "this worker names `{forbidden}`, which belongs to a sibling authority"
+            );
+        }
     }
 }
