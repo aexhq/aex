@@ -112,6 +112,18 @@ struct FakeCustody {
     secrets: BTreeMap<String, StoredSecret>,
     credentials: Vec<StoredCredential>,
     page_size: usize,
+    /// Every plan the handler committed, so a case can assert the expression and
+    /// not only the published body.
+    committed: std::sync::Mutex<Vec<CommittedPlan>>,
+}
+
+/// What one committed transaction said, flattened for assertion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommittedPlan {
+    client_request_token: String,
+    participants: Vec<String>,
+    conditions: Vec<String>,
+    updates: Vec<String>,
 }
 
 impl FakeCustody {
@@ -238,8 +250,38 @@ impl SecretCustodyStore for FakeCustody {
         Err(Self::out_of_scope("idempotency.receipt"))
     }
 
-    async fn commit(&self, _plan: &TransactionPlan) -> Result<(), StoreError> {
-        Err(Self::out_of_scope("custody.commit"))
+    async fn commit(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
+        self.committed
+            .lock()
+            .expect("an uncontended fixture")
+            .push(CommittedPlan {
+                client_request_token: plan.client_request_token().to_owned(),
+                participants: plan
+                    .participants()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                conditions: plan
+                    .actions()
+                    .iter()
+                    .filter_map(|action| {
+                        action
+                            .update()
+                            .and_then(|update| update.condition_expression())
+                            .map(str::to_owned)
+                    })
+                    .collect(),
+                updates: plan
+                    .actions()
+                    .iter()
+                    .filter_map(|action| {
+                        action
+                            .update()
+                            .map(|update| update.update_expression().to_owned())
+                    })
+                    .collect(),
+            });
+        Ok(())
     }
 
     async fn commit_update(
@@ -428,14 +470,25 @@ fn cursor_keys() -> CursorKeyRing {
     .expect("a ring")
 }
 
+/// The physical table name the composition root supplies.
+const CUSTODY_TABLE: &str = "dev-eu-west-1-regional-secret-custody";
+
 fn router(custody: FakeCustody) -> (axum::Router, Vec<RouteId>) {
     composed(custody, FakeRegistry::default())
 }
 
 fn composed(custody: FakeCustody, registry: FakeRegistry) -> (axum::Router, Vec<RouteId>) {
+    build(Arc::new(custody), Arc::new(registry)).0
+}
+
+fn build(
+    custody: Arc<FakeCustody>,
+    registry: Arc<FakeRegistry>,
+) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
     let shared = Arc::new(Shared {
-        custody: Arc::new(custody),
-        registry: Arc::new(registry),
+        custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
+        custody_table: CUSTODY_TABLE.to_owned(),
+        registry: registry as Arc<dyn RegistryStore>,
         cursor_keys: Arc::new(cursor_keys()),
     });
     let mounted = mount_unary(
@@ -444,7 +497,7 @@ fn composed(custody: FakeCustody, registry: FakeRegistry) -> (axum::Router, Vec<
         aex_wire::dispatch::RequestLimits::DEFAULT,
     )
     .expect("the served set mounts");
-    (mounted.router, mounted.routes)
+    ((mounted.router, mounted.routes), custody)
 }
 
 /// A registry holding exactly one pointer in every collection.
@@ -506,6 +559,34 @@ async fn get(router: &axum::Router, uri: &str) -> (StatusCode, Option<String>, s
         serde_json::from_slice(&body).expect("the response body is JSON")
     };
     (status, etag, json)
+}
+
+async fn post(router: &axum::Router, uri: &str, body: &str) -> (StatusCode, serde_json::Value) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .expect("a request"),
+        )
+        .await
+        .expect("a response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a body")
+        .to_bytes();
+    let json = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("the response body is JSON")
+    };
+    (status, json)
 }
 
 // --- the served set --------------------------------------------------------------
@@ -684,6 +765,7 @@ async fn a_cursor_minted_for_another_collection_is_refused() {
         ]),
         page_size: 1,
         credentials: vec![stored_credential()],
+        ..FakeCustody::default()
     };
     let (router, _) = router(custody);
     let (_, _, body) = get(&router, "/api/workspace/secrets?limit=1").await;
@@ -778,6 +860,133 @@ async fn a_credential_listing_applies_the_declared_provider_filter() {
         serde_json::from_value(body).expect("the published schema");
     assert_eq!(filtered.items.len(), 1);
     assert_eq!(filtered.items[0].provider, models::ProviderId::Anthropic);
+}
+
+// --- provider credential revocation -------------------------------------------------
+
+fn revocations_path(credential: ProviderCredentialId) -> String {
+    format!("/api/workspace/provider-credentials/{credential}/revocations")
+}
+
+#[tokio::test]
+async fn a_revocation_fences_the_binding_and_publishes_the_committed_row() {
+    let stored = stored_credential();
+    let ((router, _), custody) = build(
+        Arc::new(FakeCustody {
+            credentials: vec![stored.clone()],
+            ..FakeCustody::default()
+        }),
+        Arc::new(FakeRegistry::default()),
+    );
+
+    let (status, body) = post(&router, &revocations_path(stored.credential), "{}").await;
+    assert_eq!(status, StatusCode::OK);
+    let decoded: models::ProviderCredential =
+        serde_json::from_value(body).expect("the published schema");
+    assert_eq!(decoded.state, models::ProviderCredentialState::Revoked);
+    assert_eq!(
+        decoded.revision,
+        stored.revision + 1,
+        "a fenced binding publishes the revision the condition committed against"
+    );
+    assert!(decoded.revoked_at.is_some());
+
+    // The body being right is not enough: a revocation that stopped conditioning
+    // on the observed state would still publish this answer.
+    let plans = custody.committed.lock().expect("an uncontended fixture");
+    assert_eq!(plans.len(), 1, "exactly one transaction");
+    let plan = &plans[0];
+    assert_eq!(plan.participants, vec!["custody.provider_credential"]);
+    assert_eq!(plan.conditions.len(), 1);
+    assert!(
+        plan.conditions[0].contains("revision = :expectedRevision"),
+        "the fence must condition on the observed revision: {}",
+        plan.conditions[0]
+    );
+    assert!(
+        plan.conditions[0].contains(":ready"),
+        "only a ready binding may be fenced: {}",
+        plan.conditions[0]
+    );
+    assert!(plan.updates[0].contains("revokedAt = :now"));
+    assert!(
+        plan.client_request_token.starts_with("aex-"),
+        "the transaction carries a deterministic deduplication identity"
+    );
+}
+
+/// The route declares an `Idempotency-Key` and needs no durable receipt: the
+/// scope subject is the credential and the body is empty, so a replay can only
+/// carry the same intent and is answered from the stored row (RS-31).
+#[tokio::test]
+async fn a_replayed_revocation_answers_the_stored_row_and_writes_nothing() {
+    let mut already = stored_credential();
+    already.state = CredentialState::Revoked;
+    already.revoked_at = Some(moment("2026-08-01T13:00:00.000Z"));
+    let ((router, _), custody) = build(
+        Arc::new(FakeCustody {
+            credentials: vec![already.clone()],
+            ..FakeCustody::default()
+        }),
+        Arc::new(FakeRegistry::default()),
+    );
+
+    let (status, body) = post(&router, &revocations_path(already.credential), "{}").await;
+    assert_eq!(status, StatusCode::OK);
+    let decoded: models::ProviderCredential =
+        serde_json::from_value(body).expect("the published schema");
+    assert_eq!(decoded.state, models::ProviderCredentialState::Revoked);
+    assert_eq!(
+        decoded.revision, already.revision,
+        "a replay must not advance the revision a concurrent reader is fencing on"
+    );
+    assert!(
+        custody
+            .committed
+            .lock()
+            .expect("an uncontended fixture")
+            .is_empty(),
+        "a replay writes nothing"
+    );
+}
+
+#[tokio::test]
+async fn revoking_an_absent_binding_answers_the_declared_code() {
+    let (router, _) = router(FakeCustody::default());
+    let absent: ProviderCredentialId = sample(9);
+    let (status, body) = post(&router, &revocations_path(absent), "{}").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some(ErrorCode::ProviderCredentialNotFound.as_str())
+    );
+}
+
+/// The deployable holds `TransactWriteItems` on `regional-secret-custody` and is
+/// deliberately not granted `UpdateItem`, so the revocation has to reach the
+/// authority as a transaction. A bare conditional update would pass every local
+/// test and be denied in production.
+#[tokio::test]
+async fn the_revocation_reaches_the_authority_as_a_transaction() {
+    let stored = stored_credential();
+    let ((router, _), custody) = build(
+        Arc::new(FakeCustody {
+            credentials: vec![stored.clone()],
+            ..FakeCustody::default()
+        }),
+        Arc::new(FakeRegistry::default()),
+    );
+    let (status, _) = post(&router, &revocations_path(stored.credential), "{}").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        custody
+            .committed
+            .lock()
+            .expect("an uncontended fixture")
+            .len(),
+        1,
+        "the only write path this deployable is granted is a transaction"
+    );
 }
 
 /// The `secrets` and `provider-credentials` fragments are each split across two
@@ -889,18 +1098,7 @@ async fn every_registry_listing_reads_its_own_collection_and_publishes_its_rows(
 async fn a_registry_listing_asks_the_authority_for_its_own_kind_and_no_other() {
     for (id, path, kind) in REGISTRY_LISTINGS {
         let registry = Arc::new(populated_registry());
-        let shared = Arc::new(Shared {
-            custody: Arc::new(FakeCustody::default()),
-            registry: Arc::clone(&registry) as Arc<dyn RegistryStore>,
-            cursor_keys: Arc::new(cursor_keys()),
-        });
-        let router = mount_unary(
-            Arc::new(Dispatcher::new(shared)),
-            Arc::new(Admit),
-            aex_wire::dispatch::RequestLimits::DEFAULT,
-        )
-        .expect("the served set mounts")
-        .router;
+        let ((router, _), _) = build(Arc::new(FakeCustody::default()), Arc::clone(&registry));
         let (status, _, _) = get(&router, path).await;
         assert_eq!(status, StatusCode::OK, "{id}");
         assert_eq!(
