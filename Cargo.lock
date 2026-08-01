@@ -860,10 +860,10 @@ dependencies = [
 name = "aex-secret-domain"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "aex-wire",
+ "blake3",
+ "proptest",
  "thiserror",
- "time",
- "uuid",
  "zeroize",
 ]
 
