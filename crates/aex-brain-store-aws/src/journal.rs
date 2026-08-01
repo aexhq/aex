@@ -1,2 +1,489 @@
-//! `journal` surface of `aex-brain-store-aws`. The owning implementation stream fills this
-//! module; the crate-level documentation states what may and may not live here.
+//! The `DynamoDB`-backed [`JournalStore`] and [`EffectStore`].
+//!
+//! Three properties are carried by this module rather than by review.
+//!
+//! - **A page that observes a gap returns no entries.** The fold is contiguous, so half a
+//!   page is worse than none: it would let an agent act on a prefix of its own history.
+//! - **A page whose body does not hash to its recorded entry id quarantines.** That is a
+//!   fork, and folding either side of one silently forks the agent's whole future.
+//! - **A redelivered decision is a success, not a duplicate.** The journal put is
+//!   conditional on `attribute_not_exists`, so the second attempt loses that action and
+//!   comes back as [`ConditionFailure::IdempotentReplay`].
+
+use aex_brain_application::ports::{
+    AgentHead, BoxFuture, CommitError, CommitReceipt, ConditionFailure, DispatchTicket,
+    EffectStore, FenceGuard, JournalPage, JournalStore, ReadBudget, StoreError,
+};
+use aex_brain_domain::commit::DecisionCommit;
+use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
+use aex_brain_domain::ids::{AgentKey, ContentHash, EffectId, JournalSeq, Timestamp};
+use aex_session_dynamodb::attr::{Item, Row, n, s, stamp};
+use aex_session_dynamodb::plan::key as item_key;
+use aws_sdk_dynamodb::Client;
+
+use crate::plan::{self, DecisionContext};
+use crate::{control, effect, keys, translate};
+
+/// The `DynamoDB` half of the Brain store.
+///
+/// One type implements [`JournalStore`], [`EffectStore`] and
+/// [`LeaseStore`](aex_brain_application::ports::LeaseStore) because all three address the
+/// same two partitions with the same client and the same table configuration. Three types
+/// would be three copies of that configuration and three chances for them to disagree about
+/// which table an agent lives in.
+#[derive(Debug, Clone)]
+pub struct BrainStore {
+    client: Client,
+    context: DecisionContext,
+}
+
+impl BrainStore {
+    /// Binds the store to a client and a composition.
+    #[must_use]
+    pub const fn new(client: Client, context: DecisionContext) -> Self {
+        Self { client, context }
+    }
+
+    /// The composition this store was built with.
+    #[must_use]
+    pub const fn context(&self) -> &DecisionContext {
+        &self.context
+    }
+
+    /// The client, shared by the lease path.
+    #[must_use]
+    pub const fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// The `session-authority` table this store addresses.
+    #[must_use]
+    pub fn table(&self) -> &str {
+        &self.context.tables.session_authority
+    }
+
+    async fn get_control(&self, key: &AgentKey) -> Result<Option<Item>, StoreError> {
+        let control = keys::control(key).map_err(|error| store_key_error(&error))?;
+        let output = self
+            .client
+            .get_item()
+            .table_name(self.table())
+            .set_key(Some(item_key(&control.pk, &control.sk)))
+            // Strongly consistent: an authority read that may be stale is not an authority
+            // read, and every decision this feeds conditions on the values it returns.
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| transport("load_head", &error))?;
+        Ok(output.item)
+    }
+
+    async fn query_effects(&self, key: &AgentKey) -> Result<Vec<DurableEffect>, StoreError> {
+        let partition = keys::agent_partition(key).map_err(|error| store_key_error(&error))?;
+        let output = self
+            .client
+            .query()
+            .table_name(self.table())
+            .consistent_read(true)
+            .key_condition_expression("pk = :pk AND begins_with(sk, :prefix)")
+            .expression_attribute_values(":pk", s(partition))
+            .expression_attribute_values(":prefix", s(keys::effect_prefix()))
+            .send()
+            .await
+            .map_err(|error| transport("load_open", &error))?;
+        let mut open = Vec::new();
+        for item in output.items() {
+            let decoded = effect::decode(item).map_err(|error| StoreError::Undecodable {
+                location: "agent effect".to_owned(),
+                reason: error.to_string(),
+            })?;
+            if !decoded.state.is_settled() {
+                open.push(decoded);
+            }
+        }
+        Ok(open)
+    }
+}
+
+impl JournalStore for BrainStore {
+    fn load_head<'a>(
+        &'a self,
+        key: &'a AgentKey,
+    ) -> BoxFuture<'a, Result<Option<AgentHead>, StoreError>> {
+        Box::pin(async move {
+            let Some(item) = self.get_control(key).await? else {
+                return Ok(None);
+            };
+            let open = self
+                .query_effects(key)
+                .await?
+                .into_iter()
+                .map(|effect| effect.id)
+                .collect();
+            control::decode(&item, *key, open)
+                .map(Some)
+                .map_err(|error| StoreError::Undecodable {
+                    location: "agent control".to_owned(),
+                    reason: error.to_string(),
+                })
+        })
+    }
+
+    fn read_page<'a>(
+        &'a self,
+        key: &'a AgentKey,
+        from: JournalSeq,
+        budget: ReadBudget,
+    ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
+        Box::pin(async move {
+            let partition = keys::agent_partition(key).map_err(|error| store_key_error(&error))?;
+            let output = self
+                .client
+                .query()
+                .table_name(self.table())
+                .consistent_read(true)
+                .key_condition_expression("pk = :pk AND sk BETWEEN :from AND :to")
+                .expression_attribute_values(":pk", s(partition))
+                .expression_attribute_values(":from", s(keys::journal_sort_key(from)))
+                .expression_attribute_values(
+                    ":to",
+                    s(format!("{}\u{ffff}", keys::journal_prefix())),
+                )
+                .limit(i32::try_from(budget.max_entries).unwrap_or(i32::MAX))
+                .send()
+                .await
+                .map_err(|error| transport("read_page", &error))?;
+            decode_page(output.items(), from, budget)
+        })
+    }
+
+    fn commit<'a>(
+        &'a self,
+        commit: &'a DecisionCommit,
+    ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>> {
+        Box::pin(async move {
+            let compiled = plan::compile(&self.context, commit).map_err(commit_plan_error)?;
+            let participants = compiled.participants().to_vec();
+            let request = compiled
+                .compile(&self.client)
+                .map_err(|error| commit_store_error(&error))?;
+            match request.send().await {
+                Ok(_) => Ok(CommitReceipt {
+                    revision: commit.control.next_revision,
+                    tail: commit.control.next_tail,
+                    wakes: commit.wakes.iter().map(|wake| wake.id).collect(),
+                    committed_at: self.context.now,
+                }),
+                Err(error) => {
+                    let mapped = match error.as_service_error() {
+                        Some(service) => {
+                            aex_session_dynamodb::error::decode_cancellation(service, &participants)
+                        }
+                        None => aex_session_dynamodb::error::classify(
+                            &error,
+                            aex_session_dynamodb::error::Idempotence::Write(
+                                aex_session_dynamodb::error::Resolution::TargetItem,
+                            ),
+                        ),
+                    };
+                    Err(commit_store_error(&mapped))
+                }
+            }
+        })
+    }
+}
+
+impl EffectStore for BrainStore {
+    fn mark_dispatch_started<'a>(
+        &'a self,
+        guard: &'a FenceGuard,
+        id: &'a EffectId,
+        attempt: u16,
+        at: Timestamp,
+    ) -> BoxFuture<'a, Result<DispatchTicket, CommitError>> {
+        Box::pin(async move {
+            let key = guard.key();
+            let effect_key = keys::effect(&key, *id)
+                .map_err(|error| CommitError::Store(store_key_error(&error)))?;
+            let now = translate::at(at, "at")
+                .map_err(|error| CommitError::Store(translate_error(&error)))?;
+            self.client
+                .update_item()
+                .table_name(self.table())
+                .set_key(Some(item_key(&effect_key.pk, &effect_key.sk)))
+                // Both halves matter. The effect must still be `prepared`, so one durable
+                // pre-send write authorizes exactly one attempt; and the agent fence must
+                // still be ours, so a fenced-out owner cannot mint permission to dispatch.
+                .condition_expression(
+                    "#state = :prepared AND effectId = :id AND agentFence = :fence",
+                )
+                .update_expression(
+                    "SET #state = :next, attempt = :attempt, dispatchStartedAt = :now",
+                )
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(":prepared", s("prepared"))
+                .expression_attribute_values(":id", s(id.to_hex()))
+                .expression_attribute_values(":fence", n(guard.fence().0))
+                .expression_attribute_values(":next", s("dispatched"))
+                .expression_attribute_values(":attempt", n(u64::from(attempt)))
+                .expression_attribute_values(":now", stamp(now))
+                .send()
+                .await
+                .map_err(|error| effect_condition(*id, "mark_dispatch_started", &error))?;
+            Ok(DispatchTicket::mint(guard, *id, attempt, at))
+        })
+    }
+
+    fn mark_response_started<'a>(
+        &'a self,
+        ticket: &'a DispatchTicket,
+        evidence: &'a DispatchEvidence,
+    ) -> BoxFuture<'a, Result<(), CommitError>> {
+        Box::pin(async move {
+            let key = ticket.key();
+            let effect_key = keys::effect(&key, ticket.effect())
+                .map_err(|error| CommitError::Store(store_key_error(&error)))?;
+            let now = translate::at(ticket.issued_at(), "at")
+                .map_err(|error| CommitError::Store(translate_error(&error)))?;
+            self.client
+                .update_item()
+                .table_name(self.table())
+                .set_key(Some(item_key(&effect_key.pk, &effect_key.sk)))
+                .condition_expression("#state = :dispatched")
+                .update_expression(
+                    "SET #state = :next, responseStartedAt = :now, dispatchStage = :stage, \
+                     dispatchProof = :proof",
+                )
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(":dispatched", s("dispatched"))
+                .expression_attribute_values(":next", s("responding"))
+                .expression_attribute_values(":now", stamp(now))
+                .expression_attribute_values(":stage", s(format!("{:?}", evidence.stage)))
+                .expression_attribute_values(":proof", s(format!("{:?}", evidence.proof)))
+                .send()
+                .await
+                .map_err(|error| {
+                    effect_condition(ticket.effect(), "mark_response_started", &error)
+                })?;
+            Ok(())
+        })
+    }
+
+    fn load_open<'a>(
+        &'a self,
+        key: &'a AgentKey,
+    ) -> BoxFuture<'a, Result<Vec<DurableEffect>, StoreError>> {
+        Box::pin(async move { self.query_effects(key).await })
+    }
+}
+
+/// Turns one query page into a [`JournalPage`], enforcing contiguity and fork detection.
+///
+/// Separated from the client call so both properties are assertable without a service: they
+/// are the two rules that decide whether an agent may act at all.
+///
+/// # Errors
+///
+/// [`StoreError::JournalGap`] when the page is not contiguous from `from`,
+/// [`StoreError::JournalForked`] when a stored body does not hash to its recorded entry id,
+/// [`StoreError::ReadBudgetExhausted`] when the page exceeds its byte bound, and
+/// [`StoreError::Undecodable`] when a row is not a journal entry.
+pub fn decode_page(
+    items: &[Item],
+    from: JournalSeq,
+    budget: ReadBudget,
+) -> Result<JournalPage, StoreError> {
+    let mut entries = Vec::with_capacity(items.len());
+    let mut expected = from;
+    let mut bytes = 0_usize;
+    for item in items {
+        let row = Row::bind(item, aex_session_dynamodb::codec::JOURNAL_ENTRY)
+            .map_err(|error| undecodable("journal entry", &error))?;
+        let seq = JournalSeq(
+            row.u64("seq")
+                .map_err(|error| undecodable("journal entry", &error))?,
+        );
+        if seq != expected {
+            return Err(StoreError::JournalGap { missing: expected });
+        }
+        let body = row
+            .bytes(aex_session_dynamodb::codec::BODY_INLINE)
+            .map_err(|error| undecodable("journal entry", &error))?;
+        let recorded = row
+            .string("entryId")
+            .map_err(|error| undecodable("journal entry", &error))?;
+        let observed = ContentHash::of(body);
+        if observed.to_hex() != recorded {
+            return Err(StoreError::JournalForked {
+                seq,
+                stored: parse_hash(recorded).unwrap_or(observed),
+                read: observed,
+            });
+        }
+        bytes = bytes.saturating_add(body.len());
+        if bytes > budget.max_bytes {
+            return Err(StoreError::ReadBudgetExhausted {
+                entries: entries.len(),
+                bytes,
+            });
+        }
+        let record = aex_brain_domain::journal::decode(body)
+            .map_err(|error| undecodable("journal entry", &error))?;
+        let recorded_at = row
+            .timestamp("occurredAt")
+            .map_err(|error| undecodable("journal entry", &error))?;
+        entries.push(aex_brain_domain::journal::JournalEntry {
+            envelope: aex_brain_domain::wire_pending::JournalEnvelope {
+                seq,
+                content_hash: observed,
+                recorded_at: translate::from_wire(recorded_at),
+            },
+            record,
+        });
+        expected = expected.next();
+        if entries.len() >= budget.max_entries {
+            break;
+        }
+    }
+    let next = (entries.len() >= budget.max_entries).then_some(expected);
+    Ok(JournalPage { entries, next })
+}
+
+fn undecodable(location: &str, error: &impl core::fmt::Display) -> StoreError {
+    StoreError::Undecodable {
+        location: location.to_owned(),
+        reason: error.to_string(),
+    }
+}
+
+fn parse_hash(text: &str) -> Option<ContentHash> {
+    if text.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(text.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(ContentHash(bytes))
+}
+
+pub(crate) fn store_key_error(error: &crate::keys::BrainKeyError) -> StoreError {
+    undecodable("agent key", error)
+}
+
+pub(crate) fn translate_error(error: &crate::translate::TranslateError) -> StoreError {
+    undecodable("timestamp", error)
+}
+
+pub(crate) fn transport<E, R>(
+    operation: &str,
+    error: &aws_sdk_dynamodb::error::SdkError<E, R>,
+) -> StoreError
+where
+    E: aws_smithy_types::error::metadata::ProvideErrorMetadata,
+{
+    let mapped = aex_session_dynamodb::error::classify(
+        error,
+        aex_session_dynamodb::error::Idempotence::Read,
+    );
+    StoreError::Transport {
+        reason: format!("{operation}: {mapped}"),
+        retryable: mapped.retryable(),
+    }
+}
+
+fn effect_condition<R>(
+    id: EffectId,
+    operation: &str,
+    error: &aws_sdk_dynamodb::error::SdkError<
+        aws_sdk_dynamodb::operation::update_item::UpdateItemError,
+        R,
+    >,
+) -> CommitError {
+    if error.as_service_error().is_some_and(
+        aws_sdk_dynamodb::operation::update_item::UpdateItemError::is_conditional_check_failed_exception,
+    ) {
+        // The effect is not in the state this write required. That is never a retry: the
+        // durable record already says what happened to this attempt.
+        return CommitError::Condition(ConditionFailure::EffectStateMismatch { effect: id });
+    }
+    CommitError::Store(transport(operation, error))
+}
+
+fn commit_plan_error(error: crate::plan::PlanError) -> CommitError {
+    match error {
+        crate::plan::PlanError::Envelope(violation) => CommitError::Envelope(violation),
+        crate::plan::PlanError::Key(key) => CommitError::Store(store_key_error(&key)),
+        crate::plan::PlanError::Store(store) => commit_store_error(&store),
+    }
+}
+
+/// Maps the shared store vocabulary onto the Brain's commit failures.
+///
+/// This is only decodable because the plan named every participant: `DynamoDB` returns a
+/// positional reason vector, and a position means nothing to a caller that never saw the
+/// compiled request.
+#[must_use]
+pub fn commit_store_error(error: &aex_session_dynamodb::error::StoreError) -> CommitError {
+    use aex_session_dynamodb::error::StoreError as Shared;
+    match error {
+        Shared::PreconditionFailed { participant, .. } => {
+            CommitError::Condition(condition_for(*participant))
+        }
+        Shared::Throttled { retry_after } => CommitError::Throttled {
+            retry_after: *retry_after,
+        },
+        Shared::ItemTooLarge { measured, .. } => {
+            CommitError::Envelope(aex_brain_domain::commit::EnvelopeViolation::ItemTooLarge {
+                bytes: *measured,
+                which: "a compiled action".to_owned(),
+            })
+        }
+        other => CommitError::Store(StoreError::Transport {
+            reason: other.to_string(),
+            retryable: other.retryable(),
+        }),
+    }
+}
+
+fn replayed() -> ConditionFailure {
+    ConditionFailure::IdempotentReplay(Box::new(CommitReceipt {
+        revision: aex_brain_domain::ids::AgentRevision::ZERO,
+        tail: JournalSeq::ZERO,
+        wakes: Vec::new(),
+        committed_at: Timestamp::from_millis(0),
+    }))
+}
+
+/// The precondition failure one losing participant means.
+///
+/// Named per participant rather than collapsed into one "conflict", because the four
+/// answers are genuinely different: reload, replan, treat as success, or quarantine.
+#[must_use]
+pub fn condition_for(participant: aex_session_dynamodb::plan::Participant) -> ConditionFailure {
+    use aex_session_dynamodb::plan::Participant;
+    match participant {
+        // The head guard fences the cancellation and deletion epochs and nothing else, so a
+        // loss there is always "the session moved out from under this decision".
+        Participant::SESSION_HEAD_GUARD => ConditionFailure::CancelEpochAdvanced,
+        Participant::AGENT_CONTROL => ConditionFailure::StaleFence,
+        // A journal put loses only to itself: the sort key is the sequence and the
+        // condition is `attribute_not_exists`, so whatever beat it is the same decision
+        // arriving twice. The caller treats that as success.
+        // One wake outstanding per agent is likewise a durable claim: losing it means a
+        // wake is already in flight, which is exactly the state the caller wanted.
+        Participant::AGENT_JOURNAL | Participant::WORK_NEXT_WAKE | Participant::WORK_DEDUPE => {
+            replayed()
+        }
+        Participant::AGENT_EFFECT => ConditionFailure::EffectStateMismatch {
+            effect: EffectId([0; 16]),
+        },
+        other
+            if other == crate::plan::participant::SESSION_BUDGET
+                || other == crate::plan::participant::AGENT_BUDGET =>
+        {
+            ConditionFailure::BudgetExhausted
+        }
+        _ => ConditionFailure::ChildStateMismatch,
+    }
+}

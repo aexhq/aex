@@ -7,7 +7,15 @@
 //! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
 //! itself lives in the library crates this deployable composes.
 
+pub mod admission;
+pub mod cache;
+pub mod compose;
+pub mod control;
+pub mod drain;
 pub mod health;
+pub mod measure;
+pub mod runtime;
+pub mod scale;
 
 /// Validated start-up configuration for `brain-mux`.
 ///
@@ -51,9 +59,15 @@ pub enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`brain-mux` has no implementation yet")]
-    NotImplemented,
+    /// The configuration does not compose into a usable process.
+    #[error(transparent)]
+    Composition(#[from] compose::CompositionError),
+    /// A runtime or the health listener could not be created.
+    #[error("brain-mux could not start: {reason}")]
+    Runtime {
+        /// What failed.
+        reason: String,
+    },
 }
 
 /// Environment variable naming the deployment plane.
@@ -133,15 +147,54 @@ where
     }
 }
 
-/// Runs `brain-mux` until it stops.
+/// The port the health responder listens on.
+///
+/// Part of the image contract rather than configuration: the ALB target group and the task
+/// definition both name it, and a defaulted-but-configurable port is a value two places can
+/// disagree about with no symptom until a deploy.
+pub const HEALTH_PORT: u16 = 9_090;
+
+/// Builds the composition this configuration describes.
 ///
 /// # Errors
 ///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
+/// [`RunError::Composition`] when the admission bands or the memory split do not hold
+/// together. Both fail startup rather than at the moment the over-commitment matters, which
+/// is always the worst moment.
+pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
+    let bounds = admission::AdmissionBounds {
+        target: config.budget,
+        safety_cap: config.budget.saturating_mul(2),
+        offered_ceiling: config.budget.saturating_mul(5),
+    };
+    compose::Composition::build(
+        bounds,
+        compose::Envelope::candidate_launch(),
+        cache::CachePolicy::default(),
+        scale::ScaleBounds {
+            min_tasks: 1,
+            max_tasks: 32,
+            target_work_seconds_per_task: 10.0,
+        },
+        runtime::RuntimeShape::detected(),
+    )
+    .map_err(RunError::Composition)
+}
+
+/// Runs `brain-mux` until it stops.
+///
+/// Three schedulers, started in one order that matters: the control thread first, so the
+/// process can answer a probe before it can do anything else, then the main runtime.
+/// `SIGTERM` starts the drain sequence; the process exits zero once it has quiesced.
+///
+/// # Errors
+///
+/// [`RunError::Composition`] when the configuration does not compose, and
+/// [`RunError::Runtime`] when a runtime or the health listener cannot be created.
 pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
     // Readiness starts false and is never defaulted true: a process that reported ready
     // before validating its bindings would admit work it cannot serve.
+    let composition = std::sync::Arc::new(compose(config)?);
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -155,7 +208,139 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             config.region.clone(),
         ),
     );
-    Err(RunError::NotImplemented)
+
+    // The control thread starts before anything that could saturate a scheduler. It runs a
+    // current-thread runtime on its own OS thread precisely so no amount of work on the main
+    // reactor can delay a probe (BC-20).
+    let health = std::sync::Arc::clone(&composition.health);
+    let control = std::thread::Builder::new()
+        .name("brain-mux-control".to_owned())
+        .spawn(move || serve_health(&health))
+        .map_err(|error| RunError::Runtime {
+            reason: format!("the control thread could not start: {error}"),
+        })?;
+
+    let main_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(composition.shape.worker_threads)
+        .max_blocking_threads(composition.shape.max_blocking_threads)
+        .enable_all()
+        .thread_name("brain-mux-worker")
+        .build()
+        .map_err(|error| RunError::Runtime {
+            reason: format!("the main runtime could not start: {error}"),
+        })?;
+
+    // Configuration and the composition itself are the only bindings validated so far. The
+    // catalog, the store and the schema hashes are each set by the component that proves
+    // them; readiness stays false until every one of them has.
+    composition.health.bindings_validated();
+
+    main_runtime.block_on(async {
+        let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
+        wait_for_shutdown().await;
+        let _stage = composition.begin_drain();
+        sampler.abort();
+    });
+
+    // The control thread stops when the health state reports drain, so joining it is how the
+    // process proves it stopped answering rather than merely stopped listening.
+    let _ = control.join();
+    Ok(())
+}
+
+/// Serves `/internal/healthz` and `/internal/readyz` until drain completes.
+fn serve_health(health: &std::sync::Arc<control::HealthState>) {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        eprintln!("brain-mux: the control runtime could not start");
+        return;
+    };
+    runtime.block_on(async {
+        let Ok(listener) = tokio::net::TcpListener::bind(("0.0.0.0", HEALTH_PORT)).await else {
+            eprintln!("brain-mux: the health listener could not bind port {HEALTH_PORT}");
+            return;
+        };
+        loop {
+            let accepted =
+                tokio::time::timeout(core::time::Duration::from_millis(250), listener.accept())
+                    .await;
+            // A timeout is the loop's own heartbeat: it is how drain is noticed without a
+            // second channel between the two schedulers.
+            if let Ok(Ok((stream, _))) = accepted {
+                answer(stream, health).await;
+            }
+            if health.is_draining() {
+                return;
+            }
+        }
+    });
+}
+
+async fn answer(mut stream: tokio::net::TcpStream, health: &std::sync::Arc<control::HealthState>) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    // Bounded on purpose: a probe request is a request line and a couple of headers, and a
+    // responder that read an unbounded body would be a way to stall the one thread that
+    // must never stall.
+    let mut buffer = [0_u8; 1_024];
+    let Ok(read) = stream.read(&mut buffer).await else {
+        return;
+    };
+    let request = String::from_utf8_lossy(&buffer[..read]);
+    let response = control::parse_request_line(&request).map_or_else(
+        || control::HttpResponse {
+            status: 400,
+            body: "bad request".to_owned(),
+        },
+        |(method, path)| health.respond(method, path),
+    );
+    let _ = stream.write_all(response.render().as_bytes()).await;
+    let _ = stream.shutdown().await;
+}
+
+/// Samples the reactor's scheduling lateness.
+///
+/// A 100 ms tick that records how late it actually ran. It is the only way to observe the
+/// reactor from inside it, and it is what makes "the reactor is wedged" a measurement rather
+/// than an inference from unrelated symptoms.
+async fn sample_reactor_delay(composition: std::sync::Arc<compose::Composition>) {
+    let mut ticker = tokio::time::interval(compose::REACTOR_TICK);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let expected = tokio::time::Instant::now() + compose::REACTOR_TICK;
+        ticker.tick().await;
+        let lateness = tokio::time::Instant::now().saturating_duration_since(expected);
+        composition
+            .health
+            .observe_reactor_delay(u32::try_from(lateness.as_millis()).unwrap_or(u32::MAX));
+        composition
+            .health
+            .observe_active(composition.admission.active());
+    }
+}
+
+/// Resolves when the orchestrator asks the process to stop.
+async fn wait_for_shutdown() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(_) => {
+                    let _ = tokio::signal::ctrl_c().await;
+                    return;
+                }
+            };
+        tokio::select! {
+            _ = terminate.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 fn main() -> std::process::ExitCode {

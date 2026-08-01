@@ -1,0 +1,29 @@
+# Overload. 500 offers against a 200-active safety cap, so most of them must not
+# start. The whole assertion is that none of them is lost: every offer ends
+# completed, typed-rejected or durably queued, and every rejection is retryable.
+id = "brain-500-offered"
+owner = "brain-core"
+target = "aex-live-brain-mux"
+tier = "t3"
+duration = "30m"
+ttl = "4h"
+
+[arrival]
+mode = "open"
+rate_per_s = 16.7
+mix = { short_turn = 0.35, long_context_turn = 0.25, tool_turn = 0.2, subagent_turn = 0.2 }
+
+[[gate]]
+id = "LOAD-500-BOUNDED"
+kind = "budget"
+blocking = true
+assert = "offered == completed + typed_rejected + queued_at_end && every rejection typed and retryable && jain_fairness >= 0.80 && max_queue_age <= declared"
+source = "Q-PERFORMANCE; Area 10 T3 row; 07-brain-core.md"
+
+[report]
+metrics = [
+  "completed_per_s", "queue_delay_ms", "time_to_first_token_ms", "end_to_end_ms",
+  "provider_wait_ms", "local_cpu_ms", "rss_peak_bytes", "open_fds", "tokio_tasks",
+  "sockets", "journal_bytes", "checkpoint_bytes", "affinity_hit_rate", "scale_event_s",
+  "recovery_s", "duplicate_effects", "gaps", "cost_micro_usd_per_completed_turn",
+]

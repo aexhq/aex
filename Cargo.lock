@@ -113,13 +113,18 @@ dependencies = [
 name = "aex-brain-store-aws"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-session-dynamodb",
+ "aex-wire",
+ "aex-work-dynamodb",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-s3",
  "aws-sdk-sqs",
+ "aws-smithy-http-client",
  "aws-smithy-types",
  "blake3",
  "bytes",
@@ -128,6 +133,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -499,6 +505,11 @@ dependencies = [
 [[package]]
 name = "aex-live-brain-mux"
 version = "0.1.0"
+dependencies = [
+ "aex-load-harness",
+ "aex-test-harness",
+ "tokio",
+]
 
 [[package]]
 name = "aex-live-central-authz"
@@ -2395,9 +2406,17 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 name = "brain-mux"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
+ "aex-brain-domain",
+ "aex-brain-store-aws",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-usage-application",
+ "aex-usage-domain",
  "thiserror",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -1,0 +1,29 @@
+# The same assertions over 24 hours, recorded rather than blocking. It exists to
+# catch drift a 12-hour window cannot show — allocator fragmentation, connection
+# pool aging, a daily cron interacting with a long-lived task.
+id = "brain-soak-24h"
+owner = "brain-core"
+target = "aex-live-brain-mux"
+tier = "t2"
+duration = "24h"
+ttl = "36h"
+
+[arrival]
+mode = "closed"
+concurrency = 100
+mix = { short_turn = 0.4, long_context_turn = 0.2, tool_turn = 0.2, subagent_turn = 0.2 }
+
+[[gate]]
+id = "LEAK-SOAK-24H"
+kind = "diagnostic"
+blocking = false
+assert = "the LEAK-SOAK-12H assertions over 24 h"
+source = "Area 7 scheduled-drift rule"
+
+[report]
+metrics = [
+  "completed_per_s", "queue_delay_ms", "time_to_first_token_ms", "end_to_end_ms",
+  "provider_wait_ms", "local_cpu_ms", "rss_peak_bytes", "open_fds", "tokio_tasks",
+  "sockets", "journal_bytes", "checkpoint_bytes", "affinity_hit_rate", "scale_event_s",
+  "recovery_s", "duplicate_effects", "gaps", "cost_micro_usd_per_completed_turn",
+]

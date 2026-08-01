@@ -12,18 +12,23 @@ use aex_brain_domain::ids::{
     AgentId, AgentKey, EffectId, FanoutIntentId, JoinId, JournalSeq, SessionId,
 };
 use aex_brain_store_aws::keys::{
-    BRAIN_PREFIX, agent_partition, child_index_sort_key, control_sort_key, effect_sort_key,
-    fanout_intent_sort_key, join_shard_for, join_shard_sort_key, join_sort_key, journal_sort_key,
-    mailbox_sort_key, preview_sort_key, queued_index_sort_key, session_budget_sort_key,
-    session_partition,
+    BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, agent_partition, brain_agent_partition,
+    child_index_sort_key, control_sort_key, effect_sort_key, fanout_intent_sort_key,
+    join_shard_for, join_sort_key, journal_sort_key, mailbox_sort_key, queued_index_sort_key,
+    session_budget_sort_key, session_partition,
 };
 use aex_brain_store_aws::{Condition, Table};
+use aex_wire::ids::Uuid7;
 use uuid::Uuid;
 
-fn key(agent: u128) -> AgentKey {
+fn v7(millis: u64, seed: u8) -> Uuid {
+    Uuid::from_bytes(*Uuid7::compose(millis, [seed; 10]).as_bytes())
+}
+
+fn key(agent: u64) -> AgentKey {
     AgentKey::new(
-        SessionId(Uuid::from_u128(1)),
-        AgentId(Uuid::from_u128(agent)),
+        SessionId(v7(1_767_225_600_000, 1)),
+        AgentId(v7(1_767_225_600_000 + agent, 2)),
     )
 }
 
@@ -40,10 +45,14 @@ fn only_two_tables_participate() {
 /// another's.
 #[test]
 fn agent_partitions_are_disjoint() {
-    let first = agent_partition(&key(2));
-    let second = agent_partition(&key(3));
+    let first = agent_partition(&key(2)).expect("a version-7 identity");
+    let second = agent_partition(&key(3)).expect("a version-7 identity");
     assert_ne!(first, second);
-    assert!(first.starts_with(&session_partition(SessionId(Uuid::from_u128(1)))));
+    assert!(first.starts_with("AGENT#"));
+    assert_ne!(
+        first,
+        session_partition(SessionId(v7(1_767_225_600_000, 1))).expect("a version-7 identity")
+    );
 }
 
 /// Every sort key the Brain writes is accounted for, and each is in exactly one of the two
@@ -54,17 +63,21 @@ fn every_brain_sort_key_is_in_exactly_one_namespace() {
         control_sort_key(),
         journal_sort_key(JournalSeq(0)),
         effect_sort_key(EffectId([1; 16])),
-        child_index_sort_key(0, AgentId(Uuid::from_u128(4))),
-        join_sort_key(JoinId(Uuid::from_u128(5))),
-        join_shard_sort_key(JoinId(Uuid::from_u128(5)), 0),
+        child_index_sort_key(0, AgentId(v7(1_767_225_600_004, 4))),
+        join_sort_key(JoinId(v7(1_767_225_600_005, 5))),
         mailbox_sort_key(0),
-        preview_sort_key(0),
     ];
     let session_level = [
         session_budget_sort_key(),
-        queued_index_sort_key(0, 0, AgentId(Uuid::from_u128(6))),
-        fanout_intent_sort_key(FanoutIntentId(Uuid::from_u128(7))),
+        queued_index_sort_key(0, 0, AgentId(v7(1_767_225_600_006, 6))),
+        fanout_intent_sort_key(FanoutIntentId(v7(1_767_225_600_007, 7))),
     ];
+    assert!(
+        brain_agent_partition(&key(2))
+            .expect("a version-7 identity")
+            .starts_with(BRAIN_AGENT_PARTITION_PREFIX),
+        "Brain-owned per-agent items sit in the reserved partition space"
+    );
 
     for sort_key in &per_agent {
         assert!(!sort_key.starts_with(BRAIN_PREFIX), "{sort_key}");
@@ -113,8 +126,11 @@ fn join_shards_follow_the_measured_curve_and_are_used() {
 
     let shards = join_shards(1_000);
     let mut used = vec![false; usize::from(shards)];
-    for seed in 0..1_000_u128 {
-        used[usize::from(join_shard_for(AgentId(Uuid::from_u128(seed)), shards))] = true;
+    for seed in 0..1_000_u64 {
+        used[usize::from(join_shard_for(
+            AgentId(v7(1_767_225_600_000 + seed, 9)),
+            shards,
+        ))] = true;
     }
     assert!(
         used.iter().filter(|hit| **hit).count() > shards as usize / 2,
@@ -173,17 +189,17 @@ fn an_oversized_decision_never_reaches_the_transport() {
 
     let children: Vec<ChildWrite> = (0..64)
         .map(|ordinal| ChildWrite::Spawn {
-            child: AgentId(Uuid::from_u128(u128::from(ordinal) + 100)),
+            child: AgentId(v7(1_767_225_600_100 + u64::from(ordinal), 8)),
             ordinal,
             grant: DimensionVector::uniform(1),
-            join: JoinId(Uuid::from_u128(7)),
+            join: JoinId(v7(1_767_225_600_007, 7)),
             queued_reason: None,
         })
         .collect();
     let decision = DecisionCommit {
         guard: FenceGuardRef {
             key: key(2),
-            owner: OwnerToken(Uuid::from_u128(3)),
+            owner: OwnerToken(v7(1_767_225_600_003, 3)),
             fence: Fence(1),
             revision: AgentRevision(1),
             tail: None,
