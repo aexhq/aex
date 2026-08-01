@@ -397,6 +397,7 @@ dependencies = [
 name = "aex-hands-control-aws"
 version = "0.1.0"
 dependencies = [
+ "aex-hands-agent",
  "aex-hands-protocol",
  "aex-runtime-control",
  "aex-wire",
@@ -964,11 +965,13 @@ version = "0.1.0"
 dependencies = [
  "aex-hands-control-aws",
  "aex-hands-protocol",
+ "aex-internal-contracts",
  "aex-runtime-control",
  "aex-wire",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -2143,12 +2146,15 @@ checksum = "d02c123e89527e7b424f74f52d11be0d17ef2887819323a42dcae1c7630ca53d"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "http 1.5.0",
  "http-body 1.1.0",
  "http-serde",
  "query_map",
  "serde",
+ "serde_dynamo",
  "serde_json",
+ "serde_with",
 ]
 
 [[package]]
@@ -2226,6 +2232,12 @@ name = "base16ct"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
+
+[[package]]
+name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64"
@@ -3703,19 +3715,34 @@ dependencies = [
 name = "hands-agent"
 version = "0.1.0"
 dependencies = [
+ "aex-hands-agent",
+ "aex-hands-protocol",
+ "aex-hands-tools",
+ "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-wire",
+ "axum",
+ "blake3",
+ "cargo_metadata",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
 name = "hands-image"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
- "aex-telemetry-schema",
+ "aex-hands-agent",
+ "clap",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -5643,9 +5670,21 @@ dependencies = [
 name = "runtime-control-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-hands-control-aws",
+ "aex-internal-contracts",
  "aex-platform-telemetry",
+ "aex-runtime-control",
+ "aex-runtime-control-aws",
  "aex-telemetry-schema",
+ "aex-wire",
+ "aws_lambda_events",
+ "axum",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -5968,6 +6007,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "serde_dynamo"
+version = "4.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "873a97c3f7a67dd042bceb47d056d288424b82d4c66b0a25e1a3b34675620951"
+dependencies = [
+ "base64 0.21.7",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
