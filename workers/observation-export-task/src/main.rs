@@ -1,46 +1,48 @@
 //! `observation-export-task` composition root (one-shot Rust OCI task).
 //!
-//! Exclusive responsibility: bounded-memory multipart NDJSON, Parquet and OTLP export.
+//! Exclusive responsibility: generate **exactly one** bounded-memory multipart
+//! export artifact and exit.
 //!
-//! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
-//! itself lives in the library crates this deployable composes.
+//! This is a Fargate task, not a Lambda: it runs once per admitted export, holds
+//! a lease while it generates, and stops. Its memory profile is flat because
+//! every buffer is reserved before the producing loop starts (see
+//! [`crate::budget`]), so a multi-GB export costs the same resident bytes as a
+//! one-page export.
+//!
+//! Two outcomes are both success. A published artifact exits zero, and so does a
+//! **superseded** export: a cancel, a deletion or a lease takeover is
+//! authoritative, and reporting it as a failure would produce spurious alarms
+//! and retry storms on a correct outcome.
+//!
+//! This role holds no delete capability anywhere, which the start-up composition
+//! assertion refuses to run without.
 
-/// Validated start-up configuration for `observation-export-task`.
+mod aws;
+mod budget;
+mod config;
+mod health;
+mod task;
+
+use std::sync::Arc;
+
+use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
+use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_otlp_admission::MemoryBudget;
+use aex_wire::types::Timestamp;
+
+use crate::config::{Config, ConfigError, REQUIRED_VARS};
+use crate::health::{HealthError, HealthServer, HealthState};
+use crate::task::{ExportOutcome, ExportTask, TaskError, TaskSettings, object_prefix};
+
+/// The capability grant this deployable is allowed to hold.
 ///
-/// Nothing here has a default. A variable that identifies a resource must be
-/// supplied explicitly, because a defaulted resource identifier silently binds
-/// the process to the wrong plane, region or table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    /// Deployment plane this process belongs to (`dev` or `prd`).
-    pub plane: String,
-    /// `AWS` region this process is bound to.
-    pub region: String,
-    /// Private S3 bucket receiving multipart export parts.
-    pub resource: String,
-    /// Maximum in-memory buffer size in bytes.
-    pub budget: u32,
-}
+/// The export task reads the authority and the bodies and writes export objects.
+/// It holds **no** delete of any kind, so composing it with one refuses to start
+/// rather than running with authority it never declared.
+pub const ROLE: Role = Role::ExportTask;
 
-/// Why `observation-export-task` refused to start.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    /// A required variable was absent or empty.
-    #[error("required environment variable `{name}` is missing")]
-    Missing {
-        /// The variable that must be supplied.
-        name: &'static str,
-    },
-    /// A required variable was present but unusable.
-    #[error("environment variable `{name}` is invalid: {reason}")]
-    Invalid {
-        /// The variable that was rejected.
-        name: &'static str,
-        /// Why the supplied value was rejected.
-        reason: String,
-    },
-}
+/// The dependencies this deployable proves before it reports ready.
+pub const REQUIRED_PROBES: &[Probe] = &[Probe::ObservationTable, Probe::ObservationBucket];
 
 /// Why `observation-export-task` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -60,95 +62,170 @@ pub enum RunError {
         /// The outstanding probe.
         probe: &'static str,
     },
-    /// The behaviour of this deployable has not been implemented yet.
-    #[error("`observation-export-task` has no implementation yet")]
-    NotImplemented,
+    /// The health listener could not be bound.
+    #[error(transparent)]
+    Health(#[from] HealthError),
+    /// A start-up probe failed against a real resource.
+    #[error("a start-up probe failed: {reason}")]
+    Probe {
+        /// What failed.
+        reason: String,
+    },
+    /// The clock is outside the wire range.
+    #[error("the process clock is outside the representable wire range")]
+    Clock,
+    /// The export itself failed.
+    #[error(transparent)]
+    Export(#[from] TaskError),
 }
 
-/// Environment variable naming the deployment plane.
-pub const PLANE_VAR: &str = "AEX_PLANE";
-/// Environment variable naming the bound `AWS` region.
-pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming private S3 bucket receiving multipart export parts.
-pub const RESOURCE_VAR: &str = "AEX_EXPORT_OUTPUT_BUCKET";
-/// Environment variable naming maximum in-memory buffer size in bytes.
-pub const BUDGET_VAR: &str = "AEX_MAX_BUFFER_BYTES";
-
-/// Planes this deployable may be bound to.
-const PLANES: [&str; 2] = ["dev", "prd"];
-
-impl Config {
-    /// Reads and validates the configuration of `observation-export-task` from the process environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
-    /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|name| std::env::var(name).ok())
-    }
-
-    /// Reads and validates the configuration from an arbitrary lookup.
-    ///
-    /// Tests use this directly: `std::env::set_var` is `unsafe` in edition 2024
-    /// and this workspace forbids `unsafe` code.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        let plane = required(&lookup, PLANE_VAR)?;
-        if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
-                name: PLANE_VAR,
-                reason: format!("expected one of {PLANES:?}, got `{plane}`"),
-            });
-        }
-        let region = required(&lookup, REGION_VAR)?;
-        let resource = required(&lookup, RESOURCE_VAR)?;
-        let raw_budget = required(&lookup, BUDGET_VAR)?;
-        let budget = raw_budget
-            .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
-            })?;
-        if budget == 0 {
-            return Err(ConfigError::Invalid {
-                name: BUDGET_VAR,
-                reason: "expected a positive integer, got `0`".to_owned(),
-            });
-        }
-        Ok(Self {
-            plane,
-            region,
-            resource,
-            budget,
-        })
-    }
-}
-
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    match lookup(name) {
-        Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
-    }
-}
-
-/// Runs `observation-export-task` until it stops.
+/// Asserts the observed capability grant and the readiness probe set.
 ///
 /// # Errors
 ///
-/// Currently always returns [`RunError::NotImplemented`]: the owning
-/// implementation stream lands the body on top of this composition root.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// Returns [`RunError::Capability`] when the process holds a capability its role
+/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
+/// probe that has not passed is never assumed.
+pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError> {
+    assert_grant(ROLE, observed).map_err(|violation| RunError::Capability {
+        capability: violation.capability.as_str(),
+    })?;
+    match readiness(REQUIRED_PROBES, passed) {
+        Readiness::Ready => Ok(()),
+        Readiness::NotReady { outstanding } => Err(RunError::NotReady {
+            probe: outstanding.as_str(),
+        }),
+    }
+}
+
+/// Builds every adapter, proves every probe and generates one export.
+///
+/// # Errors
+///
+/// Returns the typed failure of the first start-up stage that refused, or the
+/// export's own failure. Nothing is read before every declared probe has
+/// actually passed.
+pub async fn run(config: Config) -> Result<(), RunError> {
+    let aws = aws_config::from_env()
+        .region(aws_config::Region::new(config.region.as_str()))
+        .load()
+        .await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let s3 = aws_sdk_s3::Client::new(&aws);
+
+    let authority = aws::DynamoExportAuthority::new(dynamodb, s3.clone(), &config);
+    let objects = aws::S3ExportObjects::new(s3, config.observation_bucket.clone());
+
+    let mut passed = Vec::new();
+    authority.probe().await.map_err(|error| RunError::Probe {
+        reason: error.to_string(),
+    })?;
+    passed.push(Probe::ObservationTable);
+    objects.probe().await.map_err(|error| RunError::Probe {
+        reason: error.to_string(),
+    })?;
+    passed.push(Probe::ObservationBucket);
+    compose(ROLE.granted(), &passed)?;
+
+    let health = serve_health(&config, passed).await?;
+    let outcome = export(config, authority, objects).await;
+    if let Some(server) = health {
+        server.shutdown().await;
+    }
+    let outcome = outcome?;
+    report(&outcome);
+    // Both outcomes exit zero: the distinction is recorded, never signalled.
+    tracing::debug!(
+        published = outcome.is_published(),
+        superseded_by = outcome.superseded_by().unwrap_or("none"),
+        "the export task finished"
+    );
+    Ok(())
+}
+
+/// Binds the health listener, when a port is configured.
+async fn serve_health(
+    config: &Config,
+    passed: Vec<Probe>,
+) -> Result<Option<HealthServer>, RunError> {
+    let Some(port) = config.health_port else {
+        // The Fargate row declares `port = 0`, so nothing is bound; the same
+        // bodies stay available through `health_body` and `readiness_body`.
+        return Ok(None);
+    };
+    let state = Arc::new(HealthState {
+        release_digest: release_digest(),
+        required: REQUIRED_PROBES,
+        passed,
+    });
+    let server = health::serve(port, state).await?;
+    tracing::info!(addr = %server.local_addr(), "the health listener is bound");
+    Ok(Some(server))
+}
+
+/// Runs the one export this task exists for.
+async fn export(
+    config: Config,
+    authority: aws::DynamoExportAuthority,
+    objects: aws::S3ExportObjects,
+) -> Result<ExportOutcome, RunError> {
+    let settings = TaskSettings {
+        plan: config.memory_plan(),
+        budget: MemoryBudget::new(config.memory_budget_bytes),
+        page_limit: config.page_limit,
+        part_bytes: config.part_bytes,
+        object_prefix: object_prefix(config.workspace_id, config.export_id).into(),
+    };
+    let now = Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
+        .map_err(|_| RunError::Clock)?;
+    Ok(ExportTask::new(authority, objects, settings)
+        .run(now)
+        .await?)
+}
+
+/// Records what the one export did.
+fn report(outcome: &ExportOutcome) {
+    match outcome {
+        ExportOutcome::Published {
+            object_key,
+            object_bytes,
+            manifest_hash,
+            parts,
+            records,
+        } => tracing::info!(
+            object_key = %object_key,
+            object_bytes,
+            manifest_hash = %manifest_hash,
+            parts,
+            records,
+            "the export is ready"
+        ),
+        ExportOutcome::Superseded { reason } => {
+            tracing::info!(reason, "the export was superseded; exiting zero");
+        }
+    }
+}
+
+/// The release digest both health endpoints report.
+fn release_digest() -> String {
+    std::env::var("AEX_RELEASE_DIGEST").unwrap_or_else(|_| "unreleased".to_owned())
+}
+
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("observation-export-task: refusing to start: {error}");
+            eprintln!(
+                "observation-export-task: required configuration: {}",
+                REQUIRED_VARS.join(", ")
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -159,23 +236,10 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         )
         .with(
             aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
+            config.region.as_str().to_owned(),
         ),
     );
-    Err(RunError::NotImplemented)
-}
-
-fn main() -> std::process::ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("observation-export-task: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry);
+    let outcome = run(config).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {
@@ -192,158 +256,23 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
-    use std::collections::BTreeMap;
-
-    fn complete() -> BTreeMap<&'static str, String> {
-        BTreeMap::from([
-            (PLANE_VAR, "dev".to_owned()),
-            (REGION_VAR, "eu-west-1".to_owned()),
-            (
-                RESOURCE_VAR,
-                "aex-observation_export_task-fixture".to_owned(),
-            ),
-            (BUDGET_VAR, "8".to_owned()),
-        ])
-    }
-
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
-        Config::from_lookup(|name| vars.get(name).cloned())
-    }
-
-    #[test]
-    fn accepts_a_complete_environment() {
-        let config = read(&complete()).expect("complete environment is accepted");
-        assert_eq!(config.plane, "dev");
-        assert_eq!(config.region, "eu-west-1");
-        assert_eq!(config.resource, "aex-observation_export_task-fixture");
-        assert_eq!(config.budget, 8);
-    }
-
-    #[test]
-    fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
-            let mut vars = complete();
-            vars.remove(name);
-            assert_eq!(
-                read(&vars),
-                Err(ConfigError::Missing { name }),
-                "removing {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_blank_variable_as_missing() {
-        let mut vars = complete();
-        vars.insert(RESOURCE_VAR, "   ".to_owned());
-        assert_eq!(
-            read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
-        );
-    }
-
-    #[test]
-    fn rejects_an_unknown_plane() {
-        let mut vars = complete();
-        vars.insert(PLANE_VAR, "staging".to_owned());
-        let error = read(&vars).expect_err("an unknown plane is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: PLANE_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_non_numeric_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "lots".to_owned());
-        let error = read(&vars).expect_err("a non-numeric budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn rejects_a_zero_budget() {
-        let mut vars = complete();
-        vars.insert(BUDGET_VAR, "0".to_owned());
-        let error = read(&vars).expect_err("a zero budget is rejected");
-        assert!(
-            matches!(
-                error,
-                ConfigError::Invalid {
-                    name: BUDGET_VAR,
-                    ..
-                }
-            ),
-            "{error:?}"
-        );
-    }
-}
-
-// --- composition ------------------------------------------------------------
-
-/// The capability grant this deployable is allowed to hold.
-///
-/// Asserted at startup: a role that observes a capability outside its grant
-/// refuses to start rather than running with more authority than it declared.
-pub const ROLE: aex_observation_store_aws::composition::Role =
-    aex_observation_store_aws::composition::Role::ExportTask;
-
-/// The dependencies this deployable proves before it reports ready.
-pub const REQUIRED_PROBES: &[aex_observation_store_aws::health::Probe] = &[
-    aex_observation_store_aws::health::Probe::ObservationTable,
-    aex_observation_store_aws::health::Probe::ObservationBucket,
-];
-
-/// Asserts the observed capability grant and the readiness probe set.
-///
-/// # Errors
-///
-/// Returns [`RunError::Capability`] when the process holds a capability its role
-/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
-/// probe that has not passed is never assumed.
-pub fn compose(
-    observed: &[aex_observation_store_aws::composition::Capability],
-    passed: &[aex_observation_store_aws::health::Probe],
-) -> Result<(), RunError> {
-    aex_observation_store_aws::composition::assert_grant(ROLE, observed).map_err(|violation| {
-        RunError::Capability {
-            capability: violation.capability.as_str(),
-        }
-    })?;
-    match aex_observation_store_aws::health::readiness(REQUIRED_PROBES, passed) {
-        aex_observation_store_aws::health::Readiness::Ready => Ok(()),
-        aex_observation_store_aws::health::Readiness::NotReady { outstanding } => {
-            Err(RunError::NotReady {
-                probe: outstanding.as_str(),
-            })
-        }
-    }
-}
-
-#[cfg(test)]
-mod composition_tests {
-    use super::{REQUIRED_PROBES, ROLE, RunError, compose};
     use aex_observation_store_aws::composition::Capability;
+    use aex_observation_store_aws::health::Probe;
+
+    use super::{REQUIRED_PROBES, ROLE, RunError, compose, report};
+    use crate::task::ExportOutcome;
 
     #[test]
     fn its_own_grant_and_a_complete_probe_set_start() {
         compose(ROLE.granted(), REQUIRED_PROBES).expect("the declared composition starts");
+        assert_eq!(
+            ROLE.granted(),
+            &[
+                Capability::ReadAuthority,
+                Capability::ReadBodies,
+                Capability::WriteExportObjects
+            ]
+        );
     }
 
     #[test]
@@ -355,15 +284,70 @@ mod composition_tests {
     }
 
     #[test]
-    fn an_unproven_probe_is_never_assumed() {
-        if let Some(first) = REQUIRED_PROBES.first() {
-            let error = compose(ROLE.granted(), &[]).expect_err("refused");
+    fn the_export_task_can_never_link_a_delete_capability() {
+        // The task writes an artifact and reads observations. A delete here
+        // would turn an export role into a data-destroying one, so composing
+        // with either delete refuses by name rather than by convention.
+        for forbidden in [Capability::DeleteBodies, Capability::DeleteObservations] {
+            assert!(
+                !ROLE.granted().contains(&forbidden),
+                "`{}` must not be in the export-task grant",
+                forbidden.as_str()
+            );
+            let error = compose(&[forbidden], REQUIRED_PROBES).expect_err("refused");
             match error {
-                RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
-                other => panic!("expected a readiness failure, got {other:?}"),
+                RunError::Capability { capability } => {
+                    assert_eq!(capability, forbidden.as_str());
+                }
+                other => panic!("expected a capability violation, got {other:?}"),
             }
         }
-        assert!(!ROLE.granted().is_empty());
-        assert!(!Capability::ALL.is_empty());
+    }
+
+    #[test]
+    fn the_export_task_can_never_link_a_write_or_launch_capability_either() {
+        for forbidden in [
+            Capability::WriteAdmission,
+            Capability::WriteBodies,
+            Capability::LaunchExportTasks,
+            Capability::DeliverUsage,
+        ] {
+            assert!(!ROLE.granted().contains(&forbidden));
+            assert!(compose(&[forbidden], REQUIRED_PROBES).is_err());
+        }
+    }
+
+    #[test]
+    fn an_unproven_probe_is_never_assumed() {
+        let first = REQUIRED_PROBES.first().expect("a probe set is declared");
+        let error = compose(ROLE.granted(), &[]).expect_err("refused");
+        match error {
+            RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+            other => panic!("expected a readiness failure, got {other:?}"),
+        }
+        // Proving a prefix is not proving the set.
+        let error = compose(ROLE.granted(), &[Probe::ObservationTable]).expect_err("refused");
+        assert!(matches!(error, RunError::NotReady { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn both_outcomes_are_success_and_both_are_reportable() {
+        let superseded = ExportOutcome::Superseded {
+            reason: "a cancel won",
+        };
+        report(&superseded);
+        assert!(!superseded.is_published());
+        assert_eq!(superseded.superseded_by(), Some("a cancel won"));
+
+        let published = ExportOutcome::Published {
+            object_key: "exports/wsp/exp.jsonl".into(),
+            object_bytes: 42,
+            manifest_hash: "a".repeat(64).into(),
+            parts: 2,
+            records: 7,
+        };
+        report(&published);
+        assert!(published.is_published());
+        assert_eq!(published.superseded_by(), None);
     }
 }
