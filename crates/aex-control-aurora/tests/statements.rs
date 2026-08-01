@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use aws_sdk_rdsdata::types::{ArrayValue, Field, SqlParameter};
 use aws_smithy_types::Blob;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use aex_control_app::ports::AuthorizationReader;
@@ -135,6 +136,20 @@ fn key_record() -> Vec<Field> {
     ]
 }
 
+fn central_actor_record(scopes: Vec<Option<String>>) -> Vec<Field> {
+    vec![
+        Field::StringValue(Uuid::from_u128(1).to_string()),
+        Field::StringValue(Uuid::from_u128(2).to_string()),
+        Field::ArrayValue(ArrayValue::StringValues(scopes)),
+        Field::BlobValue(Blob::new(vec![7_u8; 32])),
+        Field::LongValue(1),
+        Field::BooleanValue(false),
+        Field::BooleanValue(false),
+        Field::BooleanValue(true),
+        Field::StringValue("[]".to_owned()),
+    ]
+}
+
 #[tokio::test]
 async fn resolving_a_workspace_key_is_one_statement_and_no_transaction() {
     let transport = Counting::with(vec![key_record()]);
@@ -153,7 +168,11 @@ async fn resolving_a_session_for_a_workspace_is_also_one_statement() {
     let transport = Counting::with(Vec::new());
     let reader = AuroraAuthorizationReader::new(client(&transport));
     let resolved = reader
-        .resolve_session_for_workspace(Uuid::from_u128(1), Uuid::from_u128(2))
+        .resolve_session_for_workspace(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            OffsetDateTime::UNIX_EPOCH,
+        )
         .await
         .expect("the read succeeds");
     assert!(resolved.is_none());
@@ -171,12 +190,20 @@ async fn the_two_workspace_actor_statements_bind_the_same_parameters() {
         let reader = AuroraAuthorizationReader::new(client(&transport));
         if name == "token" {
             reader
-                .resolve_account_token_for_workspace(Uuid::from_u128(1), Uuid::from_u128(2))
+                .resolve_account_token_for_workspace(
+                    Uuid::from_u128(1),
+                    Uuid::from_u128(2),
+                    OffsetDateTime::UNIX_EPOCH,
+                )
                 .await
                 .expect("the read succeeds");
         } else {
             reader
-                .resolve_session_for_workspace(Uuid::from_u128(1), Uuid::from_u128(2))
+                .resolve_session_for_workspace(
+                    Uuid::from_u128(1),
+                    Uuid::from_u128(2),
+                    OffsetDateTime::UNIX_EPOCH,
+                )
                 .await
                 .expect("the read succeeds");
         }
@@ -193,6 +220,39 @@ async fn the_two_workspace_actor_statements_bind_the_same_parameters() {
             ],
             "{name} binds the same three parameters"
         );
+    }
+}
+
+#[tokio::test]
+async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_bootstrap_scope() {
+    for (session, expected) in [
+        (false, sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL),
+        (true, sql::RESOLVE_SESSION_CENTRAL),
+    ] {
+        let scopes = (!session)
+            .then(|| vec![Some("account:read".to_owned())])
+            .unwrap_or_default();
+        let transport = Counting::with(vec![central_actor_record(scopes)]);
+        let reader = AuroraAuthorizationReader::new(client(&transport));
+        let resolved = if session {
+            reader
+                .resolve_dashboard_session_central(Uuid::from_u128(1), OffsetDateTime::UNIX_EPOCH)
+                .await
+        } else {
+            reader
+                .resolve_account_token_central(Uuid::from_u128(1), OffsetDateTime::UNIX_EPOCH)
+                .await
+        }
+        .expect("the read succeeds")
+        .expect("the actor exists");
+        assert_eq!(resolved.scopes.to_strings(), ["account:read"]);
+        assert_eq!(transport.statements(), 1);
+        assert_eq!(transport.transactions(), 0);
+        let Some(Call::Execute { sql, parameters }) = transport.calls().first().cloned() else {
+            panic!("the central actor read issued no statement");
+        };
+        assert_eq!(sql, expected);
+        assert_eq!(parameters, ["credential_id", "now_ms"]);
     }
 }
 

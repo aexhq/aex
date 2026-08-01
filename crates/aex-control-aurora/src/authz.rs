@@ -12,10 +12,11 @@ use aex_control_app::ports::{
     AccountActorState, AuthorizationReader, CentralActorState, SigningKeyRecord, StoreError,
     WorkspaceKeyState,
 };
+use aex_control_domain::{Scope, ScopeSet};
 use aex_rds_data::{DataApiClient, SqlValue, Statement};
 
 use crate::error::map_store_error;
-use crate::rows::{AccountActorRow, SigningKeyRow, WorkspaceKeyRow};
+use crate::rows::{AccountActorRow, CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
 use crate::sql;
 
 /// The authorization reader.
@@ -60,6 +61,35 @@ impl AuroraAuthorizationReader {
             .map_err(map_store_error)?;
         Ok(row.map(|row| row.0))
     }
+
+    /// Resolves one central credential and its active memberships in one read.
+    async fn resolve_central_actor(
+        &self,
+        statement: &'static str,
+        credential_id: Uuid,
+        dashboard_session: bool,
+        now: OffsetDateTime,
+    ) -> Result<Option<CentralActorState>, StoreError> {
+        let row: Option<CentralActorRow> = self
+            .client
+            .query_opt(
+                Statement::new(statement)
+                    .bind("credential_id", SqlValue::Uuid(credential_id))
+                    .bind("now_ms", SqlValue::I64(Self::now_ms(now))),
+            )
+            .await
+            .map_err(map_store_error)?;
+        Ok(row.map(|row| {
+            let mut state = row.0;
+            if dashboard_session {
+                // The generated contract admits a browser session only on the
+                // bootstrap route. Keep that credential at the exact route
+                // scope rather than treating it as an unrestricted token.
+                state.scopes = ScopeSet::of(&[Scope::AccountRead]);
+            }
+            state
+        }))
+    }
 }
 
 #[async_trait]
@@ -82,12 +112,13 @@ impl AuthorizationReader for AuroraAuthorizationReader {
         &self,
         token_id: Uuid,
         workspace_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<AccountActorState>, StoreError> {
         self.resolve_workspace_actor(
             sql::RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE,
             token_id,
             workspace_id,
-            OffsetDateTime::UNIX_EPOCH,
+            now,
         )
         .await
     }
@@ -96,38 +127,33 @@ impl AuthorizationReader for AuroraAuthorizationReader {
         &self,
         session_id: Uuid,
         workspace_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<AccountActorState>, StoreError> {
         self.resolve_workspace_actor(
             sql::RESOLVE_SESSION_FOR_WORKSPACE,
             session_id,
             workspace_id,
-            OffsetDateTime::UNIX_EPOCH,
+            now,
         )
         .await
     }
 
     async fn resolve_account_token_central(
         &self,
-        _token_id: Uuid,
+        token_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<CentralActorState>, StoreError> {
-        // TODO(cross-stream): the central-plane actor statement returns an
-        // `array_agg` of active memberships in one row. `aex-rds-data` decodes a
-        // `text[]`, but a composite array needs either a JSON projection or a
-        // second statement, and choosing between them is a schema decision the
-        // dashboard-bootstrap route's shape settles. Until then the central
-        // authorizer resolves through `central-identity-api`.
-        Err(StoreError::Fatal(
-            "the central-plane actor statement is not landed; see central-identity.md".to_owned(),
-        ))
+        self.resolve_central_actor(sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL, token_id, false, now)
+            .await
     }
 
     async fn resolve_dashboard_session_central(
         &self,
-        _session_id: Uuid,
+        session_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<CentralActorState>, StoreError> {
-        Err(StoreError::Fatal(
-            "the central-plane actor statement is not landed; see central-identity.md".to_owned(),
-        ))
+        self.resolve_central_actor(sql::RESOLVE_SESSION_CENTRAL, session_id, true, now)
+            .await
     }
 
     async fn verification_key_set(&self) -> Result<Vec<SigningKeyRecord>, StoreError> {

@@ -724,6 +724,7 @@ pub trait AuthorizationReader: Send + Sync {
         &self,
         token_id: Uuid,
         workspace_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<AccountActorState>, StoreError>;
 
     /// Resolves a browser session scoped to one workspace.
@@ -739,6 +740,7 @@ pub trait AuthorizationReader: Send + Sync {
         &self,
         session_id: Uuid,
         workspace_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<AccountActorState>, StoreError>;
 
     /// Resolves an account token for the central plane.
@@ -749,6 +751,7 @@ pub trait AuthorizationReader: Send + Sync {
     async fn resolve_account_token_central(
         &self,
         token_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<CentralActorState>, StoreError>;
 
     /// Resolves a browser session for the central plane.
@@ -759,6 +762,7 @@ pub trait AuthorizationReader: Send + Sync {
     async fn resolve_dashboard_session_central(
         &self,
         session_id: Uuid,
+        now: OffsetDateTime,
     ) -> Result<Option<CentralActorState>, StoreError>;
 
     /// The keys a region will accept right now.

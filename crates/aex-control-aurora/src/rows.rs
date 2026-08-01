@@ -4,15 +4,18 @@
 //! `API` timestamp string, so a decode has no dependence on the session time
 //! zone or `DateStyle`.
 
-use aex_control_app::ports::{AccountActorState, SigningKeyRecord, WorkspaceKeyState};
+use aex_control_app::ports::{
+    AccountActorState, CentralActorState, SigningKeyRecord, WorkspaceKeyState,
+};
 use aex_control_domain::{
     AccountState, ApiKey, Epoch, Fence, IntentHash, Invitation, InvitationStatus, Lease,
     LeaseOwner, Membership, MembershipStatus, Operation, OperationKind, OperationStatus,
-    OperationVisibility, OrgRole, Organization, OrganizationStatus, OutboxMessage, Revision,
-    ScopeSet, Slug, Topic, Workspace, WorkspaceStatus,
+    OperationVisibility, OrgMembership, OrgRole, Organization, OrganizationStatus, OutboxMessage,
+    Revision, ScopeSet, Slug, Topic, Workspace, WorkspaceStatus,
 };
 use aex_rds_data::{DecodeError, Record, Row};
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 /// Decodes a `text[]` of scope spellings.
 fn scopes(record: &Record<'_>, index: usize) -> Result<ScopeSet, DecodeError> {
@@ -430,6 +433,62 @@ impl Row for AccountActorRow {
     }
 }
 
+/// A central actor and its complete active-membership snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CentralActorRow(pub CentralActorState);
+
+impl Row for CentralActorRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(9)?;
+        let membership_document = record.json::<serde_json::Value>(8)?;
+        let membership_values = membership_document
+            .as_array()
+            .ok_or(DecodeError::BadJson { index: 8 })?;
+        if membership_values.len() > aex_control_app::ports::MAX_PAGE_LIMIT as usize {
+            return Err(DecodeError::Overflow { index: 8 });
+        }
+        let memberships = membership_values
+            .iter()
+            .map(|value| membership(value, 8))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self(CentralActorState {
+            credential_id: record.uuid(0)?,
+            user_id: record.uuid(1)?,
+            scopes: scopes(record, 2)?,
+            verifier: record.fixed::<32>(3)?,
+            pepper_version: record.u16(4)?,
+            credential_revoked: record.bool(5)?,
+            credential_expired: record.bool(6)?,
+            user_active: record.bool(7)?,
+            memberships,
+        }))
+    }
+}
+
+fn membership(value: &serde_json::Value, index: usize) -> Result<OrgMembership, DecodeError> {
+    let fields = value
+        .as_array()
+        .filter(|fields| fields.len() == 3)
+        .ok_or(DecodeError::BadJson { index })?;
+    let organization_id = fields[0]
+        .as_str()
+        .and_then(|text| Uuid::parse_str(text).ok())
+        .ok_or(DecodeError::BadJson { index })?;
+    let membership_id = fields[1]
+        .as_str()
+        .and_then(|text| Uuid::parse_str(text).ok())
+        .ok_or(DecodeError::BadJson { index })?;
+    let role = fields[2]
+        .as_str()
+        .and_then(OrgRole::parse)
+        .ok_or(DecodeError::BadJson { index })?;
+    Ok(OrgMembership {
+        organization_id,
+        membership_id,
+        role,
+    })
+}
+
 /// The projection of the signing-key statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SigningKeyRow(pub SigningKeyRecord);
@@ -453,7 +512,7 @@ impl Row for SigningKeyRow {
 
 #[cfg(test)]
 mod tests {
-    use super::{SigningKeyRow, WorkspaceKeyRow};
+    use super::{CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
     use aex_rds_data::{DecodeError, Record, Row};
     use aws_sdk_rdsdata::types::{ArrayValue, Field};
     use aws_smithy_types::Blob;
@@ -478,6 +537,35 @@ mod tests {
             Field::LongValue(1),
             Field::LongValue(0),
         ]
+    }
+
+    #[test]
+    fn a_central_actor_decodes_the_complete_membership_snapshot() {
+        let organization_id = Uuid::from_u128(21);
+        let membership_id = Uuid::from_u128(22);
+        let fields = vec![
+            Field::StringValue(Uuid::from_u128(1).to_string()),
+            Field::StringValue(Uuid::from_u128(2).to_string()),
+            Field::ArrayValue(ArrayValue::StringValues(vec![Some(
+                "account:read".to_owned(),
+            )])),
+            Field::BlobValue(Blob::new(vec![7_u8; 32])),
+            Field::LongValue(1),
+            Field::BooleanValue(false),
+            Field::BooleanValue(false),
+            Field::BooleanValue(true),
+            Field::StringValue(
+                serde_json::json!([[organization_id, membership_id, "admin"]]).to_string(),
+            ),
+        ];
+        let row = CentralActorRow::from_record(&Record::new(&fields)).expect("decodes");
+        assert_eq!(row.0.memberships.len(), 1);
+        assert_eq!(row.0.memberships[0].organization_id, organization_id);
+        assert_eq!(row.0.memberships[0].membership_id, membership_id);
+        assert_eq!(
+            row.0.memberships[0].role,
+            aex_control_domain::OrgRole::Admin
+        );
     }
 
     #[test]

@@ -98,6 +98,38 @@ SELECT s.id, s.user_id, m.id AS membership_id, m.role, \
   LEFT JOIN control.authorization_epoch ea ON ea.subject_kind='account'    AND ea.subject_id = w.organization_id \
  WHERE s.id = :credential_id";
 
+/// Resolves an account token and every active organization membership in one read.
+pub const RESOLVE_ACCOUNT_TOKEN_CENTRAL: &str = "\
+SELECT t.id, t.user_id, t.scopes, t.verifier, t.pepper_version, \
+       (t.revoked_at IS NOT NULL) AS credential_revoked, \
+       (t.expires_at <= (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')) AS credential_expired, \
+       (u.status = 'active') AS user_active, \
+       COALESCE((SELECT jsonb_agg(jsonb_build_array(m.organization_id::text, m.id::text, m.role) \
+                                  ORDER BY m.id) \
+                   FROM (SELECT organization_id, id, role FROM control.membership \
+                          WHERE user_id = u.id AND status = 'active' ORDER BY id LIMIT 1001) m), \
+                '[]'::jsonb) AS memberships \
+  FROM identity.account_token t JOIN identity.user u ON u.id = t.user_id \
+ WHERE t.id = :credential_id";
+
+/// Resolves a dashboard session and every active organization membership in one read.
+///
+/// A dashboard session only enters the generated bootstrap route. Its one
+/// route scope is assigned from the generated registry by the Rust adapter,
+/// rather than repeated as SQL data here.
+pub const RESOLVE_SESSION_CENTRAL: &str = "\
+SELECT s.id, s.user_id, ARRAY(SELECT unnest(ARRAY[]::text[])) AS scopes, \
+       s.verifier, s.pepper_version, (s.revoked_at IS NOT NULL) AS credential_revoked, \
+       (s.expires_at <= (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')) AS credential_expired, \
+       (u.status = 'active') AS user_active, \
+       COALESCE((SELECT jsonb_agg(jsonb_build_array(m.organization_id::text, m.id::text, m.role) \
+                                  ORDER BY m.id) \
+                   FROM (SELECT organization_id, id, role FROM control.membership \
+                          WHERE user_id = u.id AND status = 'active' ORDER BY id LIMIT 1001) m), \
+                '[]'::jsonb) AS memberships \
+  FROM identity.dashboard_session s JOIN identity.user u ON u.id = s.user_id \
+ WHERE s.id = :credential_id";
+
 /// Every key a region will accept right now.
 pub const VERIFICATION_KEY_SET: &str = "\
 SELECT kid, public_key, secret_ref, state, \
@@ -496,6 +528,11 @@ pub const ALL: &[(&str, &str)] = &[
         "RESOLVE_SESSION_FOR_WORKSPACE",
         RESOLVE_SESSION_FOR_WORKSPACE,
     ),
+    (
+        "RESOLVE_ACCOUNT_TOKEN_CENTRAL",
+        RESOLVE_ACCOUNT_TOKEN_CENTRAL,
+    ),
+    ("RESOLVE_SESSION_CENTRAL", RESOLVE_SESSION_CENTRAL),
     ("VERIFICATION_KEY_SET", VERIFICATION_KEY_SET),
     ("ACTIVE_SIGNING_KEY", ACTIVE_SIGNING_KEY),
     ("CONTROL_PEPPER_BY_VERSION", CONTROL_PEPPER_BY_VERSION),
