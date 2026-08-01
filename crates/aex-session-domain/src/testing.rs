@@ -1,0 +1,268 @@
+//! Deterministic fixtures for this crate's own cases and its property suite.
+//!
+//! Every builder is pure and takes no clock: identical calls produce identical
+//! values, which is what lets a property test shrink to a reproducible witness.
+//! Nothing here is randomised and nothing reads the environment.
+
+use std::num::NonZeroU64;
+
+use aex_content_domain::{ContentDigest, ContentRoot};
+use aex_internal_contracts::journal::JournalEntryKind;
+use aex_operation_domain::DeletionGuard;
+use aex_secret_domain::CustodyRevision;
+use aex_wire::ids::{
+    AgentId, GenerationId, MessageId, OrganizationId, PrefixedId, RunId, SessionId, ToolCallId,
+    Uuid7, WorkspaceId,
+};
+use aex_wire::types::Timestamp;
+
+use crate::agent::{AgentControl, AgentKind, AgentStatus, MaterializedState, OpenEffectSet};
+use crate::approval::{ApprovalBinding, BindingField};
+use crate::budget::BudgetGrant;
+use crate::ids::{
+    AgentRevision, CancellationEpoch, EntryIdentity, JournalSeq, PersistRevision, ReservationId,
+    SessionRevision, UsageClosureId,
+};
+use crate::journal::{AuthorityFact, JournalBody, JournalEntry};
+use crate::lineage::Lineage;
+use crate::message::{Message, MessageRole, MessageState};
+use crate::run::{Run, RunOutcome, RunStatus};
+use crate::session::{ResolvedConfigDigest, Session, SessionStatus, WorkAdmission};
+use crate::terminal::TerminalAttempt;
+
+/// A deterministic instant.
+///
+/// # Panics
+///
+/// Panics only if a fixture literal is out of range, which is a broken fixture
+/// rather than a reachable condition.
+#[must_use]
+pub fn moment(millis: i64) -> Timestamp {
+    Timestamp::from_unix_millis(millis).expect("fixture instants are in range")
+}
+
+/// A deterministic identifier of any prefixed kind.
+#[must_use]
+pub fn id<T: PrefixedId>(tag: u8) -> T {
+    T::from_uuid7(Uuid7::compose(1_700_000_000_000, [tag; 10]))
+}
+
+/// A deterministic content root.
+#[must_use]
+pub fn root(tag: u8) -> ContentRoot {
+    ContentRoot {
+        digest: [tag; 32],
+        entries: u64::from(tag),
+        logical_bytes: u64::from(tag) * 64,
+    }
+}
+
+/// A deterministic spend grant.
+///
+/// # Panics
+///
+/// Panics only if a fixture literal is out of range.
+#[must_use]
+pub fn budget() -> BudgetGrant {
+    BudgetGrant {
+        reservation: ReservationId(Uuid7::compose(1, [5; 10])),
+        max_spend_cents: NonZeroU64::new(1_000).expect("non-zero"),
+    }
+}
+
+/// The state a materialized agent starts from.
+#[must_use]
+pub fn materialized_state() -> MaterializedState {
+    MaterializedState {
+        budget: budget(),
+        generation: None,
+    }
+}
+
+/// An idle, live session.
+#[must_use]
+pub fn session_fixture() -> Session {
+    let id_value: SessionId = id(1);
+    Session {
+        id: id_value,
+        workspace: id::<WorkspaceId>(2),
+        organization: id::<OrganizationId>(3),
+        status: SessionStatus::Idle,
+        revision: SessionRevision::INITIAL,
+        active_run: None,
+        work_admission: WorkAdmission::Open,
+        cancellation: CancellationEpoch::INITIAL,
+        deletion: DeletionGuard::live(id_value),
+        mutation_guard: None,
+        root_agent: id::<AgentId>(4),
+        generation: None,
+        initial_root: root(1),
+        persisted_root: root(1),
+        persist_revision: PersistRevision::INITIAL,
+        last_persisted_at: None,
+        custody_revision: CustodyRevision::FIRST,
+        lineage: Lineage::ROOT,
+        resolved: ResolvedConfigDigest([9; 32]),
+        created_at: moment(0),
+    }
+}
+
+/// A subagent with an empty journal.
+#[must_use]
+pub fn child_agent() -> AgentControl {
+    AgentControl {
+        id: id::<AgentId>(5),
+        session: id::<SessionId>(1),
+        kind: AgentKind::Subagent,
+        parent: Some(id::<AgentId>(4)),
+        depth: 1,
+        status: AgentStatus::Running,
+        revision: AgentRevision::INITIAL,
+        journal_tail: JournalSeq::INITIAL,
+        last_entry: None,
+        claim: None,
+        join: None,
+        budget: budget(),
+        open_effects: OpenEffectSet::new(),
+        pending_approval: None,
+        queue_reason: None,
+        generation: None,
+        terminal: None,
+        created_at: moment(0),
+    }
+}
+
+/// One journal entry at a position, carrying a given authority fact.
+///
+/// The identity is derived from the position and the fact discriminant, so two
+/// calls with the same arguments produce the same entry and different arguments
+/// produce different identities.
+///
+/// # Panics
+///
+/// Panics only if a fixture literal is out of range.
+#[must_use]
+pub fn entry_at(agent: AgentId, seq: u64, fact: AuthorityFact) -> JournalEntry {
+    let mut identity = [0_u8; 32];
+    identity[0..8].copy_from_slice(&seq.to_le_bytes());
+    identity[8] = fact_tag(fact);
+    JournalEntry {
+        agent,
+        seq: JournalSeq(seq),
+        kind: JournalEntryKind::AssistantMessage,
+        identity: EntryIdentity::from_bytes(identity),
+        body: JournalBody::Inline(b"{}".to_vec()),
+        fact,
+        recorded_at: moment(i64::try_from(seq).expect("fixture positions are small")),
+    }
+}
+
+const fn fact_tag(fact: AuthorityFact) -> u8 {
+    match fact {
+        AuthorityFact::None => 0,
+        AuthorityFact::EffectOpened(_) => 1,
+        AuthorityFact::EffectSettled(_) => 2,
+        AuthorityFact::ApprovalRaised(_) => 3,
+        AuthorityFact::ApprovalResolved(_) => 4,
+        AuthorityFact::Terminal(_) => 5,
+    }
+}
+
+/// A session with a running run, its agent and one open message.
+///
+/// # Panics
+///
+/// Panics only if a fixture literal is out of range.
+#[must_use]
+pub fn running_session() -> (Session, Run, AgentControl, Message) {
+    let mut session = session_fixture();
+    let run_id: RunId = id(6);
+    session.active_run = Some(run_id);
+    session.status = SessionStatus::Running;
+
+    let agent = child_agent();
+    let run = Run {
+        id: run_id,
+        session: session.id,
+        message: id::<MessageId>(7),
+        status: RunStatus::Running,
+        max_spend_cents: NonZeroU64::new(1_000).expect("non-zero"),
+        reservation: ReservationId(Uuid7::compose(1, [5; 10])),
+        deadline: moment(60_000),
+        cancellation_at_admission: session.cancellation,
+        queued_at: moment(0),
+        started_at: Some(moment(1)),
+        terminal_at: None,
+        outcome: None,
+    };
+    let message = Message {
+        id: id::<MessageId>(8),
+        session: session.id,
+        run: Some(run_id),
+        agent: agent.id,
+        role: MessageRole::Assistant,
+        state: MessageState::Open,
+        parts: Vec::new(),
+        created_at: moment(1),
+        sealed_at: None,
+    };
+    (session, run, agent, message)
+}
+
+/// A terminal attempt that agrees with the session it names.
+#[must_use]
+pub fn terminal_attempt(session: &Session, run: &Run) -> TerminalAttempt {
+    TerminalAttempt {
+        run: run.id,
+        outcome: RunOutcome::Succeeded {
+            output_messages: Vec::new(),
+        },
+        at: moment(10),
+        session_revision_seen: session.revision,
+        cancellation_seen: session.cancellation,
+        agent_fence: crate::ids::AgentFence::INITIAL,
+        usage_closure: UsageClosureId(Uuid7::compose(1, [11; 10])),
+    }
+}
+
+/// A binding whose eleven fields are all distinct fixture values.
+#[must_use]
+pub fn approval_binding() -> ApprovalBinding {
+    ApprovalBinding {
+        session: id::<SessionId>(1),
+        run: id::<RunId>(6),
+        agent: id::<AgentId>(5),
+        tool_call: id::<ToolCallId>(12),
+        tool: "write_file".to_owned(),
+        argument_digest: ContentDigest::of(b"arguments"),
+        implementation_digest: ContentDigest::of(b"implementation"),
+        config_digest: ContentDigest::of(b"config"),
+        expected_generation: Some(id::<GenerationId>(13)),
+        expected_custody: CustodyRevision::FIRST,
+        expected_config_revision: 4,
+    }
+}
+
+/// The same binding with exactly one field changed.
+#[must_use]
+pub fn drift_field(binding: &ApprovalBinding, field: BindingField) -> ApprovalBinding {
+    let mut drifted = binding.clone();
+    match field {
+        BindingField::Session => drifted.session = id::<SessionId>(90),
+        BindingField::Run => drifted.run = id::<RunId>(91),
+        BindingField::Agent => drifted.agent = id::<AgentId>(92),
+        BindingField::ToolCall => drifted.tool_call = id::<ToolCallId>(93),
+        BindingField::Tool => "read_file".clone_into(&mut drifted.tool),
+        BindingField::ArgumentDigest => drifted.argument_digest = ContentDigest::of(b"other"),
+        BindingField::ImplementationDigest => {
+            drifted.implementation_digest = ContentDigest::of(b"other");
+        }
+        BindingField::ConfigDigest => drifted.config_digest = ContentDigest::of(b"other"),
+        BindingField::ExpectedGeneration => {
+            drifted.expected_generation = Some(id::<GenerationId>(94));
+        }
+        BindingField::ExpectedCustody => drifted.expected_custody = CustodyRevision(99),
+        BindingField::ExpectedConfigRevision => drifted.expected_config_revision = 99,
+    }
+    drifted
+}

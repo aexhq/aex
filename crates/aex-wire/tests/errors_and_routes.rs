@@ -165,8 +165,42 @@ fn the_route_table_is_indexed_by_route_id_and_has_the_pinned_arity() {
     let central = ROUTES.iter().filter(|r| r.plane == Plane::Central).count();
     let regional = ROUTES.iter().filter(|r| r.plane == Plane::Regional).count();
     assert_eq!(central, 27, "central plane arity");
-    assert_eq!(regional, 117, "regional plane arity");
-    assert_eq!(central + regional, 144, "total public operation arity");
+    assert_eq!(regional, 119, "regional plane arity");
+    assert_eq!(central + regional, 146, "total public operation arity");
+}
+
+#[test]
+fn the_session_lifecycle_vocabulary_is_clone_trash_restore_purge() {
+    // R-DELETE supersedes `fork` and `delete`. Prelaunch clean cut means the old
+    // names are gone rather than aliased, so their absence is asserted here: an
+    // alias would let a generated client keep calling a verb whose semantics no
+    // longer exist.
+    for retired in ["session_fork", "session_delete"] {
+        assert_eq!(RouteId::parse(retired), None, "`{retired}` must be gone");
+        assert!(
+            !ROUTES.iter().any(|r| r.operation_id == retired),
+            "`{retired}` must be gone"
+        );
+    }
+    for (operation, template) in [
+        ("session_clone", "/api/sessions/{sessionId}/clones"),
+        ("session_trash", "/api/sessions/{sessionId}/trashes"),
+        ("session_restore", "/api/sessions/{sessionId}/restores"),
+        ("session_purge", "/api/sessions/{sessionId}/purges"),
+    ] {
+        let id = RouteId::parse(operation).unwrap_or_else(|| panic!("`{operation}` must exist"));
+        let descriptor = route(id);
+        assert_eq!(descriptor.template, template);
+        assert_eq!(descriptor.method, HttpMethod::Post);
+        assert_eq!(descriptor.success_status, 202);
+        assert_eq!(descriptor.idempotency, IdempotencyKind::OperationId);
+    }
+    // Trash and purge are destructive controls a paused account must still
+    // reach; restore is an ordinary mutation and is not exempt.
+    assert!(route(RouteId::SessionTrash).pause_exempt);
+    assert!(route(RouteId::SessionPurge).pause_exempt);
+    assert!(!route(RouteId::SessionRestore).pause_exempt);
+    assert!(!route(RouteId::SessionClone).pause_exempt);
 }
 
 #[test]
@@ -323,6 +357,8 @@ fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
         let exempt = operation.contains("revocation")
             || operation.contains("revoke")
             || operation.contains("delete")
+            || operation.contains("trash")
+            || operation.contains("purge")
             || operation.contains("discard")
             || operation.contains("stop")
             || operation.contains("abort")

@@ -13,6 +13,8 @@ checksum transition, or history rewrite. A `tx=no` migration must use SQLx's
 `-- no-transaction` directive, declare a precondition, and ship a sibling
 `<version>_<slug>.repair.sql`.
 
-The central-finance stream owns the runner and versions `00100`, `00400`,
-`00500`, and `00600`. The central identity/control stream owns the bodies in
-the reserved `00200` and `00300` slots.
+The central identity/control stream owns the unchanged SQL bodies in versions
+`00000` through `00300`. The central-finance stream owns the runner and the
+finance bodies in `00400` through `00600`. The runner owner mechanically
+renamed the peer's invalid four-digit filenames during the merge; their order
+and SQL bodies were preserved.

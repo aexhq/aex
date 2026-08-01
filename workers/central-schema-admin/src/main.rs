@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn finance_ddl_has_both_conservation_defences_and_no_bypass() {
-        let ddl = include_str!("../../../migrations/central/20260801000400_baseline_finance.sql");
+        let ddl = include_str!("../../../migrations/central/20260801000500_baseline_finance.sql");
         assert!(ddl.contains("DEFERRABLE INITIALLY DEFERRED"));
         assert!(ddl.contains("sum(amount_microusd)"));
         assert!(ddl.contains("observed <> declared"));
@@ -319,7 +319,15 @@ mod tests {
         assert_eq!(bundle.head(), 20_260_801_000_600);
         assert_eq!(
             bundle.versions(),
-            vec![20_260_801_000_100, 20_260_801_000_400, 20_260_801_000_600]
+            vec![
+                20_260_801_000_000,
+                20_260_801_000_100,
+                20_260_801_000_200,
+                20_260_801_000_300,
+                20_260_801_000_400,
+                20_260_801_000_500,
+                20_260_801_000_600,
+            ]
         );
         assert!(
             !Path::new(&bundle_path())

@@ -23,8 +23,16 @@ risk = ["concurrency"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "awaiting the observations-usage stream; the cases land with the crate's own implementation"
 live_suite = "application crate; its ports are exercised through its deployable's companion"
+
+[features]
+# The METER-02 probe library. Non-default on purpose: it drags `rustix`, cgroup
+# reading and pin projection in, and the three usage workers never probe.
+default = []
+probe = ["dep:pin-project-lite", "dep:rustix"]
+
+[package.metadata.aex.targets]
+probe_properties = "unit"
 
 [dependencies]
 async-trait.workspace = true
@@ -34,3 +42,18 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-usage-domain = { path = "../aex-usage-domain" }
+pin-project-lite = { workspace = true, optional = true }
+rustix = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
+# Self dev-dependency so `probe` is on whenever this package's own tests are
+# built. The feature stays non-default for real consumers — the three usage
+# workers never link `rustix` or cgroup reading — while the default test lane
+# still covers the probe rather than silently skipping it.
+aex-usage-application = { path = ".", features = ["probe"] }
+
+[[test]]
+name = "probe_properties"
+path = "tests/probe_properties.rs"

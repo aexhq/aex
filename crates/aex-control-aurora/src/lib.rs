@@ -1,16 +1,25 @@
-//! `aex-control-aurora` owns the control `PostgreSQL` adapter: control-schema statements,
-//! inbox/outbox tables, grants and concurrent membership/key transactions.
+//! `aex-control-aurora` is the schema-owned SQL for the control plane.
 //!
-//! # Invariants
+//! # Invariants asserted by this crate's own suite
 //!
-//! - inbox, outbox and state mutations commit in one transaction
-//! - concurrent membership and key transitions serialize; the loser gets a typed conflict
-//! - the adapter holds no finance grant
+//! - every statement is a `const &str` in [`sql`]; there is no format-string SQL
+//!   and no identifier interpolation anywhere
+//! - every parameter is named and bound; nothing is concatenated
+//! - every `timestamptz` column is projected as epoch milliseconds and bound
+//!   through the millisecond cast, so no read depends on the session time zone
+//! - every collection read is keyset-paged with a bound `LIMIT`
+//! - an assertion issue is **exactly one statement and zero transactions**
 //!
 //! # Not this crate's job
 //!
-//! - control policy (`aex-control-domain`)
-//! - migrations and grants (`central-schema-admin`)
-//! - queue delivery or email transport
+//! - domain policy (`aex-control-domain`)
+//! - retry policy: `aex-rds-data` classifies, the application decides
 
-pub mod store;
+pub mod authz;
+pub mod error;
+pub mod rows;
+pub mod sql;
+
+pub use authz::AuroraAuthorizationReader;
+pub use error::{map_commit_failure, map_store_error};
+pub use rows::{AccountActorRow, SigningKeyRow, WorkspaceKeyRow};

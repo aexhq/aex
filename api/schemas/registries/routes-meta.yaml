@@ -10,7 +10,7 @@
 contractVersion: v1
 expected:
   central: 27
-  regional: 117
+  regional: 119
 pathParams:
   organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
   workspaceId: { type: id, of: workspace, doc: "The workspace the request is scoped to." }

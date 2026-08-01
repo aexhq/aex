@@ -26,7 +26,9 @@ Branch: `rw/central-finance`
 - `aex-finance-aurora`: strict integer/string Data API row decoding, no floating-value accessor,
   64 KiB row and 1 MiB response rejection, database config validation, finance SQL constants, and
   business-key resolution for a lost commit response.
-- `migrations/central`: a linear `20260801000100`, `20260801000400`, `20260801000600` finance chain,
+- `migrations/central`: one linear seven-file chain from `20260801000000` through
+  `20260801000600`, preserving the merged peer bootstrap/identity/control/control-functions bodies
+  before the finance roles/schema/DDL/seed bodies,
   declarative `grants.toml`, immutable journal tables, a deferred balanced-transaction constraint
   trigger, reversal-only mutation guard, customer prepaid balance fence, finance inbox/outbox/effect,
   usage/rating/statement/provider-cost tables, roles, and the public `synthetic-zero-v1` seed.
@@ -77,8 +79,6 @@ The following portions of otherwise-started deployables are also not complete:
 - The webhook edge produces the accepted eight-event bounded envelope, but the landed generated Rust
   payment event contract represents only five events; it cannot yet be consumed byte-for-byte by
   `finance-ingest`.
-- Central identity/control migration bodies `20260801000200` and `20260801000300` are reserved for
-  their owning peer and are not fabricated here.
 - No workload descriptor was assigned to `central-finance` by the current workload registry. No
   remote/live Stripe, AWS, Aurora, queue, IAM, load, or soak evidence was attempted.
 - Lambda memory, timeout, and reserved-concurrency values cannot be added to `[package.metadata.aex]`
@@ -131,12 +131,10 @@ Temporary cross-stream types, all carrying the required replacement comment:
 2. Contracts must generate TypeScript payment command/result/event types. The event contract must
    reconcile its current five variants with the binding's eight exact event strings by adding
    `payment_intent.canceled`, `charge.dispute.closed`, and `refund.updated` plus their closed facts.
-3. Central identity/control must supply migration versions `20260801000200` and `20260801000300`
-   without editing the finance versions.
-4. Infrastructure/delivery must choose the policy-valid source for Lambda memory, timeout and
+3. Infrastructure/delivery must choose the policy-valid source for Lambda memory, timeout and
    reserved concurrency and configure the Stripe endpoint event list equal to
    `HANDLED_EVENT_TYPES`.
-5. The observation/usage producer should consume `ShadowStorageClose` so the required rounding
+4. The observation/usage producer should consume `ShadowStorageClose` so the required rounding
    error/bound travels in every shadow close; billing activation remains fenced on METER-03 signoff.
 
 ## Decisions and resolved specification conflicts
@@ -148,6 +146,11 @@ Temporary cross-stream types, all carrying the required replacement comment:
   `4703262552200136530`; a different decimal (`4703167197722708306`) in plan prose was not used.
 - The generated payment contract's six commands were implemented at the TypeScript boundary rather
   than inventing the plan prose's older nine-command shape.
+- Merged central-identity DDL arrived as four-digit `0001` through `0004` filenames, which violate
+  the binding runner format and would be interpreted by SQLx as a second incompatible version line.
+  Under the runner owner's merge authority they were mechanically renamed, without reordering or
+  rewriting their SQL bodies, to `20260801000000` through `20260801000300`. Finance follows at
+  `20260801000400` through `20260801000600`.
 - Stripe 22.4.0's declaration narrows `apiVersion` to its package-latest
   `2026-07-29.dahlia`. Runtime Stripe accepts an older explicit Dahlia pin, so the constructor uses a
   type-only cast while the actual value remains `2026-06-24.dahlia` and is snapshot-tested.
