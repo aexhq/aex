@@ -3395,9 +3395,25 @@ dependencies = [
 name = "finance-ingest"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-rdsdata",
+ "blake3",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "uuid",
 ]
 
 [[package]]

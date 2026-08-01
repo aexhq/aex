@@ -160,8 +160,8 @@ fn concrete(template: &str) -> String {
         .map(|segment| {
             if segment.starts_with('{') {
                 match segment {
-                    "{organizationId}" => "org_01j0000000000000000000000",
-                    "{statementId}" => "stm_01j0000000000000000000000",
+                    "{organizationId}" => "org_01kyw2qa4pew48j2gb1g6gw3rg",
+                    "{statementId}" => "stm_01kyw2qa4pew48j2gb1g6gw3rg",
                     other => unreachable!("the billing group binds no `{other}`"),
                 }
             } else {
@@ -186,7 +186,7 @@ async fn every_generated_billing_route_is_reachable_rather_than_a_404() {
             .method(method)
             .uri(concrete(descriptor.template));
         if descriptor.idempotency == IdempotencyKind::IdempotencyKey {
-            request = request.header("idempotency-key", "idem_01j00000000000000000000000");
+            request = request.header("idempotency-key", "idem_01kyw2qa4pew48j2gb1g6gw3rg");
         }
         let response = application(true)
             .oneshot(request.body(Body::from("{}")).expect("a valid request"))
@@ -227,7 +227,7 @@ async fn the_replay_policy_is_enforced_from_the_table_before_the_credential() {
     let response = application(true)
         .oneshot(
             Request::get("/api/billing/balance")
-                .header("idempotency-key", "idem_01j00000000000000000000000")
+                .header("idempotency-key", "idem_01kyw2qa4pew48j2gb1g6gw3rg")
                 .body(Body::empty())
                 .expect("a valid request"),
         )
