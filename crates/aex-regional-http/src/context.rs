@@ -4,6 +4,7 @@ use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{OperationId, OrganizationId, WorkspaceId};
 use aex_wire::routes::RouteId;
 use aex_wire::scopes::ScopeSet;
+use aex_wire::server::{AcceptKind, RequestContext as WireContext};
 use aex_wire::types::{ETag, Region, RequestId};
 use time::OffsetDateTime;
 
@@ -104,4 +105,31 @@ pub struct RequestContext {
     pub if_match: Option<ETag>,
     /// Edge receipt time.
     pub received_at: OffsetDateTime,
+}
+
+impl RequestContext {
+    /// Projects the richer regional record onto the context the generated
+    /// dispatchers take.
+    ///
+    /// The wire context is deliberately the smaller of the two: a handler is
+    /// told who is asking and what it may replay, and nothing about how the edge
+    /// established it. Everything the regional record adds — placement, epochs,
+    /// account state, effective limits, credential binding — has already been
+    /// used by the stage that produced it.
+    #[must_use]
+    pub fn to_wire(&self, accept: AcceptKind) -> WireContext {
+        WireContext {
+            request_id: self.request_id.clone(),
+            route: self.route,
+            principal: self.auth.principal,
+            granted_scopes: self.auth.scopes.clone(),
+            idempotency_key: self
+                .idempotency
+                .as_ref()
+                .map(|identity| identity.key.clone()),
+            operation_id: self.operation_id,
+            if_match: self.if_match.clone(),
+            accept,
+        }
+    }
 }

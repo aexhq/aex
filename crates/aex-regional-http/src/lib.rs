@@ -22,13 +22,17 @@ pub mod error;
 pub mod health;
 pub mod idempotency;
 pub mod limits;
+pub mod mount;
 pub mod page;
 pub mod router;
 pub mod stream;
-pub mod wire_pending;
 
 pub use capability::{CompositionManifest, admit};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
 pub use cursor::{CursorBinding, decode, encode};
 pub use idempotency::IdempotencyIdentity;
-pub use router::{EdgeStack, mount_secret_api, mount_session_api, mount_stream_api};
+pub use mount::{
+    AdmissionRequest, EdgeAdmission, MountError, Mounted, UnaryDispatch, mount_unary, not_served,
+    render, render_error,
+};
+pub use router::{EdgeStack, RouteOwner, route_owner};

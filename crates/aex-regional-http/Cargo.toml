@@ -25,6 +25,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 primitives = "unit"
+mount = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
@@ -47,6 +48,7 @@ tokio = { workspace = true, features = ["io-util"] }
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 zeroize.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
@@ -54,7 +56,12 @@ aex-internal-contracts = { path = "../aex-internal-contracts" }
 [dev-dependencies]
 http-body-util.workspace = true
 proptest.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "macros"] }
 
 [[test]]
 name = "primitives"
 path = "tests/primitives.rs"
+
+[[test]]
+name = "mount"
+path = "tests/mount.rs"

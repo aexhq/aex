@@ -1,17 +1,21 @@
-//! Shared axum composition and the fixed error-precedence order.
+//! Route ownership: the partition of the generated regional table across the
+//! regional deployables.
+//!
+//! There is exactly one route table. Ownership is a *projection* of it, derived
+//! per route from the generated descriptor, so a new regional route lands on a
+//! deployable by construction rather than by somebody remembering to add it to a
+//! second list.
 
 use aex_wire::error::PrecedenceStage;
 use aex_wire::routes::{Plane, RouteId, TransportKind, route};
+use aex_wire::server::RouteGroup;
 use aex_wire::types::Region;
-
-use crate::capability::CompositionManifest;
-use crate::wire_pending::{RegionalSecretApi, RegionalSessionApi, RegionalStreamApi};
 
 /// One-to-one with the wire-contract precedence table.
 pub const EDGE_PRECEDENCE: [PrecedenceStage; 13] = PrecedenceStage::ALL;
 
 /// Exactly one deployable owner for every generated regional route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RouteOwner {
     /// Finite session/resource API.
     SessionApi,
@@ -25,7 +29,72 @@ pub enum RouteOwner {
     Otlp,
 }
 
+impl RouteOwner {
+    /// Every owner, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::SessionApi,
+        Self::SecretApi,
+        Self::Stream,
+        Self::ObservationApi,
+        Self::Otlp,
+    ];
+
+    /// The deployable name this owner deploys as.
+    #[must_use]
+    pub const fn deployable(self) -> &'static str {
+        match self {
+            Self::SessionApi => "regional-session-api",
+            Self::SecretApi => "regional-secret-api",
+            Self::Stream => "regional-stream",
+            Self::ObservationApi => "regional-observation-api",
+            Self::Otlp => "regional-otlp",
+        }
+    }
+
+    /// Every regional route this deployable owns, in `RouteId` order.
+    ///
+    /// This is what a composition root mounts. Because it is derived from the
+    /// table, a route that is authored and never mounted fails the composition
+    /// test rather than answering `404` in production.
+    #[must_use]
+    pub fn routes(self) -> Vec<RouteId> {
+        RouteId::ALL
+            .iter()
+            .copied()
+            .filter(|id| route_owner(*id) == Some(self))
+            .collect()
+    }
+
+    /// The subset of `group` this deployable owns, in `RouteId` order.
+    ///
+    /// A group is one authoring fragment, and two fragments are split across two
+    /// deployables: `regional:secrets` (metadata reads here, plaintext admission
+    /// there) and `regional:provider-credentials`. Mounting therefore iterates a
+    /// group and filters by owner; it never lists templates.
+    #[must_use]
+    pub fn routes_in(self, group: RouteGroup) -> Vec<RouteId> {
+        group
+            .routes()
+            .iter()
+            .copied()
+            .filter(|id| route_owner(*id) == Some(self))
+            .collect()
+    }
+
+    /// Every group this deployable draws at least one route from, in group order.
+    #[must_use]
+    pub fn groups(self) -> Vec<RouteGroup> {
+        RouteGroup::ALL
+            .iter()
+            .copied()
+            .filter(|group| !self.routes_in(*group).is_empty())
+            .collect()
+    }
+}
+
 /// Resolves a generated route to its one regional deployable.
+///
+/// Returns `None` for a central route, which no regional deployable may serve.
 #[must_use]
 pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
     let descriptor = route(id);
@@ -105,40 +174,4 @@ impl<V, L, K> EdgeStack<V, L, K> {
     pub const fn cursor_keys(&self) -> &K {
         &self.cursor_keys
     }
-}
-
-/// Mounts only the finite-session routes the implementation provides.
-pub fn mount_session_api<A, V, L, K>(
-    api: A,
-    _edge: EdgeStack<V, L, K>,
-    _caps: &CompositionManifest,
-) -> axum::Router
-where
-    A: RegionalSessionApi + Clone + Send + Sync + 'static,
-{
-    api.router()
-}
-
-/// Mounts only plaintext-bearing secret registration routes.
-pub fn mount_secret_api<A, V, L, K>(
-    api: A,
-    _edge: EdgeStack<V, L, K>,
-    _caps: &CompositionManifest,
-) -> axum::Router
-where
-    A: RegionalSecretApi + Clone + Send + Sync + 'static,
-{
-    api.router()
-}
-
-/// Mounts only the read-only streaming routes.
-pub fn mount_stream_api<A, V, L, K>(
-    api: A,
-    _edge: EdgeStack<V, L, K>,
-    _caps: &CompositionManifest,
-) -> axum::Router
-where
-    A: RegionalStreamApi + Clone + Send + Sync + 'static,
-{
-    api.router()
 }
