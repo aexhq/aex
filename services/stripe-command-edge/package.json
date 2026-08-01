@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "aex": {
+    "owner": "central-finance",
+    "role": "deployable",
+    "artifact": "lambda_zip",
+    "deployable": "stripe-command-edge",
+    "live_suite": "aex-live-stripe-command-edge",
+    "layers": ["unit", "smoke", "e2e"],
+    "concerns": ["contract", "fault", "security", "performance"],
+    "seams": ["aws.iam.denial", "stripe.test_mode.webhook"],
+    "security_tier": "secret",
+    "risk": ["untrusted_input", "iam"],
+    "scenarios": [],
+    "targets": {
+      "edge": "unit",
+      "smoke": "smoke",
+      "resource_envelope": "e2e"
+    }
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"

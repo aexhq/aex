@@ -23,6 +23,10 @@ security_tier = "authority"
 risk = ["money"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+integration = "integration"
+
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true

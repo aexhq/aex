@@ -24,6 +24,11 @@ security_tier = "public_edge"
 risk = ["money"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+smoke = "smoke"
+resource_envelope = "e2e"
+
 [[bin]]
 name = "finance-api"
 path = "src/main.rs"

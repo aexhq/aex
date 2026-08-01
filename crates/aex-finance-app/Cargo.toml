@@ -25,6 +25,9 @@ scenarios = []
 [package.metadata.aex.not_applicable]
 live_suite = "application crate; its ports are exercised through its deployable's companion"
 
+[package.metadata.aex.targets]
+faults = "unit"
+
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true

@@ -25,6 +25,9 @@ scenarios = []
 [package.metadata.aex.not_applicable]
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
+[package.metadata.aex.targets]
+properties = "unit"
+
 [dependencies]
 aex-finance-domain = { path = "../aex-finance-domain" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }

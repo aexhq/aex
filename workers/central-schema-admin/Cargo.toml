@@ -24,6 +24,11 @@ security_tier = "internal"
 risk = ["sql"]
 scenarios = []
 
+[package.metadata.aex.targets]
+conformance = "unit"
+smoke = "smoke"
+resource_envelope = "e2e"
+
 [[bin]]
 name = "central-schema-admin"
 path = "src/main.rs"
