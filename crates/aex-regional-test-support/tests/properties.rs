@@ -33,8 +33,7 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                 assert!(
                     matches!(
                         (table.table.as_str(), grant.role.as_str()),
-                        ("session-authority", "session-operation-worker")
-                            | ("regional-work", "session-operation-worker")
+                        ("session-authority" | "regional-work", "session-operation-worker")
                             | ("regional-content", "content-lifecycle-worker")
                             | ("regional-registry", "regional-session-api")
                             // Each usage worker deletes exactly one row shape:
