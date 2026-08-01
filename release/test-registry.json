@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 91,
+    "awaiting_owner": 84,
     "capacity_gates": 15,
     "live_targets": 31,
     "packages": 139,
