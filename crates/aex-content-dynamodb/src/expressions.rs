@@ -316,9 +316,16 @@ pub fn stage_candidate(table: &str, candidate: &GcCandidate) -> Result<PutBuilde
 }
 
 /// The participants a fenced sweep names, in plan order.
-pub const SWEEP_ORDER: [Participant; 4] = [
+///
+/// Plan 05 §3.8 writes four actions, with a `ConditionCheck` on the descriptor
+/// **and** a `Delete` of that same descriptor. `DynamoDB` rejects that outright:
+/// a transaction may not contain two operations on one item, and the service
+/// answers `ValidationException` before evaluating any condition. The delete
+/// already carries the identical `gcEpoch = :markedEpoch` condition, so the
+/// separate check was redundant as well as illegal and the fence is unchanged.
+/// The engine-backed target is what caught this.
+pub const SWEEP_ORDER: [Participant; 3] = [
     Participant::CONTENT_GC_EPOCH,
-    Participant::CONTENT_DESCRIPTOR,
     Participant::CONTENT_DESCRIPTOR,
     Participant::CONTENT_GC_CANDIDATE,
 ];
@@ -356,14 +363,6 @@ pub fn sweep(table: &str, plan: &GcSweepPlan) -> Result<TransactionPlan, StoreEr
             .expression_attribute_names("#state", "state")
             .expression_attribute_values(":epoch", n(plan.epoch))
             .expression_attribute_values(":sweeping", s("sweeping")),
-    )?;
-    transaction.condition_check(
-        Participant::CONTENT_DESCRIPTOR,
-        ConditionCheck::builder()
-            .table_name(table)
-            .set_key(Some(key(&descriptor.pk, &descriptor.sk)))
-            .condition_expression("gcEpoch = :markedEpoch")
-            .expression_attribute_values(":markedEpoch", n(plan.marked_epoch)),
     )?;
     transaction.delete(
         Participant::CONTENT_DESCRIPTOR,

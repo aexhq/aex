@@ -186,6 +186,7 @@ version = "0.1.0"
 dependencies = [
  "aex-content-domain",
  "aex-session-dynamodb",
+ "aex-test-harness",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -217,6 +218,7 @@ version = "0.1.0"
 dependencies = [
  "aex-content-domain",
  "aex-session-dynamodb",
+ "aex-test-harness",
  "aex-wire",
  "async-trait",
  "aws-config",

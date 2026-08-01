@@ -46,7 +46,7 @@ fn plan() -> GcSweepPlan {
 fn a_new_epoch_between_the_mark_and_the_sweep_names_the_epoch_participant() {
     let transaction = sweep(TABLE, &plan()).expect("compiles");
     let error = decode_cancellation(
-        &cancelled(&["ConditionalCheckFailed", "None", "None", "None"]),
+        &cancelled(&["ConditionalCheckFailed", "None", "None"]),
         transaction.participants(),
     );
     assert!(
@@ -69,7 +69,7 @@ fn a_new_epoch_between_the_mark_and_the_sweep_names_the_epoch_participant() {
 fn a_body_remarked_since_the_mark_names_the_descriptor_participant() {
     let transaction = sweep(TABLE, &plan()).expect("compiles");
     let error = decode_cancellation(
-        &cancelled(&["None", "ConditionalCheckFailed", "None", "None"]),
+        &cancelled(&["None", "ConditionalCheckFailed", "None"]),
         transaction.participants(),
     );
     match error {
@@ -84,7 +84,7 @@ fn a_body_remarked_since_the_mark_names_the_descriptor_participant() {
 fn a_candidate_restaged_under_a_newer_epoch_names_the_candidate_participant() {
     let transaction = sweep(TABLE, &plan()).expect("compiles");
     let error = decode_cancellation(
-        &cancelled(&["None", "None", "None", "ConditionalCheckFailed"]),
+        &cancelled(&["None", "None", "ConditionalCheckFailed"]),
         transaction.participants(),
     );
     match error {

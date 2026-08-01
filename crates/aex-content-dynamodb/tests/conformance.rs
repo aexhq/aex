@@ -89,22 +89,22 @@ async fn the_serialized_sweep_names_every_fence_it_depends_on() {
         .await;
 
     let body = captured_body(receiver);
-    let actions = body["TransactItems"].as_array().expect("four actions");
-    assert_eq!(actions.len(), 4);
+    let actions = body["TransactItems"].as_array().expect("three actions");
+    assert_eq!(
+        actions.len(),
+        3,
+        "DynamoDB refuses two operations on one item, so the descriptor is checked          by the delete that already carries the same condition"
+    );
     assert_eq!(
         actions[0]["ConditionCheck"]["ConditionExpression"].as_str(),
         Some("epoch = :epoch AND #state = :sweeping")
     );
     assert_eq!(
-        actions[1]["ConditionCheck"]["ConditionExpression"].as_str(),
+        actions[1]["Delete"]["ConditionExpression"].as_str(),
         Some("gcEpoch = :markedEpoch")
     );
     assert_eq!(
         actions[2]["Delete"]["ConditionExpression"].as_str(),
-        Some("gcEpoch = :markedEpoch")
-    );
-    assert_eq!(
-        actions[3]["Delete"]["ConditionExpression"].as_str(),
         Some("epoch = :epoch")
     );
     for action in actions {
