@@ -1,0 +1,82 @@
+[package]
+name = "aex-central-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+# Every test target is declared explicitly, so `tests/support/` is a module and
+# never a target of its own.
+autotests = false
+
+[lints]
+workspace = true
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["aex-test-harness/containers"]
+
+[package.metadata.aex]
+owner = "central-identity"
+role = "adapter"
+artifact = "none"
+live_suite = "aex-live-central-identity-api"
+layers = ["unit", "integration"]
+concerns = ["contract", "fault", "security"]
+seams = ["aws.secretsmanager.version_stage", "aws.lambda.invoke", "aws.iam.denial"]
+security_tier = "secret"
+risk = ["iam", "concurrency"]
+scenarios = []
+
+[package.metadata.aex.targets]
+conformance = "unit"
+faults = "unit"
+security = "unit"
+integration = "integration"
+
+[dependencies]
+async-trait.workspace = true
+aws-lc-rs.workspace = true
+aws-sdk-lambda.workspace = true
+aws-sdk-secretsmanager.workspace = true
+aws-smithy-types.workspace = true
+base64.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+aex-control-app = { path = "../aex-control-app" }
+aex-control-domain = { path = "../aex-control-domain" }
+aex-identity-app = { path = "../aex-identity-app" }
+aex-identity-domain = { path = "../aex-identity-domain" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-wire = { path = "../aex-wire" }
+
+[dev-dependencies]
+aws-smithy-http-client.workspace = true
+http.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

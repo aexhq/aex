@@ -193,6 +193,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-central-runtime"
+version = "0.1.0"
+dependencies = [
+ "aex-control-app",
+ "aex-control-domain",
+ "aex-identity-app",
+ "aex-identity-domain",
+ "aex-internal-contracts",
+ "aex-test-harness",
+ "aex-wire",
+ "async-trait",
+ "aws-lc-rs",
+ "aws-sdk-lambda",
+ "aws-sdk-secretsmanager",
+ "aws-smithy-http-client",
+ "aws-smithy-types",
+ "base64 0.23.0",
+ "hex",
+ "http 1.5.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "aex-central-test-support"
 version = "0.1.0"
 dependencies = [

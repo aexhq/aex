@@ -22,6 +22,7 @@ members = [
     "crates/aex-brain-test-support",
     "crates/aex-brain-tool-catalog",
     "crates/aex-central-http",
+    "crates/aex-central-runtime",
     "crates/aex-central-test-support",
     "crates/aex-content-aws",
     "crates/aex-content-domain",

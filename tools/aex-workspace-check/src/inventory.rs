@@ -35,7 +35,7 @@ pub const NON_CARGO_DIRECTORIES: &[&str] = &[
     "tests/load/workloads",
 ];
 
-/// The 64 library crates under `crates/`.
+/// The 65 library crates under `crates/`.
 pub const CRATES: &[&str] = &[
     "aex-brain-application",
     "aex-brain-domain",
@@ -47,6 +47,7 @@ pub const CRATES: &[&str] = &[
     "aex-brain-test-support",
     "aex-brain-tool-catalog",
     "aex-central-http",
+    "aex-central-runtime",
     "aex-central-test-support",
     "aex-content-aws",
     "aex-content-domain",
