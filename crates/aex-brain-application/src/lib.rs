@@ -16,5 +16,6 @@
 //! - process lifecycle and configuration (`brain-mux`)
 
 pub mod activation;
+pub mod kernel;
 pub mod ports;
 pub mod pressure;
