@@ -23,18 +23,16 @@ security_tier = "internal"
 risk = ["concurrency"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the hands stream; the cases land with the crate's own implementation"
+[package.metadata.aex.targets]
+run_request_golden = "unit"
+provider_error_classification = "unit"
+transition_await = "unit"
+endpoint_token_redaction = "unit"
 
 [dependencies]
-async-trait.workspace = true
-aws-config.workspace = true
-aws-sdk-ecs.workspace = true
-aws-smithy-types.workspace = true
-futures.workspace = true
+aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-runtime-control = { path = "../aex-runtime-control" }
+aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-time.workspace = true
-uuid.workspace = true
-aex-runtime-control = { path = "../aex-runtime-control" }
