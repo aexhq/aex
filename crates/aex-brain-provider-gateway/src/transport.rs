@@ -233,6 +233,101 @@ impl Default for SendState {
 #[error("this attempt has already sent its request; a second generation is not permitted")]
 pub struct AlreadySent;
 
+/// Why the single send site could not proceed, or did not survive.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExecuteError {
+    /// Assembly failed while the gate was still held. `NotSent`.
+    #[error("the request could not be assembled: {0}")]
+    Assembly(#[from] UrlError),
+    /// A header this crate builds was rejected. `NotSent`.
+    #[error("a request header was rejected before send")]
+    Header,
+    /// The credential could not be turned into a header. `NotSent`.
+    #[error("the credential could not be attached: {0}")]
+    Credential(#[from] crate::credential::CredentialResolveError),
+    /// The gate had already been consumed. `NotSent` for the *second* attempt,
+    /// which is the point: it never reaches the socket.
+    #[error("{0}")]
+    AlreadySent(#[from] AlreadySent),
+    /// The transport failed at or after the send. **`PossiblySent`.**
+    ///
+    /// This arm deliberately covers `reqwest` connect errors: a pooled `HTTP`/2
+    /// connection may already have carried the request head, and no provider in
+    /// this set offers a way to ask (D-13).
+    #[error("the transport failed after the request was handed over")]
+    Transport {
+        /// The transport's own message, already bounded and redacted.
+        detail: BoundedString<256>,
+    },
+}
+
+impl ExecuteError {
+    /// What this failure proves about whether the provider saw the request.
+    #[must_use]
+    pub const fn proof(&self) -> crate::wire_pending::DispatchProof {
+        match self {
+            Self::Transport { .. } => crate::wire_pending::DispatchProof::PossiblySent,
+            _ => crate::wire_pending::DispatchProof::NotSent,
+        }
+    }
+}
+
+/// The **single** site in this crate that hands a request to the network.
+///
+/// Everything before `state.send()` is provably `NotSent`; everything from that
+/// line onward is `PossiblySent`. Keeping assembly, header construction and
+/// credential attachment above the gate — and the `reqwest` call alone below it
+/// — is what makes the proof mechanical rather than a claim.
+///
+/// # Errors
+///
+/// Returns [`ExecuteError`]. Use [`ExecuteError::proof`] rather than matching
+/// arms: the mapping from arm to proof is defined once, here.
+pub async fn execute(
+    client: &reqwest::Client,
+    request: &WireRequest,
+    key: &crate::credential::ProviderApiKey,
+    state: &mut SendState,
+) -> Result<reqwest::Response, ExecuteError> {
+    // ---- everything below is NotSent while the gate is held ----
+    let url = request.url()?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static(request.accept.as_str()),
+    );
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    for (name, value) in &request.headers {
+        let name = reqwest::header::HeaderName::from_static(name);
+        let value =
+            reqwest::header::HeaderValue::from_str(value.as_str()).map_err(|_| ExecuteError::Header)?;
+        headers.insert(name, value);
+    }
+    if let AuthScheme::AnthropicApiKey { version } = request.auth {
+        headers.insert(
+            reqwest::header::HeaderName::from_static("anthropic-version"),
+            reqwest::header::HeaderValue::from_str(version).map_err(|_| ExecuteError::Header)?,
+        );
+    }
+    let (name, value) = key.sensitive_header(request.auth)?;
+    headers.insert(name, value);
+
+    let built = client
+        .post(url)
+        .headers(headers)
+        .body(request.body.clone());
+
+    // ---- the gate. Nothing above this line reached a socket. ----
+    let _dispatched = state.send()?;
+
+    built.send().await.map_err(|error| ExecuteError::Transport {
+        detail: crate::redact::redact(&error.to_string(), &[key.expose_for_redaction()]),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use aex_model_catalog::document::EndpointPin;
