@@ -23,10 +23,34 @@
 //! - rating, pricing or money (`aex-usage-rating`, `aex-finance-*`)
 //! - the query projection's read path (`aex-usage-query-aws`)
 
+pub mod attribute;
+pub mod clock;
+pub mod codec;
 pub mod expressions;
+pub mod fault;
 pub mod outbox;
+pub mod projection;
+pub mod queue;
+pub mod store;
+pub mod stream;
 
 use aex_usage_domain::meter::Category;
+
+/// The two secondary indexes this authority declares.
+///
+/// Both are sparse and both project `itemType`: an `INCLUDE` projection carries
+/// no discriminator of its own, and a row decoded without one is a row decoded
+/// as the wrong shape.
+pub mod gsi {
+    /// Resolves a fact identity back to its workspace partition.
+    pub const FACT_ID: &str = "gsi_fact_id";
+    /// The sharded, enqueue-ordered view of undelivered outbox rows.
+    pub const OUTBOX_DUE: &str = "gsi_outbox_due";
+    /// The partition attribute `gsi_outbox_due` is keyed on.
+    pub const OUTBOX_DUE_PARTITION: &str = "outDuePk";
+    /// The sort attribute `gsi_outbox_due` is keyed on.
+    pub const OUTBOX_DUE_SORT: &str = "outDueSk";
+}
 
 /// The one authority this crate can address.
 pub const CATEGORY: Category = Category::Transfer;
@@ -43,6 +67,14 @@ pub const RECEIPT_QUEUE_ENV: &str = "AEX_USAGE_RECEIPT_TRANSFER_QUEUE";
 /// The environment variable naming the shared central rating queue.
 pub const RATING_QUEUE_ENV: &str = "AEX_USAGE_RATING_QUEUE";
 
+pub use attribute::{Row, RowError};
+pub use clock::SystemClock;
+pub use codec::{ClaimRow, DecodeError, OutboxRow, StoredReceipt};
 pub use expressions::{
-    AdmissionTransaction, FRONTIER_CAS, StoreError, TransactItem, TransferAuthority, WRITE_ONCE,
+    AdmissionTransaction, FACT_BODY, FRONTIER_CAS, ReceiptRow, StoreError, TransactItem,
+    TransferAuthority, WRITE_ONCE,
 };
+pub use projection::QueryProjection;
+pub use queue::SettlementQueue;
+pub use store::TransferStore;
+pub use stream::{ReceiptEnvelope, ReceiptError, StreamError};

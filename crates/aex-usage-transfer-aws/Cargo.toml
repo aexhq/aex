@@ -42,4 +42,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+xxhash-rust.workspace = true
+aex-usage-application = { path = "../aex-usage-application" }
 aex-usage-domain = { path = "../aex-usage-domain" }
+
+[dev-dependencies]
+aws-smithy-runtime-api.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

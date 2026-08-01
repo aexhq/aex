@@ -11,11 +11,65 @@
 use std::collections::BTreeMap;
 
 use aex_usage_domain::fact::{FactKind, UsageFact};
-use aex_usage_domain::frontier::{Frontier, FrontierState};
+use aex_usage_domain::frontier::{AcceptedSequence, Frontier, FrontierState, PoisonReason};
+use aex_usage_domain::identity::FactId;
 use aex_usage_domain::keys::{AuthorityKeys, Item, ItemType, ItemValue, KeyError, padded};
 use aex_usage_domain::meter::{Category, Meter};
+use aex_usage_domain::wire_pending::{PricingVersion, RegionId, Timestamp, WorkspaceId};
 
 use crate::CATEGORY;
+
+/// The attribute the whole serialized fact is written to.
+///
+/// The flat attributes exist for the two indexes and for an operator reading a
+/// row; they cannot reconstitute a fact on their own. This attribute can, and
+/// the decode cross-checks the two against each other, so the redundancy is a
+/// checked one rather than a second source of truth.
+pub const FACT_BODY: &str = "factBody";
+
+/// The longest bounded detail a quarantine row records.
+pub const QUARANTINE_DETAIL_MAX: usize = 1_024;
+
+/// The committed settlement facts a receipt row records.
+///
+/// A borrowed view rather than the port type, so the expression builder stays
+/// free of the application layer and can be unit-tested with no ports at all.
+#[derive(Debug, Clone, Copy)]
+pub struct ReceiptRow<'a> {
+    /// Central's own receipt identity.
+    pub receipt_id: &'a str,
+    /// The region the fact was measured in.
+    pub region: &'a RegionId,
+    /// The authority the receipt settles.
+    pub category: Category,
+    /// The fact this settles.
+    pub fact_id: &'a FactId,
+    /// What central rated it at, in micro-USD. Never a floating-point value.
+    pub rated_microusd: i128,
+    /// The journal transaction the settlement posted under.
+    pub transaction_id: &'a str,
+    /// The rate book central used.
+    pub pricing_version: &'a PricingVersion,
+    /// When central committed.
+    pub settled_at: Timestamp,
+}
+
+/// Truncates an operator detail to the bound a quarantine row records.
+///
+/// Truncation is on a character boundary, so a multi-byte detail cannot produce
+/// an invalid string, and the marker says the text was cut rather than leaving a
+/// silently shortened reason.
+#[must_use]
+pub fn bounded_detail(detail: &str) -> String {
+    if detail.len() <= QUARANTINE_DETAIL_MAX {
+        return detail.to_owned();
+    }
+    let mut end = QUARANTINE_DETAIL_MAX;
+    while end > 0 && !detail.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…[truncated]", &detail[..end])
+}
 
 /// Why a row could not be built or read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -37,6 +91,19 @@ pub enum StoreError {
     /// A key could not be built.
     #[error(transparent)]
     Key(#[from] KeyError),
+    /// The fact body could not be serialized.
+    ///
+    /// The flat attributes alone cannot reconstitute a fact — an observability
+    /// count, a correction lineage and an evidence variant have no flat
+    /// spelling — so the row carries the whole fact as well. A fact that cannot
+    /// be written whole is refused rather than written half.
+    #[error("fact `{fact_id}` could not be serialized into its row body: {reason}")]
+    Body {
+        /// The fact that was refused.
+        fact_id: String,
+        /// Why serialization failed.
+        reason: String,
+    },
 }
 
 /// One conditional write inside a transaction.
@@ -144,8 +211,109 @@ impl ComputeAuthority {
             CATEGORY,
             key,
             ItemType::Fact,
-            fact_attributes(fact),
+            fact_attributes(fact)?,
         )?)
+    }
+
+    /// The write-once `RECEIPT#` row a committed settlement parks at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::CategoryEscape`] when the receipt names a sibling
+    /// authority, and [`StoreError::Key`] when the key cannot be built.
+    pub fn receipt_item(
+        self,
+        receipt: &ReceiptRow<'_>,
+        workspace: &WorkspaceId,
+        sequence: AcceptedSequence,
+    ) -> Result<Item, StoreError> {
+        if receipt.category != CATEGORY {
+            return Err(StoreError::CategoryEscape {
+                meter: "settlement_receipt",
+                meter_category: receipt.category.id(),
+                category: CATEGORY.id(),
+            });
+        }
+        let key = self.keys.receipt(workspace, sequence)?;
+        let attributes = BTreeMap::from([
+            ("receiptId".to_owned(), ItemValue::text(receipt.receipt_id)),
+            ("category".to_owned(), ItemValue::text(CATEGORY.id())),
+            (
+                "region".to_owned(),
+                ItemValue::text(receipt.region.to_string()),
+            ),
+            (
+                "factId".to_owned(),
+                ItemValue::text(receipt.fact_id.to_string()),
+            ),
+            (
+                "workspaceId".to_owned(),
+                ItemValue::text(workspace.to_string()),
+            ),
+            (
+                "acceptedSequence".to_owned(),
+                ItemValue::number(sequence.get()),
+            ),
+            // Money is an exact integer of micro-USD and may be negative when a
+            // correction reverses. A number attribute carries the sign.
+            (
+                "ratedMicrousd".to_owned(),
+                ItemValue::N(receipt.rated_microusd.to_string()),
+            ),
+            (
+                "transactionId".to_owned(),
+                ItemValue::text(receipt.transaction_id),
+            ),
+            (
+                "pricingVersion".to_owned(),
+                ItemValue::text(receipt.pricing_version.to_string()),
+            ),
+            (
+                "settledAt".to_owned(),
+                ItemValue::instant(receipt.settled_at),
+            ),
+        ]);
+        Ok(Item::new(
+            CATEGORY,
+            key,
+            ItemType::SettlementReceipt,
+            attributes,
+        )?)
+    }
+
+    /// The `QUAR#` row a poisoned record parks behind.
+    ///
+    /// The detail is bounded and carries identifiers only: a quarantine row is
+    /// read by operators, and a quantity or a piece of evidence copied into it
+    /// would put money evidence outside the fact rows that own it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Key`] when the key cannot be built.
+    pub fn quarantine_item(
+        self,
+        workspace: &WorkspaceId,
+        sequence: AcceptedSequence,
+        reason: PoisonReason,
+        detail: &str,
+        at: Timestamp,
+    ) -> Result<Item, StoreError> {
+        let key = self.keys.quarantine(workspace, sequence)?;
+        let attributes = BTreeMap::from([
+            ("category".to_owned(), ItemValue::text(CATEGORY.id())),
+            (
+                "workspaceId".to_owned(),
+                ItemValue::text(workspace.to_string()),
+            ),
+            (
+                "acceptedSequence".to_owned(),
+                ItemValue::number(sequence.get()),
+            ),
+            ("reason".to_owned(), ItemValue::text(reason.id())),
+            ("detail".to_owned(), ItemValue::text(bounded_detail(detail))),
+            ("parkedAt".to_owned(), ItemValue::instant(at)),
+        ]);
+        Ok(Item::new(CATEGORY, key, ItemType::Quarantine, attributes)?)
     }
 
     /// The `ID#` claim that makes the deterministic identity a fence.
@@ -368,8 +536,13 @@ impl ComputeAuthority {
 }
 
 /// The attributes of one immutable fact row.
-fn fact_attributes(fact: &UsageFact) -> BTreeMap<String, ItemValue> {
+fn fact_attributes(fact: &UsageFact) -> Result<BTreeMap<String, ItemValue>, StoreError> {
+    let body = serde_json::to_string(fact).map_err(|error| StoreError::Body {
+        fact_id: fact.fact_id.to_string(),
+        reason: error.to_string(),
+    })?;
     let mut attributes = BTreeMap::from([
+        (FACT_BODY.to_owned(), ItemValue::text(body)),
         (
             "factId".to_owned(),
             ItemValue::text(fact.fact_id.to_string()),
@@ -442,7 +615,7 @@ fn fact_attributes(fact: &UsageFact) -> BTreeMap<String, ItemValue> {
     insert_attribution(&mut attributes, fact);
     insert_measurement(&mut attributes, fact);
     insert_correction(&mut attributes, fact);
-    attributes
+    Ok(attributes)
 }
 
 /// The optional attribution columns, written only when the work has them.
