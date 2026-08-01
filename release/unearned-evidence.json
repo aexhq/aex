@@ -64,27 +64,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-control-app",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-control-aurora",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-control-domain",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-finance-app",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -120,27 +99,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-identity-app",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-identity-aurora",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-identity-domain",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-observation-application",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -166,13 +124,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-rds-data",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -313,13 +264,6 @@
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-services stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-brain-mux",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
   },
   {
     "reason_class": "awaiting_owner",
@@ -693,60 +637,11 @@
     "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
   },
   {
-    "reason_class": "pending_authority",
-    "subject": "migrations/central/*.sql",
-    "owner": "central-finance",
-    "blocking_rule": "aex-migration-uncovered",
-    "detail": "the authority this rule reads does not exist yet, so the rule is recorded rather than evaluated"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LEAK-SOAK-12H",
-    "owner": "brain-core",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LEAK-SOAK-24H",
-    "owner": "brain-core",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
-  },
-  {
     "reason_class": "pending_workload",
     "subject": "LEAK-USAGE-PROBE-12H",
     "owner": "observations-usage",
     "blocking_rule": "aex-workload-unowned",
     "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-usage-compute-worker`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LOAD-100-BUDGETS",
-    "owner": "brain-core",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LOAD-100-COMPLETE",
-    "owner": "brain-core",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LOAD-200-SAFE",
-    "owner": "brain-core",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "LOAD-500-BOUNDED",
-    "owner": "brain-core",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-brain-mux`"
   },
   {
     "reason_class": "pending_workload",

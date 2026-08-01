@@ -8,13 +8,13 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 94,
-    "capacity_gates": 15,
+    "awaiting_owner": 86,
+    "capacity_gates": 19,
     "live_targets": 31,
     "packages": 139,
     "seams_claimed": 32,
     "seams_declared": 34,
-    "workloads": 0
+    "workloads": 7
   },
   "packages": {
     "apps/docs": {
@@ -321,7 +321,9 @@
         ],
         "scenarios": [],
         "targets": {
-          "expressions": "unit"
+          "adapters": "unit",
+          "expressions": "unit",
+          "plans": "unit"
         },
         "not_applicable": {
           "integration": "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
@@ -2858,13 +2860,14 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "load": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-central-authz": {
       "name": "aex-live-central-authz",

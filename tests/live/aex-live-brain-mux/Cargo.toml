@@ -23,5 +23,21 @@ security_tier = "internal"
 risk = ["iam"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the brain-core stream; live evidence cannot be earned before deployment (OD-07)"
+[package.metadata.aex.targets]
+smoke = "smoke"
+load = "e2e"
+
+[dependencies]
+aex-load-harness = { path = "../../load/aex-load-harness" }
+aex-test-harness = { path = "../../support/aex-test-harness" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+
+[[test]]
+name = "load"
+path = "tests/load.rs"

@@ -1,0 +1,40 @@
+# The declared child counts, run as one campaign per count. A scheduler that
+# quietly created a different number of children is indistinguishable to the
+# parent's model from the children failing, so the assertion is exactness rather
+# than a rate.
+#
+# 200 children exceeds one 32-child transaction page seven times over, which is
+# what makes this the case that exercises the fanout intent and its resumption.
+id = "brain-swarm-fanout"
+owner = "brain-core"
+target = "aex-live-brain-mux"
+tier = "t3"
+duration = "45m"
+ttl = "4h"
+
+[arrival]
+mode = "closed"
+concurrency = 8
+mix = { fanout_1 = 0.14, fanout_5 = 0.14, fanout_10 = 0.14, fanout_15 = 0.15, fanout_50 = 0.15, fanout_100 = 0.14, fanout_200 = 0.14 }
+
+[[gate]]
+id = "LOAD-SWARM-EXACT"
+kind = "budget"
+blocking = true
+assert = "for every child count in 1/5/10/15/50/100/200: children_created == requested && duplicate_effects == 0 && no child has two terminals && every queued child reports a binding reason"
+source = "07-brain-core.md Slice 11 'child counts 1/5/10/15/50/100/200'; BC-15 page size 32"
+
+[[gate]]
+id = "LOAD-SWARM-FAIRNESS"
+kind = "diagnostic"
+blocking = false
+assert = "a 200-child swarm from one tenant does not starve a second tenant's single-turn work"
+source = "07-brain-core.md section 12 S-8.10 weighted DRR"
+
+[report]
+metrics = [
+  "completed_per_s", "queue_delay_ms", "time_to_first_token_ms", "end_to_end_ms",
+  "provider_wait_ms", "local_cpu_ms", "rss_peak_bytes", "open_fds", "tokio_tasks",
+  "sockets", "journal_bytes", "checkpoint_bytes", "affinity_hit_rate", "scale_event_s",
+  "recovery_s", "duplicate_effects", "gaps", "cost_micro_usd_per_completed_turn",
+]
