@@ -25,3 +25,10 @@ api/generated/** text eol=lf
 api/openapi/** text eol=lf
 api/schemas/** text eol=lf
 conformance/** text eol=lf
+
+# The derived test registry and the unearned-evidence ledger are rewritten by
+# `aex-workspace-check registry build` on every manifest change and are meant to
+# be regenerated on conflict, like `Cargo.lock`. Without this, the tool writes LF,
+# Windows checks out CRLF, and every regeneration reports a whole-file diff.
+release/*.json text eol=lf
+release/policy/** text eol=lf
