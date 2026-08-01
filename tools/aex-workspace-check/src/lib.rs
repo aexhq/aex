@@ -21,13 +21,21 @@
 //!   `tools/aex-release-tool`
 //! - product policy of any kind
 
+pub mod collect;
+pub mod flake;
 pub mod inventory;
 pub mod metadata;
+pub mod policy;
+pub mod registry;
 pub mod rules;
+pub mod testmeta;
 
 use std::path::Path;
 
+pub use collect::{CollectError, Collected};
 pub use metadata::{MetadataError, WorkspaceMetadata};
+pub use policy::Policy;
+pub use registry::{Phase, RegistryDocument, RegistryReport};
 pub use rules::{TreeListing, Violation, Workspace};
 
 /// Why the workspace could not be checked.
@@ -36,6 +44,9 @@ pub enum CheckError {
     /// `cargo metadata` output could not be used.
     #[error(transparent)]
     Metadata(#[from] MetadataError),
+    /// The tree could not be read.
+    #[error(transparent)]
+    Collect(#[from] CollectError),
     /// A member root could not be read.
     #[error("cannot read `{root}`: {source}")]
     Tree {
@@ -100,6 +111,58 @@ pub fn check_metadata_json(json: &str) -> Result<Vec<Violation>, CheckError> {
     let metadata = WorkspaceMetadata::parse(json)?;
     let tree = read_tree(Path::new(&metadata.workspace_root))?;
     Ok(rules::check(&Workspace { metadata, tree }))
+}
+
+/// Runs the structural rules and the derived test registry against the real
+/// tree.
+///
+/// The two are reported together because they answer one question: is this
+/// workspace the one the accepted architecture describes, and does every
+/// package say what evidence it owes?
+///
+/// # Errors
+///
+/// Returns [`CheckError`] when the metadata cannot be parsed or the tree cannot
+/// be read.
+pub fn check_workspace(json: &str, phase: Phase) -> Result<FullReport, CheckError> {
+    let metadata = WorkspaceMetadata::parse(json)?;
+    let root = std::path::PathBuf::from(&metadata.workspace_root);
+    let tree = read_tree(&root)?;
+    let structural = rules::check(&Workspace {
+        metadata: metadata.clone(),
+        tree,
+    });
+    let collected = collect::collect(&root, &metadata)?;
+    let policy = Policy::embedded();
+    let report = registry::check(&collected.as_input(policy, phase));
+    Ok(FullReport {
+        structural,
+        registry: report,
+        collected,
+    })
+}
+
+/// Everything one run of the checker found.
+#[derive(Debug)]
+pub struct FullReport {
+    /// Structural rule violations.
+    pub structural: Vec<Violation>,
+    /// Registry rule violations and unearned-evidence rows.
+    pub registry: RegistryReport,
+    /// What was read from the tree.
+    pub collected: Collected,
+}
+
+impl FullReport {
+    /// Every violation, structural and registry, sorted and deduplicated.
+    #[must_use]
+    pub fn violations(&self) -> Vec<Violation> {
+        let mut all = self.structural.clone();
+        all.extend(self.registry.violations.iter().cloned());
+        all.sort();
+        all.dedup();
+        all
+    }
 }
 
 #[cfg(test)]

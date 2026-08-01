@@ -1058,9 +1058,13 @@ dependencies = [
 name = "aex-workspace-check"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
+ "clap",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

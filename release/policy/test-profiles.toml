@@ -10,9 +10,11 @@
 # `live_suite` is excusable; a deployable always has a started artifact, so
 # `smoke` is not.
 #
-# `[concern.<id>]` maps a declared concern to the test target that carries its
-# evidence. When `target_names` is non-empty the target must carry one of those
-# names, so the same evidence class is always found in the same place.
+# `[concern.<id>]` maps a declared concern to the layer that carries its
+# evidence. `conventional_target` is the name that evidence usually lives under;
+# it is quoted in the failure message so a stream is told where to put the case,
+# but the check is on the layer, not the filename - `Q-SELECTION` forbids a
+# filename convention from deciding what a lane runs.
 
 schema = "aex.test-profiles.v1"
 
@@ -146,31 +148,31 @@ evidence = "clean-head and adjacent-head application, idempotent re-entry, inter
 
 [concern.contract]
 requires_layer = "unit"
-target_names = []
+conventional_target = "conformance"
 
 [concern.property]
 requires_layer = "unit"
-target_names = ["properties"]
+conventional_target = "properties"
 
 [concern.concurrency]
 requires_layer = "unit"
-target_names = []
+conventional_target = "concurrency"
 
 [concern.fault]
 requires_layer = "unit"
-target_names = []
+conventional_target = "faults"
 
 [concern.security]
 requires_layer = "unit"
-target_names = []
+conventional_target = "security"
 
 [concern.performance]
 requires_layer = "e2e"
-target_names = ["load"]
+conventional_target = "load"
 
 [concern.compatibility]
 requires_layer = "unit"
-target_names = []
+conventional_target = "compatibility"
 
 # --- evidence classes with a named owner ------------------------------------
 #
