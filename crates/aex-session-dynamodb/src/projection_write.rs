@@ -1,0 +1,217 @@
+//! Write-only adapter for the regional authorization projection.
+//!
+//! Only `central-control-worker` enables this module. Every write is monotone:
+//! an older feed sequence or revocation epoch loses its `DynamoDB` condition, so
+//! delayed cross-region delivery cannot roll authorization state backwards.
+
+use aex_wire::ids::{ApiKeyId, OrganizationId, WorkspaceId};
+use aex_wire::types::{Region, Timestamp};
+use aws_sdk_dynamodb::Client;
+
+use crate::attr::{Item, ItemBuilder, n, s, stamp};
+
+const WORKSPACE_PLACEMENT: &str = "workspace_placement";
+const KEY_REVOCATION: &str = "key_revocation";
+
+/// A complete workspace placement projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacementWrite {
+    /// Workspace being projected.
+    pub workspace: WorkspaceId,
+    /// Owning organization.
+    pub organization: OrganizationId,
+    /// Immutable placement region.
+    pub region: Region,
+    /// Active, paused, or deleting.
+    pub status: String,
+    /// Current key epoch floor.
+    pub key_epoch: u64,
+    /// Current account epoch floor.
+    pub account_epoch: u64,
+    /// Current workspace revocation floor.
+    pub revocation_epoch: u64,
+    /// Monotone feed position.
+    pub feed_sequence: u64,
+    /// Projection timestamp.
+    pub updated_at: Timestamp,
+}
+
+/// A monotone API-key revocation projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevocationWrite {
+    /// Revoked key.
+    pub api_key: ApiKeyId,
+    /// Revocation instant.
+    pub revoked_at: Timestamp,
+    /// Monotone key epoch.
+    pub epoch: u64,
+}
+
+/// One region's projection writer.
+#[derive(Debug, Clone)]
+pub struct ProjectionWriter {
+    client: Client,
+    table: String,
+}
+
+impl ProjectionWriter {
+    /// Binds one regional projection table.
+    #[must_use]
+    pub fn new(client: Client, table: impl Into<String>) -> Self {
+        Self {
+            client,
+            table: table.into(),
+        }
+    }
+
+    /// Performs a strongly consistent point read for startup readiness.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport diagnostic when the table cannot be read.
+    pub async fn probe(&self) -> Result<(), String> {
+        self.client
+            .get_item()
+            .table_name(&self.table)
+            .key("pk", s("FEED"))
+            .key("sk", s("FRONTIER"))
+            .consistent_read(true)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Publishes a placement if it is at least as new as the stored feed row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a diagnostic for an invalid status or failed write.
+    pub async fn put_placement(&self, write: &PlacementWrite) -> Result<(), String> {
+        if !matches!(write.status.as_str(), "active" | "paused" | "deleting") {
+            return Err("placement status is outside the closed vocabulary".to_owned());
+        }
+        let result = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(placement_item(write)))
+            .condition_expression("attribute_not_exists(#pk) OR #sequence <= :sequence")
+            .expression_attribute_names("#pk", "pk")
+            .expression_attribute_names("#sequence", "feedSequence")
+            .expression_attribute_values(":sequence", n(write.feed_sequence))
+            .send()
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            // A newer projection already won; this stale delivery is fully
+            // handled and must not poison the queue batch.
+            Err(error) if conditional_put(&error) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Publishes a revocation if its epoch does not move the floor backwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport diagnostic when the write fails.
+    pub async fn put_revocation(&self, write: &RevocationWrite) -> Result<(), String> {
+        let result = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(revocation_item(write)))
+            .condition_expression("attribute_not_exists(#pk) OR #epoch <= :epoch")
+            .expression_attribute_names("#pk", "pk")
+            .expression_attribute_names("#epoch", "revokedEpoch")
+            .expression_attribute_values(":epoch", n(write.epoch))
+            .send()
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) if conditional_put(&error) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+fn conditional_put<R>(
+    error: &aws_sdk_dynamodb::error::SdkError<
+        aws_sdk_dynamodb::operation::put_item::PutItemError,
+        R,
+    >,
+) -> bool {
+    error.as_service_error().is_some_and(|service| {
+        matches!(
+            service,
+            aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(_)
+        )
+    })
+}
+
+fn placement_item(write: &PlacementWrite) -> Item {
+    ItemBuilder::new(WORKSPACE_PLACEMENT)
+        .set("pk", s(format!("WS#{}", write.workspace)))
+        .set("sk", s("PLACEMENT"))
+        .set("workspaceId", s(write.workspace.to_string()))
+        .set("organizationId", s(write.organization.to_string()))
+        .set("plane", s("regional"))
+        .set("region", s(write.region.as_str()))
+        .set("status", s(write.status.clone()))
+        .set("keyEpoch", n(write.key_epoch))
+        .set("accountEpoch", n(write.account_epoch))
+        .set("revocationEpoch", n(write.revocation_epoch))
+        .set("feedSequence", n(write.feed_sequence))
+        .set("updatedAt", stamp(write.updated_at))
+        .build()
+}
+
+fn revocation_item(write: &RevocationWrite) -> Item {
+    ItemBuilder::new(KEY_REVOCATION)
+        .set("pk", s(format!("KEY#{}", write.api_key)))
+        .set("sk", s("REVOCATION"))
+        .set("apiKeyId", s(write.api_key.to_string()))
+        .set("revokedAt", stamp(write.revoked_at))
+        .set("revokedEpoch", n(write.epoch))
+        .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PlacementWrite, RevocationWrite, placement_item, revocation_item};
+    use crate::projection::{decode_placement, decode_revocation};
+    use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::types::{Region, Timestamp};
+
+    #[test]
+    fn writer_rows_are_exactly_the_rows_the_regional_reader_accepts() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        let now = Timestamp::from_unix_millis(1_000).expect("timestamp");
+        let placement = PlacementWrite {
+            workspace,
+            organization,
+            region: Region::EuWest1,
+            status: "active".to_owned(),
+            key_epoch: 3,
+            account_epoch: 4,
+            revocation_epoch: 5,
+            feed_sequence: 6,
+            updated_at: now,
+        };
+        let decoded = decode_placement(&placement_item(&placement), workspace).expect("reader");
+        assert_eq!(decoded.organization, organization);
+        assert_eq!(decoded.feed_sequence, 6);
+
+        let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        let revocation = RevocationWrite {
+            api_key,
+            revoked_at: now,
+            epoch: 7,
+        };
+        let decoded = decode_revocation(&revocation_item(&revocation)).expect("reader");
+        assert_eq!(decoded.api_key, api_key);
+        assert_eq!(decoded.revoked_epoch, 7);
+    }
+}

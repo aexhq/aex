@@ -118,7 +118,7 @@ pub const SERVICES: &[&str] = &[
     "regional-stream",
 ];
 
-/// The 16 deployable workers.
+/// The 17 deployable workers.
 pub const WORKERS: &[&str] = &[
     "central-control-worker",
     "central-schema-admin",
@@ -129,6 +129,7 @@ pub const WORKERS: &[&str] = &[
     "observation-export-task",
     "observation-reconciler",
     "provider-cost-reconciler",
+    "regional-control",
     "regional-secret-key-admin",
     "runtime-control-worker",
     "session-operation-worker",
@@ -173,6 +174,7 @@ pub const LIVE_TARGETS: &[&str] = &[
     "observation-export-task",
     "observation-reconciler",
     "provider-cost-reconciler",
+    "regional-control",
     "regional-observation-api",
     "regional-otlp",
     "regional-secret-api",

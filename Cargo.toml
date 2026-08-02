@@ -96,6 +96,7 @@ members = [
     "workers/observation-export-task",
     "workers/observation-reconciler",
     "workers/provider-cost-reconciler",
+    "workers/regional-control",
     "workers/regional-secret-key-admin",
     "workers/runtime-control-worker",
     "workers/session-operation-worker",
@@ -129,6 +130,7 @@ members = [
     "tests/live/aex-live-observation-export-task",
     "tests/live/aex-live-observation-reconciler",
     "tests/live/aex-live-provider-cost-reconciler",
+    "tests/live/aex-live-regional-control",
     "tests/live/aex-live-regional-observation-api",
     "tests/live/aex-live-regional-otlp",
     "tests/live/aex-live-regional-secret-api",
@@ -228,6 +230,7 @@ aws-sdk-ssm = { version = "1.118.0", features = ["behavior-version-latest"] }
 aws-sdk-rdsdata = { version = "1.108.0", features = ["behavior-version-latest"] }
 aws-sdk-ecs = { version = "1.136.0", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = { version = "1.111.0", features = ["behavior-version-latest"] }
+aws-sdk-sesv2 = { version = "1.128.0", features = ["behavior-version-latest"] }
 # The finance sweeps report and fence; they never auto-repair money (F-30). The
 # report leaves the process through the operations topic and nowhere else.
 aws-sdk-sns = { version = "1.107.0", features = ["behavior-version-latest"] }
