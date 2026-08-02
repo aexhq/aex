@@ -3,11 +3,9 @@
 //! # The seam exists on purpose
 //!
 //! [`MicrovmControlApi`] is the one place the `MicroVM` control plane is reached.
-//! The implementation binds to the generated `aws-sdk-lambdamicrovms` crate if it is
-//! published at implementation time; otherwise it is a narrow `SigV4` client over the
-//! documented `lambda/latest/microvm-api` REST operations. Both satisfy this trait
-//! and the same live suite, and the choice is recorded as a known gap rather than
-//! guessed at.
+//! [`AwsMicrovmControl`] binds the official generated `aws-sdk-lambdamicrovms`
+//! client to that seam. Provider enums are decoded strictly and effect calls keep
+//! ambiguous transport outcomes ambiguous for reconciliation.
 //!
 //! # H-BOUNDARY B1
 //!
@@ -55,8 +53,8 @@ pub const TOKEN_REFRESH_SECONDS: u64 = 1_500;
 /// The largest run-hook payload, in UTF-8 bytes.
 pub const MAX_RUN_HOOK_PAYLOAD_BYTES: usize = 4_096;
 
-/// The managed ingress connector. Narrower than `ALL_INGRESS` on purpose.
-pub const HTTP_INGRESS: &str = "HTTP_INGRESS";
+/// The AWS-managed HTTPS proxy ingress connector.
+pub const ALL_INGRESS: &str = "ALL_INGRESS";
 
 /// The managed egress connector.
 pub const INTERNET_EGRESS: &str = "INTERNET_EGRESS";
@@ -237,7 +235,7 @@ impl RunRequest {
         Ok(Self {
             image_identifier,
             image_version,
-            ingress_network_connectors: vec![HTTP_INGRESS.to_owned()],
+            ingress_network_connectors: vec![ALL_INGRESS.to_owned()],
             egress_network_connectors: match network {
                 NetworkPolicy::PublicInternet => vec![INTERNET_EGRESS.to_owned()],
                 NetworkPolicy::None => Vec::new(),
@@ -372,10 +370,9 @@ pub trait MicrovmControlApi: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_PORT, EndpointToken, FORBIDDEN_IAM_ACTIONS, HTTP_INGRESS, INTERNET_EGRESS,
-        IdlePolicy, LaunchError, MAX_DURATION_SECONDS, MAX_RUN_HOOK_PAYLOAD_BYTES,
-        RUN_HOOK_PAYLOAD_KEYS, RUNTIME_IAM_ACTIONS, RunHookBounds, RunHookPayload, RunRequest,
-        TOKEN_TTL_SECONDS,
+        AGENT_PORT, ALL_INGRESS, EndpointToken, FORBIDDEN_IAM_ACTIONS, INTERNET_EGRESS, IdlePolicy,
+        LaunchError, MAX_DURATION_SECONDS, MAX_RUN_HOOK_PAYLOAD_BYTES, RUN_HOOK_PAYLOAD_KEYS,
+        RUNTIME_IAM_ACTIONS, RunHookBounds, RunHookPayload, RunRequest, TOKEN_TTL_SECONDS,
     };
     use aex_runtime_control::generation::{ImageIdentifier, ImageVersion, NetworkPolicy};
     use aex_runtime_control::lifecycle::client_token;
@@ -423,7 +420,7 @@ mod tests {
     #[test]
     fn the_launch_request_shape_is_exact() {
         let built = request(NetworkPolicy::PublicInternet);
-        assert_eq!(built.ingress_network_connectors, vec![HTTP_INGRESS]);
+        assert_eq!(built.ingress_network_connectors, vec![ALL_INGRESS]);
         assert_eq!(built.egress_network_connectors, vec![INTERNET_EGRESS]);
         assert_eq!(
             built.idle_policy,

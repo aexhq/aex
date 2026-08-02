@@ -453,6 +453,10 @@ dependencies = [
  "aex-hands-protocol",
  "aex-runtime-control",
  "aex-wire",
+ "aws-sdk-lambdamicrovms",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
  "serde",
  "serde_json",
  "thiserror",
@@ -1801,6 +1805,32 @@ dependencies = [
  "aws-runtime",
  "aws-smithy-async",
  "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-lambdamicrovms"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a58acd36f40af9cc41745ea1d247ace9657447d6f2fdeb684829bee7640a9a0"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
  "aws-smithy-http",
  "aws-smithy-json",
  "aws-smithy-observability",

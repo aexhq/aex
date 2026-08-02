@@ -30,6 +30,10 @@ targets = "the `hands` stream places this crate's evidence in inline unit module
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-runtime-control = { path = "../aex-runtime-control" }
 aex-wire = { path = "../aex-wire" }
+aws-sdk-lambdamicrovms.workspace = true
+aws-smithy-runtime-api.workspace = true
+aws-smithy-types.workspace = true
+aws-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
