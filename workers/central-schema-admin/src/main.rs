@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn bundle_is_linear_and_headers_match_filenames() {
+    fn bundle_is_linear_and_every_header_parses() {
         let path = bundle_path();
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
         assert_eq!(bundle.head(), 20_260_801_000_600);
