@@ -6,14 +6,17 @@
 
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
-    ChildWrite, ControlUpdate, DecisionCommit, EnvelopeViolation, FenceGuardRef, MAX_ITEM_BYTES,
-    MAX_TRANSACTION_ACTIONS, MAX_TRANSACTION_BYTES, SPAWN_PAGE_CHILDREN, event_seq, fanout_pages,
+    ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, EnvelopeViolation, FenceGuardRef,
+    MAX_ITEM_BYTES, MAX_TRANSACTION_ACTIONS, MAX_TRANSACTION_BYTES, SPAWN_PAGE_CHILDREN, event_seq,
+    fanout_pages,
 };
+use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, AgentRevision, CancelEpoch, FanoutIntentId, Fence, JoinId, JournalSeq,
-    OwnerToken, SessionId,
+    AgentId, AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, FanoutIntentId, Fence,
+    JoinId, JournalSeq, OwnerToken, SessionId, Timestamp,
 };
 use aex_brain_domain::journal::{FinishReason, JournalRecord, TypedFailure};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use uuid::Uuid;
 
 fn guard(tail: Option<JournalSeq>) -> FenceGuardRef {
@@ -82,6 +85,40 @@ fn a_minimal_decision_costs_its_appends_plus_one_control_update() {
         .validate()
         .expect("one append plus a control update fits");
     assert_eq!(cost.actions, 2);
+}
+
+#[test]
+fn only_hands_effects_carry_the_canonical_runtime_generation() {
+    let prepare = |kind, generation| EffectWrite::Prepare {
+        id: EffectId([7; 16]),
+        kind,
+        generation,
+        class: EffectClass::NonReplayable,
+        request_hash: ContentHash::of(b"request"),
+        deadline: Timestamp::from_millis(60_000),
+        attempt: 1,
+    };
+    let generation = GenerationId::from_uuid7(Uuid7::compose(1, [7; 10]));
+
+    let mut hands = decision(vec![finished()], Vec::new());
+    hands.effects = vec![prepare(EffectKind::HandsOperation, Some(generation))];
+    hands.validate().expect("Hands is bound to one generation");
+
+    hands.effects = vec![prepare(EffectKind::HandsOperation, None)];
+    assert!(matches!(
+        hands.validate(),
+        Err(EnvelopeViolation::InvalidGenerationBinding {
+            kind: EffectKind::HandsOperation
+        })
+    ));
+
+    hands.effects = vec![prepare(EffectKind::ModelCall, Some(generation))];
+    assert!(matches!(
+        hands.validate(),
+        Err(EnvelopeViolation::InvalidGenerationBinding {
+            kind: EffectKind::ModelCall
+        })
+    ));
 }
 
 /// A real spawn page: the parent control update, the fanout intent, `n` children at three

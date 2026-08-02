@@ -27,6 +27,8 @@ scenarios = []
 targets = "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
+aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-domain = { path = "../aex-brain-domain" }
 aex-hands-agent = { path = "../aex-hands-agent" }
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-hands-tools = { path = "../aex-hands-tools" }
@@ -36,3 +38,7 @@ blake3.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+uuid.workspace = true

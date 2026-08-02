@@ -29,14 +29,14 @@ use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect, EffectState, SettledOutcome};
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, DetachedOperationId, EffectId,
-    Fence, HandsGeneration, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId,
-    Timestamp, ToolName, WakeId, WorkShard,
+    Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp, ToolName,
+    WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
 use aex_brain_domain::wire_pending::{
     CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
 };
-use aex_wire::ids::{PrefixedId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -417,7 +417,7 @@ impl ToolPort for ScriptedTools {
     }
 }
 
-/// A Hands port whose peer does not exist yet.
+/// A deliberately unavailable Hands port for activation tests.
 ///
 /// Every method fails closed and names the missing implementation. It is not a stub: it
 /// answers nothing, proves nothing, and a run that needs it interrupts honestly rather than
@@ -430,10 +430,7 @@ impl AbsentHands {
         HandsError::Transport {
             stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
             proof: aex_brain_domain::effect::DispatchProof::NotSent,
-            detail: RedactedDetail::new(
-                "aex-brain-hands does not implement HandsPort; it binds aex-hands-protocol \
-                 and takes no dependency on aex-brain-application",
-            ),
+            detail: RedactedDetail::new("the activation test did not bind a Hands peer"),
         }
     }
 }
@@ -442,7 +439,7 @@ impl HandsPort for AbsentHands {
     fn ensure_generation<'a>(
         &'a self,
         _session: &'a SessionId,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
     ) -> BoxFuture<'a, Result<HandsEndpoint, HandsError>> {
         Box::pin(async { Err(Self::refusal()) })
     }
@@ -450,7 +447,7 @@ impl HandsPort for AbsentHands {
     fn start<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _start: &'a HandsOperationStart,
     ) -> BoxFuture<'a, Result<HandsAccepted, HandsError>> {
         Box::pin(async { Err(Self::refusal()) })
@@ -458,7 +455,7 @@ impl HandsPort for AbsentHands {
 
     fn status<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
     ) -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>> {
         Box::pin(async { Err(Self::refusal()) })
@@ -466,7 +463,7 @@ impl HandsPort for AbsentHands {
 
     fn cancel<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
         _fence: Fence,
     ) -> BoxFuture<'a, Result<(), HandsError>> {
@@ -475,7 +472,7 @@ impl HandsPort for AbsentHands {
 
     fn result<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
         _bounds: &'a ResultBounds,
     ) -> BoxFuture<'a, Result<crate::ports::HandsResult, HandsError>> {
@@ -501,6 +498,7 @@ impl AdmissionControl for AlwaysAdmit {
 /// One agent as the in-memory authority holds it.
 #[derive(Debug, Clone)]
 struct AgentRow {
+    generation: GenerationId,
     revision: AgentRevision,
     fence: Fence,
     tail: Option<JournalSeq>,
@@ -558,6 +556,7 @@ impl MemoryStore {
         self.agents.lock().expect("not poisoned").insert(
             key,
             AgentRow {
+                generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
                 revision: AgentRevision::ZERO,
                 fence: Fence::ZERO,
                 tail,
@@ -677,6 +676,7 @@ impl MemoryStore {
     fn head_of(row: &AgentRow, key: AgentKey) -> AgentHead {
         AgentHead {
             key,
+            generation: row.generation,
             revision: row.revision,
             fence: row.fence,
             journal_tail: row.tail,
@@ -832,6 +832,7 @@ impl JournalStore for MemoryStore {
                     EffectWrite::Prepare {
                         id,
                         kind,
+                        generation,
                         class,
                         request_hash,
                         deadline,
@@ -842,6 +843,7 @@ impl JournalStore for MemoryStore {
                             DurableEffect {
                                 id: *id,
                                 kind: *kind,
+                                generation: *generation,
                                 class: *class,
                                 request_hash: *request_hash,
                                 state: EffectState::Prepared { attempt: *attempt },

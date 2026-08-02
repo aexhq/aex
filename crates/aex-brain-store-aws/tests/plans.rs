@@ -20,7 +20,7 @@ use aex_brain_domain::journal::{FinishReason, JournalRecord};
 use aex_brain_domain::wire_pending::JoinMode;
 use aex_brain_store_aws::plan::{self, BrainTables, participant};
 use aex_session_dynamodb::plan::Participant;
-use aex_wire::ids::{PrefixedId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 
 fn v7(millis: u64, seed: u8) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*Uuid7::compose(millis, [seed; 10]).as_bytes())
@@ -247,6 +247,7 @@ fn every_compiled_action_is_conditional() {
     commit.effects.push(EffectWrite::Prepare {
         id: EffectId([1; 16]),
         kind: EffectKind::ModelCall,
+        generation: None,
         class: EffectClass::NonReplayable,
         request_hash: ContentHash::of(b"request"),
         deadline: Timestamp::from_millis(1_767_225_660_000),
@@ -279,6 +280,37 @@ fn every_compiled_action_is_conditional() {
             compiled.participants()[index]
         );
     }
+}
+
+#[test]
+fn a_hands_prepare_persists_the_exact_canonical_generation() {
+    let generation = GenerationId::from_uuid7(Uuid7::compose(1_767_225_600_009, [9; 10]));
+    let mut commit = base(vec![finished()]);
+    commit.effects.push(EffectWrite::Prepare {
+        id: EffectId([3; 16]),
+        kind: EffectKind::HandsOperation,
+        generation: Some(generation),
+        class: EffectClass::DurableDetached,
+        request_hash: ContentHash::of(b"hands request"),
+        deadline: Timestamp::from_millis(1_767_225_660_000),
+        attempt: 1,
+    });
+    let compiled = plan::compile(&tables(), &context(), &commit).expect("compiles");
+    let index = compiled
+        .participants()
+        .iter()
+        .position(|participant| *participant == Participant::AGENT_EFFECT)
+        .expect("effect participant");
+    let item = compiled.actions()[index]
+        .put()
+        .expect("a prepare is a put")
+        .item();
+    assert_eq!(
+        item["generationId"].as_s().expect("generation string"),
+        &generation.to_string()
+    );
+    assert_eq!(item["kind"].as_s().expect("kind string"), "HandsOperation");
+    assert_eq!(item["state"].as_s().expect("state string"), "prepared");
 }
 
 /// The control update carries the whole precondition set. Each rejects a different way of

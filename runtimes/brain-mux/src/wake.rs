@@ -10,11 +10,11 @@
 //! | --- | --- | --- |
 //! | `WakeQueue` | `aex_brain_store_aws::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
-//! | `ToolPort` | `aex_brain_tool_catalog::CompositeToolRouter` | real, with no executor registered: nothing implements `ToolExecutor` yet, so every route refuses by its own typed error |
+//! | `ToolPort` | injected production router, or explicit unavailable composition | managed-web and MCP do not yet implement `ToolExecutor` |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
 //! | `ProviderPort` | [`AbsentProvider`] | `aex-brain-provider-gateway` restates its own `ProviderPort` over `aex_model_catalog::canonical` types and takes no dependency on `aex-brain-application` |
 //! | `CatalogPort` | [`AbsentCatalog`] | `aex-model-catalog` publishes no `ModelCapability` |
-//! | `HandsPort` | [`AbsentHands`] | `aex-brain-hands` takes no dependency on `aex-brain-application` |
+//! | `HandsPort` | [`aex_brain_hands::HandsAdapter`] in production injection | the adapter is real; no concrete guest transport/runtime backend exists yet |
 //!
 //! Every refusal is `DispatchProof::NotSent` and carries the name of the crate that owes the
 //! implementation. None of them is a stub: a stub would let an activation appear to make
@@ -32,19 +32,21 @@ use aex_brain_application::ports::{
     FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsPort, HandsResult, IdPort, JournalPage, JournalStore, LeaseStore,
     PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SteadyInstant, StoreError, StreamBudget, UnknownResolution,
+    ReleaseDisposition, ResultBounds, SteadyInstant, StoreError, StreamBudget, ToolPort,
+    UnknownResolution,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectKind,
 };
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsGeneration,
-    HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp, ToolName, WakeId,
+    AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsOperationId, JournalSeq,
+    ModelSlug, OwnerToken, SessionId, Timestamp, ToolName, WakeId,
 };
 use aex_brain_domain::wire_pending::{
     CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
 };
+use aex_wire::ids::GenerationId;
 use std::sync::Arc;
 
 /// Historical refusal used by the explicit unbound-store fixture.
@@ -64,9 +66,13 @@ pub const CATALOG_ABSENT: &str = "aex-model-catalog publishes no ModelCapability
                                   model with document::ModelEntry over ModelLimits and \
                                   CapabilitySet";
 
+/// Why tool execution is not bound.
+pub const TOOL_EXECUTORS_ABSENT: &str = "aex-brain-managed-web and aex-brain-mcp do not implement \
+                                        aex-brain-tool-catalog::router::ToolExecutor";
+
 /// Why Hands is not bound.
-pub const HANDS_ABSENT: &str = "aex-brain-hands takes no dependency on aex-brain-application and \
-                                implements no HandsPort";
+pub const HANDS_ABSENT: &str = "aex-brain-hands implements HandsPort, but no concrete guest \
+                                transport/runtime-store HandsBackend is available";
 
 /// The admission controller, as the loop sees it.
 #[derive(Debug)]
@@ -376,7 +382,7 @@ impl HandsPort for AbsentHands {
     fn ensure_generation<'a>(
         &'a self,
         _session: &'a SessionId,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
     ) -> BoxFuture<'a, Result<HandsEndpoint, HandsError>> {
         Box::pin(async { Err(Self::refusal()) })
     }
@@ -384,7 +390,7 @@ impl HandsPort for AbsentHands {
     fn start<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _start: &'a HandsOperationStart,
     ) -> BoxFuture<'a, Result<HandsAccepted, HandsError>> {
         Box::pin(async { Err(Self::refusal()) })
@@ -392,7 +398,7 @@ impl HandsPort for AbsentHands {
 
     fn status<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
     ) -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>> {
         Box::pin(async { Err(Self::refusal()) })
@@ -400,7 +406,7 @@ impl HandsPort for AbsentHands {
 
     fn cancel<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
         _fence: aex_brain_domain::ids::Fence,
     ) -> BoxFuture<'a, Result<(), HandsError>> {
@@ -409,7 +415,7 @@ impl HandsPort for AbsentHands {
 
     fn result<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
         _bounds: &'a ResultBounds,
     ) -> BoxFuture<'a, Result<HandsResult, HandsError>> {
@@ -417,52 +423,130 @@ impl HandsPort for AbsentHands {
     }
 }
 
+/// State of one production composition binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingState {
+    /// A concrete implementation is installed.
+    Ready,
+    /// The implementation is absent for the named, actionable reason.
+    Unavailable(&'static str),
+}
+
+impl BindingState {
+    /// Whether a concrete implementation is installed.
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
 /// Whether every port the loop needs is bound to a real peer.
 ///
-/// Readiness reads this. A task whose store is unbound must never report ready: it would
+/// Readiness reads this. A task with any unbound peer must never report ready: it would
 /// take work off the queue only to release it, and a queue that is being drained and
 /// re-filled looks exactly like one that is being served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bindings {
     /// Whether the journal, effect and lease ports reach a real authority.
-    pub store: bool,
+    pub store: BindingState,
     /// Whether the provider port reaches a real adapter.
-    pub provider: bool,
+    pub provider: BindingState,
     /// Whether the catalog port reaches a verified artifact.
-    pub catalog: bool,
+    pub catalog: BindingState,
+    /// Whether every installed tool route has its concrete executor.
+    pub tools: BindingState,
+    /// Whether the Hands adapter has a concrete runtime backend.
+    pub hands: BindingState,
 }
 
 impl Bindings {
-    /// The bindings a deployed task has today.
+    /// The currently unavailable production composition.
     #[must_use]
-    pub const fn deployed() -> Self {
+    pub const fn unavailable() -> Self {
         Self {
-            store: true,
-            provider: false,
-            catalog: false,
+            store: BindingState::Ready,
+            provider: BindingState::Unavailable(PROVIDER_ABSENT),
+            catalog: BindingState::Unavailable(CATALOG_ABSENT),
+            tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
+            hands: BindingState::Unavailable(HANDS_ABSENT),
+        }
+    }
+
+    /// Fully injected production ports.
+    #[must_use]
+    pub const fn production() -> Self {
+        Self {
+            store: BindingState::Ready,
+            provider: BindingState::Ready,
+            catalog: BindingState::Ready,
+            tools: BindingState::Ready,
+            hands: BindingState::Ready,
         }
     }
 
     /// Whether the task may serve work.
     #[must_use]
     pub const fn complete(&self) -> bool {
-        self.store && self.provider && self.catalog
+        self.store.is_ready()
+            && self.provider.is_ready()
+            && self.catalog.is_ready()
+            && self.tools.is_ready()
+            && self.hands.is_ready()
     }
 
     /// The unsatisfied bindings, named. Readiness reports a name, never a bare `false`.
     #[must_use]
     pub fn unsatisfied(&self) -> Vec<&'static str> {
         let mut missing = Vec::new();
-        if !self.store {
-            missing.push(STORE_UNBOUND);
-        }
-        if !self.provider {
-            missing.push(PROVIDER_ABSENT);
-        }
-        if !self.catalog {
-            missing.push(CATALOG_ABSENT);
+        for state in [
+            self.store,
+            self.provider,
+            self.catalog,
+            self.tools,
+            self.hands,
+        ] {
+            if let BindingState::Unavailable(reason) = state {
+                missing.push(reason);
+            }
         }
         missing
+    }
+}
+
+/// Concrete non-store peers required by a production wake loop.
+///
+/// Construction requires all four peers at once. There is no default and no optional port,
+/// so a caller cannot accidentally make a partially real composition report ready.
+pub struct ProductionPeers {
+    provider: Arc<dyn ProviderPort>,
+    tools: Arc<dyn ToolPort>,
+    hands: Arc<dyn HandsPort>,
+    catalog: Arc<dyn CatalogPort>,
+}
+
+impl ProductionPeers {
+    /// Binds real provider, tool, catalog, and Hands-runtime implementations.
+    #[must_use]
+    pub fn new(
+        provider: Arc<dyn ProviderPort>,
+        tools: Arc<dyn ToolPort>,
+        hands_backend: Arc<dyn aex_brain_hands::HandsBackend>,
+        catalog: Arc<dyn CatalogPort>,
+    ) -> Self {
+        Self {
+            provider,
+            tools,
+            hands: Arc::new(aex_brain_hands::HandsAdapter::new(hands_backend)),
+            catalog,
+        }
+    }
+}
+
+impl core::fmt::Debug for ProductionPeers {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ProductionPeers")
+            .finish_non_exhaustive()
     }
 }
 
@@ -496,9 +580,9 @@ pub async fn aws_bindings(
     (store, queue)
 }
 
-/// The ports a deployed task resolves.
+/// Fail-closed ports for a task whose production peers are not composed yet.
 #[must_use]
-pub fn deployed_ports(
+pub fn unavailable_ports(
     store: Arc<aex_brain_store_aws::BrainStore>,
     wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
 ) -> Ports {
@@ -513,6 +597,27 @@ pub fn deployed_ports(
         tools: Arc::new(aex_brain_tool_catalog::router::CompositeToolRouter::new()),
         hands: Arc::new(AbsentHands),
         catalog: Arc::new(AbsentCatalog),
+        clock: Arc::new(SystemClock::new()),
+        ids: Arc::new(ProcessIds),
+    }
+}
+
+/// Composes the store/queue authorities with fully supplied production peers.
+#[must_use]
+pub fn production_ports(
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    peers: ProductionPeers,
+) -> Ports {
+    Ports {
+        journal: Arc::clone(&store) as Arc<_>,
+        effects: Arc::clone(&store) as Arc<_>,
+        leases: store,
+        wakes,
+        provider: peers.provider,
+        tools: peers.tools,
+        hands: peers.hands,
+        catalog: peers.catalog,
         clock: Arc::new(SystemClock::new()),
         ids: Arc::new(ProcessIds),
     }
@@ -617,25 +722,20 @@ mod tests {
         assert!(CATALOG_ABSENT.contains("aex-model-catalog"));
     }
 
-    /// The store is now bound, while provider and catalog remain named readiness blockers.
+    /// The store is bound, while all four absent production peers remain named blockers.
     #[test]
     fn a_deployed_task_binds_the_store_and_names_the_remaining_peers() {
-        let bindings = Bindings::deployed();
+        let bindings = Bindings::unavailable();
         assert!(!bindings.complete());
-        assert!(bindings.store);
+        assert!(bindings.store.is_ready());
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 2);
+        assert_eq!(missing.len(), 4);
         assert!(!missing.contains(&STORE_UNBOUND));
         assert!(missing.contains(&PROVIDER_ABSENT));
         assert!(missing.contains(&CATALOG_ABSENT));
-        assert!(
-            Bindings {
-                store: true,
-                provider: true,
-                catalog: true
-            }
-            .complete()
-        );
+        assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
+        assert!(missing.contains(&super::HANDS_ABSENT));
+        assert!(Bindings::production().complete());
     }
 
     /// Two claim attempts by one task must be distinguishable, so the owner token is fresh
@@ -690,15 +790,17 @@ mod tests {
         let control = MuxAdmission::new(
             Arc::clone(&admission),
             Bindings {
-                store: true,
-                provider: true,
-                catalog: true,
+                store: super::BindingState::Ready,
+                provider: super::BindingState::Ready,
+                catalog: super::BindingState::Ready,
+                tools: super::BindingState::Ready,
+                hands: super::BindingState::Ready,
             },
         );
         assert!(control.should_receive());
         assert!(
-            !MuxAdmission::new(admission, Bindings::deployed()).should_receive(),
-            "missing provider and catalog peers must never take work off the queue"
+            !MuxAdmission::new(admission, Bindings::unavailable()).should_receive(),
+            "missing production peers must never take work off the queue"
         );
         drain.start_drain();
         assert!(!control.should_receive());

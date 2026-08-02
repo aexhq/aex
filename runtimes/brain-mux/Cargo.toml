@@ -34,6 +34,7 @@ path = "src/main.rs"
 [dependencies]
 aex-brain-application = { path = "../../crates/aex-brain-application" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
+aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
 # The composed `ToolPort`. It is linked with no executor registered, because nothing
 # implements `ToolExecutor` yet; the router then refuses by its own typed error
@@ -50,6 +51,7 @@ aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # disagree.
 aex-usage-application = { path = "../../crates/aex-usage-application", features = ["probe"] }
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
+aex-wire = { path = "../../crates/aex-wire" }
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true

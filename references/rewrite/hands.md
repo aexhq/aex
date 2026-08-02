@@ -146,6 +146,7 @@ live companions are declared and unearned rather than silently green.
 | regional stores | `aex_runtime_control::store` | `RuntimeActivityStore`, `GenerationPointer`, `GenerationPlan`, `GenerationCommit`, `LifecycleIntentPlan`, `LifecycleReceiptPlan`, `LifecycleReceipt`, `IdleProbe`, `RuntimeShard`, `PageBudget`, `RuntimeDuePage`, `RuntimeStoreError` |
 | regional stores, brain | `aex_runtime_control::generation` | `HandsGeneration`, `GenerationHead`, `GenerationState`, `Revision`, `TransportMode`, `ImagePin`, `ImageCapability`, `NetworkPolicy`, `LimitsRevision`, the F1/F4/F6 functions |
 | brain | `aex_brain_hands::adapter` | `MaterializeStep`, `AdmitPlan`, `SettlePlan`, `HandsError`, `Alpn`, `transport_mode`, `pool_size`, `max_in_flight` |
+| brain, mux | `aex_brain_hands::port` | `HandsAdapter`, the exact-generation `impl aex_brain_application::ports::HandsPort`, and its `HandsBackend` runtime seam |
 | brain | `aex_brain_hands::operation` | `ResultAssembly`, `IncorporateError`, `ConstructedCommand`, `CodeLanguage`, `PackageManager`, `git`, `package_install`, `code_run` |
 | brain, guest | `aex_hands_agent::wire` | `RequestPreamble`, `ResponsePreamble`, `Frame`, `FrameExpectation`, `FrameError`, `Verb`, `encode_request`/`decode_request`, `encode_response`/`decode_response`, `split_result_payload`, `verify_body`, `DECODE_STEPS` |
 | usage | `aex_runtime_control::usage` | `UsageFactSink`, `UsageCategory`, `FactContext`, `HandsUsage`, `SnapshotResidence`, `SnapshotIo`, `derive_usage`, `derive_facts`, `category_of` |
@@ -192,11 +193,18 @@ cannot break the supervisor out from under its own operation.
 
 ### Brain (plan 07)
 
-`HandsPort` does not exist yet — `aex-brain-domain` and `aex-brain-application`
-are still skeletons. `aex_brain_hands::adapter::HandsError` already distinguishes
-`GenerationLost`, `Fenced`, `Interrupted`, `CapacityQueued`,
-`CapabilityUnavailable` and `Transport`, with `retry_same_effect()` and
-`interrupts()` as the routing predicates the recovery matrix needs.
+`aex-brain-application` publishes `HandsPort` entirely over the canonical
+`aex_wire::ids::GenerationId`. `aex_brain_hands::HandsAdapter` implements it over a
+`HandsBackend` and independently rejects an endpoint, acceptance or result that names a
+different generation. The concrete backend over runtime-activity conditional writes,
+provider lifecycle and authenticated guest RPC is still absent, so `brain-mux` keeps that
+binding explicitly unavailable rather than claiming readiness.
+
+`aex_brain_hands::adapter::HandsError` distinguishes `GenerationLost`, `Fenced`,
+`Interrupted`, `CapacityQueued`, `CapabilityUnavailable` and `Transport`, with
+`retry_same_effect()` and `interrupts()` as the routing predicates the recovery matrix
+needs. Brain's port-facing error additionally carries exact-generation mismatch and bounded
+result rejection.
 
 ### Usage + finance
 

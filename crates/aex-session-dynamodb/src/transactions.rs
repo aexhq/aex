@@ -643,7 +643,7 @@ pub fn compile_fanout_page(
                     .set(crate::attr::SK, s(control_key.sk))
                     .set("agentId", s(child.agent.to_string()))
                     .set("sessionId", s(request.session.to_string()))
-                    .set("generationId", s(child.generation.clone()))
+                    .set("generationId", s(child.generation.to_string()))
                     .set("status", s("queued"))
                     .set("revision", n(0))
                     .set("journalTail", n(0))

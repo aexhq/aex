@@ -26,9 +26,10 @@ use aex_brain_domain::journal::{
     PreservedCounters, TypedFailure, WaitResolution,
 };
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CompleteProof, ContentBlockRef, HandsGenerationRef, JoinMode,
-    NormalizedUsage, ProviderId, ResolvedAgentConfig, StopReason,
+    AgentLimits, CanonicalBlock, CompleteProof, ContentBlockRef, JoinMode, NormalizedUsage,
+    ProviderId, ResolvedAgentConfig, StopReason,
 };
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use proptest::prelude::*;
 use uuid::Uuid;
 
@@ -124,7 +125,7 @@ pub fn config() -> ResolvedAgentConfig {
         model: ModelSlug("deepseek-chat".to_owned()),
         system: None,
         tool_manifest_digests: vec![ContentHash::of(b"fixture-tools")],
-        hands_generation: HandsGenerationRef::Unbound,
+        hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
         limits: AgentLimits {
             max_turns: 32,
             max_steps_per_turn: 16,
