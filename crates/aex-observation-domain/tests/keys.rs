@@ -123,7 +123,6 @@ fn every_key_template_round_trips_its_components() {
             );
         }
     }
-    assert_eq!(keys::observation_sk(42), keys::pad_seq(42));
     assert_eq!(
         keys::segment_pk(&scope, Signal::Logs),
         "SEG#S#ses_0000000001e40r2081040g2081#logs"

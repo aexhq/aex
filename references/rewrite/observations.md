@@ -104,9 +104,13 @@ assert this.
   segment yields nothing at all.
 - `coverage` — `Snapshot::pin` subtracting `AEX_OBS_INDEX_SETTLE_MS`, honest
   `caught_up`, and `earliest_replay` as the beginning of retained data.
-- `cursor` — the twelve-field `ObservationCursorBinding` with an exhaustive
-  mismatch check, the 24-hour boundary, the deletion-epoch check, and the
-  position-count bound.
+- `cursor` — the compact `ObservationResume`: one current bucket, one exact
+  state per `(access, signal, shard)`, and the last public ordering tuple.
+  Authenticated state is structurally validated, duplicate coordinates fail
+  closed, and the worst live 20-segment bucket is tested inside the public
+  4096-byte `cur_` ceiling. The older twelve-field binding remains the request
+  mismatch/deletion-epoch algebra; signing and snapshot recovery use the one
+  regional HTTP codec.
 - `aggregate` — a bounded streaming pass with reset-aware `increase`/`rate`, a
   weight-carrying t-digest at the pinned compression, and pre-read rejection of
   invalid instrument/calculation pairs.
@@ -177,10 +181,10 @@ direction still proves the envelope. Replacing the model with a live
 | workspace scope, either order | supported, `gsi_ws_time` / `gsi_ws_accepted` |
 | several signals merged | supported, one walk per signal merged on the ordering tuple |
 | `where traceId = X` and `traces/{traceId}` | supported, `gsi_trace` |
-| exact-name metric aggregate | supported, `gsi_metric`, bounded at `metric.aggregate_scan` |
+| exact-name metric aggregate | supported: workspace scope uses `gsi_metric`; session scope uses its isolated `gsi_scope_time` partitions plus an exact projected `metricName` predicate; both are bounded at `metric.aggregate_scan` |
 | gaps at workspace or session scope | supported, `gsi_gap` / base table |
-| `events` at either scope | supported **through the port**; the workspace axis needs the peer GSI in §5 |
-| filters over indexed common and signal fields | supported as an index-side filter |
+| `events` at either scope | supported through `session-authority`: `gsi_session_events` and `gsi_workspace_events` are hour-partitioned on the same canonical observation tuple while the base journal remains sequence ordered |
+| filters over indexed common and signal fields | supported by bounded in-process evaluation over the projected row |
 | filters over `attributes.*` and log bodies | supported but **budget-bounded**: short pages with cursors; `telemetry_query_budget_exhausted` only when a first segment cannot progress |
 | `group by` over high-cardinality attributes | supported, bounded by the same budget plus the 10,000-row cap |
 | Parquet export members | **typed-unsupported**: `EncodeError::Unsupported`, see §4 |
@@ -344,12 +348,25 @@ AEX_OBS_QUERY_SCANNED_ITEMS     at most 50000
 AEX_OBS_QUERY_SEGMENTS          at most 64
 AEX_OBS_QUERY_READ_BYTES        at most 33554432
 AEX_OBS_METRIC_AGGREGATE_SCAN   at most 2000000
-AEX_EXPORT_CLUSTER              the ECS cluster an admitted export names
-AEX_OBS_CURSOR_KEY              base64, at least 32 bytes
-AEX_CENTRAL_AUTHZ_URL           https:// endpoint of the assertion exchange
-AEX_ASSERTION_TRUST_ANCHORS     kid:base64-Ed25519-public-key, comma separated
+AEX_CURSOR_SIGNING_KEY_REF      Parameter Store name of the versioned cursor ring
+AEX_AUTHZ_FUNCTION_ARN          qualified central-authz Lambda ARN
+AEX_AUTHZ_VERIFY_KEYS_PARAM     Parameter Store name of the assertion trust anchors
+AEX_AUTHZ_PROJECTION_TABLE      regional-authz-projection, read on every request
 AEX_ASSERTION_CACHE_BYTES       assertion cache budget, above zero
 ```
+
+The finite Lambda resolves both key documents once before its runtime starts;
+no signing material appears in its environment or Terraform state. The export
+cluster belongs to `observation-export-launcher`, not the API: admission writes
+the durable export control row and the launcher supplies its own cluster at the
+execution boundary.
+
+The API's `PutItem` and `UpdateItem` statement is separate from its read
+statement and is constrained by
+`ForAllValues:StringLike { dynamodb:LeadingKeys = ["EXPORT#*"] }`. The Rust
+`WriteExportControl` capability is therefore enforced by the deployed IAM
+request condition as well as by the application adapter; it cannot mutate
+admission, frontier, segment, gap, claim, or deletion rows.
 
 `regional-otlp`, fifteen:
 
@@ -507,3 +524,108 @@ No `#[ignore]`, no environment-variable self-skip, no empty suite and no
 retry-to-green anywhere in the five packages; `cargo nextest` reports
 `0 skipped`. No ClickHouse and no Kinesis appears in any of them, which four
 tests assert directly.
+
+### 9.8 Continuation reviewed on 2026-08-02
+
+The pagination and native-event follow-up fixed the bounded-cursor and physical
+tuple defects described below. The materialized observation id is deterministic
+from the batch, signal and accepted sequence, and a committed receipt now stores
+the winning accepted time and per-signal allocation ranges. An equal-intent
+client retry therefore rematerializes the same keys rather than reallocating.
+Every base and secondary observation sort key uses the same physical spelling as
+the public tuple:
+`(time-or-accepted, signalRank, observationId, revision)`. Native session and
+workspace event indexes use that spelling too; the session journal's base key
+stays `eventSeq` ordered for its owning transaction protocol.
+
+Finite pages and replay streams now authenticate the original snapshot and a
+bounded per-segment state. Reads are bucket-major, issue the current bucket's
+segment queries with at most 16 provider reads in flight, merge one
+provider-ordered head per segment, and advance durable state only when a row is
+popped. The merge still waits for every live head before selecting a tuple, so
+the concurrency cap changes resource pressure rather than ordering. A row
+rejected by the snapshot or predicate advances its own segment; a prefetched
+but unreturned row does not. A bucket is left only after every segment is
+exhausted. Event continuation remains typed: `eventId` is the native event's
+`ObservationId`, so its provider key is reconstructed without a lossy id
+translation. This removes the old fair-share reread stall and prevents a global
+tuple from skipping a later signal or shard.
+
+Every access now participates in the same logical hour groups. The all-time
+trace partition is reused once per intersecting hour with an exact half-open
+sort range, and the daily metric partition is reused the same way. That closes
+the mixed-access failure where a whole trace or metric day could be drained
+before an earlier event, log or other hourly segment. Ascending and descending
+laws cover trace plus events and metric plus logs across both hour and UTC-day
+boundaries. Because the sparse indexes are observation-time ordered, an
+accepted-order trace or metric query deliberately uses the accepted-time base
+or workspace index instead; every provider segment is therefore monotone in
+the tuple being merged.
+
+The same continuation closed four adjacent correctness defects:
+
+- finite page two recovers the authenticated page-one snapshot instead of
+  repinning under concurrent ingestion;
+- mixed completeness is the minimum selected complete frontier and retained
+  replay begins at the maximum selected retained floor; native events inherit
+  their authority-time/monotone-sequence invariant and the requested range;
+- an explicitly bounded bucket enumeration is half-open and descending reverses
+  that bounded walk;
+- session metric aggregation never reads the workspace-wide metric partition:
+  it uses `gsi_scope_time` plus the exact projected `metricName` predicate.
+
+Focused evidence recorded during the continuation:
+
+```text
+cargo test -p aex-regional-http --test primitives cursor       7 passed
+cargo test -p aex-observation-query --lib cursor::tests        7 passed
+cargo test -p aex-observation-query --lib                     39 passed
+cargo test -p regional-observation-api --lib                  46 passed
+cargo test -p aex-session-dynamodb --lib <event-key test>      1 passed
+cargo test -p regional-otlp --bin regional-otlp               28 passed
+cargo test -p aex-observation-store-aws --lib <key test>       1 passed
+cargo test -p observation-reconciler --bin observation-reconciler
+                                                               compiled clean
+cargo clippy -p regional-observation-api -p regional-otlp \
+  -p observation-reconciler -p aex-observation-query \
+  -p aex-observation-domain -p aex-observation-store-aws \
+  -p aex-regional-http -p aex-session-dynamodb --all-targets \
+  -- -D warnings                                                clean
+cargo run -p aex-regional-test-support --example emit-regional-tables
+                                                               13 tables
+cargo test -p aex-regional-test-support --lib tables::tests   21 passed
+```
+
+The deterministic regional bundle digest after adding the session event index
+and regenerating all concurrent table-definition changes is
+`blake3:ac6ff61cc3de929d52a3c778951ed080e2401e57e8f276d6103ad6c01efbe978`.
+Live DynamoDB latency/throttling evidence is still an environment-backed gate,
+not a local claim. The reconciler's spool verification remains exact and
+bounded but filters `acceptedSeq` within one accepted-hour/shard partition now
+that the authority sort key is canonical; a separate verification index is an
+optional optimization only if live evidence shows that control-path read cost
+is material.
+
+This review does **not** declare admission or earliest replay complete. The
+remaining release blockers are exact:
+
+- transaction C does not match `AdmissionPlan::commit_envelope`: it still omits
+  the `SEG#` and `SEGT#` updates, quota finalization, series claims/counter, and
+  staged-page digests on the committed receipt;
+- the authored table omits the segment/control item families it claims to own,
+  and the reader does not page the existing segment-directory authority. Its
+  epoch-to-now fallback materializes hour descriptors and silently stops at
+  `u16::MAX` hours, so `earliest` can omit current data;
+- the promised three-actions-per-signal transaction model cannot update every
+  `SEGT#` row while one admitted batch may contain observations from arbitrarily
+  many event-time hours. Admission must bound that cardinality or move exact
+  time-directory publication behind another fenced, completeness-preserving
+  protocol before the measured action claim can be true;
+- staged pages are retained, but no crash-recovery duty reconstructs and
+  materializes a committed batch from them without the original request;
+- the Lambda composition still installs `StreamPolicy::default()` with no
+  authorization revalidator, so long-lived authorization renewal remains
+  uncomposed even though deletion is now strongly re-read by the follower;
+- the read-byte budget is checked before a concurrent refill, not reserved
+  across its up-to-16 provider reads, so a page can overshoot the configured
+  byte ceiling by several prefetched pages.

@@ -23,7 +23,8 @@ use aex_regional_http::context::{
 };
 use aex_regional_http::cursor::{
     CursorBinding, CursorError, CursorKey, CursorKeyRing, CursorRequestBinding, Order,
-    SNAPSHOT_MILLIS, SnapshotToken, SortTuple, decode, decode_resume, encode,
+    SNAPSHOT_MILLIS, SnapshotToken, SortTuple, decode, decode_resume, decode_state_resume, encode,
+    encode_state,
 };
 use aex_regional_http::envelope::{ENVELOPE_BYTES, EnvelopeError, check_content_type, check_size};
 use aex_regional_http::error::{EdgeError, IntoWireError};
@@ -52,6 +53,7 @@ use base64::Engine as _;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt as _;
 use proptest::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tower::ServiceExt as _;
@@ -225,6 +227,46 @@ fn a_stream_reconnect_recovers_its_authenticated_snapshot() {
     assert_eq!(
         decode_resume(&ring, &token, &wrong, stamp(20)),
         Err(CursorError::NotBound)
+    );
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct TestResume {
+    bucket: String,
+    positions: Vec<String>,
+}
+
+#[test]
+fn a_typed_cursor_round_trips_state_without_accepting_a_tuple_decoder() {
+    let signing = key("current", 6);
+    let original = binding();
+    let state = TestResume {
+        bucket: "2026-08-01T09".to_owned(),
+        positions: vec!["logs:0:row-7".to_owned()],
+    };
+    let token = encode_state(&signing, &original, &state, stamp(10)).expect("state encodes");
+    let ring = CursorKeyRing::new(signing, vec![]).expect("ring");
+    let request = CursorRequestBinding::from(&original);
+    let resumed = decode_state_resume::<TestResume>(&ring, &token, &request, stamp(20))
+        .expect("typed state resumes");
+    assert_eq!(resumed.snapshot.as_str(), "authority-revision-7");
+    assert_eq!(resumed.state, state);
+    assert_eq!(
+        decode_resume(&ring, &token, &request, stamp(20)),
+        Err(CursorError::NotBound)
+    );
+}
+
+#[test]
+fn typed_cursor_state_cannot_exceed_the_public_envelope_bound() {
+    let signing = key("current", 8);
+    let state = TestResume {
+        bucket: "2026-08-01T09".to_owned(),
+        positions: vec!["x".repeat(aex_wire::cursor::Cursor::MAX_BYTES); 2],
+    };
+    assert_eq!(
+        encode_state(&signing, &binding(), &state, stamp(10)),
+        Err(CursorError::Malformed)
     );
 }
 

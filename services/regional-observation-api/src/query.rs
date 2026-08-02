@@ -9,6 +9,7 @@
 use aex_observation_domain::keys::ScopeKey;
 use aex_observation_domain::order::{Direction, OrderBy, OrderTuple};
 use aex_observation_domain::signal::{Signal, SignalSet};
+use aex_observation_query::ObservationResume;
 use aex_observation_query::ast::{self, CmpOp, Predicate, QueryError, TextOp};
 use aex_observation_query::coverage::{Coverage, Snapshot};
 use aex_observation_query::plan::{Budget, NormalizedQuery};
@@ -234,11 +235,12 @@ pub fn coverage(
 
 /// The digest that binds a cursor to the exact query it was issued against.
 #[must_use]
-pub fn query_digest(query: &NormalizedQuery, scope: &ScopeKey) -> [u8; 32] {
+pub fn query_digest(query: &NormalizedQuery, scope: &ScopeKey, deletion_epoch: u64) -> [u8; 32] {
     use sha2::Digest as _;
 
     let mut hasher = sha2::Sha256::new();
     hasher.update(scope.to_key().as_bytes());
+    hasher.update(deletion_epoch.to_be_bytes());
     hasher.update([u8::from(query.direction == Direction::Descending)]);
     hasher.update(query.signals.bits().to_be_bytes());
     hasher.update(query.time_gte.unix_millis().to_be_bytes());
@@ -255,11 +257,16 @@ pub fn query_digest(query: &NormalizedQuery, scope: &ScopeKey) -> [u8; 32] {
 /// tuple, so it is intentionally absent. Signal, filter, direction and scope
 /// remain bound; changing any of them refuses the cursor.
 #[must_use]
-pub fn stream_query_digest(query: &NormalizedQuery, scope: &ScopeKey) -> [u8; 32] {
+pub fn stream_query_digest(
+    query: &NormalizedQuery,
+    scope: &ScopeKey,
+    deletion_epoch: u64,
+) -> [u8; 32] {
     use sha2::Digest as _;
 
     let mut hasher = sha2::Sha256::new();
     hasher.update(scope.to_key().as_bytes());
+    hasher.update(deletion_epoch.to_be_bytes());
     hasher.update([u8::from(query.direction == Direction::Descending)]);
     hasher.update(query.signals.bits().to_be_bytes());
     if let Some(predicate) = &query.predicate {
@@ -277,36 +284,29 @@ pub fn principal_digest(cx: &RequestContext) -> [u8; 32] {
     sha2::Sha256::digest(&encoded).into()
 }
 
-/// Builds the cursor binding for one page.
-///
-/// # Errors
-///
-/// Returns `internal_error` when the snapshot cannot be rendered, which is a
-/// defect in this process rather than caller input.
-pub fn binding(
+/// Builds the stable request half of a finite-page cursor binding.
+#[must_use]
+pub fn page_request_binding(
     cx: &RequestContext,
     route: RouteId,
     region: Region,
     scope: &ScopeKey,
     workspace: aex_wire::ids::WorkspaceId,
     query: &NormalizedQuery,
-    snapshot: Snapshot,
-) -> WireResult<CursorBinding> {
-    let snapshot_token = SnapshotToken::new(snapshot.to_wire().to_string())
-        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    Ok(CursorBinding {
+    deletion_epoch: u64,
+) -> CursorRequestBinding {
+    CursorRequestBinding {
         route,
         principal_scope: principal_digest(cx),
         region,
         workspace_id: workspace,
         session_id: scope.session(),
-        query_hash: query_digest(query, scope),
+        query_hash: query_digest(query, scope, deletion_epoch),
         order: match query.direction {
             Direction::Ascending => Order::Ascending,
             Direction::Descending => Order::Descending,
         },
-        snapshot: snapshot_token,
-    })
+    }
 }
 
 /// Builds the stable request half of an NDJSON reconnect binding.
@@ -318,6 +318,7 @@ pub fn stream_request_binding(
     scope: &ScopeKey,
     workspace: aex_wire::ids::WorkspaceId,
     query: &NormalizedQuery,
+    deletion_epoch: u64,
 ) -> CursorRequestBinding {
     CursorRequestBinding {
         route: canonical_stream_route(route),
@@ -325,7 +326,7 @@ pub fn stream_request_binding(
         region,
         workspace_id: workspace,
         session_id: scope.session(),
-        query_hash: stream_query_digest(query, scope),
+        query_hash: stream_query_digest(query, scope, deletion_epoch),
         order: match query.direction {
             Direction::Ascending => Order::Ascending,
             Direction::Descending => Order::Descending,
@@ -355,6 +356,28 @@ pub fn stream_binding(
     })
 }
 
+/// Authenticated continuation accepted by a replay stream.
+#[derive(Clone, Debug)]
+pub enum StreamResume {
+    /// Legacy/global checkpoint used once a replay has exhausted every segment
+    /// and a follow poll must look for newly accepted rows.
+    Tuple(OrderTuple),
+    /// Exact open-segment state while a bounded replay is still in progress.
+    Segments(ObservationResume),
+}
+
+/// Builds a complete finite-page cursor binding at its original snapshot.
+///
+/// # Errors
+///
+/// Returns `internal_error` if the bounded snapshot cannot be represented.
+pub fn page_binding(
+    request: &CursorRequestBinding,
+    snapshot: Snapshot,
+) -> WireResult<CursorBinding> {
+    stream_binding(request, snapshot)
+}
+
 /// Authenticates an NDJSON reconnect and recovers its snapshot and last tuple.
 ///
 /// # Errors
@@ -366,19 +389,59 @@ pub fn resume_stream(
     token: &Cursor,
     binding: &CursorRequestBinding,
     now: Timestamp,
-) -> WireResult<(Snapshot, OrderTuple)> {
+) -> WireResult<(Snapshot, StreamResume)> {
+    if let Ok(resumed) = aex_regional_http::cursor::decode_state_resume::<ObservationResume>(
+        ring, token, binding, now,
+    ) {
+        resumed
+            .state
+            .validate()
+            .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
+        let snapshot = snapshot_from_token(&resumed.snapshot)?;
+        return Ok((
+            Snapshot::at(snapshot),
+            StreamResume::Segments(resumed.state),
+        ));
+    }
     let resumed = aex_regional_http::cursor::decode_resume(ring, token, binding, now)
         .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
-    let millis = resumed
-        .snapshot
+    let millis = snapshot_from_token(&resumed.snapshot)?;
+    let tuple = tuple_from_parts(resumed.tuple.parts())?;
+    Ok((Snapshot::at(millis), StreamResume::Tuple(tuple)))
+}
+
+/// Authenticates a finite-page continuation and recovers its original snapshot.
+///
+/// # Errors
+///
+/// Returns `invalid_cursor` for any signature, binding, lifetime or snapshot
+/// representation failure.
+pub fn resume_page(
+    ring: &CursorKeyRing,
+    token: &Cursor,
+    binding: &CursorRequestBinding,
+    now: Timestamp,
+) -> WireResult<(Snapshot, ObservationResume)> {
+    let resumed = aex_regional_http::cursor::decode_state_resume::<ObservationResume>(
+        ring, token, binding, now,
+    )
+    .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
+    resumed
+        .state
+        .validate()
+        .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
+    let snapshot = snapshot_from_token(&resumed.snapshot)?;
+    Ok((Snapshot::at(snapshot), resumed.state))
+}
+
+fn snapshot_from_token(token: &SnapshotToken) -> WireResult<Timestamp> {
+    token
         .as_str()
         .parse::<u128>()
         .ok()
         .and_then(|value| i64::try_from(value).ok())
         .and_then(|value| Timestamp::from_unix_millis(value).ok())
-        .ok_or_else(|| WireError::new(ErrorCode::InvalidCursor))?;
-    let tuple = tuple_from_parts(resumed.tuple.parts())?;
-    Ok((Snapshot::at(millis), tuple))
+        .ok_or_else(|| WireError::new(ErrorCode::InvalidCursor))
 }
 
 fn canonical_stream_route(route: RouteId) -> RouteId {
@@ -416,21 +479,23 @@ pub fn issue(
         .map_err(|_| WireError::new(ErrorCode::InternalError))
 }
 
-/// Resolves a presented continuation back into an ordering tuple.
+/// Mints a finite-page continuation carrying exact per-segment progress.
 ///
 /// # Errors
 ///
-/// Returns `invalid_cursor` for a token bound to another request, an expired
-/// token, or a token whose deletion epoch has advanced.
-pub fn resume(
-    ring: &CursorKeyRing,
-    token: &Cursor,
+/// Returns `internal_error` when the bounded state cannot be encoded inside the
+/// public cursor ceiling.
+pub fn issue_page(
+    key: &CursorKey,
     binding: &CursorBinding,
+    resume: &ObservationResume,
     now: Timestamp,
-) -> WireResult<OrderTuple> {
-    let tuple = aex_regional_http::cursor::decode(ring, token, binding, now)
-        .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
-    tuple_from_parts(tuple.parts())
+) -> WireResult<Cursor> {
+    resume
+        .validate()
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    aex_regional_http::cursor::encode_state(key, binding, resume, now)
+        .map_err(|_| WireError::new(ErrorCode::InternalError))
 }
 
 fn tuple_from_parts(parts: &[String]) -> WireResult<OrderTuple> {
@@ -504,14 +569,52 @@ pub const fn budget_for(configured: Budget, limit: u16) -> Budget {
 
 #[cfg(test)]
 mod tests {
+    use aex_observation_domain::keys::BucketHour;
+    use aex_observation_domain::order::{Direction, OrderBy, OrderTuple};
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_observation_query::ast::Predicate;
+    use aex_observation_query::coverage::Snapshot;
+    use aex_observation_query::plan::{Access, NormalizedQuery, ScopeAxis};
+    use aex_observation_query::{ObservationResume, ResumeKey, SegmentResume, SegmentState};
+    use aex_regional_http::cursor::{
+        CursorBinding, CursorKey, CursorKeyRing, CursorRequestBinding, Order, SnapshotToken,
+    };
+    use aex_wire::ids::{ObservationId, PrefixedId as _, WorkspaceId};
     use aex_wire::models::{
         ObservationFilter, ObservationFilterCompare, ObservationFilterExists, ObservationOperator,
         ObservationSignal,
     };
+    use aex_wire::routes::RouteId;
+    use aex_wire::types::{Region, Timestamp};
 
-    use super::{operand, signal_for, to_predicate};
+    use super::{issue_page, operand, query_digest, resume_page, signal_for, to_predicate};
+
+    fn instant(millis: i64) -> Timestamp {
+        Timestamp::from_unix_millis(millis).expect("representable test instant")
+    }
+
+    #[test]
+    fn a_deletion_epoch_advance_changes_the_authenticated_query_binding() {
+        let workspace = WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]));
+        let scope = aex_observation_domain::keys::ScopeKey::Workspace(workspace);
+        let query = NormalizedQuery {
+            axis: ScopeAxis::Workspace,
+            signals: SignalSet::from_signal(Signal::Logs),
+            predicate: None,
+            time_gte: instant(1),
+            time_lt: instant(2),
+            order_by: OrderBy::Time,
+            direction: Direction::Ascending,
+            limit: 100,
+            trace_id: None,
+            metric_name: None,
+        };
+
+        assert_ne!(
+            query_digest(&query, &scope, 3),
+            query_digest(&query, &scope, 4)
+        );
+    }
 
     #[test]
     fn the_route_signal_is_the_authority_over_the_body() {
@@ -580,5 +683,115 @@ mod tests {
         });
         let predicate = to_predicate(&filter, &[Signal::Logs]).expect("prefix is admissible");
         assert!(matches!(predicate, Predicate::Text { .. }));
+    }
+
+    #[test]
+    fn a_finite_resume_recovers_the_authenticated_original_snapshot() {
+        let key = CursorKey::new("current", vec![7; 32]).expect("strong cursor key");
+        let request = CursorRequestBinding {
+            route: RouteId::ALL[0],
+            principal_scope: [3; 32],
+            region: Region::ALL[0],
+            workspace_id: WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10])),
+            session_id: None,
+            query_hash: [5; 32],
+            order: Order::Ascending,
+        };
+        let original = Snapshot::at(instant(1_000));
+        let binding = CursorBinding {
+            route: request.route,
+            principal_scope: request.principal_scope,
+            region: request.region,
+            workspace_id: request.workspace_id,
+            session_id: request.session_id,
+            query_hash: request.query_hash,
+            order: request.order,
+            snapshot: SnapshotToken::new(original.to_wire().to_string()).expect("snapshot token"),
+        };
+        let last = OrderTuple::new(
+            instant(900),
+            Signal::Logs,
+            ObservationId::from_uuid7(aex_wire::Uuid7::compose(1, [6; 10])),
+            1,
+        );
+        let resume = ObservationResume::new(
+            BucketHour::parse("1970-01-01T00").expect("bucket"),
+            last,
+            Vec::new(),
+        )
+        .expect("resume");
+        let token = issue_page(&key, &binding, &resume, instant(1_100)).expect("cursor issues");
+        let ring = CursorKeyRing::new(key, Vec::new()).expect("key ring");
+
+        let (snapshot, resumed) =
+            resume_page(&ring, &token, &request, instant(1_500)).expect("cursor resumes");
+
+        assert_eq!(snapshot, original);
+        assert_eq!(resumed.last_order().expect("last tuple"), last);
+    }
+
+    #[test]
+    fn the_largest_live_bucket_resume_fits_the_public_cursor_ceiling() {
+        let key = CursorKey::new("current", vec![9; 32]).expect("strong cursor key");
+        let workspace = WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]));
+        let request = CursorRequestBinding {
+            route: RouteId::ALL[0],
+            principal_scope: [3; 32],
+            region: Region::ALL[0],
+            workspace_id: workspace,
+            session_id: None,
+            query_hash: [5; 32],
+            order: Order::Ascending,
+        };
+        let snapshot = Snapshot::at(instant(1_000));
+        let binding = CursorBinding {
+            route: request.route,
+            principal_scope: request.principal_scope,
+            region: request.region,
+            workspace_id: request.workspace_id,
+            session_id: None,
+            query_hash: request.query_hash,
+            order: request.order,
+            snapshot: SnapshotToken::new(snapshot.to_wire().to_string()).expect("snapshot"),
+        };
+        let last_id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(1, [6; 10]));
+        let last = OrderTuple::new(instant(900), Signal::Traces, last_id, 1);
+        let session = aex_wire::ids::SessionId::from_uuid7(aex_wire::Uuid7::compose(2, [7; 10]));
+        let mut segments = Vec::new();
+        for signal in Signal::ALL {
+            for shard in 0..4 {
+                let event = *signal == Signal::Events;
+                segments.push(SegmentResume {
+                    access: if event {
+                        Access::SessionAuthority
+                    } else {
+                        Access::WorkspaceTime
+                    },
+                    signal: *signal,
+                    shard,
+                    state: SegmentState::After(ResumeKey {
+                        scope: format!("S#{session}"),
+                        primary_ms: 900,
+                        accepted_ms: 950,
+                        observation_id: ObservationId::from_uuid7(aex_wire::Uuid7::compose(
+                            1,
+                            [shard.saturating_add(signal.rank()); 10],
+                        ))
+                        .to_string(),
+                        revision: 1,
+                        base_shard: shard,
+                        event_seq: event.then_some(u64::from(shard) + 1),
+                    }),
+                });
+            }
+        }
+        let resume = ObservationResume::new(
+            BucketHour::parse("1970-01-01T00").expect("bucket"),
+            last,
+            segments,
+        )
+        .expect("bounded resume");
+        let token = issue_page(&key, &binding, &resume, instant(1_100)).expect("cursor fits");
+        assert!(token.as_str().len() <= aex_wire::cursor::Cursor::MAX_BYTES);
     }
 }

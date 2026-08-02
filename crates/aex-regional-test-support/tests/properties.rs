@@ -28,11 +28,9 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
             // `BatchWriteItem` deletes as well as writes, so it is checked
             // against the same allow list; a delete vector nobody listed is a
             // delete vector nobody reviewed.
-            if grant
-                .actions
-                .iter()
-                .any(|action| action == "dynamodb:DeleteItem" || action == "dynamodb:BatchWriteItem")
-            {
+            if grant.actions.iter().any(|action| {
+                action == "dynamodb:DeleteItem" || action == "dynamodb:BatchWriteItem"
+            }) {
                 assert!(
                     matches!(
                         (table.table.as_str(), grant.role.as_str()),
@@ -52,14 +50,15 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                             // under a pinned deletion epoch. The startup
                             // capability assertion narrows the second to the
                             // `deletion.execute` deployment alone.
-                            | ("observation-authority", "observation-reconciler")
-                            // Admission materializes OBS# revisions in batches:
-                            // the commit's action count is independent of the
-                            // record count only because the revisions land
-                            // outside the transaction (G7). It writes them and
-                            // deletes nothing; the immutability condition on
-                            // every OBS# write is what makes a replay converge.
-                            | ("observation-authority", "regional-otlp")
+                            | (
+                                "observation-authority",
+                                "observation-reconciler" | "regional-otlp",
+                            ) // Admission materializes OBS# revisions in batches:
+                              // the commit's action count is independent of the
+                              // record count only because the revisions land
+                              // outside the transaction (G7). It writes them and
+                              // deletes nothing; the immutability condition on
+                              // every OBS# write is what makes a replay converge.
                     ),
                     "`{}` grants a delete vector to `{}`, which is not on the deletion allow list",
                     table.table,

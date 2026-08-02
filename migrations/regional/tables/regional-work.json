@@ -111,16 +111,6 @@
       "role": "brain-mux",
       "actions": ["dynamodb:Query"],
       "resources": ["table", "index/*"]
-    },
-    {
-      "role": "regional-stream",
-      "actions": [
-        "dynamodb:GetRecords",
-        "dynamodb:GetShardIterator",
-        "dynamodb:DescribeStream",
-        "dynamodb:ListStreams"
-      ],
-      "resources": ["stream"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "work", "aex:data-class": "authority" }

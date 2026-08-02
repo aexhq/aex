@@ -303,6 +303,21 @@ pub fn encode_event(session: SessionId, event: &SessionEvent) -> Item {
                     event.occurred_at,
                 )),
             )
+            .set(
+                crate::stream_keys::SESSION_EVENT_PK,
+                s(crate::stream_keys::session_event_partition(
+                    session,
+                    event.occurred_at,
+                )),
+            )
+            .set(
+                crate::stream_keys::SESSION_EVENT_SK,
+                s(crate::stream_keys::workspace_event_sort(
+                    session,
+                    event.event_id,
+                    event.occurred_at,
+                )),
+            )
             .set("type", s(event.event_type.clone()))
             .set_opt("runId", event.run.map(|run| s(run.to_string())))
             .set_opt("agentId", event.agent.map(|agent| s(agent.to_string())))
@@ -1269,11 +1284,31 @@ mod tests {
                 .expect("workspace event partition")
                 .starts_with(&format!("EVTW#{}#", event.workspace))
         );
-        assert!(
+        let canonical = aex_observation_domain::order::order_sort_key(
+            aex_observation_domain::order::OrderTuple::new(
+                event.occurred_at,
+                aex_observation_domain::signal::Signal::Events,
+                event.event_id,
+                1,
+            ),
+        );
+        assert_eq!(
             encoded[crate::stream_keys::WORKSPACE_EVENT_SK]
                 .as_s()
-                .expect("workspace event sort")
-                .ends_with(&format!("#{session}#{}", event.event_id))
+                .expect("workspace event sort"),
+            &canonical
+        );
+        assert_eq!(
+            encoded[crate::stream_keys::SESSION_EVENT_SK]
+                .as_s()
+                .expect("session event sort"),
+            &canonical
+        );
+        assert!(
+            encoded[crate::stream_keys::SESSION_EVENT_PK]
+                .as_s()
+                .expect("session event partition")
+                .starts_with(&format!("EVTS#{session}#"))
         );
 
         encoded.insert("eventId".to_owned(), crate::attr::s("evt_1"));

@@ -210,6 +210,22 @@
             "minItems": 1,
             "uniqueItems": true,
             "items": { "enum": ["table", "index/*", "stream"] }
+          },
+          "condition": {
+            "description": "An optional request-shape restriction carried mechanically into the generated role statement.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operator", "key", "values"],
+            "properties": {
+              "operator": { "enum": ["ForAllValues:StringLike"] },
+              "key": { "enum": ["dynamodb:LeadingKeys"] },
+              "values": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*#\\*$" }
+              }
+            }
           }
         }
       }

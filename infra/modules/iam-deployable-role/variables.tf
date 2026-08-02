@@ -48,12 +48,13 @@ variable "assume_principal" {
 
 variable "action_grants" {
   type = list(object({
-    sid              = string
-    actions          = list(string)
-    resources        = list(string)
-    scopable         = bool
-    condition_key    = optional(string)
-    condition_values = optional(list(string))
+    sid                = string
+    actions            = list(string)
+    resources          = list(string)
+    scopable           = bool
+    condition_operator = optional(string, "StringEquals")
+    condition_key      = optional(string)
+    condition_values   = optional(list(string))
   }))
   description = "The permission set, normally taken from the regional bundle's generated IAM action lists. `scopable = true` means the resource type supports a plane/region condition, and the module then requires one."
 
@@ -104,6 +105,20 @@ variable "action_grants" {
       !g.scopable || (try(length(g.condition_key), 0) > 0 && try(length(g.condition_values), 0) > 0)
     ])
     error_message = "Every grant whose resource type supports scoping must carry a plane or region condition."
+  }
+
+  validation {
+    condition = alltrue([
+      for g in var.action_grants : g.condition_operator == "StringEquals" || (
+        g.condition_operator == "ForAllValues:StringLike"
+        && try(g.condition_key, "") == "dynamodb:LeadingKeys"
+        && alltrue([
+          for value in try(g.condition_values, []) :
+          can(regex("^[A-Z][A-Z0-9_]*#\\*$", value))
+        ])
+      )
+    ])
+    error_message = "A set-qualified wildcard condition is accepted only for reviewed DynamoDB leading-key prefixes such as `EXPORT#*`."
   }
 
   validation {

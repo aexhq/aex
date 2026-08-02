@@ -89,12 +89,13 @@ variable "deployable_grants" {
     })
     wildcard_resource_allowlist = list(string)
     action_grants = list(object({
-      sid              = string
-      actions          = list(string)
-      resources        = list(string)
-      scopable         = bool
-      condition_key    = optional(string)
-      condition_values = optional(list(string))
+      sid                = string
+      actions            = list(string)
+      resources          = list(string)
+      scopable           = bool
+      condition_operator = optional(string, "StringEquals")
+      condition_key      = optional(string)
+      condition_values   = optional(list(string))
     }))
   }))
   description = "Execution role grants per deployable, taken from the generated IAM action lists."

@@ -16,7 +16,7 @@ grants in.
 | `plane` | `string` | `dev` or `prd`. |
 | `region` | `string` | AWS region code. |
 | `assume_principal` | `object` | `{ type, identifiers }`; who may assume the role. |
-| `action_grants` | `list(object)` | `{ sid, actions, resources, scopable, condition_key, condition_values }`. |
+| `action_grants` | `list(object)` | `{ sid, actions, resources, scopable, condition_operator, condition_key, condition_values }`; the operator defaults to `StringEquals`, and only reviewed operators are accepted. |
 | `wildcard_resource_allowlist` | `list(string)` | Exhaustive list of actions permitted on `Resource: "*"`. |
 | `boundary_policy_arn` | `string` | Optional permissions boundary. |
 | `max_session_duration` | `number` | Session duration in seconds. |

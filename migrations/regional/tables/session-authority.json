@@ -17,7 +17,9 @@
     { "name": "wsIndexPk", "type": "S" },
     { "name": "wsIndexSk", "type": "S" },
     { "name": "evPk", "type": "S" },
-    { "name": "evSk", "type": "S" }
+    { "name": "evSk", "type": "S" },
+    { "name": "esPk", "type": "S" },
+    { "name": "esSk", "type": "S" }
   ],
   "keySchema": { "partition": "pk", "sort": "sk" },
   "globalSecondaryIndexes": [
@@ -54,6 +56,32 @@
       "projection": {
         "type": "INCLUDE",
         "attributes": [
+          "itemType",
+          "workspaceId",
+          "sessionId",
+          "eventSeq",
+          "eventId",
+          "type",
+          "runId",
+          "agentId",
+          "bodyInline",
+          "bodyDigest",
+          "occurredAt",
+          "outboxState"
+        ]
+      }
+    },
+    {
+      "name": "gsi_session_events",
+      "partition": "esPk",
+      "sort": "esSk",
+      "sparse": true,
+      "projectsRecordBody": true,
+      "rationale": "Only native events carry these attributes. Hour partitions and the canonical observation tuple provide exact event-time pagination for a session without scanning unrelated workspace traffic or changing the journal's sequence-ordered authority key.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": [
+          "itemType",
           "workspaceId",
           "sessionId",
           "eventSeq",
@@ -136,20 +164,22 @@
     },
     {
       "role": "regional-observation-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "actions": ["dynamodb:DescribeTable", "dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table", "index/*"]
+    },
+    {
+      "role": "regional-stream",
+      "actions": ["dynamodb:DescribeTable", "dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table", "index/*"]
     },
     {
       "role": "regional-stream",
       "actions": [
-        "dynamodb:GetItem",
-        "dynamodb:Query",
         "dynamodb:GetRecords",
         "dynamodb:GetShardIterator",
-        "dynamodb:DescribeStream",
-        "dynamodb:ListStreams"
+        "dynamodb:DescribeStream"
       ],
-      "resources": ["table", "index/*", "stream"]
+      "resources": ["stream"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "session", "aex:data-class": "authority" }

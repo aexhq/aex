@@ -37,7 +37,7 @@
       "sort": "tSk",
       "sparse": true,
       "projectsRecordBody": true,
-      "rationale": "Scope-ordered event time. Only observation revisions carry tPk, so no control row, receipt or spool chunk can appear in a scope listing. The partition carries the signal, the event-time hour bucket and the shard, so a walk is a bounded range read per bucket rather than a scan.",
+      "rationale": "Scope-ordered event time on the canonical observation tuple. Only observation revisions carry tPk, so no control row, receipt or spool chunk can appear in a scope listing. The partition carries the signal, the event-time hour bucket and the shard, so a walk is a bounded range read per bucket rather than a scan.",
       "projection": {
         "type": "INCLUDE",
         "attributes": [
@@ -75,7 +75,7 @@
       "sort": "wSk",
       "sparse": true,
       "projectsRecordBody": true,
-      "rationale": "Workspace-ordered accepted time, tie-broken by an eight-hex scope digest so cross-session ordering needs no shared counter. Same slim projection as the other dense indexes: attrS, attrN and attrB are deliberately absent, so a page that needs customer attributes issues a base-table BatchGetItem instead of tripling retained bytes.",
+      "rationale": "Workspace-ordered accepted time on the canonical observation tuple; the stable observation id provides the unique cross-session tie-break without a shared counter. Same slim projection as the other dense indexes: attrS, attrN and attrB are deliberately absent, so a page that needs customer attributes issues a base-table BatchGetItem instead of tripling retained bytes.",
       "projection": {
         "type": "INCLUDE",
         "attributes": [
@@ -113,7 +113,7 @@
       "sort": "wtSk",
       "sparse": true,
       "projectsRecordBody": true,
-      "rationale": "Workspace-ordered event time, the axis a dashboard reads. It is a separate index from the accepted-time one because a query may not silently answer an event-time question from an accepted-time order.",
+      "rationale": "Workspace-ordered event time on the canonical observation tuple, the axis a dashboard reads. It is a separate index from the accepted-time one because a query may not silently answer an event-time question from an accepted-time order.",
       "projection": {
         "type": "INCLUDE",
         "attributes": [
@@ -160,7 +160,7 @@
       "sort": "trSk",
       "sparse": true,
       "projectsRecordBody": false,
-      "rationale": "One trace inside one scope, ordered by signal rank. KEYS_ONLY: only spans and logs carrying a traceId appear, and the spans themselves are read by key from the base table.",
+      "rationale": "One trace inside one scope, ordered by the canonical observation tuple. KEYS_ONLY: only spans and logs carrying a traceId appear, and the spans themselves are read by key from the base table.",
       "projection": { "type": "KEYS_ONLY", "attributes": [] }
     },
     {
@@ -222,13 +222,22 @@
     {
       "role": "regional-observation-api",
       "actions": [
+        "dynamodb:DescribeTable",
         "dynamodb:GetItem",
         "dynamodb:BatchGetItem",
-        "dynamodb:Query",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem"
+        "dynamodb:Query"
       ],
       "resources": ["table", "index/*"]
+    },
+    {
+      "role": "regional-observation-api",
+      "actions": ["dynamodb:PutItem", "dynamodb:UpdateItem"],
+      "resources": ["table"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["EXPORT#*"]
+      }
     },
     {
       "role": "regional-otlp",
@@ -271,16 +280,20 @@
     },
     {
       "role": "regional-stream",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
-      "resources": ["table"]
+      "actions": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query"
+      ],
+      "resources": ["table", "index/*"]
     },
     {
       "role": "regional-stream",
       "actions": [
         "dynamodb:GetRecords",
         "dynamodb:GetShardIterator",
-        "dynamodb:DescribeStream",
-        "dynamodb:ListStreams"
+        "dynamodb:DescribeStream"
       ],
       "resources": ["stream"]
     }

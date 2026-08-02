@@ -137,6 +137,22 @@ impl OrderTuple {
     }
 }
 
+/// Renders the canonical physical sort key for an ordering tuple.
+///
+/// Every observation index uses this exact spelling, so provider order and the
+/// public merge order are the same order. Fixed-width numeric fields preserve
+/// lexical ordering, and the `obs_` `UUIDv7` spelling preserves identifier order.
+#[must_use]
+pub fn order_sort_key(tuple: OrderTuple) -> String {
+    format!(
+        "{}#{:03}#{}#{:020}",
+        tuple.primary.to_wire(),
+        tuple.signal_rank,
+        tuple.observation_id,
+        tuple.revision
+    )
+}
+
 /// The position a walk resumes from inside one segment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SegmentPosition {
@@ -150,7 +166,7 @@ pub struct SegmentPosition {
 
 #[cfg(test)]
 mod tests {
-    use super::{Direction, OrderBy, OrderTuple};
+    use super::{Direction, OrderBy, OrderTuple, order_sort_key};
     use crate::signal::Signal;
     use aex_wire::ids::ObservationId;
     use aex_wire::ids::{PrefixedId, Uuid7};
@@ -187,5 +203,20 @@ mod tests {
         assert_eq!(Direction::Descending.as_str(), "descending");
         assert_eq!(OrderBy::default(), OrderBy::Time);
         assert_eq!(Direction::default(), Direction::Ascending);
+    }
+
+    #[test]
+    fn physical_sort_keys_have_the_same_order_as_merge_tuples() {
+        let tuples = [
+            OrderTuple::new(instant(1), Signal::Events, id(1), 1),
+            OrderTuple::new(instant(1), Signal::Logs, id(1), 1),
+            OrderTuple::new(instant(1), Signal::Logs, id(2), 1),
+            OrderTuple::new(instant(1), Signal::Logs, id(2), 2),
+            OrderTuple::new(instant(2), Signal::Events, id(1), 1),
+        ];
+        for pair in tuples.windows(2) {
+            assert!(pair[0] < pair[1]);
+            assert!(order_sort_key(pair[0]) < order_sort_key(pair[1]));
+        }
     }
 }

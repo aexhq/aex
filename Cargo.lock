@@ -1167,6 +1167,7 @@ dependencies = [
 name = "aex-session-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-observation-domain",
  "aex-operation-domain",
  "aex-wire",
  "async-trait",
@@ -5978,8 +5979,9 @@ dependencies = [
  "aws-sdk-lambda",
  "aws-sdk-s3",
  "aws-sdk-ssm",
+ "aws-smithy-http-client",
+ "aws-smithy-types",
  "axum",
- "base64 0.23.0",
  "bytes",
  "futures",
  "http 1.5.0",
@@ -6021,6 +6023,7 @@ dependencies = [
  "lambda_http",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
  "tokio",

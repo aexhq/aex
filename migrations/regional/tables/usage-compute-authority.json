@@ -91,11 +91,6 @@
       "resources": ["table", "index/*"]
     },
     {
-      "role": "regional-stream",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
-      "resources": ["table"]
-    },
-    {
       "role": "runtime-control-worker",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
       "resources": ["table"]

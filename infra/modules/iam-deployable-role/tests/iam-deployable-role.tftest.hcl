@@ -83,7 +83,7 @@ run "scopable_grants_carry_a_plane_or_region_condition" {
   assert {
     condition = alltrue([
       for i, g in var.action_grants :
-      !g.scopable || can(jsondecode(aws_iam_role_policy.this.policy).Statement[i].Condition.StringEquals)
+      !g.scopable || can(jsondecode(aws_iam_role_policy.this.policy).Statement[i].Condition[g.condition_operator])
     ])
     error_message = "Every scopable grant must render a plane or region condition."
   }
@@ -92,6 +92,49 @@ run "scopable_grants_carry_a_plane_or_region_condition" {
     condition     = jsondecode(aws_iam_role_policy.this.policy).Statement[0].Condition.StringEquals["aws:ResourceTag/aex:plane"] == ["dev"]
     error_message = "The plane condition must carry the configured plane value."
   }
+}
+
+run "renders_a_reviewed_set_qualified_condition" {
+  command = plan
+
+  variables {
+    action_grants = [
+      {
+        sid                = "ExportControlOnly"
+        actions            = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+        resources          = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-observation-authority"]
+        scopable           = true
+        condition_operator = "ForAllValues:StringLike"
+        condition_key      = "dynamodb:LeadingKeys"
+        condition_values   = ["EXPORT#*"]
+      },
+    ]
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.this.policy).Statement[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["EXPORT#*"]
+    error_message = "The generated policy must retain the set-qualified leading-key condition verbatim."
+  }
+}
+
+run "rejects_an_unreviewed_set_qualified_condition" {
+  command = plan
+
+  variables {
+    action_grants = [
+      {
+        sid                = "UnreviewedWildcard"
+        actions            = ["dynamodb:PutItem"]
+        resources          = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-observation-authority"]
+        scopable           = true
+        condition_operator = "ForAllValues:StringLike"
+        condition_key      = "aws:RequestedRegion"
+        condition_values   = ["*"]
+      },
+    ]
+  }
+
+  expect_failures = [var.action_grants]
 }
 
 run "rejects_a_wildcard_action" {

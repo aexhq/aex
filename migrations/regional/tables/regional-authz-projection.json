@@ -52,6 +52,11 @@
       "resources": ["table"]
     },
     {
+      "role": "regional-stream",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
+      "resources": ["table"]
+    },
+    {
       "role": "regional-otlp",
       "actions": ["dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table"]

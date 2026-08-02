@@ -11,7 +11,10 @@ use aex_wire::models::ObservationSignal;
 ///
 /// Declaration order is the rank order, and the rank is the second component of
 /// the ordering tuple, so it is a wire-visible ordering fact and never changes.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Signal {
     /// Structured platform events, stored in `session-authority`.
     Events,

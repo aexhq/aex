@@ -12,7 +12,10 @@ use aws_sdk_dynamodb::types::AttributeValue;
 
 use aex_observation_domain::keys::{BucketHour, ScopeKey};
 use aex_observation_domain::limits;
+use aex_observation_domain::order::{OrderTuple, order_sort_key};
 use aex_observation_domain::signal::{Signal, SignalSet};
+use aex_wire::ids::ObservationId;
+use aex_wire::types::Timestamp;
 
 use crate::expressions::{ExpressionBuilder, PK, SK};
 
@@ -363,7 +366,9 @@ impl AdmissionPlan {
         &self,
         signal: Signal,
         shard: u8,
-        accepted_seq: u64,
+        accepted_at: Timestamp,
+        observation_id: ObservationId,
+        revision: u64,
     ) -> std::collections::HashMap<String, AttributeValue> {
         let mut key = std::collections::HashMap::new();
         key.insert(
@@ -377,7 +382,12 @@ impl AdmissionPlan {
         );
         key.insert(
             SK.to_owned(),
-            AttributeValue::S(aex_observation_domain::keys::observation_sk(accepted_seq)),
+            AttributeValue::S(order_sort_key(OrderTuple::new(
+                accepted_at,
+                signal,
+                observation_id,
+                revision,
+            ))),
         );
         key
     }
@@ -389,6 +399,8 @@ mod tests {
     use aex_observation_domain::keys::{BucketHour, ScopeKey};
     use aex_observation_domain::limits;
     use aex_observation_domain::signal::{Signal, SignalSet};
+    use aex_wire::ids::{ObservationId, PrefixedId as _, Uuid7};
+    use aex_wire::types::Timestamp;
     use aws_sdk_dynamodb::types::AttributeValue;
 
     fn scope() -> ScopeKey {
@@ -496,14 +508,20 @@ mod tests {
             0,
         )
         .expect("plans");
-        let key = plan.observation_key(Signal::Logs, 3, 7);
+        let accepted_at = Timestamp::parse("2026-08-01T09:02:03.004Z").expect("timestamp");
+        let observation_id = ObservationId::from_uuid7(Uuid7::compose(1, [7; 10]));
+        let key = plan.observation_key(Signal::Logs, 3, accepted_at, observation_id, 1);
         assert_eq!(
             key.get("pk").and_then(|value| value.as_s().ok()),
             Some(&"OBS#S#ses_0000000003ec1r60r30c1g60r3#logs#2026-08-01T09#03".to_owned())
         );
         assert_eq!(
             key.get("sk").and_then(|value| value.as_s().ok()),
-            Some(&"00000000000000000007".to_owned())
+            Some(&format!(
+                "{}#001#{}#00000000000000000001",
+                accepted_at.to_wire(),
+                observation_id
+            ))
         );
     }
 

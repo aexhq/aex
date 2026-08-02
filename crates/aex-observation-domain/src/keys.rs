@@ -345,12 +345,6 @@ pub fn observation_pk(scope: &ScopeKey, signal: Signal, abucket: BucketHour, sha
     )
 }
 
-/// `{accepted_seq:020}`.
-#[must_use]
-pub fn observation_sk(accepted_seq: u64) -> String {
-    pad_seq(u128::from(accepted_seq))
-}
-
 /// Classifies an `observation-authority` partition key.
 ///
 /// Returns `Some` for exactly the observation revision family and `None` for

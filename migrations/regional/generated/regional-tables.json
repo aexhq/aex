@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:dbf615111f8ee350315942143f89a7b182e29dd5563c7d47d8ece84f8f606ca7",
+  "digest": "blake3:ac6ff61cc3de929d52a3c778951ed080e2401e57e8f276d6103ad6c01efbe978",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -95,7 +95,7 @@
           "sort": "tSk",
           "sparse": true,
           "projectsRecordBody": true,
-          "rationale": "Scope-ordered event time. Only observation revisions carry tPk, so no control row, receipt or spool chunk can appear in a scope listing. The partition carries the signal, the event-time hour bucket and the shard, so a walk is a bounded range read per bucket rather than a scan.",
+          "rationale": "Scope-ordered event time on the canonical observation tuple. Only observation revisions carry tPk, so no control row, receipt or spool chunk can appear in a scope listing. The partition carries the signal, the event-time hour bucket and the shard, so a walk is a bounded range read per bucket rather than a scan.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
@@ -133,7 +133,7 @@
           "sort": "wSk",
           "sparse": true,
           "projectsRecordBody": true,
-          "rationale": "Workspace-ordered accepted time, tie-broken by an eight-hex scope digest so cross-session ordering needs no shared counter. Same slim projection as the other dense indexes: attrS, attrN and attrB are deliberately absent, so a page that needs customer attributes issues a base-table BatchGetItem instead of tripling retained bytes.",
+          "rationale": "Workspace-ordered accepted time on the canonical observation tuple; the stable observation id provides the unique cross-session tie-break without a shared counter. Same slim projection as the other dense indexes: attrS, attrN and attrB are deliberately absent, so a page that needs customer attributes issues a base-table BatchGetItem instead of tripling retained bytes.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
@@ -171,7 +171,7 @@
           "sort": "wtSk",
           "sparse": true,
           "projectsRecordBody": true,
-          "rationale": "Workspace-ordered event time, the axis a dashboard reads. It is a separate index from the accepted-time one because a query may not silently answer an event-time question from an accepted-time order.",
+          "rationale": "Workspace-ordered event time on the canonical observation tuple, the axis a dashboard reads. It is a separate index from the accepted-time one because a query may not silently answer an event-time question from an accepted-time order.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
@@ -221,7 +221,7 @@
           "sort": "trSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "One trace inside one scope, ordered by signal rank. KEYS_ONLY: only spans and logs carrying a traceId appear, and the spans themselves are read by key from the base table.",
+          "rationale": "One trace inside one scope, ordered by the canonical observation tuple. KEYS_ONLY: only spans and logs carrying a traceId appear, and the spans themselves are read by key from the base table.",
           "projection": {
             "type": "KEYS_ONLY",
             "attributes": []
@@ -291,16 +291,32 @@
         {
           "role": "regional-observation-api",
           "actions": [
+            "dynamodb:DescribeTable",
             "dynamodb:GetItem",
             "dynamodb:BatchGetItem",
-            "dynamodb:Query",
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem"
+            "dynamodb:Query"
           ],
           "resources": [
             "table",
             "index/*"
           ]
+        },
+        {
+          "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*"
+            ]
+          }
         },
         {
           "role": "regional-otlp",
@@ -358,11 +374,14 @@
         {
           "role": "regional-stream",
           "actions": [
+            "dynamodb:DescribeTable",
             "dynamodb:GetItem",
+            "dynamodb:BatchGetItem",
             "dynamodb:Query"
           ],
           "resources": [
-            "table"
+            "table",
+            "index/*"
           ]
         },
         {
@@ -370,8 +389,7 @@
           "actions": [
             "dynamodb:GetRecords",
             "dynamodb:GetShardIterator",
-            "dynamodb:DescribeStream",
-            "dynamodb:ListStreams"
+            "dynamodb:DescribeStream"
           ],
           "resources": [
             "stream"
@@ -468,6 +486,16 @@
         },
         {
           "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "regional-stream",
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:Query"
@@ -1115,18 +1143,6 @@
             "table",
             "index/*"
           ]
-        },
-        {
-          "role": "regional-stream",
-          "actions": [
-            "dynamodb:GetRecords",
-            "dynamodb:GetShardIterator",
-            "dynamodb:DescribeStream",
-            "dynamodb:ListStreams"
-          ],
-          "resources": [
-            "stream"
-          ]
         }
       ],
       "tags": {
@@ -1304,6 +1320,14 @@
         {
           "name": "evSk",
           "type": "S"
+        },
+        {
+          "name": "esPk",
+          "type": "S"
+        },
+        {
+          "name": "esSk",
+          "type": "S"
         }
       ],
       "keySchema": {
@@ -1344,6 +1368,32 @@
           "projection": {
             "type": "INCLUDE",
             "attributes": [
+              "itemType",
+              "workspaceId",
+              "sessionId",
+              "eventSeq",
+              "eventId",
+              "type",
+              "runId",
+              "agentId",
+              "bodyInline",
+              "bodyDigest",
+              "occurredAt",
+              "outboxState"
+            ]
+          }
+        },
+        {
+          "name": "gsi_session_events",
+          "partition": "esPk",
+          "sort": "esSk",
+          "sparse": true,
+          "projectsRecordBody": true,
+          "rationale": "Only native events carry these attributes. Hour partitions and the canonical observation tuple provide exact event-time pagination for a session without scanning unrelated workspace traffic or changing the journal's sequence-ordered authority key.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "itemType",
               "workspaceId",
               "sessionId",
               "eventSeq",
@@ -1439,6 +1489,7 @@
         {
           "role": "regional-observation-api",
           "actions": [
+            "dynamodb:DescribeTable",
             "dynamodb:GetItem",
             "dynamodb:Query"
           ],
@@ -1450,16 +1501,23 @@
         {
           "role": "regional-stream",
           "actions": [
+            "dynamodb:DescribeTable",
             "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:GetRecords",
-            "dynamodb:GetShardIterator",
-            "dynamodb:DescribeStream",
-            "dynamodb:ListStreams"
+            "dynamodb:Query"
           ],
           "resources": [
             "table",
-            "index/*",
+            "index/*"
+          ]
+        },
+        {
+          "role": "regional-stream",
+          "actions": [
+            "dynamodb:GetRecords",
+            "dynamodb:GetShardIterator",
+            "dynamodb:DescribeStream"
+          ],
+          "resources": [
             "stream"
           ]
         }
@@ -1612,16 +1670,6 @@
           "resources": [
             "table",
             "index/*"
-          ]
-        },
-        {
-          "role": "regional-stream",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
           ]
         },
         {
@@ -2091,26 +2139,6 @@
         },
         {
           "role": "regional-session-api",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "regional-observation-api",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "regional-stream",
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:TransactWriteItems"
