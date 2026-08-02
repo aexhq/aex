@@ -4,7 +4,7 @@
 //! must not write cannot: `regional-stream` links a store type that exposes no
 //! mutating method at all, and `observation-export-launcher` links no read port.
 
-use aex_observation_domain::gap::{GapRevision, TimeWindow};
+use aex_observation_domain::gap::{GapRecord, TimeWindow};
 use aex_observation_domain::keys::ScopeKey;
 use aex_observation_domain::signal::SignalSet;
 use aex_wire::types::Timestamp;
@@ -145,13 +145,14 @@ pub struct CommitReceipt {
 }
 
 /// The durable observation authority, write side.
+#[async_trait::async_trait]
 pub trait ObservationAuthority: Send + Sync {
     /// Reads the scope's pinned deletion epoch.
     ///
     /// # Errors
     ///
     /// Returns [`PortError::Unavailable`] when the authority cannot be read.
-    fn deletion_epoch(&self, scope: &ScopeKey) -> Result<u64, PortError>;
+    async fn deletion_epoch(&self, scope: &ScopeKey) -> Result<u64, PortError>;
 
     /// Runs the nine-step admission for one prepared batch.
     ///
@@ -161,15 +162,19 @@ pub trait ObservationAuthority: Send + Sync {
     /// [`PortError::DeletionEpochAdvanced`] when the scope was deleted under the
     /// caller, and [`PortError::GateClosed`] when the regional ingress gate is
     /// closed.
-    fn commit(&self, request: &CommitRequest) -> Result<CommitReceipt, PortError>;
+    async fn commit(&self, request: &CommitRequest) -> Result<CommitReceipt, PortError>;
+}
 
-    /// Records an explicit gap.
+/// The append-only durable telemetry-gap ledger.
+#[async_trait::async_trait]
+pub trait GapSink: Send + Sync {
+    /// Appends an explicit scoped gap revision.
     ///
     /// # Errors
     ///
     /// Returns [`PortError::Unavailable`] when the gap cannot be written. A gap
     /// that cannot be recorded is never treated as absent.
-    fn open_gap(&self, revision: &GapRevision) -> Result<(), PortError>;
+    async fn append_gap(&self, record: &GapRecord) -> Result<(), PortError>;
 }
 
 #[cfg(test)]
