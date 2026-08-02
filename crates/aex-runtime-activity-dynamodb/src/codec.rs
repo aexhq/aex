@@ -108,6 +108,11 @@ pub struct GenerationRow {
 /// # Errors
 ///
 /// [`EncodeError`] when a key component is unusable.
+///
+/// # Panics
+///
+/// Only if serialization of the closed [`IntentRecord`] or [`KeepaliveLease`]
+/// data model fails; neither type contains a fallible JSON value.
 pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
     let key = keys::head(row.session, row.generation);
     let builder = ItemBuilder::new(HANDS_GENERATION)
@@ -291,6 +296,11 @@ pub fn decode_generation(item: &Item, asserted: WorkspaceId) -> Result<Generatio
 /// Decodes a generation without a caller-supplied tenant assertion.
 ///
 /// Used only after a point read by globally unique generation identity.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] for any missing, mistyped or out-of-vocabulary
+/// attribute.
 pub fn decode_generation_view(item: &Item) -> Result<GenerationRow, CodecError> {
     let row = Row::bind(item, HANDS_GENERATION)?;
     decode_generation(item, row.id::<WorkspaceId>("workspaceId")?)

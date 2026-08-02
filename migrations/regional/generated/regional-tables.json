@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:f68a1a246710b579b4340a7a1c81d8a24d58417343bae18c56a7ebc3360cda70",
+  "digest": "blake3:c1cacdbf0d3c771457bd7ad7ec2de8f9d76bd6c0896fbfba69612a06a64dad1c",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1128,7 +1128,7 @@
       "schema": "aex.regional-table.v1",
       "table": "runtime-activity",
       "owner": "regional-stores",
-      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1169,7 +1169,7 @@
           "sort": "rtDueSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "Sixteen shards over non-terminal generation heads. A dedicated due index rather than a regional-work item per evaluation, because the 180 second true-idle timer would otherwise cost a work-item rewrite per generation per evaluation; the index gives the reaper a bounded ordered scan at zero write cost between evaluations.",
+          "rationale": "Sixteen shards over generation heads and undelivered usage outbox rows. A dedicated due index avoids one work-item rewrite per generation per evaluation and keeps receipt delivery retryable after a terminal head leaves the index.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
@@ -1178,6 +1178,7 @@
               "generationId",
               "state",
               "fence",
+              "revision",
               "idleSince",
               "providerLifetimeExpiresAt",
               "keepaliveLeaseUntil"
@@ -1206,16 +1207,19 @@
         "lifecycle_intent",
         "lifecycle_receipt",
         "idle_probe",
-        "current_generation"
+        "current_generation",
+        "usage_outbox"
       ],
       "iam": [
         {
           "role": "runtime-control-worker",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:DescribeTable",
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
@@ -1388,6 +1392,17 @@
             "dynamodb:TransactWriteItems",
             "dynamodb:UpdateItem",
             "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "runtime-control-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:DescribeTable"
           ],
           "resources": [
             "table"

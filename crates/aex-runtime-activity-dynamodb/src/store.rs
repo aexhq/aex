@@ -12,19 +12,22 @@ use aex_runtime_control::store::{
     GenerationCommit, GenerationPlan, GenerationPointer, GenerationView,
     IdleProbe as CanonicalIdleProbe, LifecycleIntentPlan, LifecycleReceipt as CanonicalReceipt,
     LifecycleReceiptPlan, PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage,
-    RuntimeShard, RuntimeStoreError, StoreFuture,
+    RuntimeShard, RuntimeStoreError, StoreFuture, UsageOutboxEntry,
 };
 use aex_session_dynamodb::attr::{Item, ItemBuilder, PK, SK, n, s, stamp};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
 use aex_session_dynamodb::paging::PageBudget;
 use aex_session_dynamodb::plan::{Participant, key};
+use aex_usage_domain::fact::FactDraft;
+use aex_usage_domain::meter::Category;
 use aex_wire::ids::{GenerationId, PrefixedId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::builders::{PutBuilder, UpdateBuilder};
 use aws_sdk_dynamodb::types::{
-    Put, ReturnValue, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update,
+    Put, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update,
 };
+use std::str::FromStr as _;
 
 use crate::codec::{
     self, CurrentGeneration, GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt,
@@ -156,46 +159,6 @@ impl RuntimeActivityDynamoStore {
             }
         }
     }
-
-    async fn conditional_update_returning(
-        &self,
-        builder: UpdateBuilder,
-        participant: Participant,
-    ) -> Result<Item, StoreError> {
-        let built = builder.build().map_err(|error| StoreError::Invalid {
-            detail: error.to_string(),
-        })?;
-        let outcome = self
-            .client
-            .update_item()
-            .table_name(&self.table)
-            .set_key(Some(built.key().clone()))
-            .set_condition_expression(built.condition_expression().map(str::to_owned))
-            .update_expression(built.update_expression())
-            .set_expression_attribute_names(built.expression_attribute_names().cloned())
-            .set_expression_attribute_values(built.expression_attribute_values().cloned())
-            .return_values(ReturnValue::AllNew)
-            .return_values_on_condition_check_failure(ReturnValuesOnConditionCheckFailure::AllOld)
-            .send()
-            .await;
-        match outcome {
-            Ok(output) => output.attributes.ok_or_else(|| StoreError::Invalid {
-                detail: "a successful generation update returned no ALL_NEW image".to_owned(),
-            }),
-            Err(error) => {
-                if let Some(
-                    aws_sdk_dynamodb::operation::update_item::UpdateItemError::ConditionalCheckFailedException(failed),
-                ) = error.as_service_error()
-                {
-                    return Err(StoreError::PreconditionFailed {
-                        participant,
-                        observed: failed.item.clone().map(Box::new),
-                    });
-                }
-                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
-            }
-        }
-    }
 }
 
 impl RuntimeActivityDynamoStore {
@@ -267,11 +230,20 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the head and current-pointer mutations are one atomic fence transition; keeping the expressions together makes their equality auditable"
+    )]
     fn commit_generation<'a>(
         &'a self,
         plan: &'a GenerationPlan,
     ) -> StoreFuture<'a, GenerationCommit> {
         Box::pin(async move {
+            let before = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
             let target = keys::head_for_generation(plan.generation);
             let next_revision = plan.expected_revision.next();
             let evaluable = keys::is_evaluable(plan.next_state);
@@ -283,11 +255,12 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .table_name(&self.table)
                 .set_key(Some(key(&target.pk, &target.sk)))
                 .condition_expression(
-                    "generationId = :generation AND #state = :expectedState AND revision = :expectedRevision",
+                    "generationId = :generation AND #state = :expectedState AND fence = :expectedFence AND revision = :expectedRevision",
                 )
                 .expression_attribute_names("#state", "state")
                 .expression_attribute_values(":generation", s(plan.generation.to_string()))
                 .expression_attribute_values(":expectedState", s(keys::state_str(plan.expected_state)))
+                .expression_attribute_values(":expectedFence", n(plan.expected_fence.0))
                 .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
                 .expression_attribute_values(":nextState", s(keys::state_str(plan.next_state)))
                 .expression_attribute_values(":nextFence", n(plan.next_fence.0))
@@ -306,6 +279,24 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
             } else {
                 remove.push("transportMode");
             }
+            if let Some(accounting) = plan.accounting {
+                update.push_str(
+                    ", accountedFrom = :accountedFrom, snapshotOrdinal = :snapshotOrdinal",
+                );
+                builder = builder
+                    .expression_attribute_values(":accountedFrom", stamp(accounting.accounted_from))
+                    .expression_attribute_values(
+                        ":snapshotOrdinal",
+                        n(u64::from(accounting.snapshot_ordinal)),
+                    );
+                if let Some(suspended_at) = accounting.suspended_at {
+                    update.push_str(", suspendedAt = :suspendedAt");
+                    builder =
+                        builder.expression_attribute_values(":suspendedAt", stamp(suspended_at));
+                } else {
+                    remove.push("suspendedAt");
+                }
+            }
             if !evaluable {
                 remove.extend([keys::DUE_PK, keys::DUE_SK]);
             }
@@ -313,18 +304,62 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 update.push_str(" REMOVE ");
                 update.push_str(&remove.join(", "));
             }
-            let persisted = self
-                .conditional_update_returning(
-                    builder.update_expression(update),
-                    Participant::RUNTIME_GENERATION,
+            let head_update = builder
+                .update_expression(update)
+                .return_values_on_condition_check_failure(
+                    ReturnValuesOnConditionCheckFailure::AllOld,
                 )
-                .await
-                .map_err(|error| runtime_error(error, Some(plan.expected_revision)))?;
-            let persisted = codec::decode_generation_view(&persisted).map_err(|error| {
-                RuntimeStoreError::Malformed {
-                    reason: error.to_string(),
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let current = keys::current(before.session);
+            let current_update = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&current.pk, &current.sk)))
+                .condition_expression("generationId = :generation AND fence = :expectedFence")
+                .update_expression(
+                    "SET fence = :nextFence, revision = :nextRevision, updatedAt = :at",
+                )
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":expectedFence", n(plan.expected_fence.0))
+                .expression_attribute_values(":nextFence", n(plan.next_fence.0))
+                .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.at))
+                .return_values_on_condition_check_failure(
+                    ReturnValuesOnConditionCheckFailure::AllOld,
+                )
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            self.transact(
+                vec![
+                    TransactWriteItem::builder().update(head_update).build(),
+                    TransactWriteItem::builder().update(current_update).build(),
+                ],
+                transaction_token(
+                    "generation",
+                    plan.generation,
+                    &format!(
+                        "{}:{}:{}",
+                        plan.expected_revision.value(),
+                        next_revision.value(),
+                        plan.next_fence.0
+                    ),
+                ),
+            )
+            .await
+            .map_err(|error| match error {
+                RuntimeStoreError::RevisionConflict { found, .. } => {
+                    RuntimeStoreError::RevisionConflict {
+                        expected: plan.expected_revision,
+                        found,
+                    }
                 }
+                other => other,
             })?;
+            let persisted = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
             Ok(GenerationCommit {
                 head: generation_view(persisted).head,
                 revision: next_revision,
@@ -407,6 +442,10 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one contiguous builder keeps the lifecycle receipt, intent, head, and bounded usage outbox transaction auditable as one atomic unit"
+    )]
     fn settle_intent<'a>(
         &'a self,
         plan: &'a LifecycleReceiptPlan,
@@ -417,14 +456,43 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     generation: plan.generation,
                 },
             )?;
-            let mut intent = row
-                .open_intent
-                .ok_or_else(|| RuntimeStoreError::Malformed {
-                    reason: format!(
-                        "generation {} has no open intent {}",
-                        plan.generation, plan.intent_id
-                    ),
-                })?;
+            let Some(mut intent) = row.open_intent else {
+                let receipt_key = keys::receipt(row.session, plan.generation, &plan.intent_id.0)
+                    .map_err(|error| RuntimeStoreError::Malformed {
+                        reason: error.to_string(),
+                    })?;
+                let stored = self
+                    .get(&receipt_key.pk, &receipt_key.sk)
+                    .await
+                    .map_err(|error| runtime_error(error, None))?
+                    .ok_or_else(|| RuntimeStoreError::Malformed {
+                        reason: format!(
+                            "generation {} has neither open intent nor receipt {}",
+                            plan.generation, plan.intent_id
+                        ),
+                    })?;
+                let text = |name: &str| stored.get(name).and_then(|value| value.as_s().ok());
+                let stored_intent: IntentRecord = serde_json::from_str(
+                    text("intent")
+                        .ok_or_else(|| malformed("lifecycle receipt has no stored intent"))?,
+                )
+                .map_err(|error| malformed(&error.to_string()))?;
+                if stored_intent.intent_id != plan.intent_id {
+                    return Err(malformed("lifecycle receipt intent identity disagrees"));
+                }
+                let receipt_id = text("receiptId")
+                    .ok_or_else(|| malformed("lifecycle receipt has no receiptId"))?
+                    .to_owned();
+                let snapshot = text("snapshot")
+                    .map(|value| serde_json::from_str(value))
+                    .transpose()
+                    .map_err(|error| malformed(&error.to_string()))?;
+                return Ok(CanonicalReceipt {
+                    intent: stored_intent,
+                    receipt_id,
+                    snapshot,
+                });
+            };
             if intent.intent_id != plan.intent_id {
                 return Err(RuntimeStoreError::IntentOpen {
                     intent_id: intent.intent_id,
@@ -467,6 +535,11 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 })
             };
             if plan.next_intent_state == IntentState::Unknown {
+                if plan.generation_commit.is_some() || !plan.usage.is_empty() {
+                    return Err(malformed(
+                        "an unknown provider outcome cannot close the generation or emit usage",
+                    ));
+                }
                 let next = serde_json::to_string(&intent).map_err(|error| {
                     RuntimeStoreError::Malformed {
                         reason: error.to_string(),
@@ -528,12 +601,88 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 )
                 .set("settledAt", stamp(plan.settled_at))
                 .build();
-            let update = Update::builder()
+            let mut head_update = String::new();
+            let mut remove = vec!["openIntent"];
+            let mut head_builder = Update::builder()
                 .table_name(&self.table)
                 .set_key(Some(key(&target.pk, &target.sk)))
-                .condition_expression("openIntent = :expected")
-                .update_expression("REMOVE openIntent")
-                .expression_attribute_values(":expected", s(expected))
+                .expression_attribute_values(":expected", s(expected));
+            if let Some(generation) = &plan.generation_commit {
+                if generation.generation != plan.generation {
+                    return Err(malformed(
+                        "the receipt and final generation transition name different generations",
+                    ));
+                }
+                let next_revision = generation.expected_revision.next();
+                head_update.push_str(
+                    "SET #state = :nextState, fence = :nextFence, revision = :nextRevision, updatedAt = :at",
+                );
+                head_builder = head_builder
+                    .condition_expression(
+                        "generationId = :generation AND #state = :expectedState AND fence = :expectedFence AND revision = :expectedRevision AND openIntent = :expected",
+                    )
+                    .expression_attribute_names("#state", "state")
+                    .expression_attribute_values(
+                        ":generation",
+                        s(generation.generation.to_string()),
+                    )
+                    .expression_attribute_values(
+                        ":expectedState",
+                        s(keys::state_str(generation.expected_state)),
+                    )
+                    .expression_attribute_values(
+                        ":expectedFence",
+                        n(generation.expected_fence.0),
+                    )
+                    .expression_attribute_values(
+                        ":expectedRevision",
+                        n(generation.expected_revision.value()),
+                    )
+                    .expression_attribute_values(
+                        ":nextState",
+                        s(keys::state_str(generation.next_state)),
+                    )
+                    .expression_attribute_values(":nextFence", n(generation.next_fence.0))
+                    .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                    .expression_attribute_values(":at", stamp(generation.at));
+                if let Some(accounting) = generation.accounting {
+                    head_update.push_str(
+                        ", accountedFrom = :accountedFrom, snapshotOrdinal = :snapshotOrdinal",
+                    );
+                    head_builder = head_builder
+                        .expression_attribute_values(
+                            ":accountedFrom",
+                            stamp(accounting.accounted_from),
+                        )
+                        .expression_attribute_values(
+                            ":snapshotOrdinal",
+                            n(u64::from(accounting.snapshot_ordinal)),
+                        );
+                    if let Some(suspended_at) = accounting.suspended_at {
+                        head_update.push_str(", suspendedAt = :suspendedAt");
+                        head_builder = head_builder
+                            .expression_attribute_values(":suspendedAt", stamp(suspended_at));
+                    } else {
+                        remove.push("suspendedAt");
+                    }
+                }
+                if !keys::is_evaluable(generation.next_state) {
+                    remove.extend([keys::DUE_PK, keys::DUE_SK]);
+                }
+            } else {
+                head_builder = head_builder.condition_expression("openIntent = :expected");
+            }
+            if head_update.is_empty() {
+                head_update.push_str("REMOVE ");
+            } else {
+                head_update.push_str(" REMOVE ");
+            }
+            head_update.push_str(&remove.join(", "));
+            let update = head_builder
+                .update_expression(head_update)
+                .return_values_on_condition_check_failure(
+                    ReturnValuesOnConditionCheckFailure::AllOld,
+                )
                 .build()
                 .map_err(|error| RuntimeStoreError::Malformed {
                     reason: error.to_string(),
@@ -546,14 +695,82 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .map_err(|error| RuntimeStoreError::Malformed {
                     reason: error.to_string(),
                 })?;
+            if plan.usage.len() > 3 {
+                return Err(RuntimeStoreError::Malformed {
+                    reason: format!(
+                        "one lifecycle interval produced {} usage drafts, over the three-meter ceiling",
+                        plan.usage.len()
+                    ),
+                });
+            }
+            let mut transaction = vec![
+                TransactWriteItem::builder().update(update).build(),
+                TransactWriteItem::builder()
+                    .update(durable_intent_update()?)
+                    .build(),
+                TransactWriteItem::builder().put(put).build(),
+            ];
+            let (outbox_state, outbox_fence, outbox_revision) = plan
+                .generation_commit
+                .as_ref()
+                .map_or((row.state, row.fence, row.revision), |generation| {
+                    (
+                        generation.next_state,
+                        generation.next_fence,
+                        generation.expected_revision.next(),
+                    )
+                });
+            for pending in &plan.usage {
+                if pending.category != pending.draft.authority.category {
+                    return Err(RuntimeStoreError::Malformed {
+                        reason: format!(
+                            "usage outbox category {} disagrees with draft authority {}",
+                            pending.category, pending.draft.authority.category
+                        ),
+                    });
+                }
+                let fact_id = pending.draft.fact_id().to_string();
+                let target = keys::usage_outbox(plan.generation, &fact_id);
+                let body = serde_json::to_string(&pending.draft).map_err(|error| {
+                    RuntimeStoreError::Malformed {
+                        reason: format!("usage draft {fact_id} does not serialize: {error}"),
+                    }
+                })?;
+                let item = ItemBuilder::new("usage_outbox")
+                    .set(PK, s(target.pk))
+                    .set(SK, s(target.sk))
+                    .set("sessionId", s(row.session.to_string()))
+                    .set("workspaceId", s(row.workspace.to_string()))
+                    .set("generationId", s(plan.generation.to_string()))
+                    .set("factId", s(fact_id.clone()))
+                    .set("category", s(pending.category.id()))
+                    .set("draft", s(body))
+                    .set("state", s(keys::state_str(outbox_state)))
+                    .set("fence", n(outbox_fence.0))
+                    .set("revision", n(outbox_revision.value()))
+                    .set("enqueuedAt", stamp(plan.settled_at))
+                    .set(keys::DUE_PK, s(keys::due_partition(plan.generation)))
+                    .set(
+                        keys::DUE_SK,
+                        s(format!(
+                            "{}#{}#{fact_id}",
+                            plan.settled_at.to_wire(),
+                            plan.generation
+                        )),
+                    )
+                    .build();
+                let put = Put::builder()
+                    .table_name(&self.table)
+                    .set_item(Some(item))
+                    .condition_expression("attribute_not_exists(pk)")
+                    .build()
+                    .map_err(|error| RuntimeStoreError::Malformed {
+                        reason: error.to_string(),
+                    })?;
+                transaction.push(TransactWriteItem::builder().put(put).build());
+            }
             self.transact(
-                vec![
-                    TransactWriteItem::builder().update(update).build(),
-                    TransactWriteItem::builder()
-                        .update(durable_intent_update()?)
-                        .build(),
-                    TransactWriteItem::builder().put(put).build(),
-                ],
+                transaction,
                 transaction_token("settle", plan.generation, &plan.intent_id.0),
             )
             .await?;
@@ -562,6 +779,93 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 receipt_id,
                 snapshot: plan.snapshot.clone(),
             })
+        })
+    }
+
+    fn load_usage_outbox(
+        &self,
+        generation: GenerationId,
+    ) -> StoreFuture<'_, Vec<UsageOutboxEntry>> {
+        Box::pin(async move {
+            let mut exclusive_start_key = None;
+            let mut pending = Vec::new();
+            loop {
+                let output = self
+                    .client
+                    .query()
+                    .table_name(&self.table)
+                    .key_condition_expression("pk = :pk AND begins_with(sk, :prefix)")
+                    .expression_attribute_values(
+                        ":pk",
+                        s(keys::generation_partition_for_id(generation)),
+                    )
+                    .expression_attribute_values(":prefix", s("USAGE#"))
+                    .consistent_read(true)
+                    .set_exclusive_start_key(exclusive_start_key)
+                    .send()
+                    .await
+                    .map_err(|error| runtime_error(classify(&error, Idempotence::Read), None))?;
+                for item in output.items() {
+                    let text = |name: &str| item.get(name).and_then(|value| value.as_s().ok());
+                    if text("itemType").map(String::as_str) != Some("usage_outbox") {
+                        return Err(malformed("USAGE# row is not a usage_outbox item"));
+                    }
+                    let category = text("category")
+                        .ok_or_else(|| malformed("usage outbox row has no category"))
+                        .and_then(|value| {
+                            Category::from_str(value).map_err(|error| malformed(&error.to_string()))
+                        })?;
+                    let draft: FactDraft = serde_json::from_str(
+                        text("draft").ok_or_else(|| malformed("usage outbox row has no draft"))?,
+                    )
+                    .map_err(|error| malformed(&error.to_string()))?;
+                    if draft.authority.category != category {
+                        return Err(malformed(
+                            "usage outbox category disagrees with its draft authority",
+                        ));
+                    }
+                    pending.push(UsageOutboxEntry {
+                        generation,
+                        category,
+                        draft,
+                    });
+                }
+                exclusive_start_key = output.last_evaluated_key().cloned();
+                if exclusive_start_key.is_none() {
+                    break;
+                }
+            }
+            pending.sort_by_key(|entry| entry.draft.fact_id().to_string());
+            Ok(pending)
+        })
+    }
+
+    fn mark_usage_emitted<'a>(
+        &'a self,
+        generation: GenerationId,
+        draft: &'a FactDraft,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let fact_id = draft.fact_id().to_string();
+            let target = keys::usage_outbox(generation, &fact_id);
+            self.client
+                .delete_item()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression("attribute_not_exists(pk) OR factId = :factId")
+                .expression_attribute_values(":factId", s(fact_id))
+                .return_values_on_condition_check_failure(
+                    ReturnValuesOnConditionCheckFailure::AllOld,
+                )
+                .send()
+                .await
+                .map_err(|error| {
+                    runtime_error(
+                        classify(&error, Idempotence::Write(Resolution::TargetItem)),
+                        None,
+                    )
+                })?;
+            Ok(())
         })
     }
 

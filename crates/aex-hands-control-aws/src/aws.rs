@@ -1,4 +1,4 @@
-//! Production Lambda MicroVM control adapter over the official AWS Rust SDK.
+//! Production Lambda `MicroVM` control adapter over the official AWS Rust SDK.
 
 use std::str::FromStr as _;
 
@@ -18,7 +18,7 @@ use crate::provider::{
 
 const AUTH_HEADER: &str = "X-aws-proxy-auth";
 
-/// Official AWS Lambda MicroVM control-plane adapter.
+/// Official AWS Lambda `MicroVM` control-plane adapter.
 #[derive(Debug, Clone)]
 pub struct AwsMicrovmControl {
     client: Client,

@@ -29,6 +29,7 @@ live_suite = "pure domain crate; Area 9's registry declares no independent live 
 [dependencies]
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-usage-domain = { path = "../aex-usage-domain" }
 aex-wire = { path = "../aex-wire" }
 serde.workspace = true
 thiserror.workspace = true

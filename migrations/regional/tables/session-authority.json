@@ -109,6 +109,15 @@
       "resources": ["table"]
     },
     {
+      "role": "runtime-control-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:DescribeTable"
+      ],
+      "resources": ["table"]
+    },
+    {
       "role": "regional-observation-api",
       "actions": ["dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table", "index/*"]

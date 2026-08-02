@@ -45,6 +45,7 @@ blake3.workspace = true
 thiserror.workspace = true
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-runtime-control = { path = "../aex-runtime-control" }
+aex-usage-domain = { path = "../aex-usage-domain" }
 aex-wire = { path = "../aex-wire" }
 # The shared regional store machinery only. `default-features = false` keeps the
 # session-authority row codec and the projection reader out of the link graph.

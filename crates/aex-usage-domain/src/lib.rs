@@ -18,6 +18,7 @@ pub mod correction;
 pub mod fact;
 pub mod frontier;
 pub mod identity;
+pub mod ingress;
 pub mod intent;
 pub mod interval;
 pub mod keys;

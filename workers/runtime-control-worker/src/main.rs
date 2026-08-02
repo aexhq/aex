@@ -19,10 +19,16 @@ mod health;
 
 use std::sync::Arc;
 
+use aex_hands_control_aws::AwsMicrovmControl;
 use aex_hands_control_aws::provider::MicrovmControlApi;
+use aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore;
+use aex_runtime_control::generation::ImageIdentifier;
 use aex_runtime_control::store::{OpenEffectCounter, RuntimeActivityStore};
 use aex_runtime_control::usage::UsageFactSink;
+use aex_runtime_control_aws::usage_ingress::SqsFactDraftSink;
 use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, RuntimeSettings};
+use aex_session_dynamodb::runtime_effects::OpenHandsEffectCounter;
+use aex_usage_domain::meter::Category;
 use aex_wire::types::Timestamp;
 use config::{Config, ConfigError};
 use health::{Bindings, Dependency};
@@ -50,6 +56,14 @@ pub enum RunError {
         /// The ports with no adapter.
         missing: Vec<&'static str>,
     },
+    /// A required dependency could not be reached before polling began.
+    #[error("startup probe for `{dependency}` failed: {reason}")]
+    Startup {
+        /// Dependency whose binding was probed.
+        dependency: &'static str,
+        /// Remote failure.
+        reason: String,
+    },
     /// The Lambda runtime stopped.
     #[error("the Lambda runtime stopped: {reason}")]
     Runtime {
@@ -71,23 +85,10 @@ impl Pace for TokioPace {
 
 /// The adapters this composition binds.
 ///
-/// Each field is an `Option` because each is implemented by a package another
-/// stream ships, and this run deploys and credentials nothing (OD-07). An absent
-/// adapter is named by `readyz` and refuses the start; it is never substituted by
-/// a stub that would make the worker look healthy while suspending nothing.
-///
-/// `TODO(cross-stream) regional stores`: `store` wants
-/// `aex-runtime-activity-dynamodb` over `aex_runtime_control::store::RuntimeActivityStore`
-/// — the crate currently declares its own trait of the same name and already
-/// carries the `TODO` saying so. `effects` wants the bounded strongly-consistent
-/// open-Hands-effect query in `aex-session-dynamodb`.
-///
-/// `TODO(cross-stream) hands`: `provider` wants the `MicrovmControlApi`
-/// implementation, which is blocked on whether `aws-sdk-lambdamicrovms` exists;
-/// the seam and its narrow-SigV4 fallback are recorded in plan 10 §14.
-///
-/// `TODO(cross-stream) usage`: `compute` and `storage` want the compute and
-/// storage category ingresses. There is deliberately no third field.
+/// Production resolution binds all five fields. They remain `Option`s so the
+/// readiness and fail-closed composition tests can prove that every absent port
+/// is named and refused; production never substitutes a stub. There is
+/// deliberately no transfer-authority field.
 #[derive(Default)]
 pub struct Adapters {
     /// The runtime-activity authority.
@@ -173,20 +174,99 @@ impl Adapters {
     }
 }
 
-/// Resolves the adapters available to this build.
-///
-/// Nothing is bound today, and that is stated rather than hidden: every port is
-/// owned by a package another stream ships, no AWS client is constructed, and no
-/// credential is read. The moment a peer's adapter lands, each becomes one line.
-fn resolve(_config: &Config) -> Adapters {
-    Adapters::default()
+/// Resolves and probes every production adapter before Lambda begins polling.
+async fn resolve(config: &Config) -> Result<Adapters, RunError> {
+    let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(aws_types::region::Region::new(config.region.as_str()))
+        .load()
+        .await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let sqs = aws_sdk_sqs::Client::new(&aws);
+
+    for (dependency, table) in [
+        ("runtime-activity", config.runtime_activity_table.as_str()),
+        (
+            "session-open-effects",
+            config.session_authority_table.as_str(),
+        ),
+    ] {
+        dynamodb
+            .describe_table()
+            .table_name(table)
+            .send()
+            .await
+            .map_err(|error| RunError::Startup {
+                dependency,
+                reason: error.to_string(),
+            })?;
+    }
+    for (dependency, queue) in [
+        (
+            "runtime-lifecycle-queue",
+            config.lifecycle_queue_url.as_str(),
+        ),
+        ("usage-compute-sink", config.compute_queue_url.as_str()),
+        ("usage-storage-sink", config.storage_queue_url.as_str()),
+    ] {
+        sqs.get_queue_attributes()
+            .queue_url(queue)
+            .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
+            .send()
+            .await
+            .map_err(|error| RunError::Startup {
+                dependency,
+                reason: error.to_string(),
+            })?;
+    }
+
+    let mut provider_config = aws_sdk_lambdamicrovms::config::Builder::from(&aws);
+    if let Some(endpoint) = &config.provider_endpoint {
+        provider_config = provider_config.endpoint_url(endpoint);
+    }
+    let provider = AwsMicrovmControl::new(
+        aws_sdk_lambdamicrovms::Client::from_conf(provider_config.build()),
+        config.region.as_str(),
+    );
+    provider
+        .list(
+            Some(&ImageIdentifier(config.image_identifier.clone())),
+            None,
+        )
+        .await
+        .map_err(|error| RunError::Startup {
+            dependency: "microvm-control",
+            reason: error.to_string(),
+        })?;
+
+    Ok(Adapters {
+        store: Some(Arc::new(RuntimeActivityDynamoStore::new(
+            dynamodb.clone(),
+            config.runtime_activity_table.clone(),
+        ))),
+        effects: Some(Arc::new(OpenHandsEffectCounter::new(
+            dynamodb,
+            config.session_authority_table.clone(),
+        ))),
+        provider: Some(Arc::new(provider)),
+        compute: Some(Arc::new(SqsFactDraftSink::new(
+            sqs.clone(),
+            config.compute_queue_url.clone(),
+            Category::Compute,
+        ))),
+        storage: Some(Arc::new(SqsFactDraftSink::new(
+            sqs,
+            config.storage_queue_url.clone(),
+            Category::Storage,
+        ))),
+    })
 }
 
 /// Runs `runtime-control-worker` until it stops.
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Unbound`] when a declared port has no adapter, and
+/// Returns [`RunError::Startup`] when a production dependency probe fails,
+/// [`RunError::Unbound`] when a declared port has no adapter, and
 /// [`RunError::Runtime`] when the Lambda runtime stops.
 pub async fn run(
     config: &Config,
@@ -209,7 +289,7 @@ pub async fn run(
             config.region.as_str(),
         ),
     );
-    let adapters = resolve(config);
+    let adapters = resolve(config).await?;
     let bindings = Arc::new(adapters.bindings());
     let control = Arc::new(adapters.compose(config)?);
     lambda_runtime::run(lambda_runtime::service_fn(
@@ -303,7 +383,7 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Adapters, RunError, config::Config, health::Readiness, now, resolve};
+    use super::{Adapters, RunError, config::Config, health::Readiness, now};
     use std::collections::BTreeMap;
 
     fn config() -> Config {
@@ -340,9 +420,9 @@ mod tests {
 
     #[test]
     fn an_unbound_port_refuses_the_start_and_says_which_one() {
-        let error = resolve(&config())
+        let error = Adapters::default()
             .compose(&config())
-            .expect_err("nothing is bound in this build");
+            .expect_err("an empty composition is refused");
         let RunError::Unbound { missing } = error else {
             panic!("an unbound port is its own error class, not a generic failure");
         };

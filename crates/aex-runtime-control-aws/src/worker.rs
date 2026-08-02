@@ -19,7 +19,6 @@ use aex_hands_control_aws::provider::{MicrovmControlApi, MicrovmDescription};
 use aex_hands_protocol::lifecycle::{ProviderRequestId, RuntimeReceipt};
 use aex_hands_protocol::rpc::Fence;
 use aex_internal_contracts::PricingVersion;
-use aex_internal_contracts::usage::{Attribution, AuthorityKind};
 use aex_runtime_control::clock::millis_between;
 use aex_runtime_control::generation::{GenerationHead, GenerationState, next_fence};
 use aex_runtime_control::idle::IdleAssessment;
@@ -28,14 +27,16 @@ use aex_runtime_control::lifecycle::{
     snapshot_lifecycle_id,
 };
 use aex_runtime_control::store::{
-    CommandBinding, GenerationCommit, GenerationPlan, GenerationView, IdleProbe,
-    LifecycleIntentPlan, LifecycleReceiptPlan, OpenEffectCounter, PageBudget, RuntimeActivityStore,
-    RuntimeShard, RuntimeStoreError, bind_command,
+    CommandBinding, GenerationAccountingPlan, GenerationCommit, GenerationPlan, GenerationView,
+    IdleProbe, LifecycleIntentPlan, LifecycleReceiptPlan, OpenEffectCounter, PageBudget,
+    RuntimeActivityStore, RuntimeShard, RuntimeStoreError, UsageOutboxPlan, bind_command,
 };
 use aex_runtime_control::usage::{
-    FactContext, SnapshotIo, SnapshotResidence, UsageCategory, UsageFactSink, category_of,
+    FactContext, SinkError, SnapshotIo, SnapshotResidence, UsageCategory, UsageFactSink,
     derive_facts,
 };
+use aex_usage_domain::fact::FactDraft;
+use aex_usage_domain::meter::Category;
 use aex_wire::ids::{GenerationId, SessionId};
 use aex_wire::types::{Region, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -302,6 +303,8 @@ struct Closure<'a> {
     microvm: &'a MicrovmId,
     /// The intent this settles.
     intent_id: &'a LifecycleIntentId,
+    /// Provider action the intent performed.
+    action: LifecycleAction,
     /// Where the head lands.
     next_state: GenerationState,
     /// What the provider was observed to be.
@@ -448,6 +451,9 @@ impl RuntimeControl {
             }
             Err(error) => return store_outcome(&error),
         };
+        if let Err(outcome) = self.flush_usage(view.head.generation).await {
+            return outcome;
+        }
         if view.head.fence != fence {
             return CommandOutcome::Retry {
                 reason: format!(
@@ -545,11 +551,13 @@ impl RuntimeControl {
         let plan = GenerationPlan {
             generation: view.head.generation,
             expected_state: view.head.state,
+            expected_fence: view.head.fence,
             expected_revision: view.head.revision,
             next_state: GenerationState::LifetimeDraining,
             next_fence: next_fence(view.head.fence),
             microvm: view.microvm.clone(),
             transport_mode: view.head.transport_mode,
+            accounting: None,
             at: now,
         };
         match self.ports.store.commit_generation(&plan).await {
@@ -573,14 +581,31 @@ impl RuntimeControl {
         microvm: &MicrovmId,
         now: Timestamp,
     ) -> Result<GenerationCommit, CommandOutcome> {
+        self.move_head_with_accounting(from, next_state, next_fence, microvm, None, now)
+            .await
+    }
+
+    /// Moves a head and optionally advances its accounting cursors under the
+    /// same state, revision, and fence condition.
+    async fn move_head_with_accounting(
+        &self,
+        from: &GenerationHead,
+        next_state: GenerationState,
+        next_fence: Fence,
+        microvm: &MicrovmId,
+        accounting: Option<GenerationAccountingPlan>,
+        now: Timestamp,
+    ) -> Result<GenerationCommit, CommandOutcome> {
         let plan = GenerationPlan {
             generation: from.generation,
             expected_state: from.state,
+            expected_fence: from.fence,
             expected_revision: from.revision,
             next_state,
             next_fence,
             microvm: Some(microvm.clone()),
             transport_mode: from.transport_mode,
+            accounting,
             at: now,
         };
         match self.ports.store.commit_generation(&plan).await {
@@ -619,29 +644,22 @@ impl RuntimeControl {
 
     /// Everything one settled transition has to land together.
     async fn close(&self, closure: Closure<'_>, now: Timestamp) -> Result<(), CommandOutcome> {
-        let receipt_plan = LifecycleReceiptPlan {
-            intent_id: closure.intent_id.clone(),
-            generation: closure.from.generation,
-            next_intent_state: IntentState::Settled,
-            provider_request_id: closure.request,
-            observed_state: Some(closure.observed),
-            snapshot: closure.residence.clone(),
-            settled_at: now,
-        };
-        let receipt = self
-            .ports
-            .store
-            .settle_intent(&receipt_plan)
-            .await
-            .map_err(|error| store_outcome(&error))?;
-        self.move_head(
-            closure.from,
-            closure.next_state,
-            closure.from.fence,
-            closure.microvm,
-            now,
-        )
-        .await?;
+        let source_receipt_id = closure.request.as_ref().map_or_else(
+            || {
+                format!(
+                    "aex-runtime:{}:{}",
+                    closure.from.generation, closure.intent_id.0
+                )
+            },
+            |request| {
+                format!(
+                    "lambda-microvm:{}:{}:{}",
+                    closure.microvm,
+                    closure.action.as_str(),
+                    request.0
+                )
+            },
+        );
         let runtime_receipt = RuntimeReceipt {
             generation: closure.from.generation,
             shape: closure.from.size,
@@ -652,22 +670,75 @@ impl RuntimeControl {
             snapshot_bytes: None,
             transmit_bytes: None,
         };
-        // A suspend *opens* a residence; only a resume or a terminate closes one,
-        // and only a closed residence has retained minutes to charge.
-        let charged = if closure.charge_residence {
-            closure.residence.as_ref()
-        } else {
-            None
-        };
-        self.emit(
+        let charged = closure
+            .charge_residence
+            .then_some(closure.residence.as_ref())
+            .flatten();
+        let drafts = self.derive_drafts(
             closure.view,
             &runtime_receipt,
             charged,
             closure.intent_id,
-            &receipt.receipt_id,
-            now,
-        )
-        .await
+            &source_receipt_id,
+        )?;
+        let snapshot_ordinal = closure
+            .view
+            .snapshot_ordinal
+            .checked_add(u32::from(
+                closure.residence.is_some() && closure.charge_residence,
+            ))
+            .ok_or_else(|| CommandOutcome::Poison {
+                reason: "snapshot generation ordinal overflowed".to_owned(),
+            })?;
+        let generation_commit = GenerationPlan {
+            generation: closure.from.generation,
+            expected_state: closure.from.state,
+            expected_fence: closure.from.fence,
+            expected_revision: closure.from.revision,
+            next_state: closure.next_state,
+            next_fence: closure.from.fence,
+            microvm: Some(closure.microvm.clone()),
+            transport_mode: closure.from.transport_mode,
+            accounting: Some(GenerationAccountingPlan {
+                accounted_from: now,
+                suspended_at: (closure.next_state == GenerationState::Suspended).then_some(now),
+                snapshot_ordinal,
+            }),
+            at: now,
+        };
+        let receipt_plan = LifecycleReceiptPlan {
+            intent_id: closure.intent_id.clone(),
+            generation: closure.from.generation,
+            next_intent_state: IntentState::Settled,
+            provider_request_id: closure.request.clone(),
+            observed_state: Some(closure.observed),
+            snapshot: closure.residence.clone(),
+            usage: drafts
+                .iter()
+                .cloned()
+                .map(|draft| UsageOutboxPlan {
+                    category: draft.authority.category,
+                    draft,
+                })
+                .collect(),
+            generation_commit: Some(generation_commit),
+            settled_at: now,
+        };
+        let receipt = self
+            .ports
+            .store
+            .settle_intent(&receipt_plan)
+            .await
+            .map_err(|error| store_outcome(&error))?;
+        if receipt.receipt_id != source_receipt_id {
+            return Err(CommandOutcome::Poison {
+                reason: format!(
+                    "runtime receipt identity `{}` disagrees with transactional usage identity `{source_receipt_id}`",
+                    receipt.receipt_id
+                ),
+            });
+        }
+        self.flush_usage(closure.from.generation).await
     }
 
     /// The suspend transition.
@@ -742,7 +813,14 @@ impl RuntimeControl {
 
         // 5. Await SUSPENDED. Never assume success.
         if let Some(outcome) = self
-            .settle_await(view, microvm, LifecycleAction::Suspend, &intent_id, now)
+            .settle_await(
+                view,
+                &locked.head,
+                microvm,
+                LifecycleAction::Suspend,
+                &intent_id,
+                now,
+            )
             .await
         {
             return outcome;
@@ -754,14 +832,17 @@ impl RuntimeControl {
             from: &locked.head,
             microvm,
             intent_id: &intent_id,
+            action: LifecycleAction::Suspend,
             next_state: GenerationState::Suspended,
             observed: ProviderState::Suspended,
             request: Some(request),
             residence: Some(SnapshotResidence {
                 lifecycle_id: snapshot_lifecycle_id(microvm, view.snapshot_ordinal),
+                generation: u64::from(view.snapshot_ordinal),
                 bytes: view.snapshot_bytes,
                 suspended_at: now,
                 released_at: now,
+                terminal: false,
                 io: SnapshotIo::default(),
             }),
             charge_residence: false,
@@ -862,7 +943,14 @@ impl RuntimeControl {
             }
         };
         if let Some(outcome) = self
-            .settle_await(view, &microvm, LifecycleAction::Resume, &intent_id, now)
+            .settle_await(
+                view,
+                &moved.head,
+                &microvm,
+                LifecycleAction::Resume,
+                &intent_id,
+                now,
+            )
             .await
         {
             return outcome;
@@ -872,14 +960,17 @@ impl RuntimeControl {
             from: &moved.head,
             microvm: &microvm,
             intent_id: &intent_id,
+            action: LifecycleAction::Resume,
             next_state: GenerationState::Running,
             observed: ProviderState::Running,
             request: Some(request),
             residence: Some(SnapshotResidence {
                 lifecycle_id: snapshot_lifecycle_id(&microvm, view.snapshot_ordinal),
+                generation: u64::from(view.snapshot_ordinal),
                 bytes: view.snapshot_bytes,
                 suspended_at,
                 released_at: now,
+                terminal: false,
                 io: SnapshotIo::default(),
             }),
             charge_residence: true,
@@ -965,6 +1056,7 @@ impl RuntimeControl {
             from: &moved.head,
             microvm: &microvm,
             intent_id: &intent_id,
+            action,
             next_state: GenerationState::Terminated,
             observed: ProviderState::Terminated,
             request,
@@ -973,9 +1065,11 @@ impl RuntimeControl {
                 .filter(|_| was_suspended)
                 .map(|suspended_at| SnapshotResidence {
                     lifecycle_id: snapshot_lifecycle_id(&microvm, view.snapshot_ordinal),
+                    generation: u64::from(view.snapshot_ordinal),
                     bytes: view.snapshot_bytes,
                     suspended_at,
                     released_at: now,
+                    terminal: true,
                     io: SnapshotIo::default(),
                 }),
             charge_residence: true,
@@ -998,6 +1092,7 @@ impl RuntimeControl {
     async fn settle_await(
         &self,
         view: &GenerationView,
+        current: &GenerationHead,
         microvm: &MicrovmId,
         action: LifecycleAction,
         intent_id: &LifecycleIntentId,
@@ -1008,7 +1103,7 @@ impl RuntimeControl {
             .await
         {
             Ok(AwaitVerdict::Reached(_)) => None,
-            Ok(AwaitVerdict::Lost) => Some(self.mark_lost(view, intent_id, now).await),
+            Ok(AwaitVerdict::Lost) => Some(self.mark_lost(view, current, intent_id, now).await),
             Ok(AwaitVerdict::TimedOut | AwaitVerdict::Poll) => {
                 Some(self.mark_unknown(view, intent_id, now).await)
             }
@@ -1095,8 +1190,24 @@ impl RuntimeControl {
             return self.mark_unknown(view, intent_id, now).await;
         }
         if matches!(call, ProviderCall::NotFound) {
-            return self.mark_lost(view, intent_id, now).await;
+            return self.mark_lost(view, current, intent_id, now).await;
         }
+        // The restore is conditional on the head as it stands **after** the fence
+        // was taken, not on the caller's stale read. It is committed with the
+        // receipt so a lost response cannot leave a settled intent in a
+        // transitional generation.
+        let restore = GenerationPlan {
+            generation: current.generation,
+            expected_state: current.state,
+            expected_fence: current.fence,
+            expected_revision: current.revision,
+            next_state: restore_to,
+            next_fence: current.fence,
+            microvm: view.microvm.clone(),
+            transport_mode: current.transport_mode,
+            accounting: None,
+            at: now,
+        };
         let plan = LifecycleReceiptPlan {
             intent_id: intent_id.clone(),
             generation: view.head.generation,
@@ -1104,33 +1215,12 @@ impl RuntimeControl {
             provider_request_id: None,
             observed_state: None,
             snapshot: None,
+            usage: Vec::new(),
+            generation_commit: Some(restore),
             settled_at: now,
         };
         if let Err(error) = self.ports.store.settle_intent(&plan).await {
             return store_outcome(&error);
-        }
-        // The restore is conditional on the head as it stands **after** the fence
-        // was taken, not on the caller's stale read. Getting that wrong leaves the
-        // generation in a transitional state that admits nothing and resumes
-        // nothing, so a failed restore is reported rather than swallowed.
-        let restore = GenerationPlan {
-            generation: current.generation,
-            expected_state: current.state,
-            expected_revision: current.revision,
-            next_state: restore_to,
-            next_fence: current.fence,
-            microvm: view.microvm.clone(),
-            transport_mode: current.transport_mode,
-            at: now,
-        };
-        if let Err(error) = self.ports.store.commit_generation(&restore).await {
-            return CommandOutcome::Retry {
-                reason: format!(
-                    "the provider refused the dispatch and generation {} could not be restored \
-                     from {:?} to {restore_to:?}: {error}",
-                    current.generation, current.state
-                ),
-            };
         }
         provider_outcome(call, "the lifecycle dispatch")
     }
@@ -1149,6 +1239,8 @@ impl RuntimeControl {
             provider_request_id: None,
             observed_state: None,
             snapshot: None,
+            usage: Vec::new(),
+            generation_commit: None,
             settled_at: now,
         };
         if let Err(error) = self.ports.store.settle_intent(&plan).await {
@@ -1161,9 +1253,22 @@ impl RuntimeControl {
     async fn mark_lost(
         &self,
         view: &GenerationView,
+        current: &GenerationHead,
         intent_id: &LifecycleIntentId,
         now: Timestamp,
     ) -> CommandOutcome {
+        let generation_commit = GenerationPlan {
+            generation: current.generation,
+            expected_state: current.state,
+            expected_fence: current.fence,
+            expected_revision: current.revision,
+            next_state: GenerationState::Lost,
+            next_fence: current.fence,
+            microvm: view.microvm.clone(),
+            transport_mode: current.transport_mode,
+            accounting: None,
+            at: now,
+        };
         let plan = LifecycleReceiptPlan {
             intent_id: intent_id.clone(),
             generation: view.head.generation,
@@ -1171,6 +1276,8 @@ impl RuntimeControl {
             provider_request_id: None,
             observed_state: Some(ProviderState::Terminated),
             snapshot: None,
+            usage: Vec::new(),
+            generation_commit: Some(generation_commit),
             settled_at: now,
         };
         if let Err(error) = self.ports.store.settle_intent(&plan).await {
@@ -1179,52 +1286,67 @@ impl RuntimeControl {
         CommandOutcome::Settled(Settled::Lost)
     }
 
-    /// Derives and emits the usage facts one closed interval produces.
-    async fn emit(
+    /// Derives the canonical drafts persisted in the lifecycle transaction.
+    fn derive_drafts(
         &self,
         view: &GenerationView,
         receipt: &RuntimeReceipt,
         residence: Option<&SnapshotResidence>,
         intent_id: &LifecycleIntentId,
         source_receipt_id: &str,
-        now: Timestamp,
-    ) -> Result<(), CommandOutcome> {
+    ) -> Result<Vec<FactDraft>, CommandOutcome> {
         let context = FactContext {
             organization: view.organization,
             workspace: view.workspace,
             region: self.settings.region,
-            attribution: Attribution {
-                session: Some(view.session),
-                run: None,
-                operation: None,
-            },
+            session: view.session,
             pricing_version: self.settings.pricing_version.clone(),
             intent: intent_id.clone(),
             source_receipt_id: source_receipt_id.to_owned(),
-            observed_at: now,
         };
-        let facts =
-            derive_facts(receipt, residence, &context).map_err(|error| CommandOutcome::Poison {
-                reason: format!(
-                    "the runtime receipt does not account for its own interval: {error}"
-                ),
-            })?;
-        for fact in facts {
-            let category = category_of(fact.meter);
+        derive_facts(receipt, residence, &context).map_err(|error| CommandOutcome::Poison {
+            reason: format!("the runtime receipt does not account for its own interval: {error}"),
+        })
+    }
+
+    /// Delivers and acknowledges the generation's transactional usage outbox.
+    async fn flush_usage(&self, generation: GenerationId) -> Result<(), CommandOutcome> {
+        let pending = self
+            .ports
+            .store
+            .load_usage_outbox(generation)
+            .await
+            .map_err(|error| store_outcome(&error))?;
+        for entry in pending {
+            let category = entry.category;
             let sink = self
                 .sink_for(category)
                 .ok_or_else(|| CommandOutcome::Poison {
                     reason: format!(
                         "meter {} routes to the {category:?} authority, which this worker holds no \
                      binding for",
-                        fact.meter.as_str()
+                        entry
+                            .draft
+                            .kind
+                            .meter()
+                            .map_or("correction", |meter| meter.id())
                     ),
                 })?;
-            if let Err(error) = sink.emit(category, fact).await {
-                return Err(CommandOutcome::Retry {
-                    reason: format!("a usage ingress refused a fact: {error}"),
-                });
-            }
+            sink.emit(category, entry.draft.clone())
+                .await
+                .map_err(|error| match error {
+                    SinkError::Refused { .. } => CommandOutcome::Poison {
+                        reason: error.to_string(),
+                    },
+                    SinkError::Unavailable { .. } => CommandOutcome::Retry {
+                        reason: error.to_string(),
+                    },
+                })?;
+            self.ports
+                .store
+                .mark_usage_emitted(generation, &entry.draft)
+                .await
+                .map_err(|error| store_outcome(&error))?;
         }
         Ok(())
     }
@@ -1236,9 +1358,9 @@ impl RuntimeControl {
     /// accident.
     fn sink_for(&self, category: UsageCategory) -> Option<&Arc<dyn UsageFactSink>> {
         match category {
-            AuthorityKind::Compute => Some(&self.ports.compute),
-            AuthorityKind::Storage => Some(&self.ports.storage),
-            AuthorityKind::Transfer => None,
+            Category::Compute => Some(&self.ports.compute),
+            Category::Storage => Some(&self.ports.storage),
+            Category::Transfer => None,
         }
     }
 }
@@ -1311,7 +1433,6 @@ mod tests {
     use aex_hands_protocol::lifecycle::ProviderRequestId;
     use aex_hands_protocol::rpc::Fence;
     use aex_internal_contracts::PricingVersion;
-    use aex_internal_contracts::usage::{AuthorityKind, Meter, UsageFact};
     use aex_runtime_control::clock::minus_millis;
     use aex_runtime_control::generation::{
         GenerationHead, GenerationState, ImageIdentifier, Revision,
@@ -1325,8 +1446,11 @@ mod tests {
         GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
         LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan, OpenEffectCounter, PageBudget,
         RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
+        UsageOutboxEntry,
     };
     use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
+    use aex_usage_domain::fact::{FactDraft, FactKind};
+    use aex_usage_domain::meter::{Category, Meter};
     use aex_wire::ids::{
         GenerationId, OrganizationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId,
     };
@@ -1404,8 +1528,10 @@ mod tests {
         commits: Vec<GenerationPlan>,
         intents: Vec<LifecycleIntentPlan>,
         receipts: Vec<LifecycleReceiptPlan>,
+        outbox: Vec<UsageOutboxEntry>,
         probes: Vec<IdleProbe>,
         scan_failure: Option<RuntimeStoreError>,
+        lose_next_settle_response: bool,
     }
 
     #[derive(Default)]
@@ -1468,9 +1594,18 @@ mod tests {
             head.state = plan.next_state;
             head.fence = plan.next_fence;
             head.revision = head.revision.next();
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.fence = head.fence;
+                pointer.revision = head.revision;
+            }
             state.commits.push(plan.clone());
             if let Some(view) = state.view.as_mut() {
                 view.head = head.clone();
+                if let Some(accounting) = plan.accounting {
+                    view.accounted_from = accounting.accounted_from;
+                    view.suspended_at = accounting.suspended_at;
+                    view.snapshot_ordinal = accounting.snapshot_ordinal;
+                }
             }
             let revision = head.revision;
             drop(state);
@@ -1500,23 +1635,106 @@ mod tests {
             &'a self,
             plan: &'a LifecycleReceiptPlan,
         ) -> StoreFuture<'a, LifecycleReceipt> {
-            self.lock().receipts.push(plan.clone());
+            let mut state = self.lock();
+            if let Some(generation) = &plan.generation_commit {
+                let head = &state.view.as_ref().expect("the fixture has a view").head;
+                if head.state != generation.expected_state
+                    || head.fence != generation.expected_fence
+                    || head.revision != generation.expected_revision
+                {
+                    let expected = generation.expected_revision;
+                    let found = Some(head.revision);
+                    drop(state);
+                    return Box::pin(async move {
+                        Err(RuntimeStoreError::RevisionConflict { expected, found })
+                    });
+                }
+            }
+            state.receipts.push(plan.clone());
+            state
+                .outbox
+                .extend(plan.usage.iter().cloned().map(|pending| UsageOutboxEntry {
+                    generation: plan.generation,
+                    category: pending.category,
+                    draft: pending.draft,
+                }));
+            if let Some(generation) = &plan.generation_commit {
+                let mut head = state
+                    .view
+                    .as_ref()
+                    .expect("the fixture has a view")
+                    .head
+                    .clone();
+                head.state = generation.next_state;
+                head.fence = generation.next_fence;
+                head.revision = head.revision.next();
+                state.commits.push(generation.clone());
+                if let Some(view) = state.view.as_mut() {
+                    view.head = head;
+                    if let Some(accounting) = generation.accounting {
+                        view.accounted_from = accounting.accounted_from;
+                        view.suspended_at = accounting.suspended_at;
+                        view.snapshot_ordinal = accounting.snapshot_ordinal;
+                    }
+                }
+            }
+            let lose_response = state.lose_next_settle_response;
+            state.lose_next_settle_response = false;
+            drop(state);
+            if lose_response {
+                return Box::pin(async move {
+                    Err(RuntimeStoreError::Unavailable {
+                        reason: "the committed settlement response was lost".to_owned(),
+                    })
+                });
+            }
+            let action = if plan.intent_id.0.contains(":resume:") {
+                LifecycleAction::Resume
+            } else if plan.intent_id.0.contains(":terminate:") {
+                LifecycleAction::Terminate
+            } else {
+                LifecycleAction::Suspend
+            };
+            let receipt_id = plan.provider_request_id.as_ref().map_or_else(
+                || format!("aex-runtime:{}:{}", plan.generation, plan.intent_id.0),
+                |request| format!("lambda-microvm:mvm-1:{}:{}", action.as_str(), request.0),
+            );
             let receipt = LifecycleReceipt {
                 intent: IntentRecord {
                     intent_id: plan.intent_id.clone(),
                     generation: plan.generation,
                     microvm: Some(microvm()),
-                    action: LifecycleAction::Suspend,
+                    action,
                     fence: Fence(4),
                     state: plan.next_intent_state,
                     provider_request_id: plan.provider_request_id.clone(),
                     attempts: 0,
                     dispatched_at: plan.settled_at,
                 },
-                receipt_id: "lambda-microvm:mvm-1:suspend:req-1".to_owned(),
+                receipt_id,
                 snapshot: plan.snapshot.clone(),
             };
             Box::pin(async move { Ok(receipt) })
+        }
+
+        fn load_usage_outbox(
+            &self,
+            _generation: GenerationId,
+        ) -> StoreFuture<'_, Vec<UsageOutboxEntry>> {
+            let outbox = self.lock().outbox.clone();
+            Box::pin(async move { Ok(outbox) })
+        }
+
+        fn mark_usage_emitted<'a>(
+            &'a self,
+            _generation: GenerationId,
+            draft: &'a FactDraft,
+        ) -> StoreFuture<'a, ()> {
+            let fact_id = draft.fact_id();
+            self.lock()
+                .outbox
+                .retain(|entry| entry.draft.fact_id() != fact_id);
+            Box::pin(async move { Ok(()) })
         }
 
         fn record_probe<'a>(&'a self, probe: &'a IdleProbe) -> StoreFuture<'a, ()> {
@@ -1701,7 +1919,8 @@ mod tests {
 
     #[derive(Default)]
     struct FakeSink {
-        facts: Mutex<Vec<(UsageCategory, UsageFact)>>,
+        facts: Mutex<Vec<(UsageCategory, FactDraft)>>,
+        failure: Mutex<Option<SinkError>>,
     }
 
     impl FakeSink {
@@ -1710,7 +1929,7 @@ mod tests {
                 .lock()
                 .expect("the fixture lock is not poisoned")
                 .iter()
-                .map(|(_, fact)| fact.meter)
+                .filter_map(|(_, fact)| fact.kind.meter())
                 .collect()
         }
 
@@ -1719,7 +1938,10 @@ mod tests {
                 .lock()
                 .expect("the fixture lock is not poisoned")
                 .iter()
-                .map(|(_, fact)| fact.quantity.get())
+                .filter_map(|(_, fact)| match &fact.kind {
+                    FactKind::Measured(measurement) => Some(measurement.quantity().get()),
+                    _ => None,
+                })
                 .collect()
         }
 
@@ -1731,14 +1953,29 @@ mod tests {
                 .map(|(category, _)| *category)
                 .collect()
         }
+
+        fn fail_with(&self, failure: Option<SinkError>) {
+            *self
+                .failure
+                .lock()
+                .expect("the fixture lock is not poisoned") = failure;
+        }
     }
 
     impl UsageFactSink for FakeSink {
         fn emit<'a>(
             &'a self,
             category: UsageCategory,
-            fact: UsageFact,
+            fact: FactDraft,
         ) -> core::pin::Pin<Box<dyn Future<Output = Result<(), SinkError>> + Send + 'a>> {
+            if let Some(error) = self
+                .failure
+                .lock()
+                .expect("the fixture lock is not poisoned")
+                .clone()
+            {
+                return Box::pin(async move { Err(error) });
+            }
             self.facts
                 .lock()
                 .expect("the fixture lock is not poisoned")
@@ -1935,8 +2172,106 @@ mod tests {
                 .compute
                 .categories()
                 .iter()
-                .all(|category| *category == AuthorityKind::Compute),
+                .all(|category| *category == Category::Compute),
             "no fact reaches an authority this worker holds no binding for"
+        );
+        let state = closing.store.lock();
+        let accounting = state.commits[1]
+            .accounting
+            .expect("the settled transition advances accounting");
+        assert_eq!(accounting.accounted_from, now);
+        assert_eq!(accounting.suspended_at, Some(now));
+        assert_eq!(accounting.snapshot_ordinal, 0);
+        assert_eq!(state.receipts[0].usage.len(), 2);
+        assert!(
+            state.outbox.is_empty(),
+            "successful enqueue acknowledges the outbox"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_usage_outage_cannot_lose_a_committed_lifecycle_interval() {
+        let closing = fixture(
+            FakeStore::with(view(GenerationState::Running, 0)),
+            FakeProvider::running(),
+            0,
+        );
+        closing.compute.fail_with(Some(SinkError::Unavailable {
+            category: Category::Compute,
+            reason: "queue unavailable".to_owned(),
+        }));
+        let now = at(LAUNCHED_AT + 3_600_000);
+        assert!(matches!(
+            closing.control.handle_command(evaluate(), now).await,
+            CommandOutcome::Retry { .. }
+        ));
+        {
+            let state = closing.store.lock();
+            assert_eq!(
+                state.view.as_ref().expect("view").head.state,
+                GenerationState::Suspended
+            );
+            assert_eq!(state.outbox.len(), 2, "both compute drafts remain durable");
+        }
+
+        closing.compute.fail_with(None);
+        let outcome = closing.control.handle_command(evaluate(), now).await;
+        assert!(matches!(
+            outcome,
+            CommandOutcome::Settled(
+                Settled::Held { .. } | Settled::AlreadyTerminal { .. } | Settled::Raced
+            )
+        ));
+        assert!(
+            closing.store.lock().outbox.is_empty(),
+            "redelivery flushes and acknowledges the transactional outbox"
+        );
+        assert_eq!(closing.compute.meters().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_lost_settlement_response_cannot_repeat_the_provider_effect() {
+        let store = FakeStore::with(view(GenerationState::Running, 0));
+        store.lock().lose_next_settle_response = true;
+        let closing = fixture(Arc::clone(&store), FakeProvider::running(), 0);
+        let now = at(LAUNCHED_AT + 3_600_000);
+
+        assert!(matches!(
+            closing.control.handle_command(evaluate(), now).await,
+            CommandOutcome::Retry { .. }
+        ));
+        {
+            let state = store.lock();
+            assert_eq!(
+                state.view.as_ref().expect("view").head.state,
+                GenerationState::Suspended,
+                "the receipt, final state, accounting, and outbox committed together"
+            );
+            assert_eq!(state.outbox.len(), 2);
+        }
+        assert_eq!(
+            closing
+                .provider
+                .calls()
+                .into_iter()
+                .filter(|call| *call == "suspend")
+                .count(),
+            1
+        );
+
+        let outcome = closing.control.handle_command(evaluate(), now).await;
+        assert!(matches!(outcome, CommandOutcome::Settled(_)));
+        assert!(store.lock().outbox.is_empty());
+        assert_eq!(closing.compute.meters().len(), 2);
+        assert_eq!(
+            closing
+                .provider
+                .calls()
+                .into_iter()
+                .filter(|call| *call == "suspend")
+                .count(),
+            1,
+            "redelivery observes the final head and never repeats the effect"
         );
     }
 
@@ -2087,6 +2422,11 @@ mod tests {
             vec![0, 0],
             "suspended time is not running time, and saying so with a zero is not the same as              saying nothing"
         );
+        let state = waking.store.lock();
+        let accounting = state.commits[1].accounting.expect("resume accounting");
+        assert_eq!(accounting.accounted_from, at(LAUNCHED_AT + 600_000));
+        assert_eq!(accounting.suspended_at, None);
+        assert_eq!(accounting.snapshot_ordinal, 1);
     }
 
     #[tokio::test]
@@ -2116,6 +2456,10 @@ mod tests {
         );
         assert!(discarding.provider.calls().contains(&"terminate"));
         assert_eq!(discarding.storage.meters(), vec![Meter::StorageByteMin]);
+        let state = discarding.store.lock();
+        let accounting = state.commits[1].accounting.expect("terminal accounting");
+        assert_eq!(accounting.suspended_at, None);
+        assert_eq!(accounting.snapshot_ordinal, 1);
     }
 
     #[tokio::test]

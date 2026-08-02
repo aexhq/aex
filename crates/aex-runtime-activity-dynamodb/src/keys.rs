@@ -28,6 +28,7 @@ pub const ITEM_TYPES: &[&str] = &[
     "lifecycle_receipt",
     "idle_probe",
     "current_generation",
+    "usage_outbox",
 ];
 
 /// Every generation state, as the domain spells them.
@@ -151,6 +152,15 @@ pub fn receipt(
         pk: generation_partition(session, generation),
         sk: format!("RECEIPT#{intent}"),
     })
+}
+
+/// One pending usage draft, keyed by deterministic authority identity.
+#[must_use]
+pub fn usage_outbox(generation: GenerationId, fact_id: &str) -> Key {
+    Key {
+        pk: generation_partition_for_id(generation),
+        sk: format!("USAGE#{fact_id}"),
+    }
 }
 
 /// One true-idle probe.
