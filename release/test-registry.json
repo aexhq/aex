@@ -3495,6 +3495,7 @@
         "owner": "providers",
         "role": "live_companion",
         "artifact": "none",
+        "deployable": "brain-mux",
         "layers": [
           "smoke",
           "e2e"
@@ -3519,7 +3520,6 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "deployable": "the model catalog is a non-package artifact; delivery declares its identity in release/artifact-metadata.toml",
           "targets": "awaiting the providers stream; live evidence cannot be earned before deployment (OD-07)"
         }
       },

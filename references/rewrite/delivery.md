@@ -125,11 +125,12 @@ The other two are named in §3. That is the designed state, not a regression.
 
 ### 3.1 `[package.metadata.aex]` — landed
 
-All 140 manifests carry ownership metadata. One live companion still omits the
-`deployable` back-reference its role requires: `aex-live-model-catalog`. It
-resolves once the providers stream decides where the model catalogue's identity
-is declared; its own `not_applicable` note says delivery declares it in
-`release/artifact-metadata.toml`, and that file does not exist.
+All manifests carry ownership metadata. `aex-live-model-catalog` names
+`brain-mux` as its deployable: the catalogue is loaded and enforced inside that
+runtime rather than shipped as a standalone service. The former reference to a
+nonexistent `release/artifact-metadata.toml` is removed, so the live companion
+has a real started-artifact subject and `graph verify` no longer reports
+`aex-metadata-missing-deployable`.
 
 ### 3.2 Lambda and Fargate resource shapes — landed
 

@@ -155,13 +155,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-orphan-companion",
-    "detail": "the model catalog is a non-package artifact; delivery declares its identity in release/artifact-metadata.toml"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-observation-export-launcher",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
