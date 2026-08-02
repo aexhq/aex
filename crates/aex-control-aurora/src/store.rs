@@ -1535,6 +1535,16 @@ impl ControlStore for AuroraControlStore {
         .await
     }
 
+    async fn get_api_key(&self, id: Uuid) -> Result<Option<ApiKey>, StoreError> {
+        self.client
+            .query_opt::<ApiKeyRow>(
+                Statement::new(sql::GET_API_KEY).bind("key_id", SqlValue::Uuid(id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
+    }
+
     async fn list_api_keys(&self, query: &ListApiKeys) -> Result<Page<ApiKey>, StoreError> {
         let rows = self
             .client

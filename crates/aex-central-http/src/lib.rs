@@ -37,4 +37,4 @@ pub use router::{
     mount_bootstrap_api, mount_central_operations_api, mount_identity_api, mount_organizations_api,
     mount_workspaces_api, mounted_routes,
 };
-pub use target::{TargetPath, TargetResolver, admit_request};
+pub use target::{ControlStoreTargets, TargetPath, TargetResolver, admit_request};

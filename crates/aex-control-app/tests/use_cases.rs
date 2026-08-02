@@ -306,6 +306,10 @@ impl ControlStore for Store {
         unreachable!("{UNDRIVEN}")
     }
 
+    async fn get_api_key(&self, _id: Uuid) -> Result<Option<ApiKey>, StoreError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
     async fn list_api_keys(&self, _query: &ListApiKeys) -> Result<Page<ApiKey>, StoreError> {
         unreachable!("{UNDRIVEN}")
     }

@@ -506,6 +506,18 @@ pub trait ControlStore: Send + Sync {
         command: &CreateApiKeyTx,
     ) -> Result<TxOutcome<ApiKey>, StoreError>;
 
+    /// Reads one API key's metadata, never its verifier.
+    ///
+    /// The `HTTP` edge needs this before it can decide anything about a key: a
+    /// key names a workspace and an organization, and both must come from the
+    /// key's own row rather than from the path, or a caller who could name a
+    /// foreign workspace could authorize itself against it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure.
+    async fn get_api_key(&self, id: Uuid) -> Result<Option<ApiKey>, StoreError>;
+
     /// Lists a workspace's API keys.
     ///
     /// # Errors
