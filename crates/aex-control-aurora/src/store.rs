@@ -12,16 +12,17 @@ use aex_control_app::ports::{
     ReconcileIdentity, RevokeApiKeyTx, StoreError, TxOutcome, UnknownCommit,
 };
 use aex_control_domain::{
-    ApiKey, AuditEvent, Fence, Invitation, InvitationStatus, Membership, MembershipStatus,
-    Operation, OperationKind, OperationStatus, OperationVisibility, OrgRole, Organization,
-    OrganizationStatus, OutboxMessage, Revision, ScopeSet, Workspace, WorkspaceStatus,
+    AccountState, ApiKey, AuditEvent, Fence, Invitation, InvitationStatus, Membership,
+    MembershipStatus, Operation, OperationKind, OperationStatus, OperationVisibility, OrgRole,
+    Organization, OrganizationStatus, OutboxMessage, Revision, ScopeSet, Workspace,
+    WorkspaceStatus,
 };
 use aex_rds_data::{DataApiClient, Isolation, SqlValue, Statement, Transaction};
 
 use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
-    ApiKeyRow, IdempotencyRow, InvitationRow, MembershipRow, OperationRow, OrganizationRow,
-    OutboxRow, UuidRow, WorkspaceRow,
+    AccountStateRow, ApiKeyRow, IdempotencyRow, InvitationRow, MembershipRow, OperationRow,
+    OrganizationRow, OutboxRow, UuidRow, WorkspaceRow,
 };
 use crate::sql;
 
@@ -251,28 +252,35 @@ impl AuroraControlStore {
             .map(|_| ())
     }
 
+    /// The one `INSERT` an outbox row is ever written by.
+    ///
+    /// Shared by the in-transaction path and the standalone one so the two
+    /// cannot bind different columns: an outbox row written two ways is an
+    /// outbox row a worker reads two ways.
+    fn outbox_statement(message: &OutboxMessage) -> Statement<'static> {
+        Statement::new(sql::INSERT_OUTBOX)
+            .bind("id", SqlValue::Uuid(message.id))
+            .bind("topic", SqlValue::Text(message.topic.as_str().to_owned()))
+            .bind("dedupe_key", SqlValue::Text(message.dedupe_key.clone()))
+            .bind("group_key", SqlValue::Text(message.group_key.clone()))
+            .bind("payload", SqlValue::Json(message.payload.clone()))
+            .bind("attempts", SqlValue::I64(i64::from(message.attempts)))
+            .bind(
+                "available_at_ms",
+                SqlValue::TimestampMillis(Self::millis(message.available_at)),
+            )
+            .bind(
+                "created_at_ms",
+                SqlValue::TimestampMillis(Self::millis(message.created_at)),
+            )
+    }
+
     async fn insert_outbox(
         transaction: &mut Transaction<'_>,
         message: &OutboxMessage,
     ) -> Result<(), aex_rds_data::DataApiError> {
         transaction
-            .execute(
-                Statement::new(sql::INSERT_OUTBOX)
-                    .bind("id", SqlValue::Uuid(message.id))
-                    .bind("topic", SqlValue::Text(message.topic.as_str().to_owned()))
-                    .bind("dedupe_key", SqlValue::Text(message.dedupe_key.clone()))
-                    .bind("group_key", SqlValue::Text(message.group_key.clone()))
-                    .bind("payload", SqlValue::Json(message.payload.clone()))
-                    .bind("attempts", SqlValue::I64(i64::from(message.attempts)))
-                    .bind(
-                        "available_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(message.available_at)),
-                    )
-                    .bind(
-                        "created_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(message.created_at)),
-                    ),
-            )
+            .execute(Self::outbox_statement(message))
             .await
             .map(|_| ())
     }
@@ -1527,6 +1535,16 @@ impl ControlStore for AuroraControlStore {
         .await
     }
 
+    async fn get_api_key(&self, id: Uuid) -> Result<Option<ApiKey>, StoreError> {
+        self.client
+            .query_opt::<ApiKeyRow>(
+                Statement::new(sql::GET_API_KEY).bind("key_id", SqlValue::Uuid(id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
+    }
+
     async fn list_api_keys(&self, query: &ListApiKeys) -> Result<Page<ApiKey>, StoreError> {
         let rows = self
             .client
@@ -1688,6 +1706,18 @@ impl ControlStore for AuroraControlStore {
         Ok(rows.into_iter().map(|row| row.0).collect())
     }
 
+    async fn enqueue_outbox(&self, message: &OutboxMessage) -> Result<(), StoreError> {
+        // No transaction: this is a single `INSERT` whose atomicity the
+        // statement already has. Opening one would suggest something else was
+        // going to be committed with it, and nothing is — the aggregate this
+        // message describes was committed by somebody else.
+        self.client
+            .execute(Self::outbox_statement(message))
+            .await
+            .map(|_| ())
+            .map_err(map_store_error)
+    }
+
     async fn mark_outbox_dispatched(
         &self,
         id: Uuid,
@@ -1764,6 +1794,25 @@ impl ControlStore for AuroraControlStore {
             idempotency_records,
             outbox_messages,
         })
+    }
+
+    async fn account_state(&self, organization_id: Uuid) -> Result<AccountState, StoreError> {
+        // One statement, no transaction: the edge runs this on the request path
+        // for every non-pause-exempt route, and a transaction here would put a
+        // `BEGIN`/`COMMIT` pair in front of every `GET`.
+        let row: Option<AccountStateRow> = self
+            .client
+            .query_opt(
+                Statement::new(sql::GET_ACCOUNT_STATE)
+                    .bind("organization_id", SqlValue::Uuid(organization_id)),
+            )
+            .await
+            .map_err(map_store_error)?;
+        // No organization row means nobody could establish this account's
+        // state, which is what `Unavailable` says. It is deliberately not
+        // `NotFound`: the caller asked "may this account spend?", and the only
+        // honest answers are yes, no, and "could not establish".
+        Ok(row.map_or(AccountState::Unavailable, |row| row.0))
     }
 }
 
@@ -1910,6 +1959,53 @@ mod tests {
                 sql::INSERT_AUDIT,
                 sql::COMPLETE_IDEMPOTENCY,
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_coarse_account_state_is_one_statement_and_no_transaction() {
+        let (store, transport) = store(false);
+        // The stub returns no record, which is the absent-organization case.
+        let state = store
+            .account_state(Uuid::from_u128(7))
+            .await
+            .expect("the read succeeds");
+        assert_eq!(
+            state,
+            aex_control_domain::AccountState::Unavailable,
+            "an organization with no row is never active"
+        );
+        assert_eq!(
+            transport.statements.lock().expect("ledger").as_slice(),
+            [sql::GET_ACCOUNT_STATE],
+            "the edge pays one round trip per request and opens no transaction"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_standalone_outbox_row_is_one_insert_and_no_transaction() {
+        let (store, transport) = store(false);
+        store
+            .enqueue_outbox(&aex_control_domain::OutboxMessage {
+                id: Uuid::from_u128(21),
+                topic: aex_control_domain::Topic::InvitationEmailRequested,
+                dedupe_key: Uuid::from_u128(21).to_string(),
+                group_key: Uuid::from_u128(21).to_string(),
+                payload: serde_json::json!({ "to": "person@example.test" }),
+                attempts: 0,
+                available_at: OffsetDateTime::UNIX_EPOCH,
+                claimed_by: None,
+                claimed_until: None,
+                dispatched_at: None,
+                last_error: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+            })
+            .await
+            .expect("the row is written");
+        assert_eq!(
+            transport.statements.lock().expect("ledger").as_slice(),
+            [sql::INSERT_OUTBOX],
+            "the aggregate this message describes was committed by somebody else"
         );
     }
 

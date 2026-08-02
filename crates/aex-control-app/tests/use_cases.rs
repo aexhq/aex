@@ -306,6 +306,10 @@ impl ControlStore for Store {
         unreachable!("{UNDRIVEN}")
     }
 
+    async fn get_api_key(&self, _id: Uuid) -> Result<Option<ApiKey>, StoreError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
     async fn list_api_keys(&self, _query: &ListApiKeys) -> Result<Page<ApiKey>, StoreError> {
         unreachable!("{UNDRIVEN}")
     }
@@ -336,6 +340,10 @@ impl ControlStore for Store {
         unreachable!("{UNDRIVEN}")
     }
 
+    async fn enqueue_outbox(&self, _message: &OutboxMessage) -> Result<(), StoreError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
     async fn mark_outbox_dispatched(
         &self,
         _id: Uuid,
@@ -354,6 +362,13 @@ impl ControlStore for Store {
     }
 
     async fn gc_expired(&self, _command: &GcExpired) -> Result<GcReport, StoreError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
+    async fn account_state(
+        &self,
+        _organization_id: Uuid,
+    ) -> Result<aex_control_domain::AccountState, StoreError> {
         unreachable!("{UNDRIVEN}")
     }
 }

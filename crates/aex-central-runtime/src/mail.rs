@@ -24,8 +24,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use aex_control_app::ports::{EffectError, InvitationEmail, MailerPort, StoreError};
-use aex_control_domain::Topic;
+use aex_control_app::ports::{ControlStore, EffectError, InvitationEmail, MailerPort, StoreError};
+use aex_control_domain::{OutboxMessage, Topic};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -81,6 +81,61 @@ pub trait OutboxWriter: Send + Sync + fmt::Debug {
     /// error the caller sees: the intent is already durable, which is the
     /// entire promise.
     async fn enqueue(&self, message: &PendingNotification) -> Result<(), StoreError>;
+}
+
+/// The outbox this platform actually has: the control store's own table.
+///
+/// The message is written through [`ControlStore`] rather than through a
+/// connection of this crate's own, so the row lands in the same table, under
+/// the same role and the same unique index, as every outbox row the invitation
+/// transaction commits inline. A second writer would be a second place for the
+/// worker's `(topic, dedupe_key)` contract to be spelled.
+pub struct ControlStoreOutbox {
+    store: Arc<dyn ControlStore>,
+}
+
+impl fmt::Debug for ControlStoreOutbox {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("ControlStoreOutbox").finish()
+    }
+}
+
+impl ControlStoreOutbox {
+    /// Builds the writer over one control store.
+    #[must_use]
+    pub fn new(store: Arc<dyn ControlStore>) -> Self {
+        Self { store }
+    }
+
+    /// The durable row one pending notification becomes.
+    ///
+    /// Every dispatch-state column is the value a freshly committed row carries:
+    /// no attempts, no claim, not dispatched, no error. A writer that filled any
+    /// of them would be pre-deciding something only the worker may.
+    #[must_use]
+    pub fn row(message: &PendingNotification) -> OutboxMessage {
+        OutboxMessage {
+            id: message.id,
+            topic: message.topic,
+            dedupe_key: message.dedupe_key.clone(),
+            group_key: message.group_key.clone(),
+            payload: message.payload.clone(),
+            attempts: 0,
+            available_at: message.available_at,
+            claimed_by: None,
+            claimed_until: None,
+            dispatched_at: None,
+            last_error: None,
+            created_at: message.available_at,
+        }
+    }
+}
+
+#[async_trait]
+impl OutboxWriter for ControlStoreOutbox {
+    async fn enqueue(&self, message: &PendingNotification) -> Result<(), StoreError> {
+        self.store.enqueue_outbox(&Self::row(message)).await
+    }
 }
 
 /// The mailer that writes an intent and sends nothing.
@@ -250,6 +305,25 @@ mod tests {
                 "`{forbidden}` reached a notification body: {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn the_control_store_writer_lands_a_fresh_undispatched_row() {
+        let notification = OutboxMailer::message(&mail(), OffsetDateTime::UNIX_EPOCH);
+        let row = super::ControlStoreOutbox::row(&notification);
+        assert_eq!(row.id, notification.id);
+        assert_eq!(row.topic, Topic::InvitationEmailRequested);
+        assert_eq!(row.dedupe_key, notification.dedupe_key);
+        assert_eq!(row.group_key, notification.group_key);
+        assert_eq!(row.payload, notification.payload);
+        assert_eq!(row.available_at, notification.available_at);
+        // Every dispatch-state column belongs to the worker. A writer that set
+        // one would be deciding an attempt, a claim or a delivery it never made.
+        assert_eq!(row.attempts, 0);
+        assert_eq!(row.claimed_by, None);
+        assert_eq!(row.claimed_until, None);
+        assert_eq!(row.dispatched_at, None);
+        assert_eq!(row.last_error, None);
     }
 
     #[test]

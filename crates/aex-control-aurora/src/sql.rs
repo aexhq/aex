@@ -163,6 +163,22 @@ SELECT version, purpose, state, secret_ref \
   FROM control.credential_pepper \
  WHERE purpose = :purpose AND state = 'active'";
 
+/// The coarse account state of one organization.
+///
+/// The `HTTP` edge runs this once per non-pause-exempt request, after the
+/// authorization decision and never before it. It is driven from
+/// `control.organization` rather than from `finance.account_state_v1` so that
+/// the two absences stay distinguishable: an organization that does not exist
+/// returns no row at all, while an organization whose finance row is missing
+/// returns `'unavailable'` — and neither is ever `'active'`. Selecting from the
+/// finance relation alone would collapse both into "no row" and tempt a caller
+/// into treating it as a default.
+pub const GET_ACCOUNT_STATE: &str = "\
+SELECT COALESCE(a.status,'unavailable') AS account_status \
+  FROM control.organization o \
+  LEFT JOIN finance.account_state_v1 a ON a.organization_id = o.id \
+ WHERE o.id = :organization_id";
+
 /// The readiness probe every control role runs at start-up.
 pub const READINESS_PROBE: &str = "SELECT 1 AS ok";
 
@@ -557,6 +573,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("ACTIVE_SIGNING_KEY", ACTIVE_SIGNING_KEY),
     ("CONTROL_PEPPER_BY_VERSION", CONTROL_PEPPER_BY_VERSION),
     ("ACTIVE_CONTROL_PEPPER", ACTIVE_CONTROL_PEPPER),
+    ("GET_ACCOUNT_STATE", GET_ACCOUNT_STATE),
     ("READINESS_PROBE", READINESS_PROBE),
     ("AUTHZ_WRITE_PROBE", AUTHZ_WRITE_PROBE),
     ("FIND_IDEMPOTENCY", FIND_IDEMPOTENCY),

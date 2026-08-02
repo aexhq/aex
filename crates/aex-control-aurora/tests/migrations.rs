@@ -53,14 +53,19 @@ const MIGRATIONS: [(&str, &str); 4] = [
 /// A fixture only. In production their absence is `503
 /// account_state_unavailable`, which is the correct behaviour anyway; the stub
 /// exists so the join can be exercised at all before the finance stream lands.
+///
+/// TODO(cross-stream): the production grants for `aex_control_api` on
+/// `finance.account_state_v1` belong to the finance stream's migration, next to
+/// the view itself. `aex_authz` is in the same position and has been since the
+/// first pass; this stub is the only place either grant is written down.
 const FINANCE_STUB: &str = "\
 CREATE SCHEMA finance; \
 CREATE VIEW finance.account_state_v1 AS \
   SELECT o.id AS organization_id, 'active'::text AS status, NULL::text AS reason, \
          1::bigint AS revision, o.created_at AS changed_at \
     FROM control.organization o; \
-GRANT USAGE ON SCHEMA finance TO aex_authz; \
-GRANT SELECT ON finance.account_state_v1 TO aex_authz;";
+GRANT USAGE ON SCHEMA finance TO aex_authz, aex_control_api; \
+GRANT SELECT ON finance.account_state_v1 TO aex_authz, aex_control_api;";
 
 /// The login roles `central-schema-admin` attaches in production.
 const LOGIN_ROLES: &str = "\
@@ -192,6 +197,27 @@ impl Fixture {
             .execute(FINANCE_STUB)
             .await
             .expect("the finance fixture applies");
+        // `20260801000000` revokes every database privilege from `PUBLIC` and
+        // never grants `CONNECT` back, so no application role can open a
+        // session until somebody grants it — and nothing in the bundle does.
+        // Without this line every case that connects as a role fails with
+        // `permission denied for database`, which is a fixture gap wearing the
+        // clothes of a denial-matrix result.
+        // TODO(cross-stream): `central-schema-admin` owns the grant step and
+        // this grant is not written down anywhere yet, so the production
+        // database currently locks out all four application roles.
+        let connect: &'static str = Box::leak(
+            format!(
+                "GRANT CONNECT ON DATABASE {} TO aex_identity_api, aex_authz, \
+                 aex_control_api, aex_control_worker",
+                self.database
+            )
+            .into_boxed_str(),
+        );
+        connection
+            .execute(connect)
+            .await
+            .expect("the application roles may open a session");
         let roles = connection.execute(LOGIN_ROLES).await;
         // The roles are cluster-wide, so a parallel fixture may have created
         // them already. Their existence is the point, not who created them.
@@ -542,10 +568,15 @@ async fn only_one_signing_key_can_be_active() {
     let mut connection = fixture.superuser().await;
 
     for index in 0..2_u8 {
+        // `decode(repeat('00',32),'hex')` and not `repeat('\x00',32)::bytea`:
+        // the second builds the 128-character *text* `\x00\x00…` and asks the
+        // hex input parser to read it, which fails on the first backslash. The
+        // insert then never happened, and the case reported a `CHECK` it had
+        // not reached.
         let outcome = sqlx::query(
             "INSERT INTO control.signing_key \
                (kid, alg, public_key, secret_ref, state, created_at, activates_at, retires_at) \
-             VALUES (gen_random_uuid(), 'ed25519', repeat('\\x00', 32)::bytea, $1, 'active', \
+             VALUES (gen_random_uuid(), 'ed25519', decode(repeat('00', 32), 'hex'), $1, 'active', \
                      now(), now(), now() + interval '1 day')",
         )
         .bind(format!("aex/dev/authz-signing/{index}"))
@@ -609,4 +640,45 @@ async fn every_authorization_statement_is_valid_sql_against_the_real_schema() {
             .await
             .unwrap_or_else(|error| panic!("`{name}` is valid for aex_authz: {error}"));
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_coarse_account_state_read_is_valid_and_permitted_for_the_control_api_role() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.as_role("aex_control_api_login").await;
+
+    let statement = aex_control_aurora::sql::GET_ACCOUNT_STATE.replace(":organization_id", "$1");
+    let probe: &'static str =
+        Box::leak(format!("PREPARE probe_account_state AS {statement}").into_boxed_str());
+    connection.execute(probe).await.unwrap_or_else(|error| {
+        panic!("the account-state read is valid for aex_control_api: {error}")
+    });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_organization_with_no_finance_row_reads_as_unavailable_and_never_as_active() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+
+    // The stub view is derived from `control.organization`, so an organization
+    // that is absent from it is the only way to model a missing finance row.
+    // Asking about an organization that does not exist at all is the same
+    // question from the edge's point of view: nobody established the state.
+    // `query_scalar` wants a `'static` statement, and the input is a crate
+    // constant with one parameter marker rewritten; nothing caller-supplied
+    // reaches this string.
+    let read: &'static str = Box::leak(
+        aex_control_aurora::sql::GET_ACCOUNT_STATE
+            .replace(":organization_id", "$1")
+            .into_boxed_str(),
+    );
+    let absent: Vec<String> = sqlx::query_scalar(read)
+        .bind(uuid::Uuid::from_u128(0xDEAD))
+        .fetch_all(&mut connection)
+        .await
+        .expect("the account-state read runs");
+    assert!(
+        absent.is_empty(),
+        "an unknown organization must not answer a status at all, got {absent:?}"
+    );
 }

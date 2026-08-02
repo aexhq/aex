@@ -23,7 +23,7 @@ use aex_central_http::router::{
     mount_organizations_api, mount_workspaces_api,
 };
 use aex_wire::server::{
-    ApiKeysApi, BootstrapApi, CentralOperationsApi, OrganizationsApi, WorkspacesApi,
+    ApiKeysApi, BootstrapApi, CentralOperationsApi, OrganizationsApi, RouteGroup, WorkspacesApi,
 };
 use aex_wire::types::Region;
 
@@ -433,6 +433,48 @@ pub async fn run<A: ControlApi>(
         .map_err(|error| RunError::Listener(error.to_string()))
 }
 
+/// What each mounted group still owes, named rather than summarised.
+///
+/// A deployable that cannot serve refuses, and a refusal that says only "not
+/// composed" is one an operator cannot act on. Every entry is a gap somebody
+/// has to close before this binary can start, and
+/// `the_refusal_names_every_group_this_deployable_owns` holds the list to the
+/// owner map so a group cannot be quietly dropped from it.
+///
+/// The two entries that are not this stream's to close are marked: the
+/// dashboard shell read needs a contract decision, and the workspace view needs
+/// a field the wire model has no representation for.
+pub const UNSERVED: &[(RouteGroup, &str)] = &[
+    (
+        RouteGroup::ApiKeys,
+        "api_key_create must mint a credential under the control pepper, and \
+         `PepperPurpose` names only `identity` and `cursor`",
+    ),
+    (
+        RouteGroup::Bootstrap,
+        "dashboard_bootstrap_get answers one `AccountOperationalState` for a \
+         person who may belong to many organizations, and the contract does not \
+         say which; TODO(cross-stream): contracts",
+    ),
+    (
+        RouteGroup::CentralOperations,
+        "central_operations_list declares `kind` and `status` filters that \
+         LIST_OPERATIONS does not bind, and resolves no organization to scope \
+         the read to",
+    ),
+    (
+        RouteGroup::Organizations,
+        "organizations_list needs the caller's role per row and memberships_list \
+         needs each member's address; neither is projected by its statement",
+    ),
+    (
+        RouteGroup::Workspaces,
+        "`Workspace.operational_state` is a required field with no `unavailable` \
+         representation, on routes that declare no `account_state_unavailable`; \
+         TODO(cross-stream): contracts",
+    ),
+];
+
 fn main() -> std::process::ExitCode {
     // The Aurora-backed `ControlApi` implementation is the one remaining piece:
     // `run` is generic over it, and configuration, capability admission, the
@@ -449,6 +491,13 @@ fn main() -> std::process::ExitCode {
             );
         }
         Err(error) => eprintln!("central-control-api: refusing to start: {error}"),
+    }
+    for (group, blocker) in UNSERVED {
+        eprintln!(
+            "central-control-api: `{}` ({} route(s)) is unserved: {blocker}",
+            group.as_str(),
+            group.routes().len()
+        );
     }
     std::process::ExitCode::FAILURE
 }
@@ -983,5 +1032,25 @@ mod tests {
         fn accepts<A: ControlApi>(_api: &A) {}
         accepts(&Api);
         assert_eq!(DEPLOYABLE.groups().len(), 5);
+    }
+
+    #[test]
+    fn the_refusal_names_every_group_this_deployable_owns() {
+        // A refusal that says only "not composed" is one an operator cannot
+        // action, and a list that drifts from the owner map hides a group that
+        // quietly became servable — or one that quietly stopped being.
+        let named: Vec<_> = super::UNSERVED.iter().map(|(group, _)| *group).collect();
+        assert_eq!(
+            named,
+            DEPLOYABLE.groups(),
+            "the refusal list is the owner map, in the same order"
+        );
+        for (group, blocker) in super::UNSERVED {
+            assert!(
+                blocker.len() > 40,
+                "`{}` is refused without saying what would close it",
+                group.as_str()
+            );
+        }
     }
 }
