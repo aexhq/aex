@@ -14,6 +14,7 @@ use aex_session_dynamodb::component::KeyError;
 use aex_session_dynamodb::measure;
 use aex_wire::ids::{ContentHash, MeasurementId, OrganizationId, WorkspaceId};
 use aex_wire::types::Timestamp;
+use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::keys;
 use crate::wire_pending::{Blake3Digest, DigestError, PinOwner, SealedBytes, body_hex};
@@ -34,6 +35,193 @@ pub const TREE_PAGE: &str = "tree_page";
 pub const GC_EPOCH: &str = "gc_epoch";
 /// The `itemType` of a garbage-collection candidate.
 pub const GC_CANDIDATE: &str = "gc_candidate";
+/// The `itemType` of one durable grant-expiry scan cursor.
+pub const GRANT_EXPIRY_CURSOR: &str = "grant_expiry_cursor";
+
+/// The exact complete last-evaluated key of the expiry GSI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantExpiryPosition {
+    /// The expiry-index partition key.
+    pub expiry_partition: String,
+    /// The expiry-index sort key.
+    pub expiry_sort: String,
+    /// The grant's base-table partition key.
+    pub grant_pk: String,
+    /// The grant's base-table sort key.
+    pub grant_sk: String,
+}
+
+/// One expiry shard's durable optimistic scan cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantExpiryCursor {
+    /// Which expiry shard the cursor walks.
+    pub shard: u16,
+    /// The exact provider key after which the next page starts, or the wrapped
+    /// start of the shard.
+    pub position: Option<GrantExpiryPosition>,
+    /// The optimistic revision.
+    pub revision: u64,
+    /// When the cursor last advanced.
+    pub updated_at: Timestamp,
+}
+
+/// Encodes one grant-expiry cursor without adding sparse-index attributes.
+#[must_use]
+pub fn encode_grant_expiry_cursor(cursor: &GrantExpiryCursor) -> Item {
+    let key = keys::expiry_cursor(cursor.shard);
+    let position = cursor.position.as_ref().map(|position| {
+        AttributeValue::M(
+            [
+                (
+                    keys::EXPIRY_PK.to_owned(),
+                    s(position.expiry_partition.clone()),
+                ),
+                (keys::EXPIRY_SK.to_owned(), s(position.expiry_sort.clone())),
+                (PK.to_owned(), s(position.grant_pk.clone())),
+                (SK.to_owned(), s(position.grant_sk.clone())),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    });
+    ItemBuilder::new(GRANT_EXPIRY_CURSOR)
+        .set(PK, s(key.pk))
+        .set(SK, s(key.sk))
+        .set("shard", n(u64::from(cursor.shard)))
+        .set_opt("position", position)
+        .set("revision", n(cursor.revision))
+        .set("updatedAt", stamp(cursor.updated_at))
+        .build()
+}
+
+/// Decodes one grant-expiry cursor and rejects a partial or forged GSI key.
+///
+/// # Errors
+///
+/// [`CodecError`] when the row or its nested position is incomplete, has the
+/// wrong type, or does not name a grant in the declared shard.
+pub fn decode_grant_expiry_cursor(item: &Item) -> Result<GrantExpiryCursor, CodecError> {
+    let row = Row::bind(item, GRANT_EXPIRY_CURSOR)?;
+    let shard = u16::try_from(row.u64("shard")?).map_err(|_| CodecError::Malformed {
+        item_type: GRANT_EXPIRY_CURSOR,
+        attribute: "shard",
+        reason: "an expiry shard is a small integer".to_owned(),
+    })?;
+    if u64::from(shard) >= keys::EXPIRY_SHARDS {
+        return Err(CodecError::Malformed {
+            item_type: GRANT_EXPIRY_CURSOR,
+            attribute: "shard",
+            reason: format!("{shard} is outside 0..{}", keys::EXPIRY_SHARDS),
+        });
+    }
+    let expected_key = keys::expiry_cursor(shard);
+    if row.string(PK)? != expected_key.pk || row.string(SK)? != expected_key.sk {
+        return Err(CodecError::Malformed {
+            item_type: GRANT_EXPIRY_CURSOR,
+            attribute: "position",
+            reason: "the base key does not match the declared shard".to_owned(),
+        });
+    }
+    let position = item
+        .get("position")
+        .map(|value| decode_grant_expiry_position(value, shard))
+        .transpose()?;
+    Ok(GrantExpiryCursor {
+        shard,
+        position,
+        revision: row.u64("revision")?,
+        updated_at: row.timestamp("updatedAt")?,
+    })
+}
+
+fn decode_grant_expiry_position(
+    value: &AttributeValue,
+    shard: u16,
+) -> Result<GrantExpiryPosition, CodecError> {
+    let members = value.as_m().map_err(|_| CodecError::WrongType {
+        item_type: GRANT_EXPIRY_CURSOR,
+        attribute: "position",
+        expected: "M",
+        found: "another type",
+    })?;
+    if members.len() != 4 {
+        return Err(CodecError::Malformed {
+            item_type: GRANT_EXPIRY_CURSOR,
+            attribute: "position",
+            reason: "the expiry last-evaluated key must contain exactly four members".to_owned(),
+        });
+    }
+    let read = |name: &'static str| -> Result<String, CodecError> {
+        members
+            .get(name)
+            .ok_or(CodecError::Missing {
+                item_type: GRANT_EXPIRY_CURSOR,
+                attribute: name,
+            })?
+            .as_s()
+            .cloned()
+            .map_err(|_| CodecError::WrongType {
+                item_type: GRANT_EXPIRY_CURSOR,
+                attribute: name,
+                expected: "S",
+                found: "another type",
+            })
+    };
+    let position = GrantExpiryPosition {
+        expiry_partition: read(keys::EXPIRY_PK)?,
+        expiry_sort: read(keys::EXPIRY_SK)?,
+        grant_pk: read(PK)?,
+        grant_sk: read(SK)?,
+    };
+    validate_grant_expiry_position(&position, shard)?;
+    Ok(position)
+}
+
+/// Validates that an expiry position is the canonical complete key for one
+/// grant in `shard`.
+///
+/// # Errors
+///
+/// [`CodecError::Malformed`] when any base or index component disagrees.
+pub fn validate_grant_expiry_position(
+    position: &GrantExpiryPosition,
+    shard: u16,
+) -> Result<(), CodecError> {
+    let malformed = |reason: String| CodecError::Malformed {
+        item_type: GRANT_EXPIRY_CURSOR,
+        attribute: "position",
+        reason,
+    };
+    let token = position
+        .grant_pk
+        .strip_prefix("GRANT#")
+        .ok_or_else(|| malformed("the base partition key is not a grant".to_owned()))?;
+    let grant_key = keys::grant(token).map_err(|error| malformed(error.to_string()))?;
+    if position.grant_pk != grant_key.pk || position.grant_sk != grant_key.sk {
+        return Err(malformed(
+            "the base key is not the canonical grant key".to_owned(),
+        ));
+    }
+    if position.expiry_partition != keys::expiry_partition(shard)
+        || keys::expiry_shard(token) != shard
+    {
+        return Err(malformed(
+            "the expiry key belongs to another shard".to_owned(),
+        ));
+    }
+    let suffix = format!("#{token}");
+    let expires_at = position
+        .expiry_sort
+        .strip_suffix(&suffix)
+        .ok_or_else(|| malformed("the expiry sort key names another grant".to_owned()))
+        .and_then(|text| Timestamp::parse(text).map_err(|error| malformed(error.to_string())))?;
+    let expected_sort =
+        keys::expiry_sort(expires_at, token).map_err(|error| malformed(error.to_string()))?;
+    if position.expiry_sort != expected_sort {
+        return Err(malformed("the expiry sort key is not canonical".to_owned()));
+    }
+    Ok(())
+}
 
 /// Why a row could not be encoded.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -707,11 +895,13 @@ mod tests {
         ContentHash, MeasurementId, OrganizationId, PrefixedId, Uuid7, WorkspaceId,
     };
     use aex_wire::types::Timestamp;
+    use aws_sdk_dynamodb::types::AttributeValue;
 
     use super::{
-        ContentDescriptor, DownloadGrant, EncodeError, GcCandidate, ObjectLocation, TreePage,
-        decode_descriptor, decode_grant, decode_tree_page, encode_descriptor, encode_gc_candidate,
-        encode_grant, encode_inline_body, encode_tree_page,
+        ContentDescriptor, DownloadGrant, EncodeError, GcCandidate, GrantExpiryCursor,
+        GrantExpiryPosition, ObjectLocation, TreePage, decode_descriptor, decode_grant,
+        decode_grant_expiry_cursor, decode_tree_page, encode_descriptor, encode_gc_candidate,
+        encode_grant, encode_grant_expiry_cursor, encode_inline_body, encode_tree_page,
     };
     use crate::keys;
     use crate::wire_pending::{Blake3Digest, SealedBytes};
@@ -759,6 +949,33 @@ mod tests {
             media_type: "text/plain".to_owned(),
             expires_at: now(),
         }
+    }
+
+    fn expiry_cursor() -> GrantExpiryCursor {
+        let shard = 7;
+        let token = token_for_shard(shard);
+        let grant = keys::grant(&token).expect("the token enters a key");
+        GrantExpiryCursor {
+            shard,
+            position: Some(GrantExpiryPosition {
+                expiry_partition: keys::expiry_partition(shard),
+                expiry_sort: keys::expiry_sort(now(), &token).expect("the token enters a key"),
+                grant_pk: grant.pk,
+                grant_sk: grant.sk,
+            }),
+            revision: 9,
+            updated_at: now(),
+        }
+    }
+
+    fn token_for_shard(shard: u16) -> String {
+        for candidate in 0_u64..10_000 {
+            let token = format!("{candidate:064x}");
+            if keys::expiry_shard(&token) == shard {
+                return token;
+            }
+        }
+        panic!("no fixture token for shard {shard}");
     }
 
     #[test]
@@ -843,6 +1060,49 @@ mod tests {
             );
         }
         assert_eq!(decode_grant(&encoded).expect("decodes"), grant());
+    }
+
+    #[test]
+    fn a_grant_expiry_cursor_round_trips_the_full_lek_without_entering_the_index() {
+        let original = expiry_cursor();
+        let encoded = encode_grant_expiry_cursor(&original);
+        assert_eq!(
+            decode_grant_expiry_cursor(&encoded).expect("the full cursor decodes"),
+            original
+        );
+        assert!(!encoded.contains_key(keys::EXPIRY_PK));
+        assert!(!encoded.contains_key(keys::EXPIRY_SK));
+        let position = encoded["position"].as_m().expect("a nested map");
+        assert_eq!(
+            position.keys().collect::<std::collections::BTreeSet<_>>(),
+            [
+                keys::EXPIRY_PK.to_owned(),
+                keys::EXPIRY_SK.to_owned(),
+                aex_session_dynamodb::attr::PK.to_owned(),
+                aex_session_dynamodb::attr::SK.to_owned(),
+            ]
+            .iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn a_partial_or_cross_shard_expiry_lek_is_rejected() {
+        let original = expiry_cursor();
+        let mut partial = encode_grant_expiry_cursor(&original);
+        let mut position = partial["position"].as_m().expect("a map").clone();
+        position.remove(keys::EXPIRY_SK);
+        partial.insert("position".to_owned(), AttributeValue::M(position));
+        assert!(decode_grant_expiry_cursor(&partial).is_err());
+
+        let mut mismatched = encode_grant_expiry_cursor(&original);
+        let mut position = mismatched["position"].as_m().expect("a map").clone();
+        position.insert(
+            keys::EXPIRY_PK.to_owned(),
+            aex_session_dynamodb::attr::s(keys::expiry_partition(8)),
+        );
+        mismatched.insert("position".to_owned(), AttributeValue::M(position));
+        assert!(decode_grant_expiry_cursor(&mismatched).is_err());
     }
 
     #[test]

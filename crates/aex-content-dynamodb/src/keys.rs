@@ -1,12 +1,14 @@
 //! The `regional-content` key templates and closed vocabularies.
 //!
-//! Every content partition is **workspace scoped**. The system this replaces
-//! addressed a body as `bodies/{contentId}/{xx}/{digest}` with no workspace
-//! component, so two tenants that happened to store identical bytes shared one
-//! physical object and one physical row. That is a cross-tenant equality side
-//! channel and a shared deletion fate; scoping the partition to the workspace
-//! confines physical reuse to a single encryption domain (D-15). This is a fix,
-//! not a port.
+//! Every customer-content partition is **workspace scoped**. The system this
+//! replaces addressed a body as `bodies/{contentId}/{xx}/{digest}` with no
+//! workspace component, so two tenants that happened to store identical bytes
+//! shared one physical object and one physical row. That is a cross-tenant
+//! equality side channel and a shared deletion fate; scoping the partition to
+//! the workspace confines physical reuse to a single encryption domain (D-15).
+//! Maintenance-authority rows such as a shard cursor are explicitly system
+//! scoped and cannot be addressed through a customer content identity. This is
+//! a fix, not a port.
 
 use aex_wire::ids::{ContentHash, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -41,6 +43,7 @@ pub const ITEM_TYPES: &[&str] = &[
     "tree_page",
     "gc_epoch",
     "gc_candidate",
+    "grant_expiry_cursor",
 ];
 
 /// The closed `pin_kind` vocabulary.
@@ -123,6 +126,18 @@ pub fn expiry_shard(token_sha256_hex: &str) -> u16 {
 #[must_use]
 pub fn expiry_partition(shard: u16) -> String {
     format!("EXPIRY#{}", shard4(shard))
+}
+
+/// The durable scan cursor for one grant-expiry shard.
+///
+/// This base-table row deliberately carries neither top-level expiry-index key,
+/// so it can never enter the sparse index it is walking.
+#[must_use]
+pub fn expiry_cursor(shard: u16) -> Key {
+    Key::new(
+        format!("EXPIRY_CURSOR#{}", shard4(shard)),
+        "CURSOR".to_owned(),
+    )
 }
 
 /// The due-ordered expiry sort key.
