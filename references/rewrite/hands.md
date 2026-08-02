@@ -65,14 +65,41 @@ cargo run -p aex-workspace-check
   134 members and 141 packages satisfy every structural and registry rule
 ```
 
-One older crash-matrix gap remains explicit: taking the transitional generation
-fence and recording the provider intent are still separate store calls, and the
-worker reports an existing `dispatched`/`unknown` intent as reconciling without
-yet executing the pure `ReconcileStep` plan. A crash in either window cannot
-admit work or blindly repeat an effect, but it can leave a generation awaiting
-operator reconciliation. Do not claim the runtime lifecycle production-ready
-until active reconciliation closes that gap and the declared live `MicroVM`
-cases pass.
+The active reconciliation continuation closes the local crash-matrix gap. The
+transitional generation fence, current-generation pointer and blocking intent now
+land in one `DynamoDB` transaction. A successful or ambiguous provider response's
+request id is persisted before any await, and every later pass executes the pure
+`ReconcileStep`: it probes the exact `MicroVM`, settles only from modelled provider
+state plus the required request evidence, and advances a durable eight-attempt
+budget. The eighth unresolved probe quarantines the durable intent, removes it
+from the hot due index and reaches the same operator diagnostic channel as queue
+poison. Queue records and due-page items run in bounded 32-wide waves; production
+refuses a due page larger than one wave, so one 30-second provider await cannot
+multiply across a Lambda invocation.
+
+Two provider/authority limits remain explicit rather than guessed. A launch with
+no `MicroVM` id can only be reissued from the original signed `RunMicrovm` request,
+which this worker deliberately does not hold. A suspend/resume effect whose SDK
+response and request id were both lost may be probed, but cannot produce the exact
+receipt identity required by §6.4; it exhausts into quarantine instead of
+inventing evidence. The declared live `MicroVM` cases remain unearned.
+
+Focused active-reconciliation gates:
+
+```text
+cargo test -p aex-runtime-control -p aex-runtime-activity-dynamodb \
+  -p aex-runtime-control-aws -p runtime-control-worker
+  170 passed; 0 failed; 0 ignored
+
+cargo clippy (the same four packages) --all-targets -- -D warnings
+  clean
+
+cargo fmt (the same four packages) -- --check
+  clean
+
+git diff --check
+  clean
+```
 
 ## 1. What is implemented
 
@@ -506,7 +533,7 @@ the clock.
 
 | Gap | Handling |
 | --- | --- |
-| Active lifecycle intent reconciliation | The pure `ReconcileStep` model exists, but the worker does not yet execute it. Existing `dispatched` or `unknown` intents fail closed as `Reconciling`; no second effect is dispatched. This must be closed with the transitional-fence/intent crash window before production readiness is claimed. |
+| Launch reissue and response-less suspend/resume evidence | Active exact-VM reconciliation is implemented. A pre-VM launch still requires the original signed `RunMicrovm` request owned by the materialization path, and a suspend/resume response lost before its SDK request id can be persisted cannot satisfy the exact receipt identity. Both exhaust into durable quarantine; neither repeats or fabricates an effect. |
 | `Materialize`, `Persist`, `WriteFile` and `Exec` with stdin are refused by the guest | `ContentRef` is a digest and a length; the guest holds no credential and cannot resolve one. Presigned HTTPS would need a TLS client, and the workspace's pinned backend is `aws-lc-rs`, whose crate name the B6 closure scan rejects by prefix. the guest agent's own boundary test asserts no TLS stack is linked, so the choice is checked rather than remembered. |
 | `ReadFile` with a byte range is refused | The wire asks for a byte range; `aex-hands-tools` windows by line. Serving the whole file would answer a different question than the caller asked. |
 | Attached delivery is not served | `start`'s `Attached` mode is refused explicitly rather than left to hang, so a caller never waits on a body that will not arrive. |

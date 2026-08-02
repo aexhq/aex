@@ -410,7 +410,7 @@ mod tests {
             ),
             ("AEX_HANDS_IMAGE_IDENTIFIER", "aex-hands-1gb"),
             ("AEX_RUNTIME_DUE_SHARDS", "8"),
-            ("AEX_RUNTIME_DUE_PAGE_ITEMS", "50"),
+            ("AEX_RUNTIME_DUE_PAGE_ITEMS", "32"),
             ("AEX_RUNTIME_DUE_PAGE_READS", "100"),
             ("AEX_PRICING_VERSION", "synthetic-zero-v1"),
         ]);

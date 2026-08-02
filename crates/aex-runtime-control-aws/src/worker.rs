@@ -8,9 +8,10 @@
 //! raises an alarm, and it can never pause an authority-open background job.
 //!
 //! Every decision here is taken by the pure model in `aex-runtime-control`. What
-//! this module adds is the ordering: take the fence, then recount, then record the
-//! intent, then call the provider, then settle, then emit facts. A different order
-//! is what produces a snapshot of a running job or a charge with no intent.
+//! this module adds is the ordering: atomically take the fence and record the
+//! intent, then recount, then call the provider, then settle, then emit facts. A
+//! different order is what produces a snapshot of a running job or a charge with
+//! no intent.
 
 use std::sync::Arc;
 
@@ -20,16 +21,18 @@ use aex_hands_protocol::lifecycle::{ProviderRequestId, RuntimeReceipt};
 use aex_hands_protocol::rpc::Fence;
 use aex_internal_contracts::PricingVersion;
 use aex_runtime_control::clock::millis_between;
+use aex_runtime_control::clock::plus_millis;
 use aex_runtime_control::generation::{GenerationHead, GenerationState, next_fence};
 use aex_runtime_control::idle::IdleAssessment;
 use aex_runtime_control::lifecycle::{
-    IntentState, LifecycleAction, LifecycleIntentId, MicrovmId, ProviderCall, ProviderState,
-    snapshot_lifecycle_id,
+    IntentRecord, IntentState, LifecycleAction, LifecycleIntentId, MicrovmId, ProviderCall,
+    ProviderState, RECONCILE_ATTEMPTS, ReconcileStep, client_token, snapshot_lifecycle_id,
 };
 use aex_runtime_control::store::{
     CommandBinding, GenerationAccountingPlan, GenerationCommit, GenerationPlan, GenerationView,
-    IdleProbe, LifecycleIntentPlan, LifecycleReceiptPlan, OpenEffectCounter, PageBudget,
-    RuntimeActivityStore, RuntimeShard, RuntimeStoreError, UsageOutboxPlan, bind_command,
+    IdleProbe, LifecycleIntentPlan, LifecycleReceiptPlan, LifecycleReconcilePlan,
+    LifecycleRequestPlan, OpenEffectCounter, PageBudget, RuntimeActivityStore, RuntimeShard,
+    RuntimeStoreError, UsageOutboxPlan, bind_command,
 };
 use aex_runtime_control::usage::{
     FactContext, SinkError, SnapshotIo, SnapshotResidence, UsageCategory, UsageFactSink,
@@ -39,6 +42,7 @@ use aex_usage_domain::fact::FactDraft;
 use aex_usage_domain::meter::Category;
 use aex_wire::ids::{GenerationId, SessionId};
 use aex_wire::types::{Region, Timestamp};
+use futures::{StreamExt as _, stream};
 use serde::{Deserialize, Serialize};
 
 use crate::composition::{HoldReason, SuspendDecision, evaluate_suspend, recount};
@@ -46,6 +50,14 @@ use crate::queue::{BatchItem, BatchResult, ItemOutcome, fold_batch};
 
 /// How long a lifecycle await may take before it is treated as indeterminate.
 pub const AWAIT_BUDGET_MS: u64 = 30_000;
+
+/// Maximum independent lifecycle items evaluated concurrently in one Lambda.
+///
+/// A provider await may consume the full 30-second budget. Serially processing a
+/// ten-record SQS batch or a fifty-item due page would exceed ordinary Lambda
+/// timeouts; this bound keeps one invocation within one await window while
+/// capping provider and `DynamoDB` pressure.
+pub const ITEM_CONCURRENCY: usize = 32;
 
 /// A cooperative pause between provider polls.
 ///
@@ -321,6 +333,17 @@ struct Closure<'a> {
     suspended_ms: u64,
 }
 
+/// Exact identities needed to settle one bounded provider await.
+struct TransitionAwait<'a> {
+    view: &'a GenerationView,
+    current: &'a GenerationHead,
+    microvm: &'a MicrovmId,
+    intent_id: &'a LifecycleIntentId,
+    request: &'a ProviderRequestId,
+    action: LifecycleAction,
+    now: Timestamp,
+}
+
 /// The runtime-control engine.
 #[derive(Debug)]
 pub struct RuntimeControl {
@@ -347,20 +370,23 @@ impl RuntimeControl {
     /// Reporting the whole batch would redrive the ones that already succeeded,
     /// which for a lifecycle effect means dispatching it twice.
     pub async fn handle_queue(&self, records: &[QueueRecord], now: Timestamp) -> BatchResult {
-        let mut items = Vec::with_capacity(records.len());
-        for record in records {
-            let outcome = match serde_json::from_str::<RuntimeCommand>(&record.body) {
-                Ok(command) => self.handle_command(command, now).await,
-                Err(error) => CommandOutcome::Poison {
-                    reason: format!("undecodable runtime command: {error}"),
-                },
-            };
-            items.push(BatchItem {
-                message_id: record.message_id.clone(),
-                receive_count: record.receive_count,
-                outcome: outcome.item_outcome(),
-            });
-        }
+        let items = stream::iter(records)
+            .map(|record| async move {
+                let outcome = match serde_json::from_str::<RuntimeCommand>(&record.body) {
+                    Ok(command) => self.handle_command(command, now).await,
+                    Err(error) => CommandOutcome::Poison {
+                        reason: format!("undecodable runtime command: {error}"),
+                    },
+                };
+                BatchItem {
+                    message_id: record.message_id.clone(),
+                    receive_count: record.receive_count,
+                    outcome: outcome.item_outcome(),
+                }
+            })
+            .buffer_unordered(ITEM_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
         fold_batch(&items)
     }
 
@@ -385,19 +411,22 @@ impl RuntimeControl {
                 };
             }
         };
-        let mut outcomes = Vec::with_capacity(page.due.len());
-        for pointer in &page.due {
-            let outcome = self
-                .handle_command(
-                    RuntimeCommand::Evaluate {
-                        session: pointer.session,
-                        generation: pointer.generation,
-                    },
-                    now,
-                )
-                .await;
-            outcomes.push((pointer.generation, outcome));
-        }
+        let outcomes = stream::iter(&page.due)
+            .map(|pointer| async move {
+                let outcome = self
+                    .handle_command(
+                        RuntimeCommand::Evaluate {
+                            session: pointer.session,
+                            generation: pointer.generation,
+                        },
+                        now,
+                    )
+                    .await;
+                (pointer.generation, outcome)
+            })
+            .buffer_unordered(ITEM_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
         SchedulePass {
             scanned: u32::try_from(page.due.len()).unwrap_or(u32::MAX),
             outcomes,
@@ -463,6 +492,11 @@ impl RuntimeControl {
                 ),
             };
         }
+        if let Some(intent) = &view.open_intent
+            && !intent.permits_new_effect()
+        {
+            return self.reconcile_intent(&view, intent, now).await;
+        }
         match command {
             RuntimeCommand::Evaluate { .. } => self.evaluate(&view, now).await,
             RuntimeCommand::LiveWorkspaceWake { .. } => self.wake(&view, now).await,
@@ -470,6 +504,277 @@ impl RuntimeControl {
                 self.discard(&view, now, LifecycleAction::Terminate, false)
                     .await
             }
+        }
+    }
+
+    /// Advances one unresolved lifecycle intent without ever repeating its
+    /// provider effect.
+    async fn reconcile_intent(
+        &self,
+        view: &GenerationView,
+        intent: &IntentRecord,
+        now: Timestamp,
+    ) -> CommandOutcome {
+        if intent.generation != view.head.generation || intent.fence != view.head.fence {
+            return CommandOutcome::Poison {
+                reason: format!(
+                    "open intent {} is bound to generation {}/fence {}, but the head is {}/{}",
+                    intent.intent_id,
+                    intent.generation,
+                    intent.fence.0,
+                    view.head.generation,
+                    view.head.fence.0
+                ),
+            };
+        }
+        if intent.state == IntentState::Quarantined {
+            return CommandOutcome::Poison {
+                reason: format!(
+                    "lifecycle intent {} is quarantined after {} reconciliation attempts",
+                    intent.intent_id, intent.attempts
+                ),
+            };
+        }
+        match intent.next_reconcile_step(&client_token(view.head.generation)) {
+            ReconcileStep::Quarantine { attempts } => {
+                self.defer_reconcile(
+                    intent,
+                    now,
+                    format!("reconciliation budget exhausted after {attempts} attempts"),
+                )
+                .await
+            }
+            ReconcileStep::ReissueLaunch { .. } => {
+                // This worker deliberately holds no signed image/run-hook plan.
+                // Reissuing with a fabricated request would violate the launch
+                // authority and could create a second VM if any field drifted.
+                self.defer_reconcile(
+                    intent,
+                    now,
+                    "launch reconciliation requires the original signed RunMicrovm request"
+                        .to_owned(),
+                )
+                .await
+            }
+            ReconcileStep::Probe { microvm } => match self.ports.provider.get(&microvm).await {
+                Ok(description) => {
+                    self.reconcile_observed(view, intent, &microvm, description.state, now)
+                        .await
+                }
+                Err(ProviderCall::NotFound) if intent.action == LifecycleAction::Terminate => {
+                    self.close_reconciled(view, intent, &microvm, ProviderState::Terminated, now)
+                        .await
+                }
+                Err(ProviderCall::NotFound) => {
+                    self.mark_lost(view, &view.head, &intent.intent_id, now)
+                        .await
+                }
+                Err(call) => {
+                    self.defer_reconcile(
+                        intent,
+                        now,
+                        format!("GetMicrovm did not resolve the intent: {call}"),
+                    )
+                    .await
+                }
+            },
+        }
+    }
+
+    /// Resolves a provider observation through the same transition table as the
+    /// ordinary await path.
+    async fn reconcile_observed(
+        &self,
+        view: &GenerationView,
+        intent: &IntentRecord,
+        microvm: &MicrovmId,
+        observed: ProviderState,
+        now: Timestamp,
+    ) -> CommandOutcome {
+        if intent.action == LifecycleAction::Launch {
+            return self
+                .defer_reconcile(
+                    intent,
+                    now,
+                    format!(
+                        "launch intent observed {observed:?}, but this worker lacks the original launch receipt authority"
+                    ),
+                )
+                .await;
+        }
+        match await_step(intent.action, observed, view.head.state, AWAIT_BUDGET_MS) {
+            AwaitVerdict::Reached(_) => {
+                if matches!(
+                    intent.action,
+                    LifecycleAction::Suspend | LifecycleAction::Resume
+                ) && intent.provider_request_id.is_none()
+                {
+                    return self
+                        .defer_reconcile(
+                            intent,
+                            now,
+                            "the provider reached the target but the suspend/resume request id is absent"
+                                .to_owned(),
+                        )
+                        .await;
+                }
+                self.close_reconciled(view, intent, microvm, observed, now)
+                    .await
+            }
+            AwaitVerdict::Lost => {
+                self.mark_lost(view, &view.head, &intent.intent_id, now)
+                    .await
+            }
+            AwaitVerdict::Poll | AwaitVerdict::TimedOut => {
+                self.defer_reconcile(
+                    intent,
+                    now,
+                    format!(
+                        "provider remains {observed:?} while reconciling {}",
+                        intent.intent_id
+                    ),
+                )
+                .await
+            }
+        }
+    }
+
+    /// Closes an intent whose exact provider state is now known.
+    async fn close_reconciled(
+        &self,
+        view: &GenerationView,
+        intent: &IntentRecord,
+        microvm: &MicrovmId,
+        observed: ProviderState,
+        now: Timestamp,
+    ) -> CommandOutcome {
+        let elapsed = millis_between(view.accounted_from, now);
+        let (next_state, residence, charge_residence, running_ms, suspended_ms) =
+            match intent.action {
+                LifecycleAction::Suspend => (
+                    GenerationState::Suspended,
+                    Some(SnapshotResidence {
+                        lifecycle_id: snapshot_lifecycle_id(microvm, view.snapshot_ordinal),
+                        generation: u64::from(view.snapshot_ordinal),
+                        bytes: view.snapshot_bytes,
+                        suspended_at: now,
+                        released_at: now,
+                        terminal: false,
+                        io: SnapshotIo::default(),
+                    }),
+                    false,
+                    elapsed,
+                    0,
+                ),
+                LifecycleAction::Resume => {
+                    let Some(suspended_at) = view.suspended_at else {
+                        return CommandOutcome::Poison {
+                            reason: format!(
+                                "resume intent {} has no retained-snapshot start",
+                                intent.intent_id
+                            ),
+                        };
+                    };
+                    (
+                        GenerationState::Running,
+                        Some(SnapshotResidence {
+                            lifecycle_id: snapshot_lifecycle_id(microvm, view.snapshot_ordinal),
+                            generation: u64::from(view.snapshot_ordinal),
+                            bytes: view.snapshot_bytes,
+                            suspended_at,
+                            released_at: now,
+                            terminal: false,
+                            io: SnapshotIo::default(),
+                        }),
+                        true,
+                        0,
+                        elapsed,
+                    )
+                }
+                LifecycleAction::Terminate => {
+                    let was_suspended = view.suspended_at.is_some();
+                    (
+                        GenerationState::Terminated,
+                        view.suspended_at.map(|suspended_at| SnapshotResidence {
+                            lifecycle_id: snapshot_lifecycle_id(microvm, view.snapshot_ordinal),
+                            generation: u64::from(view.snapshot_ordinal),
+                            bytes: view.snapshot_bytes,
+                            suspended_at,
+                            released_at: now,
+                            terminal: true,
+                            io: SnapshotIo::default(),
+                        }),
+                        true,
+                        if was_suspended { 0 } else { elapsed },
+                        if was_suspended { elapsed } else { 0 },
+                    )
+                }
+                LifecycleAction::Launch => unreachable!("launch is refused before settlement"),
+            };
+        let closure = Closure {
+            view,
+            from: &view.head,
+            microvm,
+            intent_id: &intent.intent_id,
+            action: intent.action,
+            next_state,
+            observed,
+            request: intent.provider_request_id.clone(),
+            residence,
+            charge_residence,
+            running_ms,
+            suspended_ms,
+        };
+        match self.close(closure, now).await {
+            Ok(()) => match intent.action {
+                LifecycleAction::Suspend => CommandOutcome::Settled(Settled::Suspended),
+                LifecycleAction::Resume => CommandOutcome::Settled(Settled::Resumed),
+                LifecycleAction::Terminate => CommandOutcome::Settled(Settled::Terminated {
+                    continuity_lost: false,
+                    remaining_ms: view
+                        .lifetime
+                        .map_or(0, |lifetime| lifetime.remaining_ms(now)),
+                }),
+                LifecycleAction::Launch => unreachable!("launch is refused before settlement"),
+            },
+            Err(outcome) => outcome,
+        }
+    }
+
+    /// Persists one bounded probe attempt and yields the due index so a failed
+    /// prefix cannot monopolize a shard page.
+    async fn defer_reconcile(
+        &self,
+        intent: &IntentRecord,
+        now: Timestamp,
+        reason: String,
+    ) -> CommandOutcome {
+        let next_evaluate_at = plus_millis(now, 1);
+        match self
+            .ports
+            .store
+            .record_reconcile_attempt(&LifecycleReconcilePlan {
+                intent_id: intent.intent_id.clone(),
+                generation: intent.generation,
+                expected_attempts: intent.attempts,
+                next_evaluate_at,
+                reconciled_at: now,
+            })
+            .await
+        {
+            Ok(updated) if updated.state == IntentState::Quarantined => CommandOutcome::Poison {
+                reason: format!(
+                    "lifecycle intent {} quarantined after {} attempts: {reason}",
+                    updated.intent_id, updated.attempts
+                ),
+            },
+            Ok(updated) => CommandOutcome::Retry {
+                reason: format!(
+                    "lifecycle intent {} remains unresolved after {}/{} attempts: {reason}",
+                    updated.intent_id, updated.attempts, RECONCILE_ATTEMPTS
+                ),
+            },
+            Err(error) => store_outcome(&error),
         }
     }
 
@@ -569,63 +874,16 @@ impl RuntimeControl {
         }
     }
 
-    /// Moves the head under its exact recorded state and revision.
-    ///
-    /// A conditional write is the only thing that makes the fence real, so this is
-    /// the single place a head moves and there is no unconditional path beside it.
-    async fn move_head(
-        &self,
-        from: &GenerationHead,
-        next_state: GenerationState,
-        next_fence: Fence,
-        microvm: &MicrovmId,
-        now: Timestamp,
-    ) -> Result<GenerationCommit, CommandOutcome> {
-        self.move_head_with_accounting(from, next_state, next_fence, microvm, None, now)
-            .await
-    }
-
-    /// Moves a head and optionally advances its accounting cursors under the
-    /// same state, revision, and fence condition.
-    async fn move_head_with_accounting(
-        &self,
-        from: &GenerationHead,
-        next_state: GenerationState,
-        next_fence: Fence,
-        microvm: &MicrovmId,
-        accounting: Option<GenerationAccountingPlan>,
-        now: Timestamp,
-    ) -> Result<GenerationCommit, CommandOutcome> {
-        let plan = GenerationPlan {
-            generation: from.generation,
-            expected_state: from.state,
-            expected_fence: from.fence,
-            expected_revision: from.revision,
-            next_state,
-            next_fence,
-            microvm: Some(microvm.clone()),
-            transport_mode: from.transport_mode,
-            accounting,
-            at: now,
-        };
-        match self.ports.store.commit_generation(&plan).await {
-            Ok(commit) => Ok(commit),
-            Err(RuntimeStoreError::RevisionConflict { .. }) => {
-                Err(CommandOutcome::Settled(Settled::Raced))
-            }
-            Err(error) => Err(store_outcome(&error)),
-        }
-    }
-
     /// Records the intent that must exist before any provider effect.
     async fn open_intent(
         &self,
         head: &GenerationHead,
         microvm: &MicrovmId,
         action: LifecycleAction,
+        next_state: GenerationState,
         fence: Fence,
         now: Timestamp,
-    ) -> Result<LifecycleIntentId, CommandOutcome> {
+    ) -> Result<(GenerationCommit, LifecycleIntentId), CommandOutcome> {
         let intent_id = intent_id(head.generation, action, fence);
         let plan = LifecycleIntentPlan {
             intent_id: intent_id.clone(),
@@ -633,13 +891,35 @@ impl RuntimeControl {
             microvm: Some(microvm.clone()),
             action,
             fence,
+            expected_state: head.state,
+            expected_fence: head.fence,
             expected_revision: head.revision,
+            next_state,
             dispatched_at: now,
         };
         match self.ports.store.record_intent(&plan).await {
-            Ok(_) => Ok(intent_id),
+            Ok(commit) => Ok((commit.generation, intent_id)),
             Err(error) => Err(store_outcome(&error)),
         }
+    }
+
+    /// Persists the provider's request identity before any transition await.
+    async fn remember_request(
+        &self,
+        generation: GenerationId,
+        intent_id: &LifecycleIntentId,
+        request: &ProviderRequestId,
+    ) -> Result<(), CommandOutcome> {
+        self.ports
+            .store
+            .record_provider_request(&LifecycleRequestPlan {
+                intent_id: intent_id.clone(),
+                generation,
+                provider_request_id: request.clone(),
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| store_outcome(&error))
     }
 
     /// Everything one settled transition has to land together.
@@ -741,6 +1021,36 @@ impl RuntimeControl {
         self.flush_usage(closure.from.generation).await
     }
 
+    /// Recounts open effects after the suspend fence and closes the intent when
+    /// the cached counter was stale.
+    async fn recount_before_suspend(
+        &self,
+        view: &GenerationView,
+        current: &GenerationHead,
+        intent_id: &LifecycleIntentId,
+        now: Timestamp,
+    ) -> Result<Option<Settled>, CommandOutcome> {
+        let authoritative = self
+            .ports
+            .effects
+            .count_open_hands_effects(view.session, view.head.generation)
+            .await
+            .map_err(|error| store_outcome(&error))?;
+        let SuspendDecision::RepairCounter {
+            authoritative_open,
+            recorded_open,
+        } = recount(current, authoritative)
+        else {
+            return Ok(None);
+        };
+        self.settle_without_effect(view, current, intent_id, GenerationState::Running, now)
+            .await?;
+        Ok(Some(Settled::CounterRepaired {
+            authoritative_open,
+            recorded_open,
+        }))
+    }
+
     /// The suspend transition.
     async fn suspend(
         &self,
@@ -749,9 +1059,18 @@ impl RuntimeControl {
         fence: Fence,
         now: Timestamp,
     ) -> CommandOutcome {
-        // 1. Take the fence. Brain can no longer admit.
-        let locked = match self
-            .move_head(&view.head, GenerationState::Suspending, fence, microvm, now)
+        // 1. Take the fence and record the blocking intent atomically. Brain can
+        // no longer admit, and a crash can never leave a transitional head with
+        // no durable explanation.
+        let (locked, intent_id) = match self
+            .open_intent(
+                &view.head,
+                microvm,
+                LifecycleAction::Suspend,
+                GenerationState::Suspending,
+                fence,
+                now,
+            )
             .await
         {
             Ok(commit) => commit,
@@ -759,42 +1078,16 @@ impl RuntimeControl {
         };
 
         // 2. The authoritative recount, before any provider call.
-        let authoritative = match self
-            .ports
-            .effects
-            .count_open_hands_effects(view.session, view.head.generation)
+        match self
+            .recount_before_suspend(view, &locked.head, &intent_id, now)
             .await
         {
-            Ok(open) => open,
-            Err(error) => return store_outcome(&error),
-        };
-        if let SuspendDecision::RepairCounter {
-            authoritative_open,
-            recorded_open,
-        } = recount(&locked.head, authoritative)
-        {
-            if let Err(outcome) = self
-                .move_head(&locked.head, GenerationState::Running, fence, microvm, now)
-                .await
-            {
-                return outcome;
-            }
-            return CommandOutcome::Settled(Settled::CounterRepaired {
-                authoritative_open,
-                recorded_open,
-            });
+            Ok(Some(settled)) => return CommandOutcome::Settled(settled),
+            Ok(None) => {}
+            Err(outcome) => return outcome,
         }
 
-        // 3. Record the intent before the effect.
-        let intent_id = match self
-            .open_intent(&locked.head, microvm, LifecycleAction::Suspend, fence, now)
-            .await
-        {
-            Ok(intent_id) => intent_id,
-            Err(outcome) => return outcome,
-        };
-
-        // 4. Dispatch.
+        // 3. Dispatch.
         let request = match self.ports.provider.suspend(microvm).await {
             Ok(request) => request,
             Err(call) => {
@@ -811,16 +1104,26 @@ impl RuntimeControl {
             }
         };
 
+        // 4. Persist the response identity before waiting. A crash after this
+        // point leaves enough evidence for exact-identity reconciliation.
+        if let Err(outcome) = self
+            .remember_request(view.head.generation, &intent_id, &request)
+            .await
+        {
+            return outcome;
+        }
+
         // 5. Await SUSPENDED. Never assume success.
         if let Some(outcome) = self
-            .settle_await(
+            .settle_await(TransitionAwait {
                 view,
-                &locked.head,
+                current: &locked.head,
                 microvm,
-                LifecycleAction::Suspend,
-                &intent_id,
+                action: LifecycleAction::Suspend,
+                intent_id: &intent_id,
+                request: &request,
                 now,
-            )
+            })
             .await
         {
             return outcome;
@@ -913,18 +1216,18 @@ impl RuntimeControl {
             Err(outcome) => return outcome,
         };
         let fence = next_fence(view.head.fence);
-        let moved = match self
-            .move_head(&view.head, GenerationState::Resuming, fence, &microvm, now)
+        let (moved, intent_id) = match self
+            .open_intent(
+                &view.head,
+                &microvm,
+                LifecycleAction::Resume,
+                GenerationState::Resuming,
+                fence,
+                now,
+            )
             .await
         {
             Ok(commit) => commit,
-            Err(outcome) => return outcome,
-        };
-        let intent_id = match self
-            .open_intent(&moved.head, &microvm, LifecycleAction::Resume, fence, now)
-            .await
-        {
-            Ok(intent_id) => intent_id,
             Err(outcome) => return outcome,
         };
         let request = match self.ports.provider.resume(&microvm).await {
@@ -942,15 +1245,22 @@ impl RuntimeControl {
                     .await;
             }
         };
+        if let Err(outcome) = self
+            .remember_request(view.head.generation, &intent_id, &request)
+            .await
+        {
+            return outcome;
+        }
         if let Some(outcome) = self
-            .settle_await(
+            .settle_await(TransitionAwait {
                 view,
-                &moved.head,
-                &microvm,
-                LifecycleAction::Resume,
-                &intent_id,
+                current: &moved.head,
+                microvm: &microvm,
+                action: LifecycleAction::Resume,
+                intent_id: &intent_id,
+                request: &request,
                 now,
-            )
+            })
             .await
         {
             return outcome;
@@ -1012,24 +1322,18 @@ impl RuntimeControl {
             };
         }
         let fence = next_fence(view.head.fence);
-        let moved = match self
-            .move_head(
+        let (moved, intent_id) = match self
+            .open_intent(
                 &view.head,
+                &microvm,
+                action,
                 GenerationState::Terminating,
                 fence,
-                &microvm,
                 now,
             )
             .await
         {
             Ok(commit) => commit,
-            Err(outcome) => return outcome,
-        };
-        let intent_id = match self
-            .open_intent(&moved.head, &microvm, action, fence, now)
-            .await
-        {
-            Ok(intent_id) => intent_id,
             Err(outcome) => return outcome,
         };
         let request = match self.ports.provider.terminate(&microvm).await {
@@ -1050,6 +1354,13 @@ impl RuntimeControl {
                     .await;
             }
         };
+        if let Some(request) = &request
+            && let Err(outcome) = self
+                .remember_request(view.head.generation, &intent_id, request)
+                .await
+        {
+            return outcome;
+        }
         let elapsed = millis_between(view.accounted_from, now);
         let closure = Closure {
             view,
@@ -1089,24 +1400,26 @@ impl RuntimeControl {
 
     /// Awaits a dispatched transition, returning the outcome when it did not reach
     /// its target and `None` when it did.
-    async fn settle_await(
-        &self,
-        view: &GenerationView,
-        current: &GenerationHead,
-        microvm: &MicrovmId,
-        action: LifecycleAction,
-        intent_id: &LifecycleIntentId,
-        now: Timestamp,
-    ) -> Option<CommandOutcome> {
+    async fn settle_await(&self, transition: TransitionAwait<'_>) -> Option<CommandOutcome> {
+        let TransitionAwait {
+            view,
+            current,
+            microvm,
+            intent_id,
+            request,
+            action,
+            now,
+        } = transition;
         match self
             .await_transition(microvm, action, view.head.state)
             .await
         {
             Ok(AwaitVerdict::Reached(_)) => None,
             Ok(AwaitVerdict::Lost) => Some(self.mark_lost(view, current, intent_id, now).await),
-            Ok(AwaitVerdict::TimedOut | AwaitVerdict::Poll) => {
-                Some(self.mark_unknown(view, intent_id, now).await)
-            }
+            Ok(AwaitVerdict::TimedOut | AwaitVerdict::Poll) => Some(
+                self.mark_unknown(view, current, intent_id, Some(request.clone()), now)
+                    .await,
+            ),
             Err(outcome) => Some(outcome),
         }
     }
@@ -1186,16 +1499,37 @@ impl RuntimeControl {
         restore_to: GenerationState,
         now: Timestamp,
     ) -> CommandOutcome {
-        if let ProviderCall::Unknown { .. } = call {
-            return self.mark_unknown(view, intent_id, now).await;
+        if let ProviderCall::Unknown { request } = call {
+            return self
+                .mark_unknown(view, current, intent_id, request.clone(), now)
+                .await;
         }
         if matches!(call, ProviderCall::NotFound) {
             return self.mark_lost(view, current, intent_id, now).await;
         }
-        // The restore is conditional on the head as it stands **after** the fence
-        // was taken, not on the caller's stale read. It is committed with the
-        // receipt so a lost response cannot leave a settled intent in a
-        // transitional generation.
+        if let Err(outcome) = self
+            .settle_without_effect(view, current, intent_id, restore_to, now)
+            .await
+        {
+            return outcome;
+        }
+        provider_outcome(call, "the lifecycle dispatch")
+    }
+
+    /// Settles an intent proven to have produced no provider effect.
+    ///
+    /// The restore is conditional on the head as it stands **after** the fence
+    /// was taken, not on the caller's stale read. It is committed with the
+    /// receipt so a lost response cannot leave a settled intent in a
+    /// transitional generation.
+    async fn settle_without_effect(
+        &self,
+        view: &GenerationView,
+        current: &GenerationHead,
+        intent_id: &LifecycleIntentId,
+        restore_to: GenerationState,
+        now: Timestamp,
+    ) -> Result<(), CommandOutcome> {
         let restore = GenerationPlan {
             generation: current.generation,
             expected_state: current.state,
@@ -1219,28 +1553,44 @@ impl RuntimeControl {
             generation_commit: Some(restore),
             settled_at: now,
         };
-        if let Err(error) = self.ports.store.settle_intent(&plan).await {
-            return store_outcome(&error);
-        }
-        provider_outcome(call, "the lifecycle dispatch")
+        self.ports
+            .store
+            .settle_intent(&plan)
+            .await
+            .map(|_| ())
+            .map_err(|error| store_outcome(&error))
     }
 
     /// Records an indeterminate outcome. No second effect is dispatched.
     async fn mark_unknown(
         &self,
         view: &GenerationView,
+        current: &GenerationHead,
         intent_id: &LifecycleIntentId,
+        request: Option<ProviderRequestId>,
         now: Timestamp,
     ) -> CommandOutcome {
+        let generation_commit = GenerationPlan {
+            generation: current.generation,
+            expected_state: current.state,
+            expected_fence: current.fence,
+            expected_revision: current.revision,
+            next_state: GenerationState::Unknown,
+            next_fence: current.fence,
+            microvm: view.microvm.clone(),
+            transport_mode: current.transport_mode,
+            accounting: None,
+            at: now,
+        };
         let plan = LifecycleReceiptPlan {
             intent_id: intent_id.clone(),
             generation: view.head.generation,
             next_intent_state: IntentState::Unknown,
-            provider_request_id: None,
+            provider_request_id: request,
             observed_state: None,
             snapshot: None,
             usage: Vec::new(),
-            generation_commit: None,
+            generation_commit: Some(generation_commit),
             settled_at: now,
         };
         if let Err(error) = self.ports.store.settle_intent(&plan).await {
@@ -1382,11 +1732,11 @@ pub fn intent_id(
 /// How a store failure is reported.
 fn store_outcome(error: &RuntimeStoreError) -> CommandOutcome {
     match error {
-        RuntimeStoreError::Unavailable { .. } | RuntimeStoreError::RevisionConflict { .. } => {
-            CommandOutcome::Retry {
-                reason: error.to_string(),
-            }
-        }
+        RuntimeStoreError::Unavailable { .. }
+        | RuntimeStoreError::RevisionConflict { .. }
+        | RuntimeStoreError::ReconcileConflict { .. } => CommandOutcome::Retry {
+            reason: error.to_string(),
+        },
         RuntimeStoreError::IntentOpen { .. } => CommandOutcome::Settled(Settled::Reconciling),
         RuntimeStoreError::Malformed { .. } | RuntimeStoreError::NoSuchGeneration { .. } => {
             CommandOutcome::Poison {
@@ -1444,7 +1794,8 @@ mod tests {
     };
     use aex_runtime_control::store::{
         GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
-        LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan, OpenEffectCounter, PageBudget,
+        LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan,
+        LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter, PageBudget,
         RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
         UsageOutboxEntry,
     };
@@ -1615,8 +1966,8 @@ mod tests {
         fn record_intent<'a>(
             &'a self,
             plan: &'a LifecycleIntentPlan,
-        ) -> StoreFuture<'a, IntentRecord> {
-            self.lock().intents.push(plan.clone());
+        ) -> StoreFuture<'a, LifecycleIntentCommit> {
+            let mut state = self.lock();
             let record = IntentRecord {
                 intent_id: plan.intent_id.clone(),
                 generation: plan.generation,
@@ -1628,7 +1979,113 @@ mod tests {
                 attempts: 0,
                 dispatched_at: plan.dispatched_at,
             };
-            Box::pin(async move { Ok(record) })
+            let mut head = state
+                .view
+                .as_ref()
+                .expect("the fixture has a view")
+                .head
+                .clone();
+            if head.state != plan.expected_state
+                || head.fence != plan.expected_fence
+                || head.revision != plan.expected_revision
+            {
+                let found = Some(head.revision);
+                let expected = plan.expected_revision;
+                drop(state);
+                return Box::pin(async move {
+                    Err(RuntimeStoreError::RevisionConflict { expected, found })
+                });
+            }
+            head.state = plan.next_state;
+            head.fence = plan.fence;
+            head.revision = head.revision.next();
+            state.intents.push(plan.clone());
+            state.commits.push(GenerationPlan {
+                generation: plan.generation,
+                expected_state: plan.expected_state,
+                expected_fence: plan.expected_fence,
+                expected_revision: plan.expected_revision,
+                next_state: plan.next_state,
+                next_fence: plan.fence,
+                microvm: plan.microvm.clone(),
+                transport_mode: head.transport_mode,
+                accounting: None,
+                at: plan.dispatched_at,
+            });
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.fence = head.fence;
+                pointer.revision = head.revision;
+            }
+            if let Some(view) = state.view.as_mut() {
+                view.head = head.clone();
+                view.open_intent = Some(record.clone());
+            }
+            let revision = head.revision;
+            drop(state);
+            Box::pin(async move {
+                Ok(LifecycleIntentCommit {
+                    generation: GenerationCommit { head, revision },
+                    intent: record,
+                })
+            })
+        }
+
+        fn record_provider_request<'a>(
+            &'a self,
+            plan: &'a LifecycleRequestPlan,
+        ) -> StoreFuture<'a, IntentRecord> {
+            let mut state = self.lock();
+            let intent = state
+                .view
+                .as_mut()
+                .and_then(|view| view.open_intent.as_mut())
+                .expect("the fixture has an open intent");
+            if intent.intent_id != plan.intent_id {
+                let open = intent.clone();
+                drop(state);
+                return Box::pin(async move {
+                    Err(RuntimeStoreError::IntentOpen {
+                        intent_id: open.intent_id,
+                        state: open.state,
+                    })
+                });
+            }
+            intent.provider_request_id = Some(plan.provider_request_id.clone());
+            let intent = intent.clone();
+            drop(state);
+            Box::pin(async move { Ok(intent) })
+        }
+
+        fn record_reconcile_attempt<'a>(
+            &'a self,
+            plan: &'a LifecycleReconcilePlan,
+        ) -> StoreFuture<'a, IntentRecord> {
+            let mut state = self.lock();
+            let intent = state
+                .view
+                .as_mut()
+                .and_then(|view| view.open_intent.as_mut())
+                .expect("the fixture has an open intent");
+            if intent.attempts != plan.expected_attempts {
+                let found = intent.attempts;
+                drop(state);
+                return Box::pin(async move {
+                    Err(RuntimeStoreError::ReconcileConflict {
+                        expected: plan.expected_attempts,
+                        found,
+                    })
+                });
+            }
+            intent.attempts = intent
+                .attempts
+                .saturating_add(1)
+                .min(aex_runtime_control::lifecycle::RECONCILE_ATTEMPTS);
+            if intent.attempts >= aex_runtime_control::lifecycle::RECONCILE_ATTEMPTS {
+                intent.state = IntentState::Quarantined;
+            }
+            let intent = intent.clone();
+            drop(state);
+            Box::pin(async move { Ok(intent) })
         }
 
         fn settle_intent<'a>(
@@ -1669,12 +2126,24 @@ mod tests {
                 head.fence = generation.next_fence;
                 head.revision = head.revision.next();
                 state.commits.push(generation.clone());
+                if let Some(pointer) = state.pointer.as_mut() {
+                    pointer.fence = head.fence;
+                    pointer.revision = head.revision;
+                }
                 if let Some(view) = state.view.as_mut() {
                     view.head = head;
                     if let Some(accounting) = generation.accounting {
                         view.accounted_from = accounting.accounted_from;
                         view.suspended_at = accounting.suspended_at;
                         view.snapshot_ordinal = accounting.snapshot_ordinal;
+                    }
+                    if plan.next_intent_state == IntentState::Unknown {
+                        if let Some(intent) = view.open_intent.as_mut() {
+                            intent.state = IntentState::Unknown;
+                            intent.provider_request_id = plan.provider_request_id.clone();
+                        }
+                    } else {
+                        view.open_intent = None;
                     }
                 }
             }
@@ -1783,6 +2252,7 @@ mod tests {
         suspend: Option<ProviderCall>,
         resume: Option<ProviderCall>,
         terminate: Option<ProviderCall>,
+        hold_transition: bool,
         calls: Vec<&'static str>,
     }
 
@@ -1856,7 +2326,9 @@ mod tests {
                 drop(script);
                 return Box::pin(async move { Err(failure) });
             }
-            script.state = Some(ProviderState::Suspended);
+            if !script.hold_transition {
+                script.state = Some(ProviderState::Suspended);
+            }
             drop(script);
             Box::pin(async move { Ok(ProviderRequestId("req-1".to_owned())) })
         }
@@ -2139,7 +2611,16 @@ mod tests {
         );
         assert_eq!(state.commits[0].next_state, GenerationState::Suspending);
         assert_eq!(state.commits[1].next_state, GenerationState::Running);
-        assert!(state.intents.is_empty(), "no intent is recorded at all");
+        assert_eq!(
+            state.intents.len(),
+            1,
+            "the blocking intent and fence land atomically before the recount"
+        );
+        assert_eq!(
+            state.receipts.len(),
+            1,
+            "a recount refusal settles that intent while restoring running"
+        );
     }
 
     #[tokio::test]
@@ -2276,7 +2757,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_ordering_is_fence_then_recount_then_intent_then_provider_then_receipt() {
+    async fn the_fence_and_intent_land_atomically_before_recount_provider_and_receipt() {
         let ordered = fixture(
             FakeStore::with(view(GenerationState::Running, 0)),
             FakeProvider::running(),
@@ -2310,6 +2791,13 @@ mod tests {
             state.commits[1].next_state,
             GenerationState::Suspended,
             "the head lands only after the provider settled"
+        );
+        let pointer = state.pointer.as_ref().expect("the fixture has CURRENT");
+        let head = &state.view.as_ref().expect("the fixture has HEAD").head;
+        assert_eq!(pointer.fence, head.fence, "CURRENT converges with HEAD");
+        assert_eq!(
+            pointer.revision, head.revision,
+            "CURRENT and HEAD advance in the same lifecycle transaction"
         );
     }
 
@@ -2482,6 +2970,11 @@ mod tests {
             IntentState::Unknown
         );
         assert_eq!(
+            ambiguous.store.lock().receipts[0].provider_request_id,
+            Some(ProviderRequestId("req-lost".to_owned())),
+            "the request id carried by an ambiguous SDK answer remains durable"
+        );
+        assert_eq!(
             ambiguous
                 .provider
                 .calls()
@@ -2492,28 +2985,105 @@ mod tests {
             "an ambiguous outcome is never retried blindly"
         );
 
-        // A later pass sees the open intent and dispatches nothing at all.
-        let mut open = view(GenerationState::Running, 0);
-        open.open_intent = Some(IntentRecord {
-            intent_id: super::intent_id(generation(), LifecycleAction::Suspend, Fence(4)),
-            generation: generation(),
-            microvm: Some(microvm()),
-            action: LifecycleAction::Suspend,
-            fence: Fence(4),
-            state: IntentState::Unknown,
-            provider_request_id: None,
-            attempts: 1,
-            dispatched_at: at(BUSY_AT),
-        });
-        let blocked = fixture(FakeStore::with(open), FakeProvider::running(), 0);
+        // A later pass probes the exact VM, advances the durable budget, and
+        // dispatches no second effect while the provider still reports RUNNING.
+        assert!(matches!(
+            ambiguous
+                .control
+                .handle_command(evaluate(), at(BUSY_AT + 180_001))
+                .await,
+            CommandOutcome::Retry { .. }
+        ));
         assert_eq!(
-            blocked
+            ambiguous
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| **call == "suspend")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_timeout_persists_the_request_id_and_a_later_probe_settles_without_redispatch() {
+        let store = FakeStore::with(view(GenerationState::Running, 0));
+        let provider = FakeProvider::running();
+        provider.lock().hold_transition = true;
+        let control = fixture(Arc::clone(&store), Arc::clone(&provider), 0);
+
+        assert_eq!(
+            control
                 .control
                 .handle_command(evaluate(), at(BUSY_AT + 180_000))
                 .await,
             CommandOutcome::Settled(Settled::Reconciling)
         );
-        assert!(!blocked.provider.calls().contains(&"suspend"));
+        {
+            let state = store.lock();
+            let open = state
+                .view
+                .as_ref()
+                .and_then(|view| view.open_intent.as_ref())
+                .expect("the timed-out intent remains open");
+            assert_eq!(open.state, IntentState::Unknown);
+            assert_eq!(
+                open.provider_request_id,
+                Some(ProviderRequestId("req-1".to_owned())),
+                "the request identity is persisted before the await can time out"
+            );
+        }
+
+        provider.lock().state = Some(ProviderState::Suspended);
+        assert_eq!(
+            control
+                .control
+                .handle_command(evaluate(), at(BUSY_AT + 180_001))
+                .await,
+            CommandOutcome::Settled(Settled::Suspended)
+        );
+        assert_eq!(
+            provider
+                .calls()
+                .into_iter()
+                .filter(|call| *call == "suspend")
+                .count(),
+            1,
+            "reconciliation probes and never repeats the provider effect"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_eighth_unresolved_probe_quarantines_durably_and_never_redrives_hot() {
+        let mut unknown = view(GenerationState::Unknown, 0);
+        unknown.open_intent = Some(IntentRecord {
+            intent_id: super::intent_id(generation(), LifecycleAction::Suspend, Fence(3)),
+            generation: generation(),
+            microvm: Some(microvm()),
+            action: LifecycleAction::Suspend,
+            fence: Fence(3),
+            state: IntentState::Unknown,
+            provider_request_id: None,
+            attempts: 7,
+            dispatched_at: at(BUSY_AT),
+        });
+        let store = FakeStore::with(unknown);
+        let provider = FakeProvider::running();
+        let quarantining = fixture(Arc::clone(&store), Arc::clone(&provider), 0);
+        let outcome = quarantining
+            .control
+            .handle_command(evaluate(), at(BUSY_AT + 1))
+            .await;
+        assert!(matches!(outcome, CommandOutcome::Poison { .. }));
+        let state = store.lock();
+        let open = state
+            .view
+            .as_ref()
+            .and_then(|view| view.open_intent.as_ref())
+            .expect("quarantine remains operator-visible");
+        assert_eq!(open.state, IntentState::Quarantined);
+        assert_eq!(open.attempts, 8);
+        assert!(!provider.calls().contains(&"suspend"));
     }
 
     #[tokio::test]

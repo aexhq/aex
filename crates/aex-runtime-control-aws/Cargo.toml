@@ -34,6 +34,7 @@ aex-runtime-control = { path = "../aex-runtime-control" }
 aex-usage-domain = { path = "../aex-usage-domain" }
 aex-wire = { path = "../aex-wire" }
 aws-sdk-sqs.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

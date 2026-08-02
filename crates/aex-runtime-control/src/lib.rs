@@ -53,9 +53,10 @@ pub use shape::{
 };
 pub use store::{
     CommandBinding, GenerationAccountingPlan, GenerationCommit, GenerationPlan, GenerationPointer,
-    GenerationView, IdleProbe, LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan,
-    OpenEffectCounter, PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
-    RuntimeStoreError, StoreFuture, UsageOutboxEntry, UsageOutboxPlan, bind_command,
+    GenerationView, IdleProbe, LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt,
+    LifecycleReceiptPlan, LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter,
+    PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
+    UsageOutboxEntry, UsageOutboxPlan, bind_command,
 };
 pub use usage::{
     DerivationError, FactContext, HandsUsage, SinkError, SnapshotIo, SnapshotResidence,

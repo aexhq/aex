@@ -329,6 +329,10 @@ pub struct LifecycleIntent {
     pub requested_at: Timestamp,
     /// When it was dispatched.
     pub dispatched_at: Option<Timestamp>,
+    /// How many exact-identity reconciliation probes have completed.
+    pub reconcile_attempts: u32,
+    /// When the most recent reconciliation probe completed.
+    pub last_reconciled_at: Option<Timestamp>,
 }
 
 /// Encodes one lifecycle intent.
@@ -354,6 +358,8 @@ pub fn encode_intent(intent: &LifecycleIntent) -> Result<Item, EncodeError> {
         )
         .set("requestedAt", stamp(intent.requested_at))
         .set_opt("dispatchedAt", intent.dispatched_at.map(stamp))
+        .set("reconcileAttempts", n(u64::from(intent.reconcile_attempts)))
+        .set_opt("lastReconciledAt", intent.last_reconciled_at.map(stamp))
         .build())
 }
 
@@ -376,6 +382,14 @@ pub fn decode_intent(item: &Item, asserted: WorkspaceId) -> Result<LifecycleInte
         provider_request_id: row.opt_string("providerRequestId")?.map(str::to_owned),
         requested_at: row.timestamp("requestedAt")?,
         dispatched_at: row.opt_timestamp("dispatchedAt")?,
+        reconcile_attempts: u32::try_from(row.u64("reconcileAttempts")?).map_err(|_| {
+            CodecError::Malformed {
+                item_type: LIFECYCLE_INTENT,
+                attribute: "reconcileAttempts",
+                reason: "outside u32".to_owned(),
+            }
+        })?,
+        last_reconciled_at: row.opt_timestamp("lastReconciledAt")?,
     })
 }
 

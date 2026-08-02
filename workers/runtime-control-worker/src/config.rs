@@ -76,6 +76,9 @@ pub const FORBIDDEN_VARS: [&str; 2] = ["AEX_USAGE_TRANSFER_QUEUE_URL", "AEX_TRUE
 /// Planes this deployable may be bound to.
 const PLANES: [&str; 2] = ["dev", "prd"];
 
+/// Largest due page that fits one bounded 30-second provider-await wave.
+pub const MAX_DUE_PAGE_ITEMS: u32 = 32;
+
 /// Why `runtime-control-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
@@ -176,6 +179,15 @@ impl Config {
             name: REGION_VAR,
             reason: format!("`{raw_region}` is not one of the five offered regions"),
         })?;
+        let page_items = positive(&lookup, DUE_PAGE_ITEMS_VAR)?;
+        if page_items > MAX_DUE_PAGE_ITEMS {
+            return Err(ConfigError::Invalid {
+                name: DUE_PAGE_ITEMS_VAR,
+                reason: format!(
+                    "must be at most {MAX_DUE_PAGE_ITEMS} so one due page fits one provider-await wave"
+                ),
+            });
+        }
         let config = Self {
             plane,
             region,
@@ -190,7 +202,7 @@ impl Config {
             image_identifier: required(&lookup, IMAGE_IDENTIFIER_VAR)?,
             due_shards: positive(&lookup, DUE_SHARDS_VAR)?,
             page: PageBudget {
-                max_items: positive(&lookup, DUE_PAGE_ITEMS_VAR)?,
+                max_items: page_items,
                 max_reads: positive(&lookup, DUE_PAGE_READS_VAR)?,
             },
             pricing_version: required(&lookup, PRICING_VERSION_VAR)?,
@@ -313,7 +325,7 @@ mod tests {
             ),
             (super::IMAGE_IDENTIFIER_VAR, "aex-hands-1gb".to_owned()),
             (DUE_SHARDS_VAR, "8".to_owned()),
-            (DUE_PAGE_ITEMS_VAR, "50".to_owned()),
+            (DUE_PAGE_ITEMS_VAR, "32".to_owned()),
             (super::DUE_PAGE_READS_VAR, "100".to_owned()),
             (super::PRICING_VERSION_VAR, "synthetic-zero-v1".to_owned()),
         ])
@@ -330,7 +342,7 @@ mod tests {
         assert_eq!(config.region, Region::EuWest1);
         assert_eq!(config.runtime_activity_table, "aex-dev-runtime-activity");
         assert_eq!(config.due_shards, 8);
-        assert_eq!(config.page.max_items, 50);
+        assert_eq!(config.page.max_items, 32);
         assert_eq!(config.page.max_reads, 100);
     }
 
@@ -439,6 +451,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_due_page_larger_than_one_provider_await_wave_is_refused() {
+        assert_eq!(
+            usize::try_from(super::MAX_DUE_PAGE_ITEMS).expect("32 fits usize"),
+            aex_runtime_control_aws::worker::ITEM_CONCURRENCY,
+            "the config ceiling and the engine's bounded wave must move together"
+        );
+        let mut vars = complete();
+        vars.insert(DUE_PAGE_ITEMS_VAR, "33".to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: DUE_PAGE_ITEMS_VAR,
+                ..
+            })
+        ));
     }
 
     #[test]
