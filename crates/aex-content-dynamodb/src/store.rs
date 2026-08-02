@@ -8,18 +8,21 @@
 //! than at the instant, and a fence that trusted the timer would authorise a
 //! read after the grant had expired.
 
-use aex_session_dynamodb::attr::{Item, Row, s};
+use aex_session_dynamodb::attr::{Item, Row, n, s};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
 use aex_session_dynamodb::paging::PageBudget;
-use aex_session_dynamodb::plan::key;
+use aex_session_dynamodb::plan::{Participant, key};
 use aex_wire::ids::{ContentHash, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
+use aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure;
 
 use crate::codec::{
-    self, ContentDescriptor, DownloadGrant, GcEpoch, TreePage, decode_descriptor, decode_gc_epoch,
-    decode_grant, decode_inline_body, decode_tree_page,
+    self, ContentDescriptor, DownloadGrant, GcEpoch, GrantExpiryCursor, GrantExpiryPosition,
+    TreePage, decode_descriptor, decode_gc_epoch, decode_grant, decode_grant_expiry_cursor,
+    decode_inline_body, decode_tree_page, encode_grant_expiry_cursor,
+    validate_grant_expiry_position,
 };
 use crate::expressions;
 use crate::keys;
@@ -85,8 +88,9 @@ impl From<&DownloadGrant> for GrantExpiry {
 pub struct GrantExpiryPage {
     /// Due grants named by the slim index projection.
     pub grants: Vec<GrantExpiry>,
-    /// Whether the shard still contains another page.
-    pub more: bool,
+    /// The exact complete GSI key after which the next page starts. Absence
+    /// means this pass reached the end and the durable cursor wraps.
+    pub next: Option<GrantExpiryPosition>,
 }
 
 /// What a strongly consistent reachability read found in one content partition.
@@ -221,7 +225,32 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
         shard: u16,
         now: Timestamp,
         budget: PageBudget,
+        after: Option<&GrantExpiryPosition>,
     ) -> Result<GrantExpiryPage, StoreError>;
+
+    /// Strongly reads one shard's durable expiry position.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for transport or corrupt cursor state.
+    async fn load_grant_expiry_cursor(
+        &self,
+        shard: u16,
+    ) -> Result<Option<GrantExpiryCursor>, StoreError>;
+
+    /// Optimistically advances one shard to `position`, resolving a
+    /// conditional or ambiguous result by one exact strong reread.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] when another cursor winner differs.
+    async fn advance_grant_expiry_cursor(
+        &self,
+        current: Option<&GrantExpiryCursor>,
+        shard: u16,
+        position: Option<&GrantExpiryPosition>,
+        now: Timestamp,
+    ) -> Result<(), StoreError>;
 
     /// Atomically removes an expired grant and the exact grant pin it owns.
     ///
@@ -500,11 +529,15 @@ impl ContentMetadataStore for ContentStore {
         shard: u16,
         now: Timestamp,
         budget: PageBudget,
+        after: Option<&GrantExpiryPosition>,
     ) -> Result<GrantExpiryPage, StoreError> {
         if u64::from(shard) >= keys::EXPIRY_SHARDS {
             return Err(StoreError::Invalid {
                 detail: format!("expiry shard {shard} is outside 0..{}", keys::EXPIRY_SHARDS),
             });
+        }
+        if let Some(position) = after {
+            validate_grant_expiry_position(position, shard)?;
         }
         let output = self
             .client
@@ -519,6 +552,7 @@ impl ContentMetadataStore for ContentStore {
             // bare `timestamp#` prefix would sort before all of them.
             .expression_attribute_values(":now", s(format!("{}#\u{fffd}", now.to_wire())))
             .limit(budget.limit())
+            .set_exclusive_start_key(after.map(expiry_exclusive_start))
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
@@ -533,6 +567,20 @@ impl ContentMetadataStore for ContentStore {
                     detail: "an expiry index row is not a grant key".to_owned(),
                 })?
                 .to_owned();
+            let expected_key = keys::grant(&token_sha256)?;
+            let expected_sort = keys::expiry_sort(row.timestamp("expiresAt")?, &token_sha256)?;
+            if pk != expected_key.pk
+                || row.string(aex_session_dynamodb::attr::SK)? != expected_key.sk
+                || row.string(keys::EXPIRY_PK)? != keys::expiry_partition(shard)
+                || row.string(keys::EXPIRY_SK)? != expected_sort
+                || keys::expiry_shard(&token_sha256) != shard
+            {
+                return Err(StoreError::Invalid {
+                    detail: format!(
+                        "grant `{token_sha256}` carries forged base or expiry-index keys"
+                    ),
+                });
+            }
             let digest_text = row.string("contentDigest")?;
             let digest = ContentHash::parse(digest_text).map_err(|error| StoreError::Invalid {
                 detail: format!("an expiry index row has an invalid content digest: {error}"),
@@ -546,8 +594,104 @@ impl ContentMetadataStore for ContentStore {
         }
         Ok(GrantExpiryPage {
             grants,
-            more: output.last_evaluated_key.is_some(),
+            next: output
+                .last_evaluated_key
+                .map(|key| expiry_position(key, shard))
+                .transpose()?,
         })
+    }
+
+    async fn load_grant_expiry_cursor(
+        &self,
+        shard: u16,
+    ) -> Result<Option<GrantExpiryCursor>, StoreError> {
+        if u64::from(shard) >= keys::EXPIRY_SHARDS {
+            return Err(StoreError::Invalid {
+                detail: format!("expiry shard {shard} is outside 0..{}", keys::EXPIRY_SHARDS),
+            });
+        }
+        let target = keys::expiry_cursor(shard);
+        let item = self.get(&target.pk, &target.sk).await?;
+        let Some(item) = item else {
+            return Ok(None);
+        };
+        let cursor = decode_grant_expiry_cursor(&item)?;
+        if cursor.shard != shard {
+            return Err(StoreError::Invalid {
+                detail: format!(
+                    "grant-expiry cursor for shard {shard} decoded as shard {}",
+                    cursor.shard
+                ),
+            });
+        }
+        Ok(Some(cursor))
+    }
+
+    async fn advance_grant_expiry_cursor(
+        &self,
+        current: Option<&GrantExpiryCursor>,
+        shard: u16,
+        position: Option<&GrantExpiryPosition>,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        if current.is_some_and(|cursor| cursor.shard != shard) {
+            return Err(StoreError::Invalid {
+                detail: "a grant-expiry cursor belongs to another shard".to_owned(),
+            });
+        }
+        if let Some(position) = position {
+            validate_grant_expiry_position(position, shard)?;
+        }
+        let revision = current
+            .map_or(Some(1), |cursor| cursor.revision.checked_add(1))
+            .ok_or(StoreError::Invalid {
+                detail: "a grant-expiry cursor revision is exhausted".to_owned(),
+            })?;
+        let target = GrantExpiryCursor {
+            shard,
+            position: position.cloned(),
+            revision,
+            updated_at: now,
+        };
+        let mut request = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(encode_grant_expiry_cursor(&target)))
+            .return_values_on_condition_check_failure(ReturnValuesOnConditionCheckFailure::AllOld);
+        request = match current {
+            None => request.condition_expression("attribute_not_exists(pk)"),
+            Some(cursor) => request
+                .condition_expression(
+                    "itemType = :cursor AND shard = :shard AND revision = :previous",
+                )
+                .expression_attribute_values(":cursor", s(codec::GRANT_EXPIRY_CURSOR))
+                .expression_attribute_values(":shard", n(u64::from(shard)))
+                .expression_attribute_values(":previous", n(cursor.revision)),
+        };
+        let outcome = request.send().await;
+        let observed = match outcome {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                if let Some(
+                    aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(failed),
+                ) = error.as_service_error()
+                {
+                    failed.item.clone().map(Box::new)
+                } else {
+                    let classified = classify(
+                        &error,
+                        Idempotence::Write(Resolution::TargetItem),
+                    );
+                    if !matches!(classified, StoreError::CommitAmbiguous { .. }) {
+                        return Err(classified);
+                    }
+                    None
+                }
+            }
+        };
+        let winner = self.load_grant_expiry_cursor(shard).await?;
+        resolve_expiry_cursor_winner(&target, winner.as_ref(), observed)
     }
 
     async fn expire_grant(&self, grant: &GrantExpiry, now: Timestamp) -> Result<(), StoreError> {
@@ -603,5 +747,131 @@ impl ContentMetadataStore for ContentStore {
             inline,
             descriptor,
         })
+    }
+}
+
+fn expiry_exclusive_start(position: &GrantExpiryPosition) -> Item {
+    [
+        (
+            keys::EXPIRY_PK.to_owned(),
+            s(position.expiry_partition.clone()),
+        ),
+        (keys::EXPIRY_SK.to_owned(), s(position.expiry_sort.clone())),
+        (
+            aex_session_dynamodb::attr::PK.to_owned(),
+            s(position.grant_pk.clone()),
+        ),
+        (
+            aex_session_dynamodb::attr::SK.to_owned(),
+            s(position.grant_sk.clone()),
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn expiry_position(mut key: Item, shard: u16) -> Result<GrantExpiryPosition, StoreError> {
+    if key.len() != 4 {
+        return Err(StoreError::Invalid {
+            detail: "an expiry last-evaluated key does not contain exactly four members".to_owned(),
+        });
+    }
+    let read = |key: &mut Item, name: &'static str| -> Result<String, StoreError> {
+        key.remove(name)
+            .ok_or(StoreError::Invalid {
+                detail: format!("an expiry last-evaluated key is missing `{name}`"),
+            })?
+            .as_s()
+            .cloned()
+            .map_err(|_| StoreError::Invalid {
+                detail: format!("an expiry last-evaluated key `{name}` is not a string"),
+            })
+    };
+    let position = GrantExpiryPosition {
+        expiry_partition: read(&mut key, keys::EXPIRY_PK)?,
+        expiry_sort: read(&mut key, keys::EXPIRY_SK)?,
+        grant_pk: read(&mut key, aex_session_dynamodb::attr::PK)?,
+        grant_sk: read(&mut key, aex_session_dynamodb::attr::SK)?,
+    };
+    validate_grant_expiry_position(&position, shard)?;
+    Ok(position)
+}
+
+fn same_expiry_cursor_target(left: &GrantExpiryCursor, right: &GrantExpiryCursor) -> bool {
+    left.shard == right.shard && left.revision == right.revision && left.position == right.position
+}
+
+fn resolve_expiry_cursor_winner(
+    expected: &GrantExpiryCursor,
+    winner: Option<&GrantExpiryCursor>,
+    observed: Option<Box<Item>>,
+) -> Result<(), StoreError> {
+    if winner.is_some_and(|winner| same_expiry_cursor_target(winner, expected)) {
+        return Ok(());
+    }
+    Err(StoreError::PreconditionFailed {
+        participant: Participant::CONTENT_GRANT_EXPIRY_CURSOR,
+        observed: observed.or_else(|| winner.map(encode_grant_expiry_cursor).map(Box::new)),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_wire::types::Timestamp;
+
+    use aex_session_dynamodb::error::StoreError;
+
+    use super::{
+        GrantExpiryCursor, GrantExpiryPosition, resolve_expiry_cursor_winner,
+        same_expiry_cursor_target,
+    };
+
+    fn cursor(revision: u64, position: Option<&str>, updated_at: &str) -> GrantExpiryCursor {
+        GrantExpiryCursor {
+            shard: 7,
+            position: position.map(|suffix| GrantExpiryPosition {
+                expiry_partition: "EXPIRY#0007".to_owned(),
+                expiry_sort: format!("2026-08-02T12:34:56.789Z#{suffix}"),
+                grant_pk: format!("GRANT#{suffix}"),
+                grant_sk: "STATE".to_owned(),
+            }),
+            revision,
+            updated_at: Timestamp::parse(updated_at).expect("a timestamp"),
+        }
+    }
+
+    #[test]
+    fn an_identical_concurrent_cursor_target_is_an_exact_replay() {
+        let expected = cursor(10, Some("a"), "2026-08-02T12:34:56.789Z");
+        let concurrent = cursor(10, Some("a"), "2026-08-02T12:35:00.000Z");
+        assert!(
+            same_expiry_cursor_target(&concurrent, &expected),
+            "the winner instant is diagnostic; revision and position are authority"
+        );
+        assert_eq!(
+            resolve_expiry_cursor_winner(&expected, Some(&concurrent), None),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_later_or_different_cursor_winner_is_not_an_ambiguous_success() {
+        let expected = cursor(10, None, "2026-08-02T12:34:56.789Z");
+        assert!(!same_expiry_cursor_target(
+            &cursor(11, None, "2026-08-02T12:35:00.000Z"),
+            &expected
+        ));
+        assert!(!same_expiry_cursor_target(
+            &cursor(10, Some("b"), "2026-08-02T12:35:00.000Z"),
+            &expected
+        ));
+        assert!(matches!(
+            resolve_expiry_cursor_winner(
+                &expected,
+                Some(&cursor(11, None, "2026-08-02T12:35:00.000Z")),
+                None,
+            ),
+            Err(StoreError::PreconditionFailed { .. })
+        ));
     }
 }

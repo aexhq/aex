@@ -4,10 +4,12 @@
 //!
 //! # Invariants
 //!
-//! - **every partition is workspace scoped.** The system this replaces addressed
-//!   a body without a workspace component, so identical bytes in two tenants
-//!   shared one physical row and one deletion fate; that is a cross-tenant
-//!   equality side channel and it is fixed here, not ported (D-15)
+//! - **every customer-content partition is workspace scoped.** The system this
+//!   replaces addressed a body without a workspace component, so identical
+//!   bytes in two tenants shared one physical row and one deletion fate; that is
+//!   a cross-tenant equality side channel and it is fixed here, not ported
+//!   (D-15). Maintenance-authority rows are explicitly system/shard scoped and
+//!   are not customer-addressable
 //! - **pins live on roots.** A binding over 10,000 files writes one pin, not
 //!   10,000, and only a loose body carries a direct pin (D-10)
 //! - a download grant holds a content reference and a pin, **never a body copy**

@@ -123,6 +123,8 @@ impl Participant {
     pub const CONTENT_GRANT: Self = Self::new("content.grant");
     /// A download grant's pin.
     pub const CONTENT_GRANT_PIN: Self = Self::new("content.grant_pin");
+    /// One grant-expiry shard's durable scan position.
+    pub const CONTENT_GRANT_EXPIRY_CURSOR: Self = Self::new("content.grant_expiry_cursor");
     /// A registry pointer.
     pub const REGISTRY_POINTER: Self = Self::new("registry.pointer");
     /// A staged registry upload.

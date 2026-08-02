@@ -6,7 +6,7 @@
 
 mod support;
 
-use aex_content_dynamodb::codec;
+use aex_content_dynamodb::codec::{self, GrantExpiryCursor, GrantExpiryPosition};
 use aex_content_dynamodb::keys;
 use aex_content_dynamodb::store::{ContentMetadataStore, ContentStore};
 use aex_content_dynamodb::wire_pending::GcSweepPlan;
@@ -178,7 +178,7 @@ async fn an_expiry_page_is_a_bounded_due_index_query_without_a_scan_or_filter() 
     let (client, receiver) = capturing_client();
     let store = ContentStore::new(client, TABLE);
     let _ignored = store
-        .scan_expired_grants(7, now(), PageBudget::new(17).expect("a page"))
+        .scan_expired_grants(7, now(), PageBudget::new(17).expect("a page"), None)
         .await;
 
     let body = captured_body(receiver);
@@ -197,6 +197,80 @@ async fn an_expiry_page_is_a_bounded_due_index_query_without_a_scan_or_filter() 
         "the upper bound must include every token due in the exact millisecond"
     );
     assert!(body["FilterExpression"].is_null());
+    assert!(body["ExclusiveStartKey"].is_null());
+}
+
+#[tokio::test]
+async fn an_expiry_page_resumes_after_the_exact_complete_provider_key() {
+    let grant = grant();
+    let shard = keys::expiry_shard(&grant.token_sha256);
+    let grant_key = keys::grant(&grant.token_sha256).expect("a grant key");
+    let position = GrantExpiryPosition {
+        expiry_partition: keys::expiry_partition(shard),
+        expiry_sort: keys::expiry_sort(grant.expires_at, &grant.token_sha256)
+            .expect("an expiry key"),
+        grant_pk: grant_key.pk,
+        grant_sk: grant_key.sk,
+    };
+    let (client, receiver) = capturing_client();
+    let store = ContentStore::new(client, TABLE);
+    let _ignored = store
+        .scan_expired_grants(
+            shard,
+            later(600_000),
+            PageBudget::new(17).expect("a page"),
+            Some(&position),
+        )
+        .await;
+
+    let body = captured_body(receiver);
+    let start = &body["ExclusiveStartKey"];
+    assert_eq!(start[keys::EXPIRY_PK]["S"], position.expiry_partition);
+    assert_eq!(start[keys::EXPIRY_SK]["S"], position.expiry_sort);
+    assert_eq!(start["pk"]["S"], position.grant_pk);
+    assert_eq!(start["sk"]["S"], position.grant_sk);
+    assert_eq!(start.as_object().expect("the full provider key").len(), 4);
+}
+
+#[tokio::test]
+async fn an_expiry_cursor_advance_is_revision_fenced_and_never_enters_the_expiry_index() {
+    let grant = grant();
+    let shard = keys::expiry_shard(&grant.token_sha256);
+    let grant_key = keys::grant(&grant.token_sha256).expect("a grant key");
+    let position = GrantExpiryPosition {
+        expiry_partition: keys::expiry_partition(shard),
+        expiry_sort: keys::expiry_sort(grant.expires_at, &grant.token_sha256)
+            .expect("an expiry key"),
+        grant_pk: grant_key.pk,
+        grant_sk: grant_key.sk,
+    };
+    let current = GrantExpiryCursor {
+        shard,
+        position: None,
+        revision: 4,
+        updated_at: now(),
+    };
+    let (client, receiver) = capturing_client();
+    let store = ContentStore::new(client, TABLE);
+    let _ignored = store
+        .advance_grant_expiry_cursor(Some(&current), shard, Some(&position), later(1))
+        .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(
+        body["ConditionExpression"].as_str(),
+        Some("itemType = :cursor AND shard = :shard AND revision = :previous")
+    );
+    assert_eq!(body["ExpressionAttributeValues"][":previous"]["N"], "4");
+    assert_eq!(body["ReturnValuesOnConditionCheckFailure"], "ALL_OLD");
+    let item = &body["Item"];
+    assert!(item[keys::EXPIRY_PK].is_null());
+    assert!(item[keys::EXPIRY_SK].is_null());
+    assert_eq!(item["revision"]["N"], "5");
+    assert_eq!(
+        item["position"]["M"].as_object().expect("full LEK").len(),
+        4
+    );
 }
 
 #[tokio::test]
@@ -270,7 +344,7 @@ async fn the_reachability_read_is_strongly_consistent_and_covers_pins_and_grants
 
 #[tokio::test]
 async fn every_authority_point_read_is_strongly_consistent() {
-    for read in ["descriptor", "body", "grant", "epoch"] {
+    for read in ["descriptor", "body", "grant", "epoch", "expiry_cursor"] {
         let (client, receiver) = capturing_client();
         let store = ContentStore::new(client, TABLE);
         match read {
@@ -283,8 +357,11 @@ async fn every_authority_point_read_is_strongly_consistent() {
             "grant" => {
                 let _ignored = store.redeem_grant(&"b".repeat(64), now()).await;
             }
-            _ => {
+            "epoch" => {
                 let _ignored = store.load_gc_epoch(workspace()).await;
+            }
+            _ => {
+                let _ignored = store.load_grant_expiry_cursor(7).await;
             }
         }
         let body = captured_body(receiver);

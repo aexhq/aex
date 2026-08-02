@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "regional-content",
   "owner": "regional-stores",
-  "purpose": "Content body descriptors, inline ciphertext bodies, Merkle tree pages, root descriptors, root and body pins, download grants, GC epochs and GC candidates. Every partition is workspace scoped.",
+  "purpose": "Content body descriptors, inline ciphertext bodies, Merkle tree pages, root descriptors, root and body pins, download grants, durable grant-expiry cursors, GC epochs and GC candidates. Every customer-content partition is workspace scoped.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -77,7 +77,8 @@
     "root_descriptor",
     "tree_page",
     "gc_epoch",
-    "gc_candidate"
+    "gc_candidate",
+    "grant_expiry_cursor"
   ],
   "iam": [
     {

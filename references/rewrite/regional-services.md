@@ -1429,3 +1429,48 @@ for the complete point and collection models, followed by exact lifecycle and
 status semantics. The real-router served test names both routes explicitly and
 requires them to remain absent, return no body, and mint no ETag until that work
 lands.
+## Durable content-expiry cursor continuation (2026-08-02)
+
+Grant expiry no longer restarts every shard at its oldest due row. The
+`regional-content` authority now owns one `grant_expiry_cursor` base-table row
+per shard. Its optimistic revision fences concurrent scheduled invocations, and
+its optional nested `position` is the exact complete DynamoDB GSI
+last-evaluated key: expiry partition and sort keys plus base partition and sort
+keys. The four components must be present together, canonical for the named
+grant and bound to the cursor shard. They are deliberately nested rather than
+written as top-level `expiryShardPk` / `expiryShardSk`, so a cursor row cannot
+enter the sparse index it walks.
+
+Each bounded shard pipeline strongly reads that cursor, queries strictly after
+its full position, settles every grant-and-pin expiry transaction selected by
+the page, and only then advances under revision CAS. It advances even when some
+selected transactions fail, which prevents a permanently failing full prefix
+from monopolising the page. A final or empty page stores no position and wraps
+the next invocation to the shard start, so failed rows are retried on a later
+pass. A crash before the cursor write can repeat already-settled transactions;
+those transactions are idempotent. A query failure never advances its shard.
+
+A conditional or transport-ambiguous cursor write is resolved by one strongly
+consistent reread of the exact row. Only the expected revision and position,
+including an expected wrapped `None`, count as replay success. A later revision
+or different position fails loud and is never overwritten by a blind retry.
+At most sixteen shard pipelines execute provider reads at once. Grant expiry
+transactions and cursor writes share a second global sixteen-operation bound,
+and every launched task settles before the invocation returns.
+
+This protocol provides starvation-resistant traversal, not a claim that one GSI
+pass is a point-in-time snapshot. The expiry index is eventually consistent,
+and TTL may remove disposable grant rows independently; repeated wraps and the
+strong explicit `expiresAt` transaction fence are what converge safely. A
+permanently corrupt or condition-failing grant remains visible and keeps every
+pass that selects it red, but it no longer prevents later rows in the shard from
+being attempted.
+
+Verification on `rw/content-expiry-cursor`: the content store and lifecycle
+worker run 84 focused tests with 84 passed and none skipped; the three expiry
+fairness/concurrency tests pass again after the final aggregate refactor; the
+regional-table support package runs 50 tests with 50 passed, including the
+deterministic bundle rebuild; strict all-target clippy with warnings denied and
+package-scoped formatting are clean; and `aex-workspace-check` is green at 136
+members and 143 packages. The regenerated 13-table bundle digest is
+`blake3:357d0b92a60e93cde4019939ea99a7b5cef65206f7ca6ac7ba63376bcef858e5`.
