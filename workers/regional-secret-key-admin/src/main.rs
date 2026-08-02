@@ -13,6 +13,8 @@ use aex_regional_http::config::ConfigError;
 use aex_wire::ids::{PrefixedId as _, WorkspaceId};
 use clap::{Parser, Subcommand};
 use regional_secret_key_admin::AdminOutcome;
+use regional_secret_key_admin::admin::{AdminCommand, AdminRunError, execute};
+use regional_secret_key_admin::aws::AwsKeyAdmin;
 use regional_secret_key_admin::config::Config;
 
 /// Administers the regional secret keystore.
@@ -58,10 +60,6 @@ impl Command {
             | Self::Verify { workspace } => workspace,
         }
     }
-
-    fn mutates(&self) -> bool {
-        !matches!(self, Self::Verify { .. })
-    }
 }
 
 /// Why the task refused or failed.
@@ -73,12 +71,16 @@ enum AdminError {
     /// The workspace argument was not a `wsp_` identifier.
     #[error("`{0}` is not a `wsp_` workspace identifier")]
     Workspace(String),
+    /// The real provider/store administration path refused or failed.
+    #[error(transparent)]
+    Admin(#[from] AdminRunError),
 }
 
 /// The exit code that means "already current; nothing was mutated".
 const ALREADY_CURRENT: u8 = 3;
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
     let config = match Config::from_env() {
         Ok(config) => config,
@@ -89,7 +91,7 @@ fn main() -> ExitCode {
     };
     let settings = aex_platform_telemetry::Settings::default();
     let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&cli, &config, &telemetry);
+    let outcome = run(&cli, &config, &telemetry).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {
@@ -107,7 +109,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(
+async fn run(
     cli: &Cli,
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
@@ -136,21 +138,25 @@ fn run(
         config.keystore_table.clone(),
         config.secret_kms_key.value.clone(),
     );
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let admin = AwsKeyAdmin::new(
+        aws_sdk_dynamodb::Client::new(&aws),
+        aws_sdk_kms::Client::new(&aws),
+        binding.table(),
+        binding.kms_key_arn(),
+        config.plane.as_str(),
+        config.region.as_str(),
+    );
+    let command = match &cli.command {
+        Command::CreateBranchKey { .. } => AdminCommand::Create,
+        Command::RotateBranchKey { reason, .. } => AdminCommand::Rotate { reason },
+        Command::Verify { .. } => AdminCommand::Verify,
+    };
+    let outcome = execute(&admin, command, workspace, config.attestation).await?;
     println!(
-        "regional-secret-key-admin: {} workspace={workspace} keystore={} attestation={}",
-        if cli.command.mutates() {
-            "administering"
-        } else {
-            "verifying"
-        },
+        "regional-secret-key-admin: outcome={outcome:?} workspace={workspace} keystore={} attestation={}",
         binding.table(),
         config.attestation
     );
-    // `verify` never mutates, so a successful verification of an existing
-    // current generation is exactly the idempotent no-op exit code.
-    Ok(if cli.command.mutates() {
-        AdminOutcome::Created
-    } else {
-        AdminOutcome::AlreadyCurrent
-    })
+    Ok(outcome)
 }

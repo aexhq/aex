@@ -363,7 +363,9 @@ mistake that otherwise survive deployment are refused at start-up:
 - **`regional-secret-key-admin`** — the three `clap` commands, the exit-code
   interface (`0` acted, `3` already current, `1` refused), and start-up denial of
   a table that is not the configured keystore, a cross-region key, an unattested
-  run and every product-table binding.
+  run and every product-table binding. Its production adapter now strongly reads
+  the active row, obtains wrapped branch material directly from KMS, and commits
+  the immutable version plus active pointer in one fenced transaction.
 
 ### The one blocking gap
 
@@ -996,3 +998,29 @@ The recommended split, for `central-control-worker` to confirm:
 | RD-07 | Approval expiry is explicit input, not a hidden default | The policy owner supplies a future deadline. The domain refuses an absent window and turns a response racing the deadline into an `Expired` commit. |
 | RD-08 | Public operation payloads are decoded under the envelope kind | Stored content has no second discriminant. A mismatch is typed corruption, while internal `ContentGc` never enters the public index or point result. |
 | RD-09 | Workspace profile and limits use cold rows and a separate port | Placement stays the narrow per-request authorization item. Effective values are durable feed records, including their source; generated registry metadata is never treated as a value. |
+
+## Key administration continuation (2026-08-02)
+
+The one-shot key admin no longer treats printing an action as success. Creation
+and rotation derive the version-row identity from the attested operation, so a
+retry targets the same immutable generation. KMS
+`GenerateDataKeyWithoutPlaintext` returns only wrapped material to the process;
+the version row and `branch:ACTIVE` row then commit in one
+`TransactWriteItems`. Rotation conditions the active replacement on both the
+previous version pointer and hierarchy generation. A conditional failure is
+resolved with a new strongly consistent read, which distinguishes a lost
+acknowledgement of this operation from a competing operation.
+
+Only bounded identity facts enter the KMS encryption context. The operator's
+rotation reason is stored as SHA-256 because encryption context is diagnostic
+metadata, not a place for operator or customer prose. `verify` strongly rereads
+the exact active record, confirms the configured root-key lineage, calls KMS
+with the stored context and holds the returned plaintext only in a zeroizing
+buffer. The authored table grant now includes `TransactWriteItems`; the
+canonical generated regional-table bundle must be regenerated with the change.
+
+The implementation keeps the prelaunch custom envelope decision: it writes the
+provider-compatible keystore attribute vocabulary directly because the rejected
+Encryption SDK dependency is not present in this workspace. No ordinary
+application role gains this write adapter or the table/KMS combination it
+requires.

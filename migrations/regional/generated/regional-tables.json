@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:2b8056ecbff3483d81d57a2343053c2c776ae13d518d1be66e1aaa3a932c6495",
+  "digest": "blake3:9fbcf405cedf56b1057635545e82efcfcfd3d8b212afbced8cd87a3620874852",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -920,10 +920,7 @@
           "role": "regional-secret-key-admin",
           "actions": [
             "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
-            "dynamodb:DescribeTable"
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
