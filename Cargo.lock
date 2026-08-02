@@ -3232,6 +3232,7 @@ dependencies = [
  "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
+ "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-s3",

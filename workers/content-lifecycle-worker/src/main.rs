@@ -7,12 +7,13 @@
 
 use std::process::ExitCode;
 
-use aex_content_dynamodb::store::{ContentMetadataStore as _, ContentStore, GrantExpiry};
+use aex_content_dynamodb::store::ContentStore;
 use aex_regional_http::config::ConfigError;
 use aex_session_dynamodb::paging::PageBudget;
 use aex_wire::types::Timestamp;
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
 use content_lifecycle_worker::config::{Config, Mode};
+use content_lifecycle_worker::expiry::expire_due_grants;
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Why `content-lifecycle-worker` stopped.
@@ -148,51 +149,15 @@ impl Role {
             .ok_or_else(|| LambdaError::from("expiry role has no admitted page bound"))?;
         let budget =
             PageBudget::new(page_items).map_err(|error| LambdaError::from(error.to_string()))?;
-        let mut expired = 0_u64;
-        let mut shards_with_more = 0_u64;
-        for shard in 0..shards {
-            let page = self
-                .content
-                .scan_expired_grants(shard, now, budget)
-                .await
-                .map_err(|error| LambdaError::from(error.to_string()))?;
-            if page.more {
-                shards_with_more += 1;
-            }
-            expired += self.expire_page(page.grants, now).await?;
-        }
+        let report = expire_due_grants(self.content.clone(), shards, now, budget)
+            .await
+            .map_err(|error| LambdaError::from(error.to_string()))?;
         Ok(serde_json::json!({
             "mode": self.mode.as_str(),
-            "expiredGrants": expired,
-            "shardsScanned": shards,
-            "shardsWithMore": shards_with_more,
+            "expiredGrants": report.expired_grants,
+            "shardsScanned": report.shards_scanned,
+            "shardsWithMore": report.shards_with_more,
         }))
-    }
-
-    /// Runs every deletion in the selected page, but never lets one scheduled
-    /// invocation create an unbounded `DynamoDB` burst.
-    async fn expire_page(
-        &self,
-        grants: Vec<GrantExpiry>,
-        now: Timestamp,
-    ) -> Result<u64, LambdaError> {
-        let mut tasks = tokio::task::JoinSet::new();
-        let mut completed = 0_u64;
-        let mut first_error: Option<String> = None;
-        for grant in grants {
-            while tasks.len() >= content_lifecycle_worker::MAX_EXPIRY_WRITES_IN_FLIGHT {
-                collect_expiry_result(&mut tasks, &mut completed, &mut first_error).await;
-            }
-            let content = self.content.clone();
-            tasks.spawn(async move { content.expire_grant(&grant, now).await });
-        }
-        while !tasks.is_empty() {
-            collect_expiry_result(&mut tasks, &mut completed, &mut first_error).await;
-        }
-        match first_error {
-            None => Ok(completed),
-            Some(error) => Err(LambdaError::from(error)),
-        }
     }
 
     /// Reports per-item failures instead of throwing, so an item that already
@@ -212,23 +177,6 @@ impl Role {
             })
             .collect();
         rendered
-    }
-}
-
-async fn collect_expiry_result(
-    tasks: &mut tokio::task::JoinSet<Result<(), aex_session_dynamodb::error::StoreError>>,
-    completed: &mut u64,
-    first_error: &mut Option<String>,
-) {
-    match tasks.join_next().await {
-        Some(Ok(Ok(()))) => *completed += 1,
-        Some(Ok(Err(error))) => {
-            first_error.get_or_insert_with(|| error.to_string());
-        }
-        Some(Err(error)) => {
-            first_error.get_or_insert_with(|| format!("grant expiry task failed: {error}"));
-        }
-        None => {}
     }
 }
 
