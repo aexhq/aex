@@ -817,6 +817,40 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
+/// Resolving only the approval row would acknowledge before the durable Brain
+/// handoff. The route stays absent until one authority transaction also owns
+/// exact replay after an ambiguous commit, the concurrent-decision winner, and
+/// the single journal/result/wake or bound-call authorization it hands off.
+#[tokio::test]
+async fn approval_response_is_absent_without_one_atomic_handoff_authority() {
+    let row = stored_approval(ApprovalStatus::Pending);
+    let session = row.binding.session;
+    let approval = row.approval;
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            next: None,
+        }),
+    );
+
+    assert!(!mounted.contains(&RouteId::SessionApprovalRespond));
+    let (status, body) = post(
+        &router,
+        &format!("/api/sessions/{session}/approvals/{approval}/responses"),
+        r#"{"decision":"deny"}"#,
+    )
+    .await;
+    assert!(
+        matches!(
+            status,
+            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+        ),
+        "an incomplete approval authority became reachable: {status} {body}"
+    );
+}
+
 // --- secret reads ----------------------------------------------------------------
 
 #[tokio::test]
