@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 48,
+    "awaiting_owner": 43,
     "capacity_gates": 19,
     "live_targets": 34,
     "packages": 141,
@@ -2646,6 +2646,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "capability": "unit",
           "conformance": "unit",
           "resource_envelope": "e2e",
           "smoke": "smoke"
@@ -2686,13 +2687,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/regional-observation-api": {
       "name": "regional-observation-api",
@@ -3370,7 +3373,8 @@
         ],
         "seams": [
           "aws.iam.denial",
-          "aws.rds_data.transaction"
+          "aws.rds_data.transaction",
+          "stripe.test_mode.webhook"
         ],
         "security_tier": "money",
         "risk": [
@@ -4118,6 +4122,7 @@
         "seams": [
           "aws.dynamodb.streams",
           "aws.iam.denial",
+          "aws.rds_data.transaction",
           "aws.sqs.fifo",
           "aws.sqs.redrive"
         ],
@@ -4481,6 +4486,7 @@
         "live_suite": "aex-live-central-schema-admin",
         "layers": [
           "unit",
+          "integration",
           "smoke",
           "e2e"
         ],
@@ -4492,16 +4498,17 @@
         ],
         "seams": [
           "aws.aurora.serverless_v2",
-          "aws.ecs.run_task",
           "aws.iam.denial"
         ],
-        "security_tier": "internal",
+        "security_tier": "authority",
         "risk": [
-          "sql"
+          "sql",
+          "iam"
         ],
         "scenarios": [],
         "targets": {
           "conformance": "unit",
+          "migrations": "integration",
           "resource_envelope": "e2e",
           "smoke": "smoke"
         },
@@ -4566,26 +4573,31 @@
         ],
         "concerns": [
           "contract",
+          "property",
           "fault",
           "security",
           "performance"
         ],
         "seams": [
           "aws.rds_data.transaction",
-          "aws.iam.denial"
+          "aws.iam.denial",
+          "stripe.test_mode.webhook"
         ],
         "security_tier": "money",
         "risk": [
           "money"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "properties": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/finance-settlement-worker": {
       "name": "finance-settlement-worker",
@@ -4603,6 +4615,7 @@
         ],
         "concerns": [
           "contract",
+          "property",
           "fault",
           "security",
           "performance"
@@ -4615,16 +4628,20 @@
         ],
         "security_tier": "money",
         "risk": [
-          "money"
+          "money",
+          "concurrency"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "properties": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/observation-export-launcher": {
       "name": "observation-export-launcher",
@@ -4774,13 +4791,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/regional-secret-key-admin": {
       "name": "regional-secret-key-admin",
@@ -4960,9 +4979,8 @@
           "performance"
         ],
         "seams": [
+          "aws.rds_data.transaction",
           "aws.sqs.fifo",
-          "aws.sqs.redrive",
-          "aws.dynamodb.streams",
           "aws.iam.denial"
         ],
         "security_tier": "money",
@@ -4970,13 +4988,15 @@
           "money"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-        }
+        "targets": {
+          "conformance": "unit",
+          "resource_envelope": "e2e",
+          "smoke": "smoke"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/usage-storage-worker": {
       "name": "usage-storage-worker",
@@ -5208,7 +5228,8 @@
       "aex-live-finance-ingest",
       "aex-live-finance-reconcile",
       "aex-live-finance-settlement-worker",
-      "aex-live-provider-cost-reconciler"
+      "aex-live-provider-cost-reconciler",
+      "aex-live-usage-receipt-dispatcher"
     ],
     "aws.s3.conditional_put": [
       "aex-live-brain-mux",
@@ -5282,6 +5303,7 @@
     "stripe.test_mode.webhook": [
       "aex-live-finance-api",
       "aex-live-finance-ingest",
+      "aex-live-finance-reconcile",
       "aex-live-stripe-command-edge",
       "aex-live-stripe-webhook-edge"
     ],

@@ -99,13 +99,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "services/finance-ingest",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-central-schema-admin",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -281,27 +274,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "workers/finance-reconcile",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/finance-settlement-worker",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/provider-cost-reconciler",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "workers/runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
@@ -313,13 +285,6 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "DEFERRED by observations-usage, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications, the partial-batch response contract and the sibling-authority link proofs are covered by this binary's own unit module. The smoke and e2e targets need a deployed function, a live stream and a live receipt queue, none of which exist yet; the DynamoDB and SQS ports beneath the handler are implemented and unit-covered in this worker's one adapter."
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/usage-receipt-dispatcher",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; the cases land with the binary's own implementation"
   },
   {
     "reason_class": "awaiting_owner",
@@ -2598,6 +2563,13 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-finance-settlement-worker",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
@@ -3119,6 +3091,13 @@
     "subject": "tests/live/aex-live-usage-receipt-dispatcher",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
   },
   {
@@ -3210,13 +3189,6 @@
     "subject": "workers/central-schema-admin",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.ecs.run_task` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "workers/central-schema-admin",
-    "owner": "central-finance",
-    "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
@@ -3253,6 +3225,13 @@
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/finance-reconcile",
+    "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -3448,13 +3427,6 @@
     "subject": "workers/usage-receipt-dispatcher",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "workers/usage-receipt-dispatcher",
-    "owner": "central-finance",
-    "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
@@ -3462,14 +3434,14 @@
     "subject": "workers/usage-receipt-dispatcher",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "workers/usage-receipt-dispatcher",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.sqs.redrive` cannot be satisfied by any local substitute"
+    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

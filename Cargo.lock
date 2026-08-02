@@ -1905,6 +1905,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-sns"
+version = "1.107.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b86e20a32769dae8737938031047f46bf0857b67a5e05ef45693e7e26cb7eb35"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-query",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-sqs"
 version = "1.105.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2865,7 +2892,11 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
+ "aex-test-harness",
  "aex-wire",
+ "aws-config",
+ "aws-sdk-secretsmanager",
+ "blake3",
  "clap",
  "serde",
  "serde_json",
@@ -2873,6 +2904,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "uuid",
  "zeroize",
 ]
 
@@ -3629,43 +3661,106 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 name = "finance-api"
 version = "0.1.0"
 dependencies = [
- "aex-finance-app",
- "aex-finance-aurora",
+ "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-lambda",
+ "aws-sdk-rdsdata",
+ "aws-sdk-s3",
  "axum",
+ "base64 0.23.0",
+ "blake3",
+ "http 1.5.0",
  "lambda_http",
+ "parking_lot",
  "serde",
+ "serde_json",
  "thiserror",
+ "time",
  "tokio",
+ "toml",
  "tower",
+ "uuid",
 ]
 
 [[package]]
 name = "finance-ingest"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-rdsdata",
+ "blake3",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "uuid",
 ]
 
 [[package]]
 name = "finance-reconcile"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-domain",
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-rdsdata",
+ "aws-sdk-sns",
+ "lambda_runtime",
+ "parking_lot",
+ "proptest",
+ "serde",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "uuid",
 ]
 
 [[package]]
 name = "finance-settlement-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-finance-app",
+ "aex-finance-domain",
+ "aex-internal-contracts",
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-rdsdata",
+ "aws_lambda_events",
+ "lambda_runtime",
+ "proptest",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
+ "toml",
+ "uuid",
 ]
 
 [[package]]
@@ -5560,8 +5655,21 @@ name = "provider-cost-reconciler"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-rdsdata",
+ "aws-sdk-s3",
+ "lambda_runtime",
+ "parking_lot",
+ "serde",
+ "serde_json",
  "thiserror",
+ "time",
+ "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -7728,8 +7836,20 @@ name = "usage-receipt-dispatcher"
 version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
+ "aex-rds-data",
  "aex-telemetry-schema",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-rdsdata",
+ "aws-sdk-sqs",
+ "lambda_runtime",
+ "parking_lot",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
+ "toml",
+ "uuid",
 ]
 
 [[package]]

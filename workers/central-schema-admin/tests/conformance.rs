@@ -1,29 +1,40 @@
-//! Schema-admin local-plan conformance evidence.
+//! The offline half of the one-shot task: the plan receipt, the exit contract
+//! and the refusals that happen before a credential is ever resolved.
 
 use std::process::Command;
 
+/// The invocation prefix every subcommand shares.
+fn base() -> Vec<&'static str> {
+    vec![
+        "--database-host",
+        "db.example",
+        "--database-port",
+        "5432",
+        "--database-name",
+        "aex",
+        "--database-secret-arn",
+        "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex/schema-admin",
+        "--tls-root-ca-path",
+        "fixture.pem",
+        "--plane",
+        "dev",
+        "--release",
+        "rel_fixture",
+    ]
+}
+
+/// Runs the artifact with `arguments` appended to the shared prefix.
+fn run(arguments: &[&str]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_central-schema-admin"));
+    command.args(base());
+    command.args(arguments);
+    command.env_clear();
+    command.output().expect("the schema admin artifact starts")
+}
+
 #[test]
-fn local_plan_emits_the_bound_lock_and_linear_head() {
-    let output = Command::new(env!("CARGO_BIN_EXE_central-schema-admin"))
-        .args([
-            "--database-host",
-            "db.example",
-            "--database-port",
-            "5432",
-            "--database-name",
-            "aex",
-            "--database-secret-arn",
-            "arn:fixture",
-            "--tls-root-ca-path",
-            "fixture.pem",
-            "--plane",
-            "dev",
-            "--release",
-            "rel_fixture",
-            "plan",
-        ])
-        .output()
-        .expect("schema admin starts");
+fn the_local_plan_emits_the_bound_lock_and_the_linear_head() {
+    let output = run(&["plan"]);
     assert!(
         output.status.success(),
         "{}",
@@ -32,4 +43,86 @@ fn local_plan_emits_the_bound_lock_and_linear_head() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 receipt");
     assert!(stdout.contains("\"bundleHead\":20260801000700"));
     assert!(stdout.contains("\"lockKey\":4703262552200136530"));
+}
+
+#[test]
+fn a_stale_image_is_refused_by_the_expected_bundle_head_before_anything_else() {
+    let output = run(&["migrate", "--expect-head", "20260801000400"]);
+    assert_eq!(
+        output.status.code(),
+        Some(12),
+        "a bundle head mismatch is exit 12: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("20260801000700"), "{stderr}");
+}
+
+#[test]
+fn a_verify_against_the_wrong_bundle_head_never_opens_a_session() {
+    let output = run(&["verify", "--expect-head", "20260801000100"]);
+    assert_eq!(output.status.code(), Some(12));
+}
+
+#[test]
+fn the_exit_contract_is_observable_from_outside_the_process() {
+    // Asserted through the artifact rather than in the source: a code a release
+    // script depends on must be observable from outside the process.
+    assert_eq!(run(&["plan"]).status.code(), Some(0));
+    assert_eq!(
+        run(&["migrate", "--expect-head", "1"]).status.code(),
+        Some(12)
+    );
+    assert_eq!(
+        run(&["verify", "--expect-head", "1"]).status.code(),
+        Some(12)
+    );
+}
+
+#[test]
+fn a_repair_of_a_transactional_migration_is_refused() {
+    // Every committed migration is transactional, so no repair path exists and
+    // asking for one is a precondition failure rather than an improvised fix.
+    let output = run(&[
+        "repair",
+        "--migration",
+        "20260801000500",
+        "--confirm",
+        "rpr_0000000000000000",
+    ]);
+    assert_eq!(output.status.code(), Some(13));
+}
+
+#[test]
+fn a_backfill_of_an_unbundled_migration_is_refused_before_a_session() {
+    let output = run(&["backfill", "--migration", "20990101000000"]);
+    assert_eq!(output.status.code(), Some(12));
+}
+
+#[test]
+fn the_committed_bundle_declares_nothing_destructive() {
+    // A destructive bundle needs recorded backup evidence; the baseline must not
+    // silently require an operator to pass one.
+    let output = run(&["migrate", "--expect-head", "20260801000700"]);
+    assert_ne!(
+        output.status.code(),
+        Some(15),
+        "the baseline bundle is not destructive: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn the_committed_bundle_holds_no_checksum_exception_mechanism() {
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/central");
+    for forbidden in [
+        "approved-checksum-transitions.toml",
+        "checksum-exceptions.toml",
+    ] {
+        assert!(
+            !directory.join(forbidden).exists(),
+            "`{forbidden}` rewrites history and defeats the checksum"
+        );
+    }
 }

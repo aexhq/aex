@@ -1,0 +1,244 @@
+//! The ports `finance-api` composes, and the plain records they carry.
+//!
+//! Money crosses these ports as integer micro-USD and nothing else. There is no
+//! `f64` in any signature here, and there is deliberately no conversion helper
+//! that would let one appear: the only widening a caller may perform is
+//! [`aex_finance_domain::Microusd::to_cents_exact`], which refuses a sub-cent
+//! remainder rather than rounding it away.
+
+use aex_finance_domain::billing_account::BillingAccountState;
+use aex_finance_domain::money::Microusd;
+use aex_payment_contracts::{EffectId, PaymentCommandEnvelope, PaymentResult, ProviderCustomerRef};
+use aex_wire::ids::OrganizationId;
+
+/// The prepaid position of one organization, as the projection records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BalanceRecord {
+    /// Spendable now.
+    pub available: Microusd,
+    /// Fenced by open reservations.
+    pub reserved: Microusd,
+    /// Rated but not yet settled.
+    pub pending: Microusd,
+    /// Monotonic projection revision.
+    pub revision: u64,
+    /// When the projection last moved, in epoch milliseconds.
+    pub updated_at_millis: i64,
+    /// The account state that decides admission.
+    pub state: BillingAccountState,
+    /// Why the account is not active, when it is not.
+    pub state_reason: Option<String>,
+}
+
+/// The durable automatic top-up policy of one organization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyRecord {
+    /// Whether automatic recharge runs.
+    pub enabled: bool,
+    /// Balance at or below which a recharge is attempted.
+    pub threshold: Microusd,
+    /// How much each recharge adds.
+    pub amount: Microusd,
+    /// Whether a reusable payment method exists.
+    pub has_payment_method: bool,
+    /// Monotonic policy revision, which is also the entity tag.
+    pub revision: u64,
+    /// When the policy last changed, in epoch milliseconds.
+    pub updated_at_millis: i64,
+}
+
+/// A requested policy replacement, already converted to micro-USD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyChange {
+    /// Whether automatic recharge runs.
+    pub enabled: bool,
+    /// Balance at or below which a recharge is attempted.
+    pub threshold: Microusd,
+    /// How much each recharge adds.
+    pub amount: Microusd,
+}
+
+/// One issued statement header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementHeader {
+    /// Identity.
+    pub statement_id: uuid::Uuid,
+    /// The billed calendar month, `YYYY-MM`.
+    pub period: String,
+    /// The issued total.
+    pub closing: Microusd,
+    /// The artifact digest, present once the statement is issued.
+    pub content_sha256: Option<[u8; 32]>,
+    /// The artifact object key, present once the statement is issued.
+    pub object_key: Option<String>,
+    /// When it was issued, in epoch milliseconds.
+    pub issued_at_millis: i64,
+}
+
+/// One priced category line of an issued statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementLineRecord {
+    /// The priced category, exactly as the usage inbox spells it.
+    pub category: String,
+    /// The line total.
+    pub total: Microusd,
+}
+
+/// A page of statement headers with its continuation position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementPage {
+    /// The page, newest first.
+    pub items: Vec<StatementHeader>,
+    /// The period to continue after, when more remain.
+    pub next_period: Option<String>,
+}
+
+/// Everything the caller needs to prepare one provider effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectPreparation {
+    /// The effect identity, which is also the provider idempotency key input.
+    pub effect: EffectId,
+    /// The account the effect belongs to.
+    pub organization: OrganizationId,
+    /// The provider customer the effect acts on.
+    pub customer: ProviderCustomerRef,
+    /// The canonical intent digest committed with the effect.
+    pub intent_hash: [u8; 32],
+}
+
+/// Why an authority call did not answer.
+///
+/// `Unavailable` and `OutcomeUnknown` are deliberately distinct. The first says
+/// nothing happened; the second says something may have. A money path that
+/// collapses them charges twice.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AuthorityError {
+    /// The organization has no finance record.
+    #[error("organization has no billing account")]
+    UnknownOrganization,
+    /// The named resource does not exist.
+    #[error("{0} not found")]
+    NotFound(&'static str),
+    /// A revision precondition did not hold.
+    #[error("revision precondition failed")]
+    RevisionConflict,
+    /// The request contradicts durable state.
+    #[error("{0}")]
+    Refused(String),
+    /// An unresolved effect of the same kind already exists.
+    #[error("an unresolved provider effect already exists for this organization")]
+    EffectAlreadyOpen,
+    /// The authority is unreachable. Nothing was applied.
+    #[error("the finance authority is unavailable: {0}")]
+    Unavailable(String),
+    /// The commit response was lost. The transition may or may not be durable.
+    #[error("the finance commit outcome is unknown: {0}")]
+    OutcomeUnknown(String),
+    /// The stored row does not match what this deployable projects.
+    #[error("the finance authority returned an undecodable row: {0}")]
+    Decode(String),
+}
+
+/// The reads and money transitions `finance-api` performs.
+///
+/// One trait rather than eight so the composition root wires exactly one
+/// adapter, and so a test double is one type rather than a matrix of them.
+#[async_trait::async_trait]
+pub trait BillingAuthority: Send + Sync + 'static {
+    /// Proves this deployable can reach the database **as its own role**.
+    ///
+    /// Readiness is not "the process booted"; it is "my grants are real". A
+    /// deployable that cannot prove its own grants must not take traffic.
+    async fn probe_role(&self) -> Result<(), AuthorityError>;
+
+    /// Reads the prepaid position of one organization.
+    async fn balance(&self, organization: OrganizationId) -> Result<BalanceRecord, AuthorityError>;
+
+    /// Reads the automatic top-up policy of one organization.
+    async fn policy(&self, organization: OrganizationId) -> Result<PolicyRecord, AuthorityError>;
+
+    /// Replaces the automatic top-up policy under a revision precondition.
+    async fn replace_policy(
+        &self,
+        organization: OrganizationId,
+        change: PolicyChange,
+        expect_revision: u64,
+    ) -> Result<PolicyRecord, AuthorityError>;
+
+    /// Reads one page of issued statement headers, newest first.
+    async fn statements(
+        &self,
+        organization: OrganizationId,
+        before_period: Option<&str>,
+        limit: u32,
+    ) -> Result<StatementPage, AuthorityError>;
+
+    /// Reads one issued statement header.
+    async fn statement(
+        &self,
+        organization: OrganizationId,
+        statement_id: uuid::Uuid,
+    ) -> Result<StatementHeader, AuthorityError>;
+
+    /// Reads the priced category lines of one issued statement.
+    async fn statement_lines(
+        &self,
+        organization: OrganizationId,
+        period: &str,
+    ) -> Result<Vec<StatementLineRecord>, AuthorityError>;
+
+    /// Commits a `prepared` provider effect **before** any provider call.
+    ///
+    /// The effect identity is minted here and never by the caller, so a retry
+    /// of the same intent resolves the original effect instead of opening a
+    /// second one.
+    async fn prepare_effect(
+        &self,
+        organization: OrganizationId,
+        kind: aex_payment_contracts::CommandKind,
+        intent: &[u8],
+        amount: Option<Microusd>,
+        deadline_millis: i64,
+    ) -> Result<EffectPreparation, AuthorityError>;
+
+    /// Records the provider's answer to a dispatched effect.
+    ///
+    /// An indeterminate answer is recorded as `outcome_unknown`; this call has
+    /// no arm that turns one into a determinate failure.
+    async fn finalize_effect(
+        &self,
+        effect: EffectId,
+        result: &PaymentResult,
+    ) -> Result<(), AuthorityError>;
+}
+
+/// The one path from Rust to Stripe: a synchronous invoke of the command edge.
+#[async_trait::async_trait]
+pub trait PaymentGateway: Send + Sync + 'static {
+    /// Executes one admitted command and reports what the provider did.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GatewayError`] only when the command could not be handed to
+    /// the edge at all. Everything the provider did — including a 5xx — comes
+    /// back as a [`PaymentResult`], because only the edge can tell a decline
+    /// from an indeterminate failure.
+    async fn execute(
+        &self,
+        envelope: &PaymentCommandEnvelope,
+    ) -> Result<PaymentResult, GatewayError>;
+}
+
+/// Why a payment command could not be executed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GatewayError {
+    /// The edge could not be invoked. The command was not started.
+    #[error("the payment command edge is unavailable: {0}")]
+    Unavailable(String),
+    /// The invoke may or may not have reached the edge.
+    #[error("the payment command outcome is unknown: {0}")]
+    OutcomeUnknown(String),
+    /// The edge answered with something this contract does not admit.
+    #[error("the payment command edge answered off-contract: {0}")]
+    OffContract(String),
+}
