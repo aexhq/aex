@@ -1,4 +1,4 @@
--- aex-migration: 20260801000200 control | tx=yes | destructive=no | phase=baseline
+-- aex-migration: tx=yes destructive=no phase=baseline
 -- 0003_control.sql — organizations, memberships, invitations, workspaces, API
 -- key metadata, durable operations, replay records, audit, outbox and signing
 -- keys.

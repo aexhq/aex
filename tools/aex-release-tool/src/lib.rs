@@ -16,6 +16,7 @@
 pub mod admit;
 pub mod artifact;
 pub mod canon;
+pub mod describe;
 pub mod error;
 pub mod evidence;
 pub mod graph;

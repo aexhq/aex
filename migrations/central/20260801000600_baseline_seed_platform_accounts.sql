@@ -1,4 +1,4 @@
--- aex-migration: 20260801000600 baseline_seed_platform_accounts | tx=yes | destructive=no | phase=baseline
+-- aex-migration: tx=yes destructive=no phase=baseline
 
 INSERT INTO finance.account (account_id, org_id, kind, normal_side)
 VALUES

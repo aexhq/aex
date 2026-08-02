@@ -90,6 +90,30 @@ kind = "repo-wide"
 
 # --- workspace members -------------------------------------------------------
 
+# The three npm packages that live inside a Cargo member root. They are named
+# before the `derive-cargo` rules below because the first match wins, and a
+# derived rule would resolve them to a `cargo:` node that does not exist — an
+# owner nobody can select, which reads as ownership and behaves as a hole.
+# `aex_workspace_check::collect::NPM_EXPLICIT` holds the same three directories.
+
+[[rule]]
+id = "npm-stripe-command-edge"
+prefix = "services/stripe-command-edge/"
+kind = "node"
+node = "npm:@aexhq/stripe-command-edge"
+
+[[rule]]
+id = "npm-stripe-webhook-edge"
+prefix = "services/stripe-webhook-edge/"
+kind = "node"
+node = "npm:@aexhq/stripe-webhook-edge"
+
+[[rule]]
+id = "npm-eslint-plugin"
+prefix = "tools/eslint-plugin-aex/"
+kind = "node"
+node = "npm:eslint-plugin-aex"
+
 [[rule]]
 id = "cargo-crates"
 prefix = "crates/"

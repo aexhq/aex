@@ -1,4 +1,4 @@
--- aex-migration: 20260801000400 finance_roles_and_schema | tx=yes | destructive=no | phase=baseline
+-- aex-migration: tx=yes destructive=no phase=baseline
 
 CREATE SCHEMA IF NOT EXISTS schema_admin;
 CREATE SCHEMA IF NOT EXISTS finance;

@@ -141,6 +141,112 @@ fn a_live_companion_nobody_names_is_orphaned() {
     assert!(err.rules().contains(&"aex-orphan-companion"));
 }
 
+/// A `ts-lambda` unit whose owning package is an npm member, plus its live
+/// companion and scenario. The npm package sits under `services/`, which no
+/// `workspaces` glob reaches, so it is only visible through the explicit list
+/// `aex-workspace-check` owns.
+const TS_EDGE_UNITS: &str = r#"
+schema = "aex.units.v1"
+
+[[unit]]
+id = "stripe-command-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@fixture/stripe-command-edge"
+target = "nodejs22.x-arm64"
+profile = "release"
+form = "zip"
+entrypoint = "handler.js"
+config_env_namespace = "AEX_STRIPE_COMMAND_"
+config_schema_version = 1
+required_receipts = ["unit", "lint"]
+alarm_spec = "stripe-command-edge"
+live_suite = "aex-live-stripe-command-edge"
+
+[unit.lambda]
+memory_mb = 512
+timeout_s = 30
+reserved_concurrency = 20
+"#;
+
+const TS_EDGE_SCENARIOS: &str = r#"
+schema = "aex.scenario-ownership.v1"
+
+[[scenario]]
+id = "SC-EDGE"
+owner = "central-finance"
+observes = ["artifact:stripe-command-edge"]
+"#;
+
+fn ts_edge_fixture(units: &str) -> std::path::PathBuf {
+    Fixture::new()
+        .add_npm(
+            common::NpmPlan::new(
+                "@fixture/stripe-command-edge",
+                "services/stripe-command-edge",
+            )
+            .meta(common::npm_deployable_meta(
+                "stripe-command-edge",
+                "aex-live-stripe-command-edge",
+            )),
+        )
+        .add_crate(
+            CratePlan::new(
+                "aex-live-stripe-command-edge",
+                "tests/live/aex-live-stripe-command-edge",
+            )
+            .meta(live_meta("stripe-command-edge")),
+        )
+        .units(units)
+        .scenarios(TS_EDGE_SCENARIOS)
+        .build()
+}
+
+#[test]
+fn a_unit_owned_by_an_npm_package_resolves_to_the_npm_node() {
+    // The unit registry names a package, not a node namespace. Resolving every
+    // unit into `cargo:` would leave the two TypeScript edges pointing at a
+    // Cargo member that does not exist, which stops graph construction.
+    let root = ts_edge_fixture(TS_EDGE_UNITS);
+    let built = verify_fixture(&root).expect("a TypeScript edge unit must verify");
+    let artifact = aex_release_tool::graph::NodeId::artifact("stripe-command-edge");
+    let package = aex_release_tool::graph::NodeId::npm("@fixture/stripe-command-edge");
+    let slot = built.graph.slot(&artifact).expect("the artifact node");
+    let target = built.graph.slot(&package).expect("the npm node");
+    assert!(
+        built
+            .graph
+            .forward()
+            .neighbours(slot)
+            .any(|(neighbour, _)| neighbour == target),
+        "the artifact's input closure must reach its owning npm package"
+    );
+}
+
+#[test]
+fn an_npm_package_outside_every_workspace_glob_is_still_read() {
+    // `services/*` is in no `workspaces` array. If the delivery graph only read
+    // the globs it would derive a smaller live-target set than the registry
+    // does, and the two authorities would disagree about the same tree.
+    let root = ts_edge_fixture(TS_EDGE_UNITS);
+    let built = verify_fixture(&root).unwrap();
+    assert!(
+        built.live_targets.contains("aex-live-stripe-command-edge"),
+        "an explicitly named npm package's live_suite must reach the derived set"
+    );
+}
+
+#[test]
+fn a_unit_naming_a_package_in_neither_namespace_still_names_the_row() {
+    let units = TS_EDGE_UNITS.replace("@fixture/stripe-command-edge", "@fixture/ghost");
+    let err = verify_fixture(&ts_edge_fixture(&units)).unwrap_err();
+    assert!(
+        err.rules().contains(&"unit-package-unknown"),
+        "the report must name the registry row, not a dangling edge: {:?}",
+        err.rules()
+    );
+}
+
 #[test]
 fn a_deployable_with_no_resource_shape_fails() {
     let units = r#"

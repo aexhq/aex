@@ -1,4 +1,4 @@
--- aex-migration: 20260801000000 bootstrap | tx=yes | destructive=no | phase=baseline
+-- aex-migration: tx=yes destructive=no phase=baseline
 -- 0001_bootstrap.sql — database-wide denial and the group roles.
 --
 -- Two rules this file exists to establish.

@@ -46,13 +46,165 @@ fn recipes_are_byte_stable_across_runs() {
 }
 
 #[test]
+fn every_ts_lambda_recipe_names_a_source_entry_that_exists() {
+    // The recipe is the only record of how the bytes were produced, so a path
+    // in it that nobody can `bun build` is a recipe that documents nothing.
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let units = shipped_units();
+    let mut checked = 0;
+    for unit in units.units.iter().filter(|unit| unit.kind == "ts-lambda") {
+        let recipe = plan(unit).unwrap();
+        let entry = recipe.argv.last().expect("an entry path");
+        assert!(
+            repo.join(entry).is_file(),
+            "unit `{}` builds `{entry}`, which is not a file",
+            unit.id
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "the registry declares no ts-lambda unit");
+}
+
+#[test]
 fn a_lambda_archive_is_byte_identical_across_packagings() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("bootstrap");
     std::fs::write(&input, b"\x7fELF fixture payload").unwrap();
-    let first = package(Form::LambdaZip, &input, 0).unwrap();
-    let second = package(Form::LambdaZip, &input, 0).unwrap();
+    let first = package(Form::LambdaZip, &input, 0, "bootstrap").unwrap();
+    let second = package(Form::LambdaZip, &input, 0, "bootstrap").unwrap();
     assert_eq!(canon::digest_bytes(&first), canon::digest_bytes(&second));
+}
+
+#[test]
+fn a_lambda_archive_carries_the_entrypoint_the_unit_declares() {
+    // A Node runtime loads `handler.js`; the custom runtime loads `bootstrap`.
+    // Packaging every ZIP under one hard-coded name would ship an archive the
+    // runtime cannot start and would only be found on a live plane.
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("build-output");
+    std::fs::write(&input, b"export const handler = () => {};").unwrap();
+
+    let node = package(Form::LambdaZip, &input, 0, "handler.js").unwrap();
+    let rust = package(Form::LambdaZip, &input, 0, "bootstrap").unwrap();
+    assert!(
+        node.windows(10).any(|window| window == b"handler.js"),
+        "the archive must name the declared entrypoint"
+    );
+    assert!(!node.windows(9).any(|window| window == b"bootstrap"));
+    assert!(rust.windows(9).any(|window| window == b"bootstrap"));
+}
+
+fn described(
+    unit_id: &str,
+    artifact: &std::path::Path,
+    ran: Option<Vec<String>>,
+) -> (
+    aex_release_tool::artifact::ArtifactEnvelope,
+    Vec<aex_release_tool::describe::UnearnedField>,
+) {
+    let units = shipped_units();
+    let unit = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == unit_id)
+        .expect("the unit must be in the shipped registry");
+    let recipe = plan(unit).unwrap();
+    let build = aex_release_tool::describe::LocalBuild {
+        unit,
+        plan: &recipe,
+        artifact,
+        repository: "aexhq/aex".to_owned(),
+        commit_sha: "b".repeat(40),
+        tree_clean: true,
+        git_ref: None,
+        toolchain: aex_release_tool::artifact::Toolchain {
+            channel: "1.97.1".to_owned(),
+            rustc_version: "1.97.1".to_owned(),
+            rustc_commit_hash: "a".repeat(40),
+            host: "x86_64-pc-windows-msvc".to_owned(),
+            target: unit.target.clone(),
+            components: Vec::new(),
+            packager_version: None,
+        },
+        lockfile_digest: digest(9),
+        contract_digest: digest(8),
+        actual_argv: ran,
+        closure: std::collections::BTreeMap::from([("Cargo.lock".to_owned(), digest(9))]),
+        location_uri: "target/release-artifacts/x.zip".to_owned(),
+        receipts: Vec::new(),
+        created_at: "2026-08-01T00:00:00Z".to_owned(),
+    };
+    aex_release_tool::describe::describe(&build).expect("a describable build")
+}
+
+#[test]
+fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe() {
+    // The recipe is `cargo lambda build`. On a host where that cannot run, the
+    // bytes come from the `cargo zigbuild` invocation it wraps. Recording the
+    // recipe anyway would put the one unverifiable claim in the document into
+    // the field whose whole purpose is to be reproducible.
+    let temp = tempfile::tempdir().unwrap();
+    let artifact = temp.path().join("bootstrap.zip");
+    std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
+
+    let (recipe_envelope, recipe_ledger) = described("regional-session-api", &artifact, None);
+    assert_eq!(recipe_envelope.inputs.build_command.argv[1], "lambda");
+    assert!(
+        !recipe_ledger
+            .iter()
+            .any(|field| field.pointer == "/inputs/buildCommand/argv"),
+        "running the recipe as written owes no explanation"
+    );
+
+    let ran = vec![
+        "cargo".to_owned(),
+        "zigbuild".to_owned(),
+        "--profile".to_owned(),
+        "release-lambda".to_owned(),
+    ];
+    let (envelope, ledger) = described("regional-session-api", &artifact, Some(ran.clone()));
+    assert_eq!(envelope.inputs.build_command.argv, ran);
+    let row = ledger
+        .iter()
+        .find(|field| field.pointer == "/inputs/buildCommand/argv")
+        .expect("the substitution must be recorded");
+    assert!(row.reason.contains("cargo lambda build"));
+    assert!(row.reason.contains("cargo zigbuild"));
+}
+
+fn local_build_of(
+    unit_id: &str,
+    artifact: &std::path::Path,
+) -> aex_release_tool::error::Result<()> {
+    let (envelope, unearned) = described(unit_id, artifact, None);
+    let bytes = std::fs::read(artifact).unwrap();
+    assert_eq!(envelope.output.digest, canon::digest_bytes(&bytes));
+    assert_eq!(envelope.output.size_bytes, bytes.len() as u64);
+    assert!(
+        unearned.iter().any(|field| field.pointer == "/provenance"),
+        "the ledger must name every field a local build cannot fill"
+    );
+    envelope.verify(Some(artifact), false)
+}
+
+#[test]
+fn a_locally_described_envelope_records_real_bytes_and_is_still_refused() {
+    // The whole point of `artifact describe`. It reads the digest, the size,
+    // the argv and the closure from the tree, and it refuses to claim the
+    // provenance and the immutable location that only a published build has —
+    // so `artifact verify` rejects it rather than passing on nothing.
+    let temp = tempfile::tempdir().unwrap();
+    let artifact = temp.path().join("bootstrap.zip");
+    std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
+
+    let err = local_build_of("regional-session-api", &artifact).unwrap_err();
+    assert_eq!(
+        err.exit.code(),
+        20,
+        "a local location is not an identity: {:?}",
+        err.rules()
+    );
+    assert!(err.rules().contains(&"envelope-mutable-location"));
 }
 
 #[test]

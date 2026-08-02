@@ -119,10 +119,54 @@ pub fn deployable_meta(deployable: &str, live_suite: &str) -> Value {
     })
 }
 
+/// One synthetic npm member.
+pub struct NpmPlan {
+    pub name: String,
+    pub dir: String,
+    pub meta: Option<Value>,
+}
+
+impl NpmPlan {
+    pub fn new(name: &str, dir: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            dir: dir.to_owned(),
+            meta: Some(default_meta("delivery", "tool")),
+        }
+    }
+
+    #[must_use]
+    pub fn meta(mut self, meta: Value) -> Self {
+        self.meta = Some(meta);
+        self
+    }
+}
+
+/// A deployable ownership block for an npm member, whose `layers` name the
+/// evidence a `TypeScript` Lambda actually earns.
+pub fn npm_deployable_meta(deployable: &str, live_suite: &str) -> Value {
+    json!({
+        "owner": "central-finance",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": deployable,
+        "live_suite": live_suite,
+        "layers": ["unit", "smoke"],
+        "concerns": ["contract", "security"],
+        "seams": [],
+        "security_tier": "secret",
+        "risk": ["untrusted_input"],
+        "scenarios": [],
+        "targets": { "edge": "unit" }
+    })
+}
+
 /// The fixture under construction.
 pub struct Fixture {
     root: tempfile::TempDir,
     crates: Vec<CratePlan>,
+    npm: Vec<NpmPlan>,
+    npm_workspaces: Vec<String>,
     files: Vec<String>,
     units: String,
     scenarios: String,
@@ -153,6 +197,12 @@ kind = "derive-cargo"
 id = "cargo-live"
 prefix = "tests/live/"
 kind = "derive-cargo"
+
+[[rule]]
+id = "npm-explicit-command-edge"
+prefix = "services/stripe-command-edge/"
+kind = "node"
+node = "npm:@fixture/stripe-command-edge"
 
 [[rule]]
 id = "npm-packages"
@@ -190,6 +240,8 @@ impl Fixture {
         Self {
             root: tempfile::tempdir().expect("a temporary directory"),
             crates: Vec::new(),
+            npm: Vec::new(),
+            npm_workspaces: vec!["packages/*".to_owned()],
             files: Vec::new(),
             units: "schema = \"aex.units.v1\"\n".to_owned(),
             scenarios: "schema = \"aex.scenario-ownership.v1\"\n".to_owned(),
@@ -201,6 +253,15 @@ impl Fixture {
     pub fn add_crate(mut self, plan: CratePlan) -> Self {
         self.files.push(format!("{}/src/lib.rs", plan.dir));
         self.crates.push(plan);
+        self
+    }
+
+    /// Add an npm member. A root `package.json` is written whenever one is
+    /// present, so a fixture without npm members has no npm workspace at all.
+    #[must_use]
+    pub fn add_npm(mut self, plan: NpmPlan) -> Self {
+        self.files.push(format!("{}/src/index.ts", plan.dir));
+        self.npm.push(plan);
         self
     }
 
@@ -268,6 +329,29 @@ impl Fixture {
             "cargo-metadata.json",
             &serde_json::to_string_pretty(&json!({ "packages": packages })).unwrap(),
         );
+        if !self.npm.is_empty() {
+            write(
+                &root,
+                "package.json",
+                &serde_json::to_string_pretty(&json!({
+                    "name": "@fixture/repository",
+                    "private": true,
+                    "workspaces": self.npm_workspaces,
+                }))
+                .unwrap(),
+            );
+            for plan in &self.npm {
+                let mut manifest = json!({ "name": plan.name, "private": true });
+                if let Some(meta) = &plan.meta {
+                    manifest["aex"] = meta.clone();
+                }
+                write(
+                    &root,
+                    &format!("{}/package.json", plan.dir),
+                    &serde_json::to_string_pretty(&manifest).unwrap(),
+                );
+            }
+        }
         write(&root, "release/units.toml", &self.units);
         write(&root, "release/scenario-ownership.toml", &self.scenarios);
         write(&root, "release/path-map.toml", &self.path_map);

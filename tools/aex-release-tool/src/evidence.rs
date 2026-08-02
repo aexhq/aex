@@ -481,6 +481,126 @@ pub fn parse_junit(xml: &str) -> JunitSummary {
     }
 }
 
+/// Everything about a run that its `JUnit` report does not say.
+///
+/// `declared` is here rather than derived from the report on purpose: a report
+/// only describes cases that ran, so deriving the declared count from it would
+/// make `collected == declared` true by construction and quietly retire the one
+/// check that catches a run which lost cases between listing and executing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunContext {
+    /// Receipt identity.
+    pub receipt_id: String,
+    /// Evidence class.
+    pub class: String,
+    /// Which of the five layers.
+    pub layer: String,
+    /// Which lane produced it.
+    pub lane: String,
+    /// What it concerns.
+    #[serde(default)]
+    pub concerns: Vec<String>,
+    /// How many cases the runner listed before executing anything.
+    pub declared: u64,
+    /// Where the run came from.
+    pub source: Source,
+    /// What it ran against.
+    #[serde(default)]
+    pub inputs: Inputs,
+    /// What it is about.
+    #[serde(default)]
+    pub subject: Subject,
+    /// How it selected.
+    pub selection: SelectionBlock,
+    /// Data hygiene.
+    pub data: DataBlock,
+    /// When it started.
+    pub started_at: String,
+    /// When it finished.
+    pub completed_at: String,
+}
+
+/// Build a receipt from a run's context and its `JUnit` report.
+///
+/// The counters come from element occurrence in the report, never from its
+/// self-reported attributes, and the conclusion is derived from those counters
+/// rather than supplied: a lane that could write its own verdict could write
+/// `passed` over a skip.
+///
+/// # Errors
+/// Propagates canonicalization failure from sealing.
+pub fn new_receipt(context: RunContext, junit: &JunitSummary) -> Result<Receipt> {
+    let inventory = Inventory {
+        declared: context.declared,
+        collected: junit.cases,
+        passed: junit
+            .cases
+            .saturating_sub(junit.failures)
+            .saturating_sub(junit.skipped),
+        failed: junit.failures,
+        skipped: junit.skipped,
+        ignored: 0,
+        filtered_at_runtime: 0,
+        retried: 0,
+        flaky: junit.flaky,
+    };
+    let passed = inventory.failed == 0
+        && inventory.skipped == 0
+        && inventory.flaky == 0
+        && inventory.declared == inventory.collected
+        && inventory.declared > 0;
+    Receipt {
+        schema: "aex.evidence-receipt.v1".to_owned(),
+        receipt_digest: "sha256:0".to_owned(),
+        receipt_id: context.receipt_id,
+        class: context.class,
+        layer: context.layer,
+        lane: context.lane,
+        concerns: context.concerns,
+        source: context.source,
+        inputs: context.inputs,
+        subject: context.subject,
+        selection: context.selection,
+        inventory,
+        failures: Vec::new(),
+        attachments: Vec::new(),
+        data: context.data,
+        started_at: context.started_at,
+        completed_at: context.completed_at,
+        conclusion: if passed {
+            "passed".to_owned()
+        } else {
+            "failed".to_owned()
+        },
+    }
+    .seal()
+}
+
+/// Hash a file and record it on a receipt, then reseal.
+///
+/// The digest is computed here rather than accepted as an argument, because an
+/// attachment digest somebody typed proves nothing about the bytes it names.
+///
+/// # Errors
+/// Returns [`Exit::Usage`] when the file cannot be read, and propagates
+/// canonicalization failure from resealing.
+pub fn attach(receipt: Receipt, kind: &str, file: &std::path::Path, uri: &str) -> Result<Receipt> {
+    let bytes =
+        std::fs::read(file).map_err(|err| crate::error::io(&file.display().to_string(), &err))?;
+    let mut receipt = receipt;
+    receipt.attachments.push(Attachment {
+        kind: kind.to_owned(),
+        digest: canon::digest_bytes(&bytes),
+        uri: uri.to_owned(),
+        size_bytes: bytes.len() as u64,
+    });
+    receipt
+        .attachments
+        .sort_by(|a, b| (&a.kind, &a.digest).cmp(&(&b.kind, &b.digest)));
+    receipt.seal()
+}
+
 /// Freshness classes and their requirement.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -888,6 +1008,106 @@ mod tests {
                 flaky: 1
             }
         );
+    }
+
+    fn context(declared: u64) -> super::RunContext {
+        let template = receipt("unit");
+        super::RunContext {
+            receipt_id: "rc_local".to_owned(),
+            class: "unit".to_owned(),
+            layer: "unit".to_owned(),
+            lane: "pr".to_owned(),
+            concerns: vec!["contract".to_owned()],
+            declared,
+            source: template.source,
+            inputs: super::Inputs::default(),
+            subject: super::Subject::default(),
+            selection: template.selection,
+            data: template.data,
+            started_at: "2026-08-01T00:00:00Z".to_owned(),
+            completed_at: "2026-08-01T00:05:00Z".to_owned(),
+        }
+    }
+
+    const CLEAN_JUNIT: JunitSummary = JunitSummary {
+        cases: 3,
+        failures: 0,
+        skipped: 0,
+        flaky: 0,
+    };
+
+    #[test]
+    fn a_new_receipt_derives_its_verdict_from_the_counters() {
+        let built = super::new_receipt(context(3), &CLEAN_JUNIT).unwrap();
+        assert_eq!(built.conclusion, "passed");
+        assert_eq!(built.inventory.declared, 3);
+        assert_eq!(built.inventory.collected, 3);
+        assert_eq!(built.inventory.passed, 3);
+        built
+            .verify()
+            .expect("a clean run produces a sound receipt");
+    }
+
+    #[test]
+    fn a_run_that_lost_cases_between_listing_and_executing_fails() {
+        // Deriving `declared` from the report would make this state
+        // unrepresentable, and a run that listed ten cases and executed three
+        // would report `passed`.
+        let built = super::new_receipt(context(10), &CLEAN_JUNIT).unwrap();
+        assert_eq!(built.conclusion, "failed");
+        let err = built.verify().unwrap_err();
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"flake-inventory-mismatch"));
+    }
+
+    #[test]
+    fn a_skip_cannot_produce_a_passing_receipt() {
+        let junit = JunitSummary {
+            cases: 3,
+            failures: 0,
+            skipped: 1,
+            flaky: 0,
+        };
+        let built = super::new_receipt(context(3), &junit).unwrap();
+        assert_eq!(built.conclusion, "failed");
+        assert_eq!(built.inventory.skipped, 1);
+        let err = built.verify().unwrap_err();
+        assert!(err.rules().contains(&"flake-skipped-test"));
+    }
+
+    #[test]
+    fn a_run_that_declared_nothing_is_not_evidence() {
+        let junit = JunitSummary {
+            cases: 0,
+            failures: 0,
+            skipped: 0,
+            flaky: 0,
+        };
+        let built = super::new_receipt(context(0), &junit).unwrap();
+        assert_eq!(built.conclusion, "failed");
+    }
+
+    #[test]
+    fn attaching_hashes_the_bytes_and_reseals() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("report.xml");
+        std::fs::write(&file, b"<testsuite/>").unwrap();
+        let built = super::new_receipt(context(3), &CLEAN_JUNIT).unwrap();
+        let before = built.receipt_digest.clone();
+        let attached = super::attach(built, "junit", &file, "s3://bucket/report.xml").unwrap();
+        assert_eq!(attached.attachments.len(), 1);
+        assert_eq!(
+            attached.attachments[0].digest,
+            crate::canon::digest_bytes(b"<testsuite/>")
+        );
+        assert_eq!(attached.attachments[0].size_bytes, 12);
+        assert_ne!(
+            attached.receipt_digest, before,
+            "a receipt that gained an attachment is different bytes"
+        );
+        attached
+            .verify()
+            .expect("attaching keeps the receipt sound");
     }
 
     #[test]

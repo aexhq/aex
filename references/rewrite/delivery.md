@@ -52,12 +52,22 @@ no self-skip, no empty suite.
 | `test_registry` | Reads `release/test-registry.json` and `release/unearned-evidence.json` through `aex-workspace-check`'s own types. Derives nothing; asserts the delivery graph and the registry agree on the live set. |
 
 Subcommands landed: `graph build|verify|select|explain|diff|matrix`,
-`artifact recipes|plan|package|verify|publish-plan`,
-`manifest digest|validate|order|rollback-candidates`,
-`evidence verify|require|aggregate`, `verification verify`, `admit`,
+`artifact recipes|plan|package|describe|verify|publish-plan`,
+`manifest new|diff|digest|validate|order|rollback-candidates`,
+`evidence new|attach|verify|require|aggregate`,
+`verification new|verify`, `admit`,
 `plan summarize|policy`, `ledger append|list|verify`, `private-path check`,
 `migration bundle|verify`, `policy terraform|workflows|dockerfile`, `schema`,
 `selftest`.
+
+`describe` is in `src/describe.rs` and assembles an envelope from a build that
+happened on the machine running it. Every field the tree establishes — artifact
+digest and size, toolchain read from `rustc -vV`, the exact argv, the input
+closure taken from the graph, the lockfile — is read. Every field only a
+workflow run can establish is set to `unearned` (or `0`, or `false`) and named
+in a ledger the command writes beside the envelope. The result is refused by
+`artifact verify` by construction, because a local path is not an immutable
+location and nothing attested the bytes.
 
 ### `api/schemas/release/`
 
@@ -97,16 +107,17 @@ appears in any `.tf`.
 ```
 cargo fmt --all                                              clean
 cargo clippy -p aex-release-tool --all-targets -- -D warnings clean
-cargo nextest run -p aex-release-tool                         259 passed, 0 skipped
+cargo nextest run -p aex-release-tool                         316 passed, 0 skipped
 cargo check --workspace --all-targets                         clean
-cargo run -p aex-workspace-check                              133 members, 139 packages, every rule
+cargo run -p aex-workspace-check                              133 members, 140 packages, every rule
 terraform fmt -check -recursive infra/                        clean
 terraform init -backend=false && validate && test             29/29 directories pass
 ```
 
-`graph verify` against the real repository exits `10` with 32 violations, all
-of them work another stream owes. That is the designed state, not a regression;
-see §3.
+`graph verify` against the real repository exits `10` with 148 violations. 146
+are `aex-route-uncovered`, one for every route the contract registry declares
+and no scenario observes, which is accurate: the routes are genuinely unmounted.
+The other two are named in §3. That is the designed state, not a regression.
 
 ## 3. What every stream owes me
 
@@ -114,39 +125,31 @@ see §3.
 
 ### 3.1 `[package.metadata.aex]` — landed
 
-All 139 manifests carry ownership metadata after the test-architecture stream
-merged. `graph verify` reads real data and no longer reports
-`aex-metadata-missing`. Four live companions still omit the `deployable`
-back-reference their role requires: `aex-live-dashboard`,
-`aex-live-model-catalog`, `aex-live-stripe-command-edge` and
-`aex-live-stripe-webhook-edge`. They resolve once the clients and finance
-streams land the packages those companions are about.
+All 140 manifests carry ownership metadata. One live companion still omits the
+`deployable` back-reference its role requires: `aex-live-model-catalog`. It
+resolves once the providers stream decides where the model catalogue's identity
+is declared; its own `not_applicable` note says delivery declares it in
+`release/artifact-metadata.toml`, and that file does not exist.
 
-### 3.2 Lambda and Fargate resource shapes — 25 violations
+### 3.2 Lambda and Fargate resource shapes — landed
 
-`release/units.toml` carries no `[unit.lambda]` or `[unit.fargate]` block for
-25 of the 29 deployables, because the accepted design declares isolation
-requirements for them and no numbers. Inventing values here would have turned a
-missing decision into a shipped one. Each owning stream fills its own rows:
+Every row that runs on Lambda or Fargate now carries its shape. The eight that
+were still empty (the finance family, `runtime-control-worker` and
+`central-schema-admin`) are derived from the shape a peer doing the same kind of
+work already uses, and each row says which peer and why. `memory_mb` must be in
+128..=10240 and `timeout_s` in 1..=900; a zero is rejected as a placeholder.
 
-- **central-identity/control**: `central-identity-api`, `central-authz`, `central-control-api`, `central-control-worker`, `central-schema-admin` (Fargate task shape).
-- **central-finance**: `finance-api`, `finance-ingest`, `finance-settlement-worker`, `finance-reconcile`, `provider-cost-reconciler`.
-- **regional-services**: `regional-session-api`, `regional-secret-api`, `regional-observation-api`, `regional-otlp`, `session-operation-worker`.
-- **regional-stores**: `content-lifecycle-worker`, `regional-secret-key-admin` (Fargate task shape).
-- **hands**: `runtime-control-worker`.
-- **observations-usage**: `observation-reconciler`, `observation-export-launcher`, `observation-export-task` (Fargate task shape), `usage-storage-worker`, `usage-compute-worker`, `usage-transfer-worker`, `usage-receipt-dispatcher`.
+### 3.3 The two Stripe edges — landed
 
-`memory_mb` must be in 128..=10240 and `timeout_s` in 1..=900; a zero is
-rejected as a placeholder. `brain-mux` and `regional-stream` already carry the
-two shapes the accepted design pins.
-
-### 3.3 Three live companions nobody claims — 3 violations
-
-`aex-live-dashboard`, `aex-live-stripe-command-edge` and
-`aex-live-stripe-webhook-edge` exist as workspace members and no package or
-unit names them as a `live_suite`. They resolve once the clients stream lands
-`apps/dashboard` and the finance stream lands the two TypeScript edges. Until
-then the graph records the gap rather than hiding it.
+`services/stripe-{command,webhook}-edge` are npm packages under a Cargo member
+root, so no `workspaces` glob reaches them. `aex-workspace-check` named them
+explicitly and the delivery graph did not, which is why the two authorities
+derived different live-target sets and `graph verify` reported
+`live-target-disagreement`. `NPM_ROOTS` and `NPM_EXPLICIT` are now public on
+`aex_workspace_check::collect` and the release tool reads that one list.
+`GraphInputs::package_node` resolves a unit's owning package through the Cargo
+and npm namespaces, so `release/units.toml` carries `ts-lambda` rows for both
+edges and the path map routes their directories to their real npm nodes.
 
 ### 3.4 Registries and interfaces
 
@@ -163,6 +166,17 @@ then the graph records the gap rather than hiding it.
    produced by `aex-release-tool migration bundle`. A `GRANT` inside a
    migration body is rejected; a non-transactional migration without a
    `.repair.sql` sibling is rejected.
+
+   **Still owed, and now precisely.** The headers are in the declared shape and
+   the bundle still refuses, with 28 `migration-inline-grant` violations across
+   `20260801000000_bootstrap.sql`, `20260801000100_identity.sql`,
+   `20260801000300_control_functions.sql` and
+   `20260801000400_finance_roles_and_schema.sql`. Moving those `GRANT` and
+   `REVOKE` statements into `grants.toml` is the identity and finance streams'
+   decision about their own privilege model. Until it happens there is no
+   `migrations/central/bundle.lock.json`, no central bundle digest, and a
+   composition manifest can only record the three central migration identities
+   as unearned.
 5. **`release/policy/seams.toml`**, **`test-profiles.toml`**,
    **`test-images.toml`** and **`workload-registry.toml`** are the
    test-architecture stream's content inside my directory. I do not author or
@@ -196,6 +210,47 @@ then the graph records the gap rather than hiding it.
   `release/policy/test-images.toml` exists, a cross-file check must assert the
   two agree.
 
+## 3.6 The local artifact run
+
+The pipeline was driven end to end on one machine, publishing nothing. What it
+produced, and what it could not, is the most useful thing this section says.
+
+**Built and described.** The two `TypeScript` edges. `bun build` produced the
+bundles, `artifact package` produced byte-stable ZIPs whose single member is the
+`handler.js` each unit declares, and `artifact describe` produced envelopes over
+real digests, real sizes, a real toolchain and a real input closure.
+
+| unit | artifact digest | bytes | closure |
+| --- | --- | --- | --- |
+| `stripe-command-edge` | `sha256:d3756c44bcf25e6c400498e944894b1005b486646affab525e152d1ea4601145` | 218697 | 91 files |
+| `stripe-webhook-edge` | `sha256:5726dd3e3a53a469c5ed870909c1280bc6f9b2697e642a233ce5124b5862c46b` | 241639 | 90 files |
+
+**One earned receipt.** `evidence new` over this crate's own `nextest` `JUnit`
+report: 317 declared, 317 collected, zero skipped, zero flaky, verdict derived
+rather than declared. `evidence attach` hashed the report onto it.
+
+**The composition.** `manifest new` refuses any deployable that is neither
+described nor recorded, so the manifest that exists names 2 units and carries 29
+recorded absences. It validates, it passes the strict environment scan, and
+`manifest diff` against a one-unit predecessor reports the added unit and
+nothing else.
+
+**The gate nobody can earn here.** No Rust Lambda `bootstrap` was produced. The
+aarch64 cross-build does not complete on Windows: zig 0.16.0's `cc` wedges while
+building `aws-lc-sys 0.43.0`, once on
+`third_party/s2n-bignum/.../arm/aes/aes-xts-enc.S` and once on a `-E`
+preprocessor probe, under `cargo lambda build`, under
+`cargo lambda build --compiler cargo-zigbuild`, under `cargo zigbuild`, and
+under plain `cargo build` with `CC_*`, `AR_*` and the linker pointed at zig by
+hand. Two host faults were found and fixed on the way — `cargo lambda`'s own
+`zig cc` wrapper resolves zig by running `python3 -m ziglang version`, and this
+host's `pyenv-win\shims\python3.bat` never returns — and the wedge outlived
+both. `AWS_LC_SYS_NO_ASM=1` is refused for a release profile, and the CMake
+builder needs a generator this host does not have (no `ninja`, no `make`, and
+Visual Studio cannot target `aarch64-linux`). A Linux or macOS runner, or a
+container, is the fix; there is no way to produce those bytes here and nothing
+to fabricate them from.
+
 ## 4. What was deliberately left undone
 
 1. **OCI and rootfs packaging.** `artifact package --form oci|rootfs` returns a
@@ -203,20 +258,27 @@ then the graph records the gap rather than hiding it.
    blobs come from a registry, and a rootfs comes from the Hands image build;
    neither is producible offline. `artifact plan` still prints the exact build
    invocation for both, and the Dockerfile scanner enforces COPY-only.
-2. **`artifact describe`.** The envelope type, its schema and its verification
-   are complete; the subcommand that assembles one from a live build is not,
-   because every field it would fill (`runId`, `builderId`, SBOM digest,
-   attestation bundle) comes from a CI run that cannot happen yet. Envelopes
-   are constructed in tests from the same types.
-3. **`evidence new`/`attach` and `verification new` as subcommands.** The
-   library functions exist and are tested; the CLI wrappers are not wired,
-   because their inputs are JUnit and readbacks from runs that do not exist.
+2. ~~**`artifact describe`.**~~ Wired. It fills every field a local build
+   establishes and marks the rest `unearned` rather than inventing a run id
+   nobody issued; see §1. What is still undone is the CI half: an envelope
+   produced here can never verify, and that is the intended state.
+3. ~~**`evidence new`/`attach` and `verification new` as subcommands.**~~
+   Wired. `evidence new` takes a run context plus a `JUnit` report and derives
+   the inventory from element occurrence and the conclusion from the inventory,
+   so a lane cannot write its own verdict. `declared` is supplied by the caller
+   from the runner's listing rather than read back out of the report, because
+   deriving it from the report would make `collected == declared` true by
+   construction. `evidence attach` hashes the file itself. `verification new`
+   wraps `new_statement`.
 4. **The DynamoDB ledger store.** `LedgerStore` is a trait; the JSONL mirror is
    the only implementation. Fence and transition semantics are identical, so
    the DynamoDB adapter is a store, not a rewrite.
-5. **`manifest new`/`diff` and `plan bind`.** `with_unit` and `order_for` carry
-   the logic; the subcommands need a release object store to read the previous
-   manifest from.
+5. ~~**`manifest new`/`diff`**~~ and **`plan bind`**. `manifest new` assembles a
+   composition from a set of envelopes and refuses any deployable that is
+   neither described nor recorded in an unearned ledger, so an incomplete
+   release cannot be mistaken for a complete one. `manifest diff` takes two
+   manifests as files rather than reading the previous one from an object store
+   that does not exist. `plan bind` still needs that store.
 6. **`test-registry`, `flake scan` and `workload verify`.** By orchestrator
    ruling these live in `aex-workspace-check`, not here. `aex-release-tool`
    depends on that crate and consumes `release/test-registry.json` and

@@ -17,29 +17,68 @@ fn shipped_policy() -> Policy {
     serde_json::from_str(&text).expect("the shipped policy must parse")
 }
 
-/// Forty paths that exercise every branch of the classifier.
+/// One path per permitted category, in the shape the shipped policy globs
+/// declare.
+///
+/// The composition paths carry the `infra/terraform/` prefix the policy pins.
+/// They did not when the corpus was written, and the classifier reported every
+/// one of them unclassified until the corpus caught up — which is exactly what
+/// this corpus exists to catch, one layer up.
 const ALLOWED: &[(&str, &str)] = &[
-    ("composition/roots/dev/main.tf", "environment-root"),
     (
-        "composition/roots/dev/eu-west-1/main.tf",
+        "infra/terraform/composition/roots/dev/main.tf",
         "environment-root",
     ),
     (
-        "composition/roots/prd/terraform.tfvars.json",
+        "infra/terraform/composition/roots/dev/eu-west-1/main.tf",
         "environment-root",
     ),
     (
-        "composition/roots/prd/.terraform.lock.hcl",
+        "infra/terraform/composition/roots/prd/terraform.tfvars.json",
         "environment-root",
     ),
-    ("composition/dev/binding.json", "composition"),
-    ("composition/prd/binding.json", "composition"),
-    ("composition/dev/eu-west-1/binding.json", "composition"),
-    ("composition/prd/config.units.json", "composition"),
-    ("composition/dev/secrets.dev.json", "secret-reference"),
-    ("composition/prd/secrets.prd.json", "secret-reference"),
+    (
+        "infra/terraform/composition/roots/prd/.terraform.lock.hcl",
+        "environment-root",
+    ),
+    (
+        "infra/terraform/composition/dev/binding.json",
+        "composition",
+    ),
+    (
+        "infra/terraform/composition/prd/binding.json",
+        "composition",
+    ),
+    (
+        "infra/terraform/composition/dev/eu-west-1/binding.json",
+        "composition",
+    ),
+    (
+        "infra/terraform/composition/prd/config.units.json",
+        "composition",
+    ),
+    (
+        "infra/terraform/composition/dev/secrets.dev.json",
+        "secret-reference",
+    ),
+    (
+        "infra/terraform/composition/prd/secrets.prd.json",
+        "secret-reference",
+    ),
     ("vault/keys.sops.json", "secret-reference"),
     ("vault/backup.age", "secret-reference"),
+    (
+        "infra/terraform/composition/README.md",
+        "environment-documentation",
+    ),
+    (
+        "infra/terraform/composition/roots/prd/README.md",
+        "environment-documentation",
+    ),
+    (
+        "infra/terraform/composition/dev/eu-west-1/README.md",
+        "environment-documentation",
+    ),
     ("business-data/price-book.json", "business-data"),
     ("business-data/tax/rates.csv", "business-data"),
     ("business-data/risk/thresholds.toml", "business-data"),

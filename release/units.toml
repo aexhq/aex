@@ -5,23 +5,28 @@
 # resource shape or names a package, live companion or scenario that does not
 # exist.
 #
+# RESOURCE SHAPES
+#
+# Every row that runs on Lambda or Fargate now carries its shape. Two of them
+# the accepted design pins outright (`brain-mux` stop timeout 120 s and desired
+# count 1, `regional-stream` stop timeout 30 s); the rest are derived from the
+# shape a peer doing the same kind of work already carries, and each says which
+# peer and why in the comment above it. The reserved concurrencies sum to 477 in
+# the central plane (50 + 200 + 50 + 50 + 20 + 20 + 40 + 10 + 20 + 5 + 10 + 2)
+# and 432 in the regional plane (200 + 40 + 40 + 20 + 50 + 20 + 20 + 8 + 4 + 10 +
+# 10 + 10), both inside the 900 an account with the default 1000-concurrency
+# limit may reserve.
+#
 # WHAT IS DELIBERATELY MISSING
 #
-# Twenty-one rows carry no `[unit.lambda]` or `[unit.fargate]` block, so
-# `graph verify` reports `unit-resource-shape-missing` for each of them. That
-# is the intended state, not an oversight: the accepted design declares
-# isolation requirements for these deployables but no memory, timeout,
-# reserved-concurrency or task-shape values, and inventing them here would
-# turn a missing decision into a shipped one. Each owning stream fills its own
-# rows; the two shapes below are the only ones the accepted design pins
-# (`brain-mux` stop timeout 120 s and desired count 1, `regional-stream` stop
-# timeout 30 s).
-#
-# `dashboard`, `site`, `aex-cli`, `@aexhq/sdk`, the two Stripe TypeScript edges,
-# the model and tool catalogues and the three generated bundles are also
-# artifacts, and are absent here because their packages are not workspace
-# members yet. Adding a member is an architecture decision this stream does not
-# own.
+# `dashboard`, `site`, `aex-cli`, `@aexhq/sdk`, the model and tool catalogues and
+# the three generated bundles are also artifacts, and are absent here because
+# their packages are not workspace members yet. Adding a member is an
+# architecture decision this stream does not own. The two Stripe TypeScript
+# edges *are* workspace packages — `services/stripe-{command,webhook}-edge`,
+# named explicitly by `aex_workspace_check::collect::NPM_EXPLICIT` rather than by
+# a `workspaces` glob — so they carry rows here and the graph resolves their
+# `package` to an npm node.
 
 schema = "aex.units.v1"
 
@@ -129,6 +134,18 @@ required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "li
 alarm_spec = "finance-api"
 live_suite = "aex-live-finance-api"
 
+# The same shape `central-control-api` carries, because it is the same kind of
+# work: a request-scaled, scale-to-zero central API whose every read is one
+# Aurora Data API statement. 512 MiB holds a statement page and the decimal
+# arithmetic over it, and the 30 s timeout is the Data API statement deadline
+# plus request overhead, so a hung statement is killed by Lambda rather than by
+# a client. The reservation is its own so a billing-page refresh storm cannot
+# reach the identity or authorization budgets.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 30
+reserved_concurrency = 50
+
 [[unit]]
 id = "finance-ingest"
 kind = "rust-lambda"
@@ -146,6 +163,78 @@ ready_path = "/internal/readyz"
 required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-ingest"
 live_suite = "aex-live-finance-ingest"
+
+# The Stripe inbox. Work is one normalized event against one Aurora transaction,
+# so 512 MiB is enough and the 60 s timeout covers that transaction plus the
+# outbox row a transition produces. The reservation is sized to the webhook
+# arrival rate rather than to a burst: ordering is per workspace, so more
+# concurrency buys no throughput on a single account and only widens the window
+# in which two events for one workspace contend.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 60
+reserved_concurrency = 20
+
+# --- central plane: the two TypeScript edges ---------------------------------
+#
+# `P-AUTH-EDGE` keeps these two in TypeScript: they speak the official pinned
+# Stripe protocol and nothing else, so the vendor's own client is the smaller
+# risk. Their `package` is an npm member, which is why `GraphInputs::package_node`
+# resolves a unit's owning package through both namespaces.
+
+[[unit]]
+id = "stripe-command-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@aexhq/stripe-command-edge"
+# A bundle is compiled for no triple. `none` is the honest recorded target; the
+# arm64 the function is created with is Terraform's decision, not the bytes'.
+target = "none"
+profile = "release"
+form = "zip"
+entrypoint = "handler.js"
+config_env_namespace = "AEX_STRIPE_COMMAND_"
+config_schema_version = 1
+required_receipts = ["unit", "contract", "lint", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "stripe-command-edge"
+live_suite = "aex-live-stripe-command-edge"
+
+# It executes one already-admitted effect identity with the idempotency key
+# `finance-api` prepared, so the work is one outbound Stripe call. 512 MiB is
+# the family floor and the 30 s timeout is `finance-api`'s own request deadline:
+# an edge that outlived its caller would turn a resolved outcome into an unknown
+# one for `finance-reconcile` to chase. The reservation matches `finance-ingest`
+# because the two ends of the same money path should saturate together.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 30
+reserved_concurrency = 20
+
+[[unit]]
+id = "stripe-webhook-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@aexhq/stripe-webhook-edge"
+target = "none"
+profile = "release"
+form = "zip"
+entrypoint = "handler.js"
+config_env_namespace = "AEX_STRIPE_WEBHOOK_"
+config_schema_version = 1
+required_receipts = ["unit", "contract", "lint", "sbom", "license", "vulnerability", "package-integrity"]
+alarm_spec = "stripe-webhook-edge"
+live_suite = "aex-live-stripe-webhook-edge"
+
+# The public edge: verify a raw signature, normalize, hand off durably to
+# `finance-ingest`, return 2xx. 512 MiB holds one webhook body, and the 30 s
+# timeout is well inside Stripe's own delivery deadline, so a slow handoff
+# becomes a redelivery rather than a duplicate. The reservation is the largest
+# in the family because this is the only unit here whose arrival rate is set by
+# somebody else, and a throttled webhook is a webhook Stripe retries.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 30
+reserved_concurrency = 40
 
 # --- central plane: workers ---------------------------------------------------
 
@@ -190,6 +279,19 @@ required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vul
 alarm_spec = "finance-settlement-worker"
 live_suite = "aex-live-finance-settlement-worker"
 
+# The money path, and the only role that rates. 1024 MiB matches the usage
+# workers it drains, because it holds the same shape of inbox page plus the
+# rating table it multiplies against. The 300 s timeout is one full inbox page
+# through reserve, settle and release with the receipt outbox flushed inside the
+# same invocation, so a receipt is never left owed by a timeout. The reservation
+# is twice the reconcile role's and a fifth of the request APIs': settlement
+# must always make progress, and it must never be able to consume the pool it
+# shares with the API that reads the balances it writes.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 300
+reserved_concurrency = 20
+
 [[unit]]
 id = "finance-reconcile"
 kind = "rust-lambda"
@@ -205,6 +307,17 @@ config_schema_version = 1
 required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-reconcile"
 live_suite = "aex-live-finance-reconcile"
+
+# Scheduled repair, the same shape as `observation-reconciler`: a due scan, a
+# bounded page of resolutions, and an outbox sweep. 512 MiB holds one page; the
+# 300 s timeout is the schedule tick with room for a page of provider retries.
+# The reservation is the smallest of the money family on purpose — repair that
+# can outrun settlement would resolve disputes against balances the settlement
+# worker has not written yet.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 300
+reserved_concurrency = 5
 
 [[unit]]
 id = "usage-receipt-dispatcher"
@@ -222,6 +335,16 @@ required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability",
 alarm_spec = "usage-receipt-dispatcher"
 live_suite = "aex-live-usage-receipt-dispatcher"
 
+# The other cross-region delivery role, and it carries `central-control-worker`'s
+# shape for the same reason: a page of committed rows read centrally and written
+# regionally. 512 MiB holds the page; the 120 s timeout covers one page of
+# cross-region writes plus their retries, which is the one thing here that
+# legitimately waits on another region.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 120
+reserved_concurrency = 10
+
 [[unit]]
 id = "provider-cost-reconciler"
 kind = "rust-lambda"
@@ -238,6 +361,18 @@ required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability",
 alarm_spec = "provider-cost-reconciler"
 live_suite = "aex-live-provider-cost-reconciler"
 
+# A reporting role that never charges a customer, so it is the cheapest row in
+# the family. It compares a provider invoice period against per-model ledger
+# aggregates, not against raw rows, so 512 MiB is sufficient, and the 300 s
+# timeout is the same schedule tick every other scheduled role here uses. The
+# reservation is the smallest non-zero value in the plane: margin reporting that
+# could compete with settlement for concurrency would trade money correctness
+# for a graph.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 300
+reserved_concurrency = 2
+
 [[unit]]
 id = "central-schema-admin"
 kind = "rust-oci-task"
@@ -252,6 +387,20 @@ config_schema_version = 1
 required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-schema-admin"
 live_suite = "aex-live-central-schema-admin"
+
+# A one-shot task the release engine runs once per release, so `desired_count`
+# is 0: nothing is long-lived, and `infra/modules/ecs-task-oneshot` registers a
+# task definition with no service behind it. `regional-secret-key-admin`'s
+# 512/1024 is the right size for the same reason — the work is one statement at
+# a time against the Data API, not a computation. The stop timeout is the
+# family's longest, because the one thing that must never be killed mid-flight
+# is a migration inside its transaction.
+[unit.fargate]
+cpu = 512
+memory_mb = 1024
+desired_count = 0
+stop_timeout_s = 120
+port = 0
 
 # --- regional plane: request APIs ---------------------------------------------
 
@@ -437,6 +586,19 @@ config_schema_version = 1
 required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "runtime-control-worker"
 live_suite = "aex-live-runtime-control-worker"
+
+# The only ordinary MicroVM control role, so it carries the regional worker
+# family's 1024 MiB and `session-operation-worker`'s 120 s: one due-index page of
+# suspend, resume and terminate calls plus the usage receipt each closed interval
+# produces, inside one invocation, so an interval is never left unbilled by a
+# timeout. The reservation is deliberately above the scheduled reconcilers and
+# well below the session API: a burst of eight-hour expiries must clear inside
+# one schedule tick, and a stuck reaper must not be able to hold the pool the
+# session path shares with it.
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 120
+reserved_concurrency = 20
 
 [[unit]]
 id = "content-lifecycle-worker"
