@@ -432,6 +432,38 @@ pub fn new_manifest(
     .seal()
 }
 
+/// Deployables that are neither described by an envelope nor recorded as
+/// unearned.
+///
+/// A composition that simply omits a deployable is a release nobody can tell is
+/// incomplete. A recorded gap and a hole nobody noticed are different facts, and
+/// this is the only place that distinction can still be drawn — once the
+/// manifest is written both look identical.
+#[must_use]
+pub fn unaccounted_units(
+    registry: &crate::graph::inputs::Units,
+    described: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
+    recorded: &[aex_workspace_check::registry::UnearnedRow],
+) -> Vec<Violation> {
+    registry
+        .units
+        .iter()
+        .filter(|unit| {
+            !described.contains_key(&unit.id) && !recorded.iter().any(|row| row.subject == unit.id)
+        })
+        .map(|unit| {
+            Violation::new(
+                "manifest-unit-unaccounted",
+                format!(
+                    "deployable `{}` has no envelope and no row in the unearned ledger; a \
+                     composition that simply omits it is a release nobody can tell is incomplete",
+                    unit.id
+                ),
+            )
+        })
+        .collect()
+}
+
 /// What changed between two compositions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -826,6 +858,64 @@ mod tests {
         let ids: Vec<String> = units.units.iter().map(|unit| unit.id.clone()).collect();
         assert!(!ids.is_empty());
         order_for(&ids).expect("every registry unit must belong to a default stage");
+    }
+
+    #[test]
+    fn a_deployable_that_is_neither_described_nor_recorded_is_a_hole() {
+        let registry: crate::graph::inputs::Units = toml::from_str(
+            r#"
+schema = "aex.units.v1"
+
+[[unit]]
+id = "regional-stream"
+kind = "rust-oci-service"
+plane = "regional"
+package = "regional-stream"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+config_env_namespace = "AEX_STREAM_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "regional-stream"
+
+[[unit]]
+id = "regional-otlp"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-otlp"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+config_env_namespace = "AEX_OTLP_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "regional-otlp"
+"#,
+        )
+        .unwrap();
+        let described = std::collections::BTreeMap::new();
+        let row = |subject: &str| aex_workspace_check::registry::UnearnedRow {
+            reason_class: "awaiting_owner".to_owned(),
+            subject: subject.to_owned(),
+            owner: "delivery".to_owned(),
+            blocking_rule: "manifest-unit-unaccounted".to_owned(),
+            detail: "no registry to push the image to".to_owned(),
+        };
+
+        let holes = super::unaccounted_units(&registry, &described, &[row("regional-stream")]);
+        assert_eq!(holes.len(), 1);
+        assert!(holes[0].detail.contains("regional-otlp"));
+
+        let accounted = super::unaccounted_units(
+            &registry,
+            &described,
+            &[row("regional-stream"), row("regional-otlp")],
+        );
+        assert!(
+            accounted.is_empty(),
+            "a recorded gap and a hole nobody noticed are different facts"
+        );
     }
 
     #[test]

@@ -1015,6 +1015,102 @@ mod tests {
         );
     }
 
+    fn context(declared: u64) -> super::RunContext {
+        let template = receipt("unit");
+        super::RunContext {
+            receipt_id: "rc_local".to_owned(),
+            class: "unit".to_owned(),
+            layer: "unit".to_owned(),
+            lane: "pr".to_owned(),
+            concerns: vec!["contract".to_owned()],
+            declared,
+            source: template.source,
+            inputs: super::Inputs::default(),
+            subject: super::Subject::default(),
+            selection: template.selection,
+            data: template.data,
+            started_at: "2026-08-01T00:00:00Z".to_owned(),
+            completed_at: "2026-08-01T00:05:00Z".to_owned(),
+        }
+    }
+
+    const CLEAN_JUNIT: JunitSummary = JunitSummary {
+        cases: 3,
+        failures: 0,
+        skipped: 0,
+        flaky: 0,
+    };
+
+    #[test]
+    fn a_new_receipt_derives_its_verdict_from_the_counters() {
+        let built = super::new_receipt(context(3), &CLEAN_JUNIT).unwrap();
+        assert_eq!(built.conclusion, "passed");
+        assert_eq!(built.inventory.declared, 3);
+        assert_eq!(built.inventory.collected, 3);
+        assert_eq!(built.inventory.passed, 3);
+        built.verify().expect("a clean run produces a sound receipt");
+    }
+
+    #[test]
+    fn a_run_that_lost_cases_between_listing_and_executing_fails() {
+        // Deriving `declared` from the report would make this state
+        // unrepresentable, and a run that listed ten cases and executed three
+        // would report `passed`.
+        let built = super::new_receipt(context(10), &CLEAN_JUNIT).unwrap();
+        assert_eq!(built.conclusion, "failed");
+        let err = built.verify().unwrap_err();
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"flake-inventory-mismatch"));
+    }
+
+    #[test]
+    fn a_skip_cannot_produce_a_passing_receipt() {
+        let junit = JunitSummary {
+            cases: 3,
+            failures: 0,
+            skipped: 1,
+            flaky: 0,
+        };
+        let built = super::new_receipt(context(3), &junit).unwrap();
+        assert_eq!(built.conclusion, "failed");
+        assert_eq!(built.inventory.skipped, 1);
+        let err = built.verify().unwrap_err();
+        assert!(err.rules().contains(&"flake-skipped-test"));
+    }
+
+    #[test]
+    fn a_run_that_declared_nothing_is_not_evidence() {
+        let junit = JunitSummary {
+            cases: 0,
+            failures: 0,
+            skipped: 0,
+            flaky: 0,
+        };
+        let built = super::new_receipt(context(0), &junit).unwrap();
+        assert_eq!(built.conclusion, "failed");
+    }
+
+    #[test]
+    fn attaching_hashes_the_bytes_and_reseals() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("report.xml");
+        std::fs::write(&file, b"<testsuite/>").unwrap();
+        let built = super::new_receipt(context(3), &CLEAN_JUNIT).unwrap();
+        let before = built.receipt_digest.clone();
+        let attached = super::attach(built, "junit", &file, "s3://bucket/report.xml").unwrap();
+        assert_eq!(attached.attachments.len(), 1);
+        assert_eq!(
+            attached.attachments[0].digest,
+            crate::canon::digest_bytes(b"<testsuite/>")
+        );
+        assert_eq!(attached.attachments[0].size_bytes, 12);
+        assert_ne!(
+            attached.receipt_digest, before,
+            "a receipt that gained an attachment is different bytes"
+        );
+        attached.verify().expect("attaching keeps the receipt sound");
+    }
+
     #[test]
     fn aggregation_fails_when_a_declared_job_produced_no_receipt() {
         let declared = DeclaredJobs {

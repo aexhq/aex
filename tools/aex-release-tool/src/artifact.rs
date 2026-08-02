@@ -110,15 +110,16 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
             "tarball",
         ),
         // The entry is the module that exports the Lambda handler symbol, which
-        // is `handler.ts` in both edges. `--minify=false` keeps the bundle
-        // readable in a stack trace, and the output directory is the package's
-        // own so two edges built in one job cannot overwrite each other.
+        // is `handler.ts` in both edges. The output directory is the package's
+        // own, so two edges built in one job cannot overwrite each other. There
+        // is no minify flag: `bun build` does not minify unless asked, and
+        // `--minify=false` is a parse error rather than a no-op — writing the
+        // default down is what made this recipe unrunnable.
         "ts-lambda" => (
             vec![
                 "bun".to_owned(),
                 "build".to_owned(),
                 "--target=node".to_owned(),
-                "--minify=false".to_owned(),
                 "--outdir".to_owned(),
                 format!("services/{}/dist", unit.id),
                 format!("services/{}/src/handler.ts", unit.id),

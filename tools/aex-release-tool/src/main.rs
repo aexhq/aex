@@ -944,23 +944,7 @@ fn run_manifest_new(
         None => Vec::new(),
     };
     let registry = read_units(root)?;
-    let holes: Vec<Violation> = registry
-        .units
-        .iter()
-        .filter(|unit| {
-            !described.contains_key(&unit.id) && !recorded.iter().any(|row| row.subject == unit.id)
-        })
-        .map(|unit| {
-            Violation::new(
-                "manifest-unit-unaccounted",
-                format!(
-                    "deployable `{}` has no envelope and no row in the unearned ledger; a \
-                     composition that simply omits it is a release nobody can tell is incomplete",
-                    unit.id
-                ),
-            )
-        })
-        .collect();
+    let holes = aex_release_tool::manifest::unaccounted_units(&registry, &described, &recorded);
     if !holes.is_empty() {
         return Err(ToolError::many(Exit::CompositionIncompatible, holes));
     }
@@ -1730,5 +1714,35 @@ mod tests {
                 "verification",
             ]
         );
+    }
+
+    #[test]
+    fn the_six_wrappers_the_handoff_left_unwired_are_reachable() {
+        // `references/rewrite/delivery.md` §4 named these as library functions
+        // with no command in front of them. A group that exists while its
+        // leaves do not is exactly the shape nobody notices is missing.
+        let command = Cli::command();
+        let leaves = |group: &str| -> Vec<String> {
+            command
+                .get_subcommands()
+                .find(|candidate| candidate.get_name() == group)
+                .unwrap_or_else(|| panic!("`{group}` is not a subcommand group"))
+                .get_subcommands()
+                .map(|leaf| leaf.get_name().to_owned())
+                .collect()
+        };
+        for (group, leaf) in [
+            ("artifact", "describe"),
+            ("evidence", "new"),
+            ("evidence", "attach"),
+            ("verification", "new"),
+            ("manifest", "new"),
+            ("manifest", "diff"),
+        ] {
+            assert!(
+                leaves(group).iter().any(|name| name == leaf),
+                "`{group} {leaf}` is not reachable"
+            );
+        }
     }
 }

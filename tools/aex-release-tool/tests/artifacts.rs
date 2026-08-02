@@ -94,6 +94,75 @@ fn a_lambda_archive_carries_the_entrypoint_the_unit_declares() {
     assert!(rust.windows(9).any(|window| window == b"bootstrap"));
 }
 
+fn local_build_of(unit_id: &str, artifact: &std::path::Path) -> aex_release_tool::error::Result<()>
+{
+    let units = shipped_units();
+    let unit = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == unit_id)
+        .expect("the unit must be in the shipped registry");
+    let recipe = plan(unit).unwrap();
+    let toolchain = aex_release_tool::artifact::Toolchain {
+        channel: "1.97.1".to_owned(),
+        rustc_version: "1.97.1".to_owned(),
+        rustc_commit_hash: "a".repeat(40),
+        host: "x86_64-pc-windows-msvc".to_owned(),
+        target: unit.target.clone(),
+        components: Vec::new(),
+        packager_version: None,
+    };
+    let build = aex_release_tool::describe::LocalBuild {
+        unit,
+        plan: &recipe,
+        artifact,
+        repository: "aexhq/aex".to_owned(),
+        commit_sha: "b".repeat(40),
+        tree_clean: true,
+        git_ref: None,
+        toolchain,
+        lockfile_digest: digest(9),
+        contract_digest: digest(8),
+        closure: std::collections::BTreeMap::from([("Cargo.lock".to_owned(), digest(9))]),
+        location_uri: "release/local/artifacts/x.zip".to_owned(),
+        receipts: Vec::new(),
+        created_at: "2026-08-01T00:00:00Z".to_owned(),
+    };
+    let (envelope, unearned) = aex_release_tool::describe::describe(&build)?;
+
+    let bytes = std::fs::read(artifact).unwrap();
+    assert_eq!(envelope.output.digest, canon::digest_bytes(&bytes));
+    assert_eq!(envelope.output.size_bytes, bytes.len() as u64);
+    assert_eq!(envelope.inputs.build_command.argv, recipe.argv);
+    assert!(
+        unearned
+            .iter()
+            .any(|field| field.pointer == "/provenance"),
+        "the ledger must name every field a local build cannot fill"
+    );
+    envelope.verify(Some(artifact), false)
+}
+
+#[test]
+fn a_locally_described_envelope_records_real_bytes_and_is_still_refused() {
+    // The whole point of `artifact describe`. It reads the digest, the size,
+    // the argv and the closure from the tree, and it refuses to claim the
+    // provenance and the immutable location that only a published build has —
+    // so `artifact verify` rejects it rather than passing on nothing.
+    let temp = tempfile::tempdir().unwrap();
+    let artifact = temp.path().join("bootstrap.zip");
+    std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
+
+    let err = local_build_of("regional-session-api", &artifact).unwrap_err();
+    assert_eq!(
+        err.exit.code(),
+        20,
+        "a local location is not an identity: {:?}",
+        err.rules()
+    );
+    assert!(err.rules().contains(&"envelope-mutable-location"));
+}
+
 #[test]
 fn a_sound_envelope_verifies_against_its_own_bytes() {
     let temp = tempfile::tempdir().unwrap();
