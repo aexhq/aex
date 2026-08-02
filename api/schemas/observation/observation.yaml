@@ -260,7 +260,7 @@ schemas:
       signals: { type: array, max: 6, items: { type: ref, to: ObservationSignal }, doc: "Affected signals." }
       reason: { type: ref, to: TelemetryGapReason, doc: "Why it exists." }
       recoverable: { type: boolean, doc: "Whether the records can still be recovered." }
-      timeRange: { type: ref, to: TimeRange, doc: "The affected observation-time window." }
+      timeRange: { type: ref, to: TimeRange, optional: true, doc: "The affected observation-time window, when its extent is known." }
       fromSequence: { type: decimal, optional: true, doc: "First affected position, when known." }
       toSequence: { type: decimal, optional: true, doc: "Last affected position, when known." }
       observationCount: { type: decimal, optional: true, doc: "Observations known lost." }

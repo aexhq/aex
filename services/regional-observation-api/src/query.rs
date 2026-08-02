@@ -6,6 +6,7 @@
 //! place a cursor is minted, so there is exactly one codec (RS-17) and exactly
 //! one field policy.
 
+use aex_observation_domain::gap::{GapRecord, TimeWindow};
 use aex_observation_domain::keys::ScopeKey;
 use aex_observation_domain::order::{Direction, OrderBy, OrderTuple};
 use aex_observation_domain::signal::{Signal, SignalSet};
@@ -18,9 +19,10 @@ use aex_regional_http::cursor::{
 use aex_wire::canonical::to_jcs_bytes;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, ErrorDetails, WireError, WireResult};
+use aex_wire::ids::TelemetryGapId;
 use aex_wire::models::{
-    ObservationCoverage, ObservationFilter, ObservationOperator, ObservationOrder,
-    ObservationQuery, ObservationSignal,
+    MissingInterval, ObservationCoverage, ObservationFilter, ObservationOperator, ObservationOrder,
+    ObservationQuery, ObservationSignal, TimeRange,
 };
 use aex_wire::routes::RouteId;
 use aex_wire::server::RequestContext;
@@ -218,18 +220,62 @@ pub fn coverage(
     snapshot: Snapshot,
     accepted: Timestamp,
     earliest: Timestamp,
-) -> ObservationCoverage {
-    let resolved: Coverage = Coverage::new(snapshot, accepted, earliest);
-    ObservationCoverage {
+    signals: SignalSet,
+    window: TimeWindow,
+    gaps: &[GapRecord],
+) -> WireResult<ObservationCoverage> {
+    let mut missing = Vec::new();
+    let mut unbounded = Vec::new();
+    for gap in gaps {
+        if !gap.revision.affects(signals, window) {
+            continue;
+        }
+        if let Some(range) = gap.revision.time_range {
+            let from = range.from().max(window.from());
+            let to = range.to().min(window.to());
+            if from < to {
+                missing.push((gap.revision.gap_id.to_string(), from, to));
+            }
+        } else {
+            unbounded.push(gap.revision.gap_id.to_string());
+        }
+    }
+    if missing.len() > 100 || unbounded.len() > 100 {
+        return Err(budget_exhausted(
+            "gap_coverage",
+            u32::try_from(missing.len().saturating_add(unbounded.len())).unwrap_or(u32::MAX),
+            100,
+        ));
+    }
+    let resolved: Coverage =
+        Coverage::new(snapshot, accepted, earliest).with_gaps(missing.clone(), unbounded.clone());
+    Ok(ObservationCoverage {
         accepted: resolved.accepted,
         caught_up: resolved.caught_up,
         complete: resolved.complete,
         earliest_replay: resolved.earliest_replay,
         indexed: resolved.indexed,
-        missing_intervals: Vec::new(),
+        missing_intervals: missing
+            .into_iter()
+            .map(|(gap_id, gte, lt)| {
+                Ok(MissingInterval {
+                    gap_id: gap_id
+                        .parse()
+                        .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+                    range: TimeRange { gte, lt },
+                })
+            })
+            .collect::<WireResult<Vec<_>>>()?,
         snapshot: resolved.snapshot,
-        unbounded_gaps: Vec::new(),
-    }
+        unbounded_gaps: unbounded
+            .into_iter()
+            .map(|gap_id| {
+                gap_id
+                    .parse()
+                    .map_err(|_| WireError::new(ErrorCode::InternalError))
+            })
+            .collect::<WireResult<Vec<_>>>()?,
+    })
 }
 
 /// The digest that binds a cursor to the exact query it was issued against.
@@ -266,6 +312,101 @@ pub fn stream_query_digest(query: &NormalizedQuery, scope: &ScopeKey) -> [u8; 32
         hasher.update(format!("{predicate:?}").as_bytes());
     }
     hasher.finalize().into()
+}
+
+/// Stable request binding for a gap-list continuation.
+#[must_use]
+pub fn gap_request_binding(
+    cx: &RequestContext,
+    route: RouteId,
+    region: Region,
+    scope: &ScopeKey,
+    workspace: aex_wire::ids::WorkspaceId,
+    query: &aex_wire::models::TelemetryGapQuery,
+) -> CursorRequestBinding {
+    use sha2::Digest as _;
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(scope.to_key().as_bytes());
+    hasher.update(query.time_range.gte.unix_millis().to_be_bytes());
+    hasher.update(query.time_range.lt.unix_millis().to_be_bytes());
+    hasher.update([query.recoverable.map_or(2, u8::from)]);
+    if let Some(signals) = &query.signals {
+        for signal in signals {
+            hasher.update(signal.as_str().as_bytes());
+            hasher.update([0]);
+        }
+    }
+    CursorRequestBinding {
+        route,
+        principal_scope: principal_digest(cx),
+        region,
+        workspace_id: workspace,
+        session_id: scope.session(),
+        query_hash: hasher.finalize().into(),
+        order: Order::Ascending,
+    }
+}
+
+/// Completes a gap cursor binding at one settled ledger snapshot.
+pub fn gap_binding(
+    request: &CursorRequestBinding,
+    snapshot: Snapshot,
+) -> WireResult<CursorBinding> {
+    Ok(CursorBinding {
+        route: request.route,
+        principal_scope: request.principal_scope,
+        region: request.region,
+        workspace_id: request.workspace_id,
+        session_id: request.session_id,
+        query_hash: request.query_hash,
+        order: request.order,
+        snapshot: SnapshotToken::new(snapshot.to_wire().to_string())
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+    })
+}
+
+/// Issues a gap-list continuation after one complete gap-id group.
+pub fn issue_gap(
+    key: &CursorKey,
+    binding: &CursorBinding,
+    opened_at: Timestamp,
+    gap_id: TelemetryGapId,
+    now: Timestamp,
+) -> WireResult<Cursor> {
+    let tuple = SortTuple::new(vec![opened_at.to_wire(), gap_id.to_string()])
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    aex_regional_http::cursor::encode(key, binding, &tuple, now)
+        .map_err(|_| WireError::new(ErrorCode::InternalError))
+}
+
+/// Authenticates a gap-list continuation and recovers its ledger snapshot.
+pub fn resume_gap(
+    ring: &CursorKeyRing,
+    token: &Cursor,
+    request: &CursorRequestBinding,
+    now: Timestamp,
+) -> WireResult<(Snapshot, Timestamp, TelemetryGapId)> {
+    let resumed = aex_regional_http::cursor::decode_resume(ring, token, request, now)
+        .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
+    let millis = resumed
+        .snapshot
+        .as_str()
+        .parse::<u128>()
+        .ok()
+        .and_then(|value| i64::try_from(value).ok())
+        .and_then(|value| Timestamp::from_unix_millis(value).ok())
+        .ok_or_else(|| WireError::new(ErrorCode::InvalidCursor))?;
+    let [opened_at, gap_id] = resumed.tuple.parts() else {
+        return Err(WireError::new(ErrorCode::InvalidCursor));
+    };
+    Ok((
+        Snapshot::at(millis),
+        Timestamp::parse(opened_at).map_err(|_| WireError::new(ErrorCode::InvalidCursor))?,
+        gap_id
+            .parse()
+            .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?,
+    ))
 }
 
 /// The digest of the effective principal scope a cursor is bound to.
@@ -504,14 +645,47 @@ pub const fn budget_for(configured: Budget, limit: u16) -> Budget {
 
 #[cfg(test)]
 mod tests {
+    use aex_observation_domain::gap::{GapRecord, GapRevision, TimeWindow};
+    use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_observation_query::ast::Predicate;
+    use aex_observation_query::coverage::Snapshot;
+    use aex_wire::ids::{PrefixedId as _, TelemetryGapId, WorkspaceId};
     use aex_wire::models::{
         ObservationFilter, ObservationFilterCompare, ObservationFilterExists, ObservationOperator,
-        ObservationSignal,
+        ObservationSignal, TelemetryGapReason,
     };
+    use aex_wire::types::Timestamp;
 
-    use super::{operand, signal_for, to_predicate};
+    use super::{coverage, operand, signal_for, to_predicate};
+
+    fn instant(millis: i64) -> Timestamp {
+        Timestamp::from_unix_millis(millis).expect("fixture instant")
+    }
+
+    fn gap(id: &str, signal: Signal, range: Option<TimeWindow>, repaired: bool) -> GapRecord {
+        let workspace =
+            WorkspaceId::parse("wsp_0000000001e40r2081040g2081").expect("workspace fixture");
+        let mut revision = GapRevision::open(
+            TelemetryGapId::parse(id).expect("gap fixture"),
+            SignalSet::from_signal(signal),
+            TelemetryGapReason::SpoolLost,
+            range,
+            instant(1),
+        );
+        if repaired {
+            revision = revision.repaired("retained-stage", instant(2));
+        }
+        GapRecord::try_new(
+            workspace,
+            ScopeKey::Workspace(workspace),
+            revision,
+            None,
+            None,
+            false,
+        )
+        .expect("gap record")
+    }
 
     #[test]
     fn the_route_signal_is_the_authority_over_the_body() {
@@ -528,6 +702,44 @@ mod tests {
         let set = signal_for(ObservationSignal::Telemetry, ObservationSignal::Telemetry)
             .expect("agreement");
         assert_eq!(set, SignalSet::all());
+    }
+
+    #[test]
+    fn coverage_reports_exact_open_holes_and_ignores_repaired_or_other_signals() {
+        let window = TimeWindow::new(instant(10), instant(20)).expect("query window");
+        let known = gap(
+            "gap_0000000001e40r2081040g2081",
+            Signal::Logs,
+            TimeWindow::new(instant(5), instant(15)),
+            false,
+        );
+        let unbounded = gap("gap_0000000001e40r2081040g2082", Signal::Logs, None, false);
+        let repaired = gap(
+            "gap_0000000001e40r2081040g2083",
+            Signal::Logs,
+            TimeWindow::new(instant(10), instant(12)),
+            true,
+        );
+        let metric = gap(
+            "gap_0000000001e40r2081040g2084",
+            Signal::Metrics,
+            None,
+            false,
+        );
+        let answer = coverage(
+            Snapshot::at(instant(30)),
+            instant(30),
+            instant(0),
+            SignalSet::from_signal(Signal::Logs),
+            window,
+            &[known, unbounded, repaired, metric],
+        )
+        .expect("coverage");
+        assert!(!answer.complete);
+        assert_eq!(answer.missing_intervals.len(), 1);
+        assert_eq!(answer.missing_intervals[0].range.gte, instant(10));
+        assert_eq!(answer.missing_intervals[0].range.lt, instant(15));
+        assert_eq!(answer.unbounded_gaps.len(), 1);
     }
 
     #[test]

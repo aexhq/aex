@@ -9,7 +9,7 @@ keywords:
   - query
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-02
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -40,7 +40,7 @@ The pure authority model, with no AWS, HTTP or OTel SDK anywhere in its graph.
 | `signal` | The five signals as a bitset; `Signal::in_observation_authority` is `false` for `events` only |
 | `batch` | The admission receipt state machine: `preparing → committed | aborted`, resume-by-digest, no transition out of a terminal state |
 | `frontier` | The accepted frontier (contiguous advance only) and the `ScopeDeletion` fence with its monotone epoch |
-| `gap` | Immutable revisioned gaps, `TimeWindow`, `OrdinalRange`, and `PRODUCIBLE_REASONS` |
+| `gap` | Immutable contiguous revisioned gaps, strict non-empty `TimeWindow`, `OrdinalRange`, scoped `GapRecord` accounting evidence, and `PRODUCIBLE_REASONS` |
 | `series` | `SeriesHash` over the pinned input set, and `SeriesClaims` — the sequential model the store's sharded conditional `ADD` must reproduce |
 | `limits` | Every pinned ceiling in one module, so a second contradictory copy cannot appear in an adapter |
 
@@ -88,6 +88,10 @@ assert this.
   with its one-way recovery through `degraded` and its hysteresis dwell.
 - `store` — `AdmissionPlan`, the transaction P and C envelopes, the item-size
   model, and `StoreError` including `CommitAmbiguous` and `EnvelopeExceeded`.
+- `gap` — the one strict `GapRecord` DynamoDB codec and append-only store:
+  exact replay is success, unequal replay is conflict, successors must be
+  contiguous and preserve evidence, and unknown puts are resolved by a strongly
+  consistent exact-key read.
 - `composition` — the per-role capability grant.
 - `health` — `/internal/healthz`, `/internal/readyz` and the probe set.
 
@@ -113,10 +117,10 @@ assert this.
 
 ### `crates/aex-observation-application`
 
-`SemanticEventSource`, `SecretManifestSource` and `ObservationAuthority` ports,
-and `AdmitBatch::admit_semantic` with the `GapOnFailure` rule. A producer that
-elected `Open` records a durable gap and completes; an unrecordable gap is
-**never** downgraded to success.
+`SemanticEventSource`, `SecretManifestSource`, `ObservationAuthority` and
+`GapSink` ports, and async `AdmitBatch::admit_semantic` with the `GapOnFailure`
+rule. A producer that elected `Open` records a complete scoped `GapRecord`
+before it completes; an unrecordable gap is **never** downgraded to success.
 
 ### `crates/aex-observation-export`
 
@@ -507,3 +511,97 @@ No `#[ignore]`, no environment-variable self-skip, no empty suite and no
 retry-to-green anywhere in the five packages; `cargo nextest` reports
 `0 skipped`. No ClickHouse and no Kinesis appears in any of them, which four
 tests assert directly.
+
+## 10. Durable telemetry-gap continuation
+
+Continuation branch `rw/continue-regional-gaps`, based on public main at
+`cf327b46`, completed the gap path that the original composition left
+permissive. Nothing in this section was pushed or deployed.
+
+### 10.1 Canonical record and lifecycle
+
+`aex_observation_domain::gap::GapRecord` is now the one value passed between
+producers, persistence and readers. It binds the immutable `GapRevision` to its
+owning workspace and exact session-or-workspace scope, plus attempted records,
+attempted bytes and recoverability. Empty signal sets and empty time windows are
+invalid. Revisions begin at zero and are contiguous; skipping a number is not a
+monotone append.
+
+`aex_observation_store_aws::gap::{encode, decode}` is the one strict row codec.
+It refuses missing, mistyped or contradictory fields rather than defaulting a
+reason, signal, owner, range or repair state. The row is:
+
+```text
+pk = GAP#{scopeKey}
+sk = {gapId}#{revision:020}
+itemType = telemetry_gap
+gapId, revision, state, scopeKey, workspaceId, sessionId?
+signals, reason, ordinalRange?, timeRange?, unbounded
+attemptedRecords?, attemptedBytes?, recoverable
+openedAt, revisedAt, repairSource?, repairedAt?
+gwPk = GAPW#{workspaceId}
+gwSk = {openedAt}#{gapId}#{revision:020}
+```
+
+`GapStore::append` treats an identical exact-key replay as success and unequal
+evidence as conflict, verifies a non-zero revision's predecessor with a strongly
+consistent read, conditionally creates both keys, and resolves an unknown put by
+reading the exact key strongly. `append_action` publishes the same codec and
+immutability condition to transactions that must terminalize a source atomically
+with its gaps.
+
+### 10.2 Loss production
+
+`regional-otlp` no longer collapses several signal allocations into one lossy
+range. Every spool chunk retains a `lossCandidates` list with a source-stable
+gap id, one concrete signal, `[acceptedSeqLo, acceptedSeqHiExclusive)`, exact
+per-signal record and byte counts, and the smallest half-open observation-time
+range that covers that signal. If the exclusive end cannot be represented, the
+candidate honestly omits `timeRange` and later becomes unbounded.
+
+Both spool-attempt exhaustion and a proven persistent index hole pass those
+candidates through the canonical codec. The reconciler writes every gap revision
+and updates the source to its terminal state in one `TransactWriteItems`. The
+source update is fenced on key existence and the observed attempt/claim. A
+conditional or transport failure is success only when strongly consistent reads
+prove the exact terminal source and every exact gap row already exist.
+
+### 10.3 Finite reads, coverage and streams
+
+Session gap history is a strongly consistent base-table query. Workspace history
+uses `gsi_gap` only to discover bounded keys, then strongly hydrates complete rows
+in batches of 100. Both paths have a 5,000-revision budget, reject malformed
+rows through the shared codec, filter revisions above the pinned settled
+snapshot, and collapse each gap id to its latest visible revision.
+
+The two gap query routes now apply time, concrete-signal and recoverability
+filters, paginate in stable `(openedAt, gapId)` order with a signed request-bound
+cursor, and never fabricate an absent `timeRange`. Observation pages, metric
+aggregates and trace details compute coverage from the same visible latest gap
+set: known holes are clipped to the requested half-open window, unbounded gap
+ids are reported separately, and repaired revisions do not make coverage
+incomplete.
+
+NDJSON replay/follow producers read that same ledger on every authority pass and
+emit `ObservationFrame::Gap` before record/cursor frames. Each connection
+deduplicates `(gapId, revision)` while still emitting a later repaired revision,
+so clients can observe both incompleteness and its repair without wake hints
+being required for correctness.
+
+The public `TelemetryGap.timeRange` contract is now optional, matching the
+existing `unboundedGaps` coverage vocabulary. All generated OpenAPI, bundle and
+Rust wire artifacts were regenerated from the schema.
+
+### 10.4 Remaining integration evidence
+
+- The durable async `GapSink` is implemented and `AdmitBatch::admit_semantic`
+  now persists a complete `GapRecord` before returning `Gapped`. Brain, session
+  and Hands producers still own calling this port as already recorded in §6;
+  this continuation does not invent cross-repository call sites.
+- Repair revisions are fully modeled, stored, read and streamed, but the future
+  repair producer must supply its own proven `repairSource`; no repair is
+  inferred from an index count.
+- DynamoDB-local/live AWS route and ambiguity evidence remains in the selected
+  live suites. The default tests cover strict codec round trips and corruption,
+  stable replay/successor laws, exact spool candidates, atomic transaction and
+  claim-fence shape, coverage semantics, and stream revision deduplication.

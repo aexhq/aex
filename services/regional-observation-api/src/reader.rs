@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aex_observation_domain::canonical::CanonicalValue;
+use aex_observation_domain::gap::GapRecord;
 use aex_observation_domain::keys::{self, BucketHour, ScopeKey};
 use aex_observation_domain::order::{Direction, OrderTuple};
 use aex_observation_domain::signal::Signal;
@@ -20,16 +21,22 @@ use aex_observation_query::ast::MapRow;
 use aex_observation_query::coverage::Snapshot;
 use aex_observation_query::plan::{Access, NormalizedQuery, PageOutcome, Spend, classify};
 use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
-use aex_wire::ids::{ObservationId, RunId, SessionId, SpanId, TraceId, WorkspaceId};
+use aex_observation_store_aws::gap::decode as decode_gap;
+use aex_wire::ids::{
+    ObservationId, RunId, SessionId, SpanId, TelemetryGapId, TraceId, WorkspaceId,
+};
 use aex_wire::models::{Observation, ObservationSignal};
 use aex_wire::types::{DecimalU128, Timestamp};
-use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
 
 /// The shard count one bucket is written across, matching the admission edge.
 ///
 /// Fixed for the life of a bucket, so a reader never has to guess how many
 /// partitions to merge.
 pub const BUCKET_SHARDS: u8 = 4;
+
+/// Maximum immutable gap revisions one query may inspect before failing closed.
+pub const GAP_REVISION_BUDGET: u32 = 5_000;
 
 /// Why a read could not be served.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -222,6 +229,14 @@ impl ObservationReader {
         let floor = now.unix_millis().saturating_sub(self.settle_ms);
         let pinned = frontier.accepted_at.unix_millis().min(floor);
         Timestamp::from_unix_millis(pinned.max(0))
+            .ok()
+            .map(Snapshot::at)
+    }
+
+    /// Pins a gap-ledger snapshot to the same measured GSI settle window.
+    #[must_use]
+    pub fn settled_snapshot(&self, now: Timestamp) -> Option<Snapshot> {
+        Timestamp::from_unix_millis(now.unix_millis().saturating_sub(self.settle_ms).max(0))
             .ok()
             .map(Snapshot::at)
     }
@@ -785,6 +800,183 @@ impl ObservationReader {
         Ok(response.items.unwrap_or_default())
     }
 
+    /// Reads the latest immutable revision of one gap by its authoritative key.
+    pub async fn latest_gap(
+        &self,
+        scope: &ScopeKey,
+        gap: TelemetryGapId,
+    ) -> Result<Option<GapRecord>, ReadError> {
+        let mut builder = ExpressionBuilder::new();
+        let pk = builder.name(PK);
+        let pk_value = builder.string(keys::gap_pk(scope));
+        let sk = builder.name(SK);
+        let prefix = builder.string(format!("{gap}#"));
+        let response = self
+            .dynamodb
+            .query()
+            .table_name(&self.table)
+            .key_condition_expression(format!("{pk} = {pk_value} AND begins_with({sk}, {prefix})"))
+            .set_expression_attribute_names(Some(builder.names()))
+            .set_expression_attribute_values(Some(builder.values()))
+            .consistent_read(true)
+            .scan_index_forward(false)
+            .limit(1)
+            .send()
+            .await
+            .map_err(|error| ReadError::provider("QueryGap", error))?;
+        response
+            .items()
+            .first()
+            .map(decode_gap)
+            .transpose()
+            .map_err(|_| ReadError::Malformed {
+                attribute: "telemetry_gap",
+            })
+    }
+
+    /// Reads the latest revision of every gap visible at one settled snapshot.
+    ///
+    /// Session reads are strongly consistent base-table queries. Workspace reads
+    /// use the sparse index to discover keys, then strongly hydrate full base
+    /// rows in bounded `BatchGetItem` calls before applying lifecycle semantics.
+    pub async fn gap_history(
+        &self,
+        scope: &ScopeKey,
+        workspace: WorkspaceId,
+        snapshot: Snapshot,
+    ) -> Result<Vec<GapRecord>, ReadError> {
+        let (index, partition_attribute, partition_value) = match scope {
+            ScopeKey::Session(_) => (None, PK, keys::gap_pk(scope)),
+            ScopeKey::Workspace(_) => (
+                Some(Index::Gap),
+                Index::Gap.partition_key(),
+                format!("GAPW#{workspace}"),
+            ),
+        };
+        let mut builder = ExpressionBuilder::new();
+        let partition = builder.name(partition_attribute);
+        let value = builder.string(partition_value);
+        let mut start = None;
+        let mut rows = Vec::new();
+        loop {
+            let mut request = self
+                .dynamodb
+                .query()
+                .table_name(&self.table)
+                .key_condition_expression(format!("{partition} = {value}"))
+                .set_expression_attribute_names(Some(builder.names()))
+                .set_expression_attribute_values(Some(builder.values()))
+                .set_exclusive_start_key(start.take())
+                .limit(250);
+            if let Some(index) = index {
+                request = request.index_name(index.as_str());
+            } else {
+                request = request.consistent_read(true);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("QueryGaps", error))?;
+            rows.extend(response.items.unwrap_or_default());
+            if rows.len() > GAP_REVISION_BUDGET as usize {
+                return Err(ReadError::BudgetExhausted {
+                    dimension: "gap_revisions",
+                    scanned: u32::try_from(rows.len()).unwrap_or(u32::MAX),
+                });
+            }
+            start = response.last_evaluated_key;
+            if start.is_none() {
+                break;
+            }
+        }
+        if index.is_some() {
+            rows = self.hydrate_gap_rows(&rows).await?;
+        }
+        let mut latest = BTreeMap::<TelemetryGapId, GapRecord>::new();
+        for item in &rows {
+            let record = decode_gap(item).map_err(|_| ReadError::Malformed {
+                attribute: "telemetry_gap",
+            })?;
+            let belongs = match scope {
+                ScopeKey::Session(_) => record.scope == *scope,
+                ScopeKey::Workspace(_) => record.workspace == workspace,
+            };
+            if !belongs || record.revision.revised_at > snapshot.accepted_at() {
+                continue;
+            }
+            match latest.get(&record.revision.gap_id) {
+                Some(found) if found.revision.revision >= record.revision.revision => {}
+                _ => {
+                    latest.insert(record.revision.gap_id, record);
+                }
+            }
+        }
+        Ok(latest.into_values().collect())
+    }
+
+    async fn hydrate_gap_rows(
+        &self,
+        projected: &[HashMap<String, AttributeValue>],
+    ) -> Result<Vec<HashMap<String, AttributeValue>>, ReadError> {
+        let mut hydrated = Vec::with_capacity(projected.len());
+        for chunk in projected.chunks(100) {
+            let keys: Result<Vec<_>, _> = chunk
+                .iter()
+                .map(|item| {
+                    Ok(HashMap::from([
+                        (
+                            PK.to_owned(),
+                            item.get(PK)
+                                .cloned()
+                                .ok_or(ReadError::Malformed { attribute: PK })?,
+                        ),
+                        (
+                            SK.to_owned(),
+                            item.get(SK)
+                                .cloned()
+                                .ok_or(ReadError::Malformed { attribute: SK })?,
+                        ),
+                    ]))
+                })
+                .collect();
+            let request = KeysAndAttributes::builder()
+                .set_keys(Some(keys?))
+                .consistent_read(true)
+                .build()
+                .map_err(|error| ReadError::provider("BatchGetItem", error))?;
+            let response = self
+                .dynamodb
+                .batch_get_item()
+                .request_items(self.table.clone(), request)
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("BatchGetItem", error))?;
+            hydrated.extend(
+                response
+                    .responses
+                    .and_then(|mut responses| responses.remove(&self.table))
+                    .unwrap_or_default(),
+            );
+            if response
+                .unprocessed_keys
+                .as_ref()
+                .and_then(|unprocessed| unprocessed.get(&self.table))
+                .is_some_and(|keys| !keys.keys().is_empty())
+            {
+                return Err(ReadError::Provider {
+                    operation: "BatchGetItem",
+                    reason: "unprocessed gap keys remained".to_owned(),
+                });
+            }
+        }
+        if hydrated.len() != projected.len() {
+            return Err(ReadError::Malformed {
+                attribute: "telemetry_gap",
+            });
+        }
+        Ok(hydrated)
+    }
+
     /// Reads one control or state item by its exact key.
     ///
     /// # Errors
@@ -1067,13 +1259,6 @@ pub(crate) fn number(item: &HashMap<String, AttributeValue>, name: &str) -> Opti
     item.get(name)
         .and_then(|value| value.as_n().ok())
         .and_then(|text| text.parse().ok())
-}
-
-/// Reads a boolean attribute.
-pub(crate) fn boolean(item: &HashMap<String, AttributeValue>, name: &str) -> Option<bool> {
-    item.get(name)
-        .and_then(|value| value.as_bool().ok())
-        .copied()
 }
 
 /// Reads a fixed-width timestamp attribute.
