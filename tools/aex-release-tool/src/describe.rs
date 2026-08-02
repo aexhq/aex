@@ -67,6 +67,15 @@ pub struct LocalBuild<'a> {
     pub lockfile_digest: String,
     /// The generated contract bundle digest.
     pub contract_digest: String,
+    /// The argv that actually produced the bytes, where it differs from the
+    /// recipe's.
+    ///
+    /// Absent is the normal case and means the recipe was executed as written.
+    /// Present means the caller ran something else, and [`describe`] records
+    /// what ran and says so in the ledger — an envelope that reported the
+    /// recipe when the recipe was not what ran would be the one field in the
+    /// document nobody could check.
+    pub actual_argv: Option<Vec<String>>,
     /// Repository-relative path to blob digest, for every input in the closure.
     pub closure: BTreeMap<String, String>,
     /// Where the bytes are on this machine, repository-relative.
@@ -130,7 +139,21 @@ pub fn describe(build: &LocalBuild<'_>) -> Result<(ArtifactEnvelope, Vec<Unearne
         build.unit.base_image.as_deref(),
     )?;
 
-    let unearned = unearned_fields();
+    let mut unearned = unearned_fields();
+    if let Some(actual) = &build.actual_argv
+        && *actual != build.plan.argv
+    {
+        unearned.push(UnearnedField {
+            pointer: "/inputs/buildCommand/argv".to_owned(),
+            reason: format!(
+                "the recipe is `{}` and it did not run here; these bytes were produced by `{}`, \
+                 which is what the envelope records",
+                build.plan.argv.join(" "),
+                actual.join(" ")
+            ),
+        });
+        unearned.sort();
+    }
 
     let envelope = build_envelope(build, &bytes, closure_digest)?;
 
@@ -233,7 +256,10 @@ fn build_envelope(
             toolchain: build.toolchain.clone(),
             build_profile: build.plan.profile.clone(),
             build_command: BuildCommand {
-                argv: build.plan.argv.clone(),
+                argv: build
+                    .actual_argv
+                    .clone()
+                    .unwrap_or_else(|| build.plan.argv.clone()),
                 env: build.plan.env.clone(),
                 digest: build.plan.digest.clone(),
             },

@@ -242,6 +242,14 @@ enum ArtifactCommand {
         /// The generated contract bundle digest this build was compiled against.
         #[arg(long)]
         contract_digest: String,
+        /// One argument of the argv that actually produced the bytes, repeated.
+        ///
+        /// Omit it when the recipe was executed as written. Supplying something
+        /// else records what ran and adds a ledger row naming both, because an
+        /// envelope reporting a command nobody executed is the one field in the
+        /// document that cannot be checked against anything.
+        #[arg(long = "ran")]
+        ran: Vec<String>,
         /// Envelope creation time, RFC 3339. Defaults to now.
         #[arg(long)]
         now: Option<String>,
@@ -831,6 +839,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
             out,
             unearned_out,
             contract_digest,
+            ran,
             now,
         } => run_describe(
             cli,
@@ -840,6 +849,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
             out,
             unearned_out.as_deref(),
             contract_digest,
+            ran,
             now.as_deref(),
         ),
         ArtifactCommand::Verify {
@@ -874,6 +884,7 @@ fn run_describe(
     out: &Path,
     unearned_out: Option<&Path>,
     contract_digest: &str,
+    ran: &[String],
     now: Option<&str>,
 ) -> Result<()> {
     let units = read_units(root)?;
@@ -896,6 +907,7 @@ fn run_describe(
         toolchain: local_toolchain(&found.target)?,
         lockfile_digest: file_digest(&root.join(lockfile_for(&found.kind)))?,
         contract_digest: contract_digest.to_owned(),
+        actual_argv: (!ran.is_empty()).then(|| ran.to_vec()),
         closure: input_closure(root, &inputs, &built, unit)?,
         location_uri: relative_to(root, file),
         receipts: Vec::new(),
