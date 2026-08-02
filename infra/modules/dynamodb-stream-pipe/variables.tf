@@ -48,6 +48,16 @@ variable "filter_pattern" {
   }
 }
 
+variable "input_template" {
+  type        = string
+  description = "EventBridge Pipes input template applied to each filtered stream record before it reaches the queue. Raw DynamoDB envelopes are not a consumer contract, so the template is mandatory."
+
+  validation {
+    condition     = length(trimspace(var.input_template)) > 0 && length(var.input_template) <= 8192
+    error_message = "The input template must be non-empty and no larger than EventBridge Pipes' 8192-character limit."
+  }
+}
+
 variable "batch_size" {
   type        = number
   default     = 10

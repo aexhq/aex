@@ -10,8 +10,8 @@
 //! | --- | --- |
 //! | after the pre-send write, before the socket | the effect is `dispatch_started`; the next owner classifies it with `recover` and settles `OutcomeUnknown`. It is never dispatched twice. |
 //! | after the socket, before the settlement | identical, and deliberately so: the durable record cannot distinguish the two, which is exactly why the pre-send write exists. |
-//! | after the commit, before the ack | the wake redelivers, the journal already carries the record, and the fold plans the *next* step. |
-//! | after the ack, before the release | the lease expires on its own, and the fence rejects the dead owner whatever the clock says. |
+//! | after a decision commit, before source retirement | the wake stays authoritative; a new owner folds the committed record and retires the source without repeating the effect. |
+//! | after source retirement, before lease release or queue ack | a redelivery strongly observes the retired source, acks its hint, and never claims the agent. |
 
 use super::decide::{
     self, Draft, FailureSettlement, classify_provider_failure, classify_tool_failure, phase_tag,
@@ -25,7 +25,7 @@ use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
     ClaimError, CommitError, ConditionFailure, ControlStateView, DecisionContext, DetachedStatus,
     FenceGuard, NullPreviewSink, PreparedToolCall, ReleaseDisposition, SessionAuthority,
-    StoreError, StreamBudget, ToolOutcome, WakeDelivery,
+    StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -47,6 +47,7 @@ use aex_brain_domain::wire_pending::{
     CanonicalBlock, CanonicalModelRequest, DurableOperationSupport, ResolvedAgentConfig,
 };
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -109,6 +110,9 @@ impl Activation {
         };
 
         let owner = self.ports.ids.owner_token();
+        if !self.source_is_pending(&delivery).await? {
+            return Ok(Outcome::Idle);
+        }
         let claim = match self
             .ports
             .leases
@@ -117,10 +121,11 @@ impl Activation {
         {
             Ok(claim) => claim,
             Err(ClaimError::Terminal) => {
-                // The agent is done. The wake is satisfied, and leaving it would have the
-                // queue redeliver it until its retention expires.
-                self.ports.wakes.ack(delivery).await?;
-                return Ok(Outcome::Idle);
+                // A terminal session does not mint an agent fence. Without one there is no
+                // authority to retire this source row, so leave it durable for the owning
+                // lifecycle transaction rather than performing unfenced cleanup.
+                self.release(&delivery, self.policy.requeue_after).await;
+                return Ok(Outcome::Released(Release::HeldByOther));
             }
             Err(ClaimError::HeldByOther { .. } | ClaimError::Fenced { .. }) => {
                 self.release(&delivery, self.policy.requeue_after).await;
@@ -165,7 +170,18 @@ impl Activation {
             resume: None,
         };
 
-        let outcome = session.drive().await;
+        let outcome = if claim.head.finish.is_some() {
+            Ok(Outcome::Idle)
+        } else {
+            session.drive().await
+        };
+        let outcome = match outcome {
+            Ok(outcome) => self
+                .retire_source(&mut session, &delivery.wake)
+                .await
+                .map(|()| outcome),
+            Err(error) => Err(error),
+        };
         let disposition = match &outcome {
             Ok(Outcome::Progressed {
                 stop: Stop::Parked, ..
@@ -177,6 +193,14 @@ impl Activation {
         // redelivers against an unowned agent, which is the cheap direction to fail in.
         let _ = self.ports.leases.release(claim, disposition).await;
 
+        self.finish_delivery(delivery, outcome).await
+    }
+
+    async fn finish_delivery(
+        &self,
+        delivery: WakeDelivery,
+        outcome: Result<Outcome, ActivationError>,
+    ) -> Result<Outcome, ActivationError> {
         match outcome {
             Ok(outcome) => {
                 if matches!(outcome, Outcome::Released(_)) {
@@ -194,11 +218,14 @@ impl Activation {
                 Ok(outcome)
             }
             Err(error) => {
-                if delivery.receive_count >= self.policy.max_receives {
+                if delivery
+                    .receive_count()
+                    .is_some_and(|receives| receives >= self.policy.max_receives)
+                {
                     // The same delivery has failed this many times. Redelivering forever
                     // hides the fault behind a queue depth nobody reads; acking it records
                     // the poison and lets the durable due scan re-arm the work.
-                    let receives = delivery.receive_count;
+                    let receives = delivery.receive_count().unwrap_or_default();
                     self.ports.wakes.ack(delivery).await?;
                     return Ok(Outcome::Poisoned { receives });
                 }
@@ -213,6 +240,39 @@ impl Activation {
         // deliberately not escalated over the reason the caller is already reporting.
         let _ = self.ports.wakes.release(delivery.clone(), after).await;
     }
+
+    async fn source_is_pending(&self, delivery: &WakeDelivery) -> Result<bool, ActivationError> {
+        match self.ports.wakes.state(&delivery.wake).await {
+            Ok(WakeState::Pending) => Ok(true),
+            Ok(WakeState::Retired) => {
+                self.ports.wakes.ack(delivery.clone()).await?;
+                Ok(false)
+            }
+            Err(error) => {
+                self.release(delivery, self.policy.requeue_after).await;
+                Err(error.into())
+            }
+        }
+    }
+
+    async fn retire_source(
+        &self,
+        session: &mut Session<'_>,
+        wake: &crate::ports::DurableWake,
+    ) -> Result<(), ActivationError> {
+        match session.retire(wake.work_id.clone()).await {
+            Ok(()) => Ok(()),
+            Err(ActivationError::Commit(CommitError::Condition(
+                ConditionFailure::WakeStateMoved,
+            ))) => match self.ports.wakes.state(wake).await? {
+                WakeState::Retired => Ok(()),
+                WakeState::Pending => {
+                    Err(CommitError::Condition(ConditionFailure::WakeStateMoved).into())
+                }
+            },
+            Err(error) => Err(error),
+        }
+    }
 }
 
 /// The receive side: one batch, deduplicated, admitted and driven.
@@ -225,6 +285,7 @@ pub struct WakeLoop {
     activation: Activation,
     admission: Arc<dyn AdmissionControl>,
     inflight: Arc<Mutex<BTreeSet<String>>>,
+    due_shard: Arc<AtomicU16>,
 }
 
 /// What one pass over the queue did.
@@ -238,6 +299,8 @@ pub struct PollReport {
     pub released: usize,
     /// How many failed with a typed refusal.
     pub refused: usize,
+    /// How many of the deliveries came from the durable due backstop.
+    pub recovered: usize,
 }
 
 impl WakeLoop {
@@ -248,6 +311,7 @@ impl WakeLoop {
             activation,
             admission,
             inflight: Arc::new(Mutex::new(BTreeSet::new())),
+            due_shard: Arc::new(AtomicU16::new(0)),
         }
     }
 
@@ -273,12 +337,41 @@ impl WakeLoop {
             return Ok(report);
         }
         let policy = self.activation.policy();
-        let deliveries = self
+        let shard_count = policy.due_shards.max(1);
+        let shard = self.due_shard.fetch_add(1, Ordering::Relaxed) % shard_count;
+        let recovered = self
             .activation
             .ports()
             .wakes
-            .receive(policy.receive_batch, policy.long_poll)
+            .due_scan(
+                aex_brain_domain::ids::WorkShard(shard),
+                self.activation.ports().clock.now(),
+                policy.receive_batch,
+            )
             .await?;
+        report.recovered = recovered.len();
+        let remaining = policy.receive_batch.saturating_sub(recovered.len());
+        let wait = if recovered.is_empty() {
+            policy.long_poll
+        } else {
+            core::time::Duration::ZERO
+        };
+        let mut deliveries: Vec<WakeDelivery> = recovered
+            .into_iter()
+            .map(|wake| WakeDelivery {
+                wake,
+                origin: WakeOrigin::DueScan,
+            })
+            .collect();
+        if remaining > 0 {
+            deliveries.extend(
+                self.activation
+                    .ports()
+                    .wakes
+                    .receive(remaining, wait)
+                    .await?,
+            );
+        }
         report.received = deliveries.len();
         for delivery in deliveries {
             match self.drive(delivery).await {
@@ -594,6 +687,16 @@ impl Session<'_> {
         self.commit(draft).await
     }
 
+    /// Retires the source wake under the same session and agent fence as every decision.
+    ///
+    /// This decision carries no journal mutation: the control item is a condition check,
+    /// while the work update moves the exact pending row to done and removes its due keys.
+    async fn retire(&mut self, work_id: String) -> Result<(), ActivationError> {
+        let mut draft = self.draft(phase_tag(&self.state.phase));
+        draft.retire_wake(work_id);
+        self.commit(draft).await
+    }
+
     fn draft(&self, phase: &'static str) -> Draft {
         Draft::new(&self.guard, self.ports.clock.now(), phase)
     }
@@ -610,6 +713,7 @@ impl Session<'_> {
         let first_seq = self.guard.tail().map_or(JournalSeq::ZERO, JournalSeq::next);
         let records = draft.records().to_vec();
         let commit = draft.into_commit();
+        let retirement_only = commit.is_retirement_only();
         let context = DecisionContext {
             authority: self.authority.clone(),
             lease_expires_at: self.lease_expires_at,
@@ -623,17 +727,21 @@ impl Session<'_> {
                     apply(&mut self.state, &entry)?;
                     seq = seq.next();
                 }
-                self.guard = self.guard.advanced(receipt.revision, receipt.tail);
-                self.steps = self.steps.saturating_add(1);
+                if !retirement_only {
+                    self.guard = self.guard.advanced(receipt.revision, receipt.tail);
+                    self.steps = self.steps.saturating_add(1);
+                }
                 Ok(())
             }
             Err(CommitError::Condition(ConditionFailure::IdempotentReplay(_))) => {
                 // The identical decision already committed. Re-reading is the honest way to
                 // learn what it wrote: the receipt a replay returns describes the write this
                 // attempt did not perform.
-                self.reload().await?;
-                self.refresh_guard().await?;
-                self.steps = self.steps.saturating_add(1);
+                if !retirement_only {
+                    self.reload().await?;
+                    self.refresh_guard().await?;
+                    self.steps = self.steps.saturating_add(1);
+                }
                 Ok(())
             }
             Err(error) => Err(error.into()),

@@ -150,7 +150,9 @@ impl Default for ActivationPolicy {
             requeue_after: core::time::Duration::from_millis(250),
             max_steps_per_activation: 16,
             max_receives: 5,
-            due_shards: 16,
+            // Must match the strict-v1 regional-work descriptor. The application keeps the
+            // value explicit so a migration cannot silently change the sweep topology.
+            due_shards: 64,
             max_provider_attempts: 3,
         }
     }

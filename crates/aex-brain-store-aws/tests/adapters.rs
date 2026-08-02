@@ -7,17 +7,17 @@
 //! to observe.
 
 use aex_brain_application::ports::{
-    AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, EffectStore,
-    FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition, SessionAuthority,
-    StoreError,
+    AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, DurableWake,
+    EffectStore, FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition,
+    SessionAuthority, StoreError, WakeQueue,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq,
-    OwnerToken, SessionId, Timestamp,
+    OwnerToken, SessionId, Timestamp, WakeId,
 };
-use aex_brain_domain::journal::{FinishReason, JournalRecord};
+use aex_brain_domain::journal::{FinishReason, JournalRecord, ParkReason};
 use aex_brain_store_aws::journal::condition_for;
-use aex_brain_store_aws::{BrainStore, BrainTables};
+use aex_brain_store_aws::{BrainStore, BrainTables, DueScan, SqsWakeQueue};
 use aex_session_dynamodb::attr::{ItemBuilder, b, n, s, stamp};
 use aex_session_dynamodb::plan::Participant;
 use aex_wire::ids::{PrefixedId, Uuid7};
@@ -68,6 +68,34 @@ fn capturing() -> (BrainStore, CaptureRequestReceiver) {
     )
 }
 
+fn capturing_wake_queue() -> (SqsWakeQueue, CaptureRequestReceiver) {
+    let (dynamo_http, receiver) = capture_request(None);
+    let dynamo = aws_sdk_dynamodb::Config::builder()
+        .behavior_version_latest()
+        .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+        .credentials_provider(aws_sdk_dynamodb::config::Credentials::for_tests())
+        .http_client(dynamo_http)
+        .build();
+    let (sqs_http, _unused) = capture_request(None);
+    let sqs = aws_sdk_sqs::Config::builder()
+        .behavior_version_latest()
+        .region(aws_sdk_sqs::config::Region::new("eu-west-1"))
+        .credentials_provider(aws_sdk_sqs::config::Credentials::for_tests())
+        .http_client(sqs_http)
+        .build();
+    (
+        SqsWakeQueue::new(
+            aws_sdk_sqs::Client::from_conf(sqs),
+            "https://sqs.eu-west-1.amazonaws.com/000000000000/brain-wake".to_owned(),
+            DueScan::new(
+                aws_sdk_dynamodb::Client::from_conf(dynamo),
+                "dev-eu-west-1-regional-work".to_owned(),
+            ),
+        ),
+        receiver,
+    )
+}
+
 fn captured(receiver: CaptureRequestReceiver) -> serde_json::Value {
     let request = receiver.expect_request();
     let body = std::str::from_utf8(request.body().bytes().unwrap_or_default())
@@ -102,6 +130,28 @@ fn claim() -> Claim {
     }
 }
 
+#[tokio::test]
+async fn a_delivery_hint_is_verified_by_a_strong_source_row_read() {
+    let (queue, receiver) = capturing_wake_queue();
+    let _ = queue
+        .state(&DurableWake {
+            id: WakeId(v7(1_767_225_600_006, 7)),
+            work_id: "wrk_01".to_owned(),
+            key: key(),
+            dedup_key: "wrk_01".to_owned(),
+            reason: ParkReason::AwaitingUserMessage,
+            due: Some(Timestamp::from_millis(1_767_225_600_000)),
+            priority: 1,
+            tenant: authority().workspace.to_string(),
+        })
+        .await;
+    let body = captured(receiver);
+    assert_eq!(body["TableName"], "dev-eu-west-1-regional-work");
+    assert_eq!(body["ConsistentRead"], true);
+    assert_eq!(body["Key"]["pk"]["S"], "WORK#wrk_01");
+    assert_eq!(body["Key"]["sk"]["S"], "STATE");
+}
+
 /// A claim advances the fence and returns the agent head in the same write. Session authority
 /// is a different item and is read strongly consistently after this write succeeds.
 #[tokio::test]
@@ -121,8 +171,8 @@ async fn a_claim_advances_the_fence_and_returns_the_agent_head_with_the_write() 
     assert_eq!(body["ReturnValues"], "ALL_NEW");
     let condition = body["ConditionExpression"].as_str().expect("conditional");
     assert!(
-        condition.contains("attribute_not_exists(finishReason)"),
-        "a terminal agent has nothing to claim: {condition}"
+        !condition.contains("finishReason"),
+        "a terminal agent remains claimable so its delivered source can retire under a fence: {condition}"
     );
     assert!(
         condition.contains("leaseExpiresAt < :stealable"),
@@ -436,6 +486,10 @@ fn every_participant_names_the_failure_it_means() {
     assert!(matches!(
         condition_for(Participant::WORK_DEDUPE),
         ConditionFailure::IdempotentReplay(_)
+    ));
+    assert!(matches!(
+        condition_for(Participant::WORK_WAKE_DONE),
+        ConditionFailure::WakeStateMoved
     ));
     assert!(matches!(
         condition_for(aex_brain_store_aws::plan::participant::SESSION_BUDGET),

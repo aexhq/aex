@@ -56,6 +56,7 @@ module "journal_hint_pipe" {
   target_queue_arn   = module.operation_queue.arn
   target_kms_key_arn = var.kms_key_arn
   filter_pattern     = var.stream_pipe.filter_pattern
+  input_template     = var.stream_pipe.input_template
   batch_size         = var.stream_pipe.batch_size
   tags               = var.tags
 }

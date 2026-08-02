@@ -165,6 +165,8 @@ pub trait LeaseStore: Send + Sync + 'static {
 pub trait WakeQueue: Send + Sync + 'static {     // delivery only; no `enqueue`
     fn receive(&self, max: usize, wait: core::time::Duration)
         -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>>;
+    fn state<'a>(&'a self, wake: &'a DurableWake)
+        -> BoxFuture<'a, Result<WakeState, StoreError>>;
     fn extend_visibility<'a>(&'a self, delivery: &'a WakeDelivery, by: core::time::Duration)
         -> BoxFuture<'a, Result<(), StoreError>>;
     fn release(&self, delivery: WakeDelivery, after: core::time::Duration)
@@ -222,7 +224,7 @@ one namespace.
 | A journal envelope | regional domains | **Corrected 2026-08-01.** `aex-session-domain` publishes no envelope. It publishes `journal::JournalEntry`, keyed by agent and carrying a typed kind, an `EntryIdentity`, a `JournalBody` and an `AuthorityFact`, where Brain's `wire_pending::JournalEnvelope` is `{seq, content_hash, recorded_at}`. |
 | A content reference | regional stores | **Corrected 2026-08-01.** `aex-content-domain` publishes no `ContentRef`. Its nearest type is `descriptor::ContentDescriptor`, which is workspace-scoped and carries a `Placement` and a `CiphertextIdentity` rather than `{key, encryption}`. |
 | `aex_brain_tool_catalog::ToolManifestEntry` | tools | **Corrected 2026-08-01.** It exists and carries the `EffectClass`, but `aex-brain-tool-catalog` already depends on `aex-brain-domain`, so importing it there is a dependency cycle. The concept has to move down or out. |
-| `aex-work-dynamodb` pure expression builders usable inside a caller-owned `TransactWriteItems` | regional stores | **Corrected 2026-08-01.** Not supplied. `aex-work-dynamodb` has no expression module at all; its item shape is reachable only through `store::WorkAuthority`, which performs its own call. Brain still owns the `WorkExpressions` trait so adoption stays one impl. |
+| `aex-work-dynamodb` pure expression builders usable inside a caller-owned `TransactWriteItems` | regional stores | **Corrected 2026-08-02.** `claim::enqueue`, `enqueue_dedupe`, and `complete_pending_agent_wake` now supply the three work actions Brain composes. The last one accepts only the exact pending `agent.wake` at work fence zero and removes both sparse due-index keys under the caller's session/agent transaction guards. |
 | `aex-session-dynamodb` run-terminal-barrier and session-head expression builders | regional stores | Brain executes that transaction. |
 | `DispatchProof::NotSent` returned only with a tested, observable pre-dispatch failure | providers | it is the only value permitting an automatic retry, so an over-generous adapter creates a second generation. |
 | `PreparedToolCall.control` carrying a `ControlStateView` | tools/MCP | already in the published shape so `todo_read` stays pure. |
@@ -401,8 +403,9 @@ This pass landed the loop that drives them.
 `activation` was an empty placeholder. It now holds the whole cycle:
 
 ```
-receive -> dedupe -> local slot -> claim -> recover -> fold -> plan
-        -> dispatch -> settle -> commit -> release lease -> ack
+due shard + receive -> verify source -> dedupe -> local slot -> claim -> recover
+        -> fold -> plan -> dispatch -> settle -> commit -> retire source
+        -> release lease -> ack hint
 ```
 
 - `decide` is the pure half: one owed step in, one `DecisionCommit` out. Every
@@ -417,17 +420,20 @@ receive -> dedupe -> local slot -> claim -> recover -> fold -> plan
   vacuous. `brain-mux` consumes the same fixtures, so the engine and its
   composition are asserted against one behaviour rather than two.
 
-Four crash boundaries are each asserted by interrupting a run at a named durable
+The crash boundaries below are asserted by interrupting a run at a named durable
 point and running a second activation against what the first left:
 
 | Interrupted at | Asserted |
 | --- | --- |
 | after the pre-send write, before the settlement commits | the effect settles `OutcomeUnknown`, the run terminalizes `interrupted`, and the provider is dispatched exactly once |
 | after the commit, before the ack | the redelivery finds a terminal agent, acks, and does not run the turn again |
+| before the source-retirement decision | the due row survives, a second owner retires it, and no effect is dispatched twice |
+| after source retirement, before the queue ack | the strong source read observes `done`, the duplicate hint is acked, and no agent claim is needed |
 | the commit loses its fence | nothing is appended, no byte leaves, the delivery is released and never acked |
 | the page read observes a gap | the agent does not fold, does not plan, does not act and does not ack |
 
-Each of the four was confirmed to fail with the surviving code removed.
+The source-retirement rows were introduced red-first; the earlier rows retain
+their mutation proof.
 
 #### `runtimes/brain-mux` — the composition
 
@@ -459,12 +465,21 @@ and none of it is attributed.
 | --- | --- | --- |
 | BR-29 | Workspace, organization and deletion epoch are read from the claimed session head and passed explicitly into every decision commit; a wake's tenant is only a projection assertion | a mux serves many sessions, so fixing any of these facts at process construction can silently write one tenant's rows under another tenant. All three are rechecked by the transaction's session-head condition, so a mismatched tenant or a trash/purge racing the activation refuses the whole decision. |
 
+### 13.2 Decisions taken in the wake-reliability pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-30 | One bounded `regional-work/gsi_due` shard is swept before every queue receive; recovered rows carry `WakeOrigin::DueScan`, never a synthetic receipt | the stream and SQS are delivery hints, so a lost hint must not strand authority. Explicit provenance makes visibility, poison counting and ack no-ops for a scan result instead of issuing an invalid queue call. Sixty-four shards matches the strict-v1 table descriptor, and one shard plus one receive batch bounds every pass. |
+| BR-31 | Every successful or already-terminal agent activation ends with a retirement-only `DecisionCommit`: the session head and agent control are condition-checked under the live claim, while the exact pending source wake is moved to `done` and loses both due-index keys in the same transaction | a separate `UpdateItem` cleanup would have no agent fence, and acking first would lose the recovery path. The pure retirement does not manufacture a journal tail or advance the revision; terminal agents remain claimable solely so this transaction still has a live fence. |
+| BR-32 | A retirement-only transaction hashes agent, revision, tail and source work identity into its own 36-character client request token | it follows the final journal decision without advancing that decision's tail. Reusing the tail-only token with different transaction parameters would make DynamoDB reject the retirement as an idempotent-parameter mismatch. |
+| BR-33 | Hands effects must bind the canonical runtime `GenerationId` UUID read from session authority; the existing Brain-local `HandsGeneration(u64)` must never be converted or used to derive one | runtime idle recount and recovery have to select the exact generation that admitted an operation. A derived or parallel identifier can make one generation inherit another's open-effect count. This remains deferred with the unreachable Hands execution path rather than being smuggled into wake retirement. |
+
 ### 14. Still deferred, with what unblocks each
 
 | Deferred | Unblocked by |
 | --- | --- |
-| The `env_brain_mux` terraform binding | `platform/.../roots/dev-eu-west-1/env.tf` still declares "exactly the four variables `brain-mux` validates", and `local.queues` has no Brain wake queue at all. §10 recorded these bindings as existing; they do not |
 | `ProviderPort`, `CatalogPort` and `HandsPort` implementations | unchanged from §4 and §10: the gateway restates its own port over `aex_model_catalog::canonical` types, the catalog publishes no `ModelCapability`, and `aex-brain-hands` takes no dependency on `aex-brain-application` |
+| Canonical Hands generation binding and exact open-effect recount | type the existing session/agent-control `generationId` as `aex_wire::ids::GenerationId`, expose it through the Brain claim, replace the parallel `HandsGeneration(u64)` port/config types, and require the exact UUID on every prepared Hands effect row before the Hands path becomes reachable |
 | A `ToolExecutor` for any route | `aex-brain-managed-web` and `aex-brain-mcp` implement none, so the composed router is linked with zero executors and refuses by its own typed error |
 | The recovery controller's `RetrySameEffect` on a *dispatched* effect | nothing moves a dispatched effect back to `prepared`, so the arm is a named refusal. Unreachable for the classes this loop prepares, which a test asserts |
 | `ReconstructFromReceipt` | `aex-content-aws`'s placement API: the receipt is a digest, and the body it names lives in the content authority |
@@ -507,5 +522,29 @@ cargo run -p aex-workspace-check -- registry build      no change to either file
 git diff --check                                         clean
 ```
 
-`cargo fmt --all` still fails in this worktree with `os error 206`, so the three
+`cargo fmt --all` still fails in this worktree with `os error 206`, so the four
 owned packages are formatted individually.
+
+### 17. Wake-reliability-pass gate output
+
+```text
+cargo fmt -p aex-brain-domain -p aex-brain-application \
+          -p aex-brain-store-aws -p aex-work-dynamodb                  clean
+cargo clippy -p aex-brain-domain -p aex-brain-application \
+             -p aex-brain-store-aws -p aex-work-dynamodb \
+             -p brain-mux --all-targets -- -D warnings                clean
+cargo nextest run -p aex-brain-domain -p aex-brain-application \
+                  -p aex-brain-store-aws -p aex-work-dynamodb \
+                  -p brain-mux
+    Summary [216.550s] 444 tests run: 444 passed, 0 skipped
+cargo nextest run -p aex-brain-application --features loom \
+                  --test concurrency  (LOOM_MAX_PREEMPTIONS=3)
+    Summary [9.681s] 6 tests run: 6 passed, 0 skipped
+cargo test -p aex-brain-application activation::tests
+    21 passed, 0 failed
+cargo check --workspace --all-targets                                  clean
+cargo run -p aex-workspace-check
+    134 member(s) and 141 package(s) satisfy every structural and registry rule
+cargo run -p aex-workspace-check -- registry build      no change to either file
+git diff --check                                         clean
+```

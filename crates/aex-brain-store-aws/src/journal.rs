@@ -491,6 +491,7 @@ pub fn condition_for(participant: aex_session_dynamodb::plan::Participant) -> Co
         // loss there is always "the session moved out from under this decision".
         Participant::SESSION_HEAD_GUARD => ConditionFailure::CancelEpochAdvanced,
         Participant::AGENT_CONTROL => ConditionFailure::StaleFence,
+        Participant::WORK_WAKE_DONE => ConditionFailure::WakeStateMoved,
         // A journal put loses only to itself: the sort key is the sequence and the
         // condition is `attribute_not_exists`, so whatever beat it is the same decision
         // arriving twice. The caller treats that as success.
