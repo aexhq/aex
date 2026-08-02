@@ -28,6 +28,7 @@ scenarios = []
 [package.metadata.aex.targets]
 continuations = "unit"
 composition = "unit"
+reconciliation = "unit"
 performance_contract = "e2e"
 
 [[bin]]
