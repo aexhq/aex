@@ -109,6 +109,12 @@ pub enum ContextError {
         /// Which key.
         key: &'static str,
     },
+    /// API Gateway carried a non-string custom-authorizer value.
+    #[error("the authorizer context value for `{0}` is not a string")]
+    NonString(String),
+    /// API Gateway's reserved principal does not match the bound AEX principal.
+    #[error("the API Gateway principal does not match the AEX principal")]
+    PrincipalMismatch,
     /// The context was issued for a window that has closed.
     #[error("the authorizer context is not current")]
     NotCurrent,
@@ -147,6 +153,94 @@ pub struct CentralAuthorizerContext {
 }
 
 impl CentralAuthorizerContext {
+    /// Renders the flat string map emitted by the Lambda authorizer.
+    ///
+    /// This is the inverse of [`Self::parse`]. Keeping both directions here
+    /// gives the producer and every central edge one closed context contract.
+    #[must_use]
+    pub fn to_fields(&self) -> BTreeMap<String, String> {
+        let mut fields = BTreeMap::from([
+            (
+                "aex.accountState".to_owned(),
+                self.account_state.as_str().to_owned(),
+            ),
+            ("aex.expiresAtMs".to_owned(), self.expires_at_ms.to_string()),
+            ("aex.issuedAtMs".to_owned(), self.issued_at_ms.to_string()),
+            ("aex.principalId".to_owned(), self.principal_id.to_string()),
+            (
+                "aex.principalKind".to_owned(),
+                self.kind.as_str().to_owned(),
+            ),
+            ("aex.requestId".to_owned(), self.request_id.to_string()),
+            ("aex.scopes".to_owned(), self.scopes.to_strings().join(" ")),
+        ]);
+        if let Some(credential_id) = self.credential_id {
+            fields.insert("aex.credentialId".to_owned(), credential_id.to_string());
+        }
+        if let Some(workspace_id) = self.workspace_id {
+            fields.insert("aex.workspaceId".to_owned(), workspace_id.to_string());
+        }
+        if let Some(organization_id) = self.organization_id {
+            fields.insert("aex.organizationId".to_owned(), organization_id.to_string());
+        }
+        if let Some(region) = self.region {
+            fields.insert("aex.region".to_owned(), region.as_str().to_owned());
+        }
+        if !self.memberships.is_empty() {
+            let mut memberships = self.memberships.clone();
+            memberships.sort_unstable_by_key(|membership| membership.organization_id);
+            fields.insert(
+                "aex.memberships".to_owned(),
+                memberships
+                    .iter()
+                    .map(|membership| {
+                        format!(
+                            "{}:{}:{}",
+                            membership.organization_id,
+                            membership.membership_id,
+                            membership.role.as_str()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }
+        fields
+    }
+
+    /// Reads the custom-authorizer values carried by `lambda_http`.
+    ///
+    /// API Gateway v1 adds its reserved `principalId` beside the custom
+    /// context; v2 carries only the custom map. The reserved value is checked,
+    /// not admitted into the closed AEX key set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextError`] when a value is not a string, the reserved
+    /// principal disagrees, or the AEX context itself is malformed.
+    pub fn parse_values(
+        values: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<Self, ContextError> {
+        let mut fields = BTreeMap::new();
+        let mut gateway_principal = None;
+        for (key, value) in values {
+            let string = value
+                .as_str()
+                .ok_or_else(|| ContextError::NonString(key.clone()))?;
+            if key == "principalId" {
+                gateway_principal = Some(string);
+            } else {
+                fields.insert(key.clone(), string.to_owned());
+            }
+        }
+        let context = Self::parse(&fields)?;
+        if gateway_principal.is_some_and(|principal| principal != context.principal_id.to_string())
+        {
+            return Err(ContextError::PrincipalMismatch);
+        }
+        Ok(context)
+    }
+
     /// Reads a context from the flat map API Gateway supplies.
     ///
     /// # Errors
@@ -572,5 +666,42 @@ mod tests {
         assert_eq!(sorted, CONTEXT_KEYS);
         sorted.dedup();
         assert_eq!(sorted.len(), CONTEXT_KEYS.len());
+    }
+
+    #[test]
+    fn rendering_and_parsing_are_one_closed_contract() {
+        for fields in [actor(), key()] {
+            let parsed = CentralAuthorizerContext::parse(&fields).expect("parses");
+            assert_eq!(
+                CentralAuthorizerContext::parse(&parsed.to_fields()),
+                Ok(parsed)
+            );
+        }
+    }
+
+    #[test]
+    fn api_gateway_may_add_only_its_matching_reserved_principal() {
+        let parsed = CentralAuthorizerContext::parse(&actor()).expect("parses");
+        let mut values: std::collections::HashMap<String, serde_json::Value> = parsed
+            .to_fields()
+            .into_iter()
+            .map(|(key, value)| (key, serde_json::Value::String(value)))
+            .collect();
+        values.insert(
+            "principalId".to_owned(),
+            serde_json::Value::String(parsed.principal_id.to_string()),
+        );
+        assert_eq!(
+            CentralAuthorizerContext::parse_values(&values),
+            Ok(parsed.clone())
+        );
+        values.insert(
+            "principalId".to_owned(),
+            serde_json::Value::String(Uuid::from_u128(99).to_string()),
+        );
+        assert_eq!(
+            CentralAuthorizerContext::parse_values(&values),
+            Err(ContextError::PrincipalMismatch)
+        );
     }
 }

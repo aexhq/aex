@@ -395,6 +395,18 @@ where
         }
     }
 
+    /// The read-only authority shared with the HTTP REQUEST authorizer path.
+    #[must_use]
+    pub(crate) const fn reader(&self) -> &R {
+        &self.reader
+    }
+
+    /// The cold-start pepper ring shared with the HTTP REQUEST authorizer path.
+    #[must_use]
+    pub(crate) const fn peppers(&self) -> &PepperRing {
+        &self.peppers
+    }
+
     /// Answers one classified invocation.
     ///
     /// # Errors
@@ -1115,10 +1127,11 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_payload_is_named_rather_than_refused() {
-        // The API Gateway authorizer event is exactly such a payload. Answering
-        // `not_authorized` would hide a missing contract behind a plausible
-        // authorization failure.
+    fn the_assertion_classifier_never_reinterprets_another_operation() {
+        // The composition root handles a complete API Gateway REQUEST event
+        // before this assertion-specific classifier. A partial REQUEST-shaped
+        // value and every other operation remain named decode failures here;
+        // they must not become a plausible assertion refusal.
         for payload in [
             serde_json::json!({}),
             serde_json::json!({"type": "REQUEST", "methodArn": "arn:aws:execute-api:..."}),

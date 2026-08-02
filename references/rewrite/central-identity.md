@@ -680,16 +680,18 @@ issued. It now resolves its start-up material, gates on every probe, and enters
 
 **Routes mounted: 0, and that is the served number.** `CentralServiceId::groups()`
 assigns this binary none of the 27 central routes (D-41), and it is invoked
-rather than routed — there is no HTTP integration, so an API Gateway proxy event
-never arrives. The health router is therefore **removed rather than moved**: a
+rather than routed — there is no HTTP proxy integration. Regional assertion
+requests and API Gateway REQUEST-authorizer events both arrive as direct Lambda
+invocations. The health router is therefore **removed rather than moved**: a
 path no invocation can carry is a route that cannot be served, which RS-18
 forbids. `release/units.toml` drops `health_path` and `ready_path` for the same
-reason, one layer out. The served surface is **two invoke operations**:
+reason, one layer out. The served surface is **three invoke operations**:
 
 | Operation | Path | Answers |
 | --- | --- | --- |
 | `ResolveWorkspaceKey` | `resolve_workspace_key` → verify digest → `issue_for_key` | `AssertionResponse` |
 | `ResolveSessionForWorkspace` | `resolve_session_for_workspace` → verify digest → `issue_for_actor(UserSession)` | `AssertionResponse` |
+| API Gateway `REQUEST` | parse HTTP API v2 or IAM-policy v1 → resolve and verify bearer credential | v2 simple response or v1 IAM policy, both carrying the closed `CentralAuthorizerContext` map |
 
 Readiness became a **start-up gate**. With no endpoint to report `503` on, "not
 ready" and "not running" are the same state and the honest one is the second;
@@ -713,13 +715,13 @@ Three decisions carry weight:
   read. It then self-tests the derived public key against the published one, so a
   wrong secret is a start-up failure rather than a fleet-wide verification outage
   discovered by customers.
-- **An unrecognised payload is refused by name.** The API Gateway REQUEST
-  authorizer this binary's doc comment described has no landed request or
-  response contract, and `aex-central-http` (D-42) consumes an authorizer context
-  nothing produces. Rather than invent it, `Invocation::classify` refuses the
-  event explicitly, so the gap fails loudly at the first authorizer invocation
-  instead of being answered with a plausible assertion. **This is owed work, not
-  a closed item** — see §10.5.
+- **The REQUEST authorizer and the edge share one closed context codec.** HTTP
+  API v2 emits a simple response and v1 emits an exact-resource IAM policy;
+  both carry `CentralAuthorizerContext::to_fields()`, and the real
+  `lambda_http::request::RequestContext` consumer parses those values through
+  the inverse codec. Missing, malformed, revoked, or lapsed credentials become
+  the one `Unauthorized` answer. Store and pepper faults remain Lambda errors,
+  so an outage is never misreported as a bad credential.
 
 `AEX_CENTRAL_AUTHZ_PEPPER_SECRET_ID` is new: the pepper ring is what turns a
 transmitted digest back into a verifiable credential, so it is bound to
@@ -796,7 +798,7 @@ rotated-out anchor without a redeploy.
 
 | `TODO(cross-stream)` | Owner |
 | --- | --- |
-| The API Gateway REQUEST authorizer. No authorizer request or response shape is in the contract tree, and `aex-central-http` (D-42) consumes a context nothing produces. `Invocation::classify` refuses the event by name today, so the central plane's public routes cannot authenticate until this lands. | contracts + central identity |
+| The platform composition must attach this REQUEST authorizer to every credentialed central route while leaving both anonymous device-flow routes without an authorizer. An `Authorization` identity source on either anonymous route would make API Gateway return `401` before the Rust edge can admit it. | infrastructure |
 | Nothing writes the `regional-authz-projection`. `RegionalFloors` is fail-closed, so an absent or half-written table refuses every request rather than admitting one. The placement row must carry the workspace's organization, which `WorkspacePlacement` already declares. | central-control-worker |
 | No regional edge presents a browser session: `PresentedCredential` accepts a workspace key only. `ResolveSessionForWorkspace` is served and credential-bound, but which surface presents an `aex_ds_` token to a regional host — and how — is decided by no accepted record. | clients + regional services |
 | `AEX_CENTRAL_AUTHZ_PEPPER_SECRET_ID` and the signing secret are plain Secrets Manager values with no rotation ceremony. The pepper ring holds up to eight versions and refuses an unknown one as a fault, so a rotation is expressible; nothing performs one. | delivery |
@@ -817,6 +819,8 @@ rotated-out anchor without a redeploy.
 | D-58 | `PresentedCredential` parses a workspace API key at construction | It is the only credential a regional host accepts. Three sites re-parsed it; one parse cannot disagree with itself. |
 | D-59 | `plane_name` resolves to the typed `Plane` rather than a validated `String` | The plane a process reports and the plane it will accept an assertion for must be one value. `Plane::as_str` returns the verbatim spelling for the encryption context. |
 | D-60 | `regional-otlp`'s `EffectiveLimits.json_body_bytes` is the OTLP encoded ceiling | Every route it owns carries an OTLP body, so the edge's single body bound is that one. A deployable owning both classes would need the edge to take the class from the route table; this one does not, and a second knob nothing reads is a knob that will eventually be set wrong. |
+| D-61 | `central-authz` serves API Gateway HTTP API v2 simple responses and the v1 IAM-policy form from one normalized REQUEST invocation | HTTP API v2 is the intended platform edge; retaining the v1 policy shape makes the direct-invoke contract explicit for REST API compatibility without adding a second credential resolver. Both paths validate the execute-api ARN against the configured account and region. |
+| D-62 | Invalid credentials return API Gateway's `Unauthorized`, while unreadable authority and unknown-pepper outcomes are Lambda faults | Credential invalidity and authorization-service failure are different facts. Collapsing both to `401` would hide an outage and induce customers to rotate valid credentials. |
 
 ### 10.7 Gate output
 
