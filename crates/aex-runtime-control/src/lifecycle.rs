@@ -518,7 +518,7 @@ impl IntentRecord {
     /// Enforced by the intent's conditional write, not by a timer.
     #[must_use]
     pub const fn permits_new_effect(&self) -> bool {
-        matches!(self.state, IntentState::Settled | IntentState::Quarantined)
+        matches!(self.state, IntentState::Settled)
     }
 
     /// The next reconciliation step.
@@ -793,7 +793,10 @@ mod tests {
         assert!(!intent(IntentState::Dispatched, Some("mvm-1"), 0).permits_new_effect());
         assert!(!intent(IntentState::Unknown, Some("mvm-1"), 0).permits_new_effect());
         assert!(intent(IntentState::Settled, Some("mvm-1"), 0).permits_new_effect());
-        assert!(intent(IntentState::Quarantined, Some("mvm-1"), 8).permits_new_effect());
+        assert!(
+            !intent(IntentState::Quarantined, Some("mvm-1"), 8).permits_new_effect(),
+            "quarantine is an operator fence, not permission for an automatic second effect"
+        );
     }
 
     #[test]

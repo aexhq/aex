@@ -1066,6 +1066,7 @@ dependencies = [
  "aex-usage-domain",
  "aex-wire",
  "aws-sdk-sqs",
+ "futures",
  "serde",
  "serde_json",
  "thiserror",

@@ -216,6 +216,22 @@ impl SweepSummary {
     }
 }
 
+/// Turns scheduled poison outcomes into the same operator diagnostics emitted
+/// for poisoned queue records.
+fn schedule_quarantines(pass: &SchedulePass) -> Vec<Quarantined> {
+    pass.outcomes
+        .iter()
+        .filter_map(|(generation, outcome)| match outcome {
+            CommandOutcome::Poison { reason } => Some(Quarantined {
+                message_id: format!("runtime-sweep:{generation}"),
+                reason: reason.clone(),
+                receive_count: 1,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// What one invocation produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handled {
@@ -290,13 +306,14 @@ pub async fn handle(
         WorkerEvent::Sweep { shard } => {
             let pass = control.handle_schedule(*shard, now).await;
             let summary = SweepSummary::of(*shard, &pass);
+            let quarantined = schedule_quarantines(&pass);
             Ok(Handled {
                 response: serde_json::to_value(&summary).map_err(|error| {
                     EventError::Undecodable {
                         reason: error.to_string(),
                     }
                 })?,
-                quarantined: Vec::new(),
+                quarantined,
             })
         }
     }
@@ -304,7 +321,9 @@ pub async fn handle(
 
 #[cfg(test)]
 mod tests {
-    use super::{EventError, SweepSummary, WorkerEvent, probe, queue_records};
+    use super::{
+        EventError, SweepSummary, WorkerEvent, probe, queue_records, schedule_quarantines,
+    };
     use crate::health::{Bindings, Dependency};
     use aex_runtime_control::store::RuntimeShard;
     use aex_runtime_control_aws::worker::{CommandOutcome, SchedulePass, Settled};
@@ -472,5 +491,28 @@ mod tests {
         assert_eq!(summary.poison, 1);
         assert_eq!(summary.cursor.as_deref(), Some("next"));
         assert_eq!(summary.scan_failure, None);
+    }
+
+    #[test]
+    fn scheduled_poison_reaches_the_operator_diagnostic_channel() {
+        let generation = GenerationId::from_uuid7(Uuid7::compose(1, [7; 10]));
+        let pass = SchedulePass {
+            scanned: 1,
+            outcomes: vec![(
+                generation,
+                CommandOutcome::Poison {
+                    reason: "reconciliation exhausted".to_owned(),
+                },
+            )],
+            cursor: None,
+            scan_failure: None,
+        };
+        let diagnostics = schedule_quarantines(&pass);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message_id,
+            format!("runtime-sweep:{generation}")
+        );
+        assert_eq!(diagnostics[0].reason, "reconciliation exhausted");
     }
 }

@@ -135,6 +135,8 @@ pub fn intent() -> LifecycleIntent {
         provider_request_id: None,
         requested_at: now(),
         dispatched_at: None,
+        reconcile_attempts: 0,
+        last_reconciled_at: None,
     }
 }
 

@@ -7,11 +7,12 @@
 
 use aex_hands_protocol::rpc::Fence;
 use aex_runtime_control::generation::{GenerationHead, GenerationState, Revision, TransportMode};
-use aex_runtime_control::lifecycle::{IntentRecord, IntentState, MicrovmId};
+use aex_runtime_control::lifecycle::{IntentRecord, IntentState, MicrovmId, RECONCILE_ATTEMPTS};
 use aex_runtime_control::store::{
     GenerationCommit, GenerationPlan, GenerationPointer, GenerationView,
-    IdleProbe as CanonicalIdleProbe, LifecycleIntentPlan, LifecycleReceipt as CanonicalReceipt,
-    LifecycleReceiptPlan, PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage,
+    IdleProbe as CanonicalIdleProbe, LifecycleIntentCommit, LifecycleIntentPlan,
+    LifecycleReceipt as CanonicalReceipt, LifecycleReceiptPlan, LifecycleReconcilePlan,
+    LifecycleRequestPlan, PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage,
     RuntimeShard, RuntimeStoreError, StoreFuture, UsageOutboxEntry,
 };
 use aex_session_dynamodb::attr::{Item, ItemBuilder, PK, SK, n, s, stamp};
@@ -367,7 +368,14 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
         })
     }
 
-    fn record_intent<'a>(&'a self, plan: &'a LifecycleIntentPlan) -> StoreFuture<'a, IntentRecord> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one contiguous builder keeps the fenced HEAD, CURRENT pointer, and immutable intent transaction auditable as one atomic unit"
+    )]
+    fn record_intent<'a>(
+        &'a self,
+        plan: &'a LifecycleIntentPlan,
+    ) -> StoreFuture<'a, LifecycleIntentCommit> {
         Box::pin(async move {
             let row = self.load_canonical_row(plan.generation).await?.ok_or(
                 RuntimeStoreError::NoSuchGeneration {
@@ -380,6 +388,25 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 return Err(RuntimeStoreError::IntentOpen {
                     intent_id: intent.intent_id.clone(),
                     state: intent.state,
+                });
+            }
+            if row.state != plan.expected_state
+                || row.fence != plan.expected_fence
+                || row.revision != plan.expected_revision
+            {
+                return Err(RuntimeStoreError::RevisionConflict {
+                    expected: plan.expected_revision,
+                    found: Some(row.revision),
+                });
+            }
+            if !plan.expected_state.permits(plan.next_state)
+                || plan.fence.0 <= plan.expected_fence.0
+            {
+                return Err(RuntimeStoreError::Malformed {
+                    reason: format!(
+                        "lifecycle intent cannot move {:?}/{} to {:?}/{}",
+                        plan.expected_state, plan.expected_fence.0, plan.next_state, plan.fence.0
+                    ),
                 });
             }
             let record = IntentRecord {
@@ -398,16 +425,62 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     reason: error.to_string(),
                 })?;
             let target = keys::head_for_generation(plan.generation);
-            let update = Update::builder()
+            let next_revision = plan.expected_revision.next();
+            let mut head_expression = String::from(
+                "SET #state = :nextState, fence = :nextFence, revision = :nextRevision, updatedAt = :at, openIntent = :intent",
+            );
+            let mut head_builder = Update::builder()
                 .table_name(&self.table)
                 .set_key(Some(key(&target.pk, &target.sk)))
                 .condition_expression(
-                    "generationId = :generation AND revision = :revision AND attribute_not_exists(openIntent)",
+                    "generationId = :generation AND #state = :expectedState AND fence = :expectedFence AND revision = :expectedRevision AND attribute_not_exists(openIntent)",
                 )
-                .update_expression("SET openIntent = :intent")
+                .expression_attribute_names("#state", "state")
                 .expression_attribute_values(":generation", s(plan.generation.to_string()))
-                .expression_attribute_values(":revision", n(plan.expected_revision.value()))
-                .expression_attribute_values(":intent", s(encoded))
+                .expression_attribute_values(
+                    ":expectedState",
+                    s(keys::state_str(plan.expected_state)),
+                )
+                .expression_attribute_values(":expectedFence", n(plan.expected_fence.0))
+                .expression_attribute_values(
+                    ":expectedRevision",
+                    n(plan.expected_revision.value()),
+                )
+                .expression_attribute_values(":nextState", s(keys::state_str(plan.next_state)))
+                .expression_attribute_values(":nextFence", n(plan.fence.0))
+                .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.dispatched_at))
+                .expression_attribute_values(":intent", s(encoded));
+            if let Some(microvm) = &plan.microvm {
+                head_expression.push_str(", providerVmId = :microvm");
+                head_builder =
+                    head_builder.expression_attribute_values(":microvm", s(microvm.0.clone()));
+            }
+            let update = head_builder
+                .update_expression(head_expression)
+                .build()
+                .map_err(|error| RuntimeStoreError::Malformed {
+                    reason: error.to_string(),
+                })?;
+            let current = keys::current(row.session);
+            let current_update = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&current.pk, &current.sk)))
+                .condition_expression(
+                    "generationId = :generation AND fence = :expectedFence AND revision = :expectedRevision",
+                )
+                .update_expression(
+                    "SET fence = :nextFence, revision = :nextRevision, updatedAt = :at",
+                )
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":expectedFence", n(plan.expected_fence.0))
+                .expression_attribute_values(
+                    ":expectedRevision",
+                    n(plan.expected_revision.value()),
+                )
+                .expression_attribute_values(":nextFence", n(plan.fence.0))
+                .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.dispatched_at))
                 .build()
                 .map_err(|error| RuntimeStoreError::Malformed {
                     reason: error.to_string(),
@@ -423,6 +496,8 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 provider_request_id: None,
                 requested_at: plan.dispatched_at,
                 dispatched_at: Some(plan.dispatched_at),
+                reconcile_attempts: 0,
+                last_reconciled_at: None,
             };
             let put = expressions::record_intent(&self.table, &durable)
                 .map_err(|error| runtime_error(error, None))?
@@ -433,12 +508,195 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
             self.transact(
                 vec![
                     TransactWriteItem::builder().update(update).build(),
+                    TransactWriteItem::builder().update(current_update).build(),
                     TransactWriteItem::builder().put(put).build(),
                 ],
                 transaction_token("intent", plan.generation, &plan.intent_id.0),
             )
             .await?;
-            Ok(record)
+            let persisted = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            Ok(LifecycleIntentCommit {
+                generation: GenerationCommit {
+                    head: generation_view(persisted).head,
+                    revision: next_revision,
+                },
+                intent: record,
+            })
+        })
+    }
+
+    fn record_provider_request<'a>(
+        &'a self,
+        plan: &'a LifecycleRequestPlan,
+    ) -> StoreFuture<'a, IntentRecord> {
+        Box::pin(async move {
+            let row = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            let Some(mut intent) = row.open_intent else {
+                return Err(malformed("provider request has no open lifecycle intent"));
+            };
+            if intent.intent_id != plan.intent_id {
+                return Err(RuntimeStoreError::IntentOpen {
+                    intent_id: intent.intent_id,
+                    state: intent.state,
+                });
+            }
+            if let Some(existing) = &intent.provider_request_id {
+                if existing == &plan.provider_request_id {
+                    return Ok(intent);
+                }
+                return Err(malformed(
+                    "one lifecycle intent has two provider request ids",
+                ));
+            }
+            let expected =
+                serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
+            intent.provider_request_id = Some(plan.provider_request_id.clone());
+            let next =
+                serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
+            let target = keys::head_for_generation(plan.generation);
+            let head = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression("openIntent = :expected")
+                .update_expression("SET openIntent = :next")
+                .expression_attribute_values(":expected", s(expected))
+                .expression_attribute_values(":next", s(next))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let durable_target = keys::intent(row.session, plan.generation, &plan.intent_id.0)
+                .map_err(|error| malformed(&error.to_string()))?;
+            let durable = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&durable_target.pk, &durable_target.sk)))
+                .condition_expression(
+                    "#state IN (:dispatched, :unknown) AND attribute_not_exists(providerRequestId)",
+                )
+                .update_expression("SET providerRequestId = :request")
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(":dispatched", s("dispatched"))
+                .expression_attribute_values(":unknown", s("unknown"))
+                .expression_attribute_values(":request", s(plan.provider_request_id.0.clone()))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            self.transact(
+                vec![
+                    TransactWriteItem::builder().update(head).build(),
+                    TransactWriteItem::builder().update(durable).build(),
+                ],
+                transaction_token("request", plan.generation, &plan.intent_id.0),
+            )
+            .await?;
+            Ok(intent)
+        })
+    }
+
+    fn record_reconcile_attempt<'a>(
+        &'a self,
+        plan: &'a LifecycleReconcilePlan,
+    ) -> StoreFuture<'a, IntentRecord> {
+        Box::pin(async move {
+            let row = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            let Some(mut intent) = row.open_intent else {
+                return Err(malformed("reconciliation has no open lifecycle intent"));
+            };
+            if intent.intent_id != plan.intent_id {
+                return Err(RuntimeStoreError::IntentOpen {
+                    intent_id: intent.intent_id,
+                    state: intent.state,
+                });
+            }
+            if intent.attempts != plan.expected_attempts {
+                return Err(RuntimeStoreError::ReconcileConflict {
+                    expected: plan.expected_attempts,
+                    found: intent.attempts,
+                });
+            }
+            if !matches!(intent.state, IntentState::Dispatched | IntentState::Unknown) {
+                return Err(RuntimeStoreError::IntentOpen {
+                    intent_id: intent.intent_id,
+                    state: intent.state,
+                });
+            }
+            let expected =
+                serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
+            intent.attempts = intent.attempts.saturating_add(1).min(RECONCILE_ATTEMPTS);
+            if intent.attempts >= RECONCILE_ATTEMPTS {
+                intent.state = IntentState::Quarantined;
+            }
+            let next =
+                serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
+            let target = keys::head_for_generation(plan.generation);
+            let (head_expression, mut head_builder) = if intent.state == IntentState::Quarantined {
+                (
+                    "SET openIntent = :next, updatedAt = :at REMOVE nextEvaluateAt, rtDuePk, rtDueSk",
+                    Update::builder(),
+                )
+            } else {
+                (
+                    "SET openIntent = :next, nextEvaluateAt = :due, rtDueSk = :dueSk, updatedAt = :at",
+                    Update::builder()
+                        .expression_attribute_values(":due", stamp(plan.next_evaluate_at))
+                        .expression_attribute_values(
+                            ":dueSk",
+                            s(keys::due_sort(plan.next_evaluate_at, plan.generation)),
+                        ),
+                )
+            };
+            head_builder = head_builder
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression("openIntent = :expected")
+                .update_expression(head_expression)
+                .expression_attribute_values(":expected", s(expected))
+                .expression_attribute_values(":next", s(next))
+                .expression_attribute_values(":at", stamp(plan.reconciled_at));
+            let head = head_builder
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let durable_target = keys::intent(row.session, plan.generation, &plan.intent_id.0)
+                .map_err(|error| malformed(&error.to_string()))?;
+            let durable = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&durable_target.pk, &durable_target.sk)))
+                .condition_expression("reconcileAttempts = :expectedAttempts")
+                .update_expression(
+                    "SET #state = :state, reconcileAttempts = :attempts, lastReconciledAt = :at",
+                )
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(
+                    ":expectedAttempts",
+                    n(u64::from(plan.expected_attempts)),
+                )
+                .expression_attribute_values(":state", s(intent_state_str(intent.state)))
+                .expression_attribute_values(":attempts", n(u64::from(intent.attempts)))
+                .expression_attribute_values(":at", stamp(plan.reconciled_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            self.transact(
+                vec![
+                    TransactWriteItem::builder().update(head).build(),
+                    TransactWriteItem::builder().update(durable).build(),
+                ],
+                transaction_token(
+                    "reconcile",
+                    plan.generation,
+                    &format!("{}:{}", plan.intent_id.0, intent.attempts),
+                ),
+            )
+            .await?;
+            Ok(intent)
         })
     }
 
@@ -535,34 +793,111 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 })
             };
             if plan.next_intent_state == IntentState::Unknown {
-                if plan.generation_commit.is_some() || !plan.usage.is_empty() {
-                    return Err(malformed(
-                        "an unknown provider outcome cannot close the generation or emit usage",
-                    ));
+                if !plan.usage.is_empty() {
+                    return Err(malformed("an unknown provider outcome cannot emit usage"));
                 }
                 let next = serde_json::to_string(&intent).map_err(|error| {
                     RuntimeStoreError::Malformed {
                         reason: error.to_string(),
                     }
                 })?;
-                let head_update = Update::builder()
-                    .table_name(&self.table)
-                    .set_key(Some(key(&target.pk, &target.sk)))
-                    .condition_expression("openIntent = :expected")
-                    .update_expression("SET openIntent = :next")
-                    .expression_attribute_values(":expected", s(expected))
-                    .expression_attribute_values(":next", s(next))
-                    .build()
-                    .map_err(|error| RuntimeStoreError::Malformed {
-                        reason: error.to_string(),
-                    })?;
+                let mut transaction = Vec::with_capacity(3);
+                if let Some(generation) = &plan.generation_commit {
+                    if generation.generation != plan.generation
+                        || generation.next_state != GenerationState::Unknown
+                    {
+                        return Err(malformed(
+                            "an unknown outcome may only move its own generation to unknown",
+                        ));
+                    }
+                    let next_revision = generation.expected_revision.next();
+                    let head_update = Update::builder()
+                        .table_name(&self.table)
+                        .set_key(Some(key(&target.pk, &target.sk)))
+                        .condition_expression(
+                            "generationId = :generation AND #state = :expectedState AND fence = :expectedFence AND revision = :expectedRevision AND openIntent = :expected",
+                        )
+                        .update_expression(
+                            "SET #state = :nextState, fence = :nextFence, revision = :nextRevision, updatedAt = :at, openIntent = :next",
+                        )
+                        .expression_attribute_names("#state", "state")
+                        .expression_attribute_values(
+                            ":generation",
+                            s(generation.generation.to_string()),
+                        )
+                        .expression_attribute_values(
+                            ":expectedState",
+                            s(keys::state_str(generation.expected_state)),
+                        )
+                        .expression_attribute_values(
+                            ":expectedFence",
+                            n(generation.expected_fence.0),
+                        )
+                        .expression_attribute_values(
+                            ":expectedRevision",
+                            n(generation.expected_revision.value()),
+                        )
+                        .expression_attribute_values(
+                            ":nextState",
+                            s(keys::state_str(generation.next_state)),
+                        )
+                        .expression_attribute_values(":nextFence", n(generation.next_fence.0))
+                        .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                        .expression_attribute_values(":at", stamp(generation.at))
+                        .expression_attribute_values(":expected", s(expected))
+                        .expression_attribute_values(":next", s(next))
+                        .build()
+                        .map_err(|error| malformed(&error.to_string()))?;
+                    transaction.push(TransactWriteItem::builder().update(head_update).build());
+                    let current = keys::current(row.session);
+                    let current_update = Update::builder()
+                        .table_name(&self.table)
+                        .set_key(Some(key(&current.pk, &current.sk)))
+                        .condition_expression(
+                            "generationId = :generation AND fence = :expectedFence AND revision = :expectedRevision",
+                        )
+                        .update_expression(
+                            "SET fence = :nextFence, revision = :nextRevision, updatedAt = :at",
+                        )
+                        .expression_attribute_values(
+                            ":generation",
+                            s(generation.generation.to_string()),
+                        )
+                        .expression_attribute_values(
+                            ":expectedFence",
+                            n(generation.expected_fence.0),
+                        )
+                        .expression_attribute_values(
+                            ":expectedRevision",
+                            n(generation.expected_revision.value()),
+                        )
+                        .expression_attribute_values(":nextFence", n(generation.next_fence.0))
+                        .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                        .expression_attribute_values(":at", stamp(generation.at))
+                        .build()
+                        .map_err(|error| malformed(&error.to_string()))?;
+                    transaction.push(TransactWriteItem::builder().update(current_update).build());
+                } else {
+                    let head_update = Update::builder()
+                        .table_name(&self.table)
+                        .set_key(Some(key(&target.pk, &target.sk)))
+                        .condition_expression("openIntent = :expected")
+                        .update_expression("SET openIntent = :next")
+                        .expression_attribute_values(":expected", s(expected))
+                        .expression_attribute_values(":next", s(next))
+                        .build()
+                        .map_err(|error| RuntimeStoreError::Malformed {
+                            reason: error.to_string(),
+                        })?;
+                    transaction.push(TransactWriteItem::builder().update(head_update).build());
+                }
+                transaction.push(
+                    TransactWriteItem::builder()
+                        .update(durable_intent_update()?)
+                        .build(),
+                );
                 self.transact(
-                    vec![
-                        TransactWriteItem::builder().update(head_update).build(),
-                        TransactWriteItem::builder()
-                            .update(durable_intent_update()?)
-                            .build(),
-                    ],
+                    transaction,
                     transaction_token("unknown", plan.generation, &plan.intent_id.0),
                 )
                 .await?;
@@ -710,6 +1045,37 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     .build(),
                 TransactWriteItem::builder().put(put).build(),
             ];
+            if let Some(generation) = &plan.generation_commit {
+                let next_revision = generation.expected_revision.next();
+                let current = keys::current(row.session);
+                let current_update = Update::builder()
+                    .table_name(&self.table)
+                    .set_key(Some(key(&current.pk, &current.sk)))
+                    .condition_expression(
+                        "generationId = :generation AND fence = :expectedFence AND revision = :expectedRevision",
+                    )
+                    .update_expression(
+                        "SET fence = :nextFence, revision = :nextRevision, updatedAt = :at",
+                    )
+                    .expression_attribute_values(
+                        ":generation",
+                        s(generation.generation.to_string()),
+                    )
+                    .expression_attribute_values(
+                        ":expectedFence",
+                        n(generation.expected_fence.0),
+                    )
+                    .expression_attribute_values(
+                        ":expectedRevision",
+                        n(generation.expected_revision.value()),
+                    )
+                    .expression_attribute_values(":nextFence", n(generation.next_fence.0))
+                    .expression_attribute_values(":nextRevision", n(next_revision.value()))
+                    .expression_attribute_values(":at", stamp(generation.at))
+                    .build()
+                    .map_err(|error| malformed(&error.to_string()))?;
+                transaction.push(TransactWriteItem::builder().update(current_update).build());
+            }
             let (outbox_state, outbox_fence, outbox_revision) = plan
                 .generation_commit
                 .as_ref()

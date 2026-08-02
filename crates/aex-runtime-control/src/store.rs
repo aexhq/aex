@@ -221,10 +221,51 @@ pub struct LifecycleIntentPlan {
     pub action: LifecycleAction,
     /// The fence the intent takes.
     pub fence: Fence,
+    /// The head state the caller read before taking the lifecycle fence.
+    pub expected_state: GenerationState,
+    /// The head fence the caller read before taking the lifecycle fence.
+    pub expected_fence: Fence,
     /// The head revision the caller read.
     pub expected_revision: Revision,
+    /// The transitional state that lands with the intent.
+    pub next_state: GenerationState,
     /// When the intent is recorded.
     pub dispatched_at: Timestamp,
+}
+
+/// The atomic result of taking a lifecycle fence and recording its intent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleIntentCommit {
+    /// The head after the fence transition.
+    pub generation: GenerationCommit,
+    /// The intent that now blocks every second effect.
+    pub intent: IntentRecord,
+}
+
+/// Provider request evidence to attach before waiting for a transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleRequestPlan {
+    /// Which intent received the provider answer.
+    pub intent_id: LifecycleIntentId,
+    /// The generation the intent belongs to.
+    pub generation: GenerationId,
+    /// The exact request identity returned by the provider SDK.
+    pub provider_request_id: ProviderRequestId,
+}
+
+/// One durable reconciliation attempt against an unresolved lifecycle intent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleReconcilePlan {
+    /// Which intent was probed.
+    pub intent_id: LifecycleIntentId,
+    /// The generation the intent belongs to.
+    pub generation: GenerationId,
+    /// Attempt count the caller read.
+    pub expected_attempts: u32,
+    /// The next instant at which the due index may return this generation.
+    pub next_evaluate_at: Timestamp,
+    /// When the provider probe completed.
+    pub reconciled_at: Timestamp,
 }
 
 /// The settled outcome of one lifecycle intent.
@@ -335,6 +376,14 @@ pub enum RuntimeStoreError {
         /// The revision the store holds.
         found: Option<Revision>,
     },
+    /// Another reconciler advanced the same open intent first.
+    #[error("the lifecycle reconciliation attempt moved: expected {expected}, found {found}")]
+    ReconcileConflict {
+        /// Attempt count the caller read.
+        expected: u32,
+        /// Attempt count now stored.
+        found: u32,
+    },
     /// A second lifecycle effect was attempted while an intent is open.
     #[error("intent `{intent_id}` is still {state:?}; no second effect may be dispatched")]
     IntentOpen {
@@ -394,7 +443,22 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
     ) -> StoreFuture<'a, GenerationCommit>;
 
     /// Records a lifecycle intent before the provider call.
-    fn record_intent<'a>(&'a self, plan: &'a LifecycleIntentPlan) -> StoreFuture<'a, IntentRecord>;
+    fn record_intent<'a>(
+        &'a self,
+        plan: &'a LifecycleIntentPlan,
+    ) -> StoreFuture<'a, LifecycleIntentCommit>;
+
+    /// Persists provider request evidence before waiting for the transition.
+    fn record_provider_request<'a>(
+        &'a self,
+        plan: &'a LifecycleRequestPlan,
+    ) -> StoreFuture<'a, IntentRecord>;
+
+    /// Advances an unresolved intent's bounded reconciliation budget.
+    fn record_reconcile_attempt<'a>(
+        &'a self,
+        plan: &'a LifecycleReconcilePlan,
+    ) -> StoreFuture<'a, IntentRecord>;
 
     /// Settles a lifecycle intent with its provider evidence.
     fn settle_intent<'a>(
