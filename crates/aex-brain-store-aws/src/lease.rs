@@ -2,19 +2,20 @@
 //!
 //! Two rules are carried here rather than by review.
 //!
-//! - **A claim returns the head in the same conditional write.** The activation-pool
-//!   evaluation measured redundant strongly-consistent reads dominating the cost of
-//!   becoming an owner, so there is exactly one round trip and `ReturnValues: ALL_NEW`
-//!   carries the head back.
+//! - **A claim returns the agent head in the conditional write, then reads the session
+//!   head strongly consistently.** The second read is required: workspace, organization
+//!   and deletion epoch are session facts and cannot be fixed at process composition.
 //! - **A renewal never moves the fence.** Extending a lease proves nothing changed hands,
 //!   and advancing the fence would fence out the very owner doing the renewing.
 
 use aex_brain_application::ports::{
-    BoxFuture, Claim, ClaimError, LeaseStore, ReleaseDisposition, StoreError,
+    BoxFuture, Claim, ClaimError, LeaseStore, ReleaseDisposition, SessionAuthority, StoreError,
 };
 use aex_brain_domain::ids::{AgentKey, Fence, OwnerToken, Timestamp};
-use aex_session_dynamodb::attr::{n, s, stamp};
+use aex_session_dynamodb::attr::{Row, n, s, stamp};
 use aex_session_dynamodb::plan::key as item_key;
+use aex_session_dynamodb::wire_pending::SessionLifecycle;
+use aex_wire::ids::WorkspaceId;
 use aws_sdk_dynamodb::operation::update_item::UpdateItemError;
 use aws_sdk_dynamodb::types::ReturnValue;
 
@@ -31,6 +32,62 @@ fn is_condition<R>(error: &aws_sdk_dynamodb::error::SdkError<UpdateItemError, R>
     error
         .as_service_error()
         .is_some_and(UpdateItemError::is_conditional_check_failed_exception)
+}
+
+async fn load_session_authority(
+    store: &BrainStore,
+    key: &AgentKey,
+) -> Result<SessionAuthority, ClaimError> {
+    let session = translate::session(key.session)
+        .map_err(|error| ClaimError::Store(translate_error(&error)))?;
+    let head_key = aex_session_dynamodb::keys::head(session);
+    let output = store
+        .client()
+        .get_item()
+        .table_name(store.table())
+        .set_key(Some(item_key(&head_key.pk, &head_key.sk)))
+        .consistent_read(true)
+        .send()
+        .await
+        .map_err(|error| ClaimError::Store(transport("claim session authority", &error)))?;
+    let item = output.item.as_ref().ok_or_else(|| {
+        ClaimError::Store(StoreError::Undecodable {
+            location: "session head".to_owned(),
+            reason: "the session does not exist".to_owned(),
+        })
+    })?;
+    let row = Row::bind(item, aex_session_dynamodb::codec::SESSION_HEAD).map_err(|error| {
+        ClaimError::Store(StoreError::Undecodable {
+            location: "session head".to_owned(),
+            reason: error.to_string(),
+        })
+    })?;
+    let workspace = row.id::<WorkspaceId>("workspaceId").map_err(|error| {
+        ClaimError::Store(StoreError::Undecodable {
+            location: "session head".to_owned(),
+            reason: error.to_string(),
+        })
+    })?;
+    let head = aex_session_dynamodb::codec::decode_head(item, workspace).map_err(|error| {
+        ClaimError::Store(StoreError::Undecodable {
+            location: "session head".to_owned(),
+            reason: error.to_string(),
+        })
+    })?;
+    if head.session != session {
+        return Err(ClaimError::Store(StoreError::Undecodable {
+            location: "session head".to_owned(),
+            reason: "the row session does not match the claimed agent".to_owned(),
+        }));
+    }
+    if head.lifecycle != SessionLifecycle::Active {
+        return Err(ClaimError::Terminal);
+    }
+    Ok(SessionAuthority {
+        workspace: head.workspace,
+        organization: head.organization,
+        deletion_epoch: head.deletion_epoch,
+    })
 }
 
 impl LeaseStore for BrainStore {
@@ -105,11 +162,13 @@ impl LeaseStore for BrainStore {
             if head.finish.is_some() {
                 return Err(ClaimError::Terminal);
             }
+            let authority = load_session_authority(self, key).await?;
             Ok(Claim {
                 key: *key,
                 owner,
                 fence: head.fence,
                 expires_at: expires,
+                authority,
                 head,
             })
         })

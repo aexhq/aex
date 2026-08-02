@@ -13,16 +13,16 @@
 //! that the one-append case produces exactly [`DECISION_ORDER`]. Sharing the item shapes
 //! matters; sharing one function that cannot express the decision does not.
 
+use aex_brain_application::ports::DecisionContext;
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::child::{ChildOutcome, ChildState};
 use aex_brain_domain::commit::{ChildWrite, DecisionCommit, EffectWrite, JoinWrite, WakeCreate};
 use aex_brain_domain::ids::AgentKey;
 use aex_session_dynamodb::attr::{ItemBuilder, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
-use aex_session_dynamodb::plan::{IMMUTABLE, Participant, RegionalTables, TransactionPlan, key};
+use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
 use aex_session_dynamodb::transactions::DECISION_ORDER;
 use aex_session_dynamodb::{codec, keys as shared};
-use aex_wire::ids::{OrganizationId, WorkspaceId};
 use aex_work_dynamodb::codec::{DeliveryEvidence, Payload, WorkRecord};
 
 use crate::keys::{self, BrainKeyError};
@@ -61,25 +61,16 @@ pub mod participant {
     pub const FANOUT_INTENT: Participant = Participant::new("brain.fanout_intent");
 }
 
-/// Everything a decision needs that the pure [`DecisionCommit`] does not carry.
+/// The only physical tables Brain's durable store addresses.
 ///
-/// These are composition facts — which tables, which tenant, which clock — and the domain
-/// deliberately has none of them.
-#[derive(Debug, Clone)]
-pub struct DecisionContext {
-    /// The physical table names.
-    pub tables: RegionalTables,
-    /// The workspace every row is owned by and every wake partitions under.
-    pub workspace: WorkspaceId,
-    /// The organization that owes the money.
-    pub organization: OrganizationId,
-    /// The session head's deletion epoch, which the decision fences on without touching
-    /// the head.
-    pub deletion_epoch: u64,
-    /// The lease expiry the decision renews to.
-    pub lease_expires_at: aex_brain_domain::ids::Timestamp,
-    /// The activation's clock reading.
-    pub now: aex_brain_domain::ids::Timestamp,
+/// These names are process configuration. Session ownership is intentionally absent: it is
+/// read from each session head and arrives separately in [`DecisionContext`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrainTables {
+    /// The `session-authority` table containing heads, controls, journals and effects.
+    pub session_authority: String,
+    /// The `regional-work` table containing durable continuation wakes.
+    pub regional_work: String,
 }
 
 /// Why a decision could not be compiled.
@@ -116,14 +107,15 @@ pub const CONTINUATION_PRIORITY: u8 = 1;
     reason = "one contiguous function per transaction keeps participant order readable in one place; splitting it would hide the order it exists to fix"
 )]
 pub fn compile(
+    tables: &BrainTables,
     context: &DecisionContext,
     commit: &DecisionCommit,
 ) -> Result<TransactionPlan, PlanError> {
     commit.validate()?;
 
     let agent_key = commit.guard.key;
-    let table = context.tables.session_authority.as_str();
-    let work_table = context.tables.regional_work.as_str();
+    let table = tables.session_authority.as_str();
+    let work_table = tables.regional_work.as_str();
     let (session, agent) = translate::agent_key(&agent_key).map_err(BrainKeyError::from)?;
     let now = translate::at(context.now, "now").map_err(BrainKeyError::from)?;
     let lease = translate::at(context.lease_expires_at, "lease").map_err(BrainKeyError::from)?;
@@ -140,10 +132,16 @@ pub fn compile(
             .set_key(Some(key(&head_key.pk, &head_key.sk)))
             .condition_expression(
                 "cancelEpoch = :cancelEpoch AND deletionEpoch = :deletionEpoch \
+                 AND workspaceId = :workspaceId AND organizationId = :organizationId \
                  AND lifecycle = :active",
             )
             .expression_attribute_values(":cancelEpoch", n(commit.guard.cancel_epoch.0))
-            .expression_attribute_values(":deletionEpoch", n(context.deletion_epoch))
+            .expression_attribute_values(":deletionEpoch", n(context.authority.deletion_epoch))
+            .expression_attribute_values(":workspaceId", s(context.authority.workspace.to_string()))
+            .expression_attribute_values(
+                ":organizationId",
+                s(context.authority.organization.to_string()),
+            )
             .expression_attribute_values(":active", s("active")),
     )
     .map_err(PlanError::Store)?;
@@ -341,7 +339,7 @@ pub fn compile(
                             ItemBuilder::new(BRAIN_CHILD)
                                 .set(aex_session_dynamodb::attr::PK, s(index.pk))
                                 .set(aex_session_dynamodb::attr::SK, s(index.sk))
-                                .set("workspaceId", s(context.workspace.to_string()))
+                                .set("workspaceId", s(context.authority.workspace.to_string()))
                                 .set("childAgentId", s(child.0.as_hyphenated().to_string()))
                                 .set("ordinal", n(u64::from(*ordinal)))
                                 .set("joinId", s(join.0.as_hyphenated().to_string()))
@@ -372,7 +370,7 @@ pub fn compile(
                             ItemBuilder::new(BRAIN_QUEUED)
                                 .set(aex_session_dynamodb::attr::PK, s(queued.pk))
                                 .set(aex_session_dynamodb::attr::SK, s(queued.sk))
-                                .set("workspaceId", s(context.workspace.to_string()))
+                                .set("workspaceId", s(context.authority.workspace.to_string()))
                                 .set("parentAgentId", s(agent.to_string()))
                                 .set("childAgentId", s(child.0.as_hyphenated().to_string()))
                                 .set("grant", grant_attribute(*grant))
@@ -396,7 +394,7 @@ pub fn compile(
                             ItemBuilder::new(codec::AGENT_CONTROL)
                                 .set(aex_session_dynamodb::attr::PK, s(child_control.pk))
                                 .set(aex_session_dynamodb::attr::SK, s(child_control.sk))
-                                .set("workspaceId", s(context.workspace.to_string()))
+                                .set("workspaceId", s(context.authority.workspace.to_string()))
                                 .set("agentId", s(child.0.as_hyphenated().to_string()))
                                 .set("sessionId", s(session.to_string()))
                                 .set("parentAgentId", s(agent.to_string()))
@@ -462,7 +460,7 @@ pub fn compile(
                             ItemBuilder::new(codec::AGENT_INDEX)
                                 .set(aex_session_dynamodb::attr::PK, s(ret.pk))
                                 .set(aex_session_dynamodb::attr::SK, s(ret.sk))
-                                .set("workspaceId", s(context.workspace.to_string()))
+                                .set("workspaceId", s(context.authority.workspace.to_string()))
                                 .set("agentId", s(child.0.as_hyphenated().to_string()))
                                 .set("outcome", s(child_outcome_name(*outcome)))
                                 .set("createdAt", stamp(now))
@@ -486,7 +484,7 @@ pub fn compile(
                             ItemBuilder::new(codec::FANOUT_PAGE)
                                 .set(aex_session_dynamodb::attr::PK, s(intent_key.pk))
                                 .set(aex_session_dynamodb::attr::SK, s(intent_key.sk))
-                                .set("workspaceId", s(context.workspace.to_string()))
+                                .set("workspaceId", s(context.authority.workspace.to_string()))
                                 .set("intentId", s(intent.0.as_hyphenated().to_string()))
                                 .set("parentAgentId", s(agent.to_string()))
                                 .set("total", n(u64::from(*total)))
@@ -522,7 +520,7 @@ pub fn compile(
                             ItemBuilder::new(BRAIN_JOIN)
                                 .set(aex_session_dynamodb::attr::PK, s(group.pk))
                                 .set(aex_session_dynamodb::attr::SK, s(group.sk))
-                                .set("workspaceId", s(context.workspace.to_string()))
+                                .set("workspaceId", s(context.authority.workspace.to_string()))
                                 .set("joinId", s(join.0.as_hyphenated().to_string()))
                                 .set("mode", s(format!("{mode:?}").to_lowercase()))
                                 .set("shards", n(u64::from(*shards)))
@@ -658,8 +656,8 @@ fn wake_record(context: &DecisionContext, wake: &WakeCreate) -> Result<WorkRecor
     let due = wake.due.unwrap_or(context.now);
     Ok(WorkRecord {
         work_id: format!("wrk_{}", wake.id.0.as_simple()),
-        workspace: context.workspace,
-        organization: context.organization,
+        workspace: context.authority.workspace,
+        organization: context.authority.organization,
         session: Some(session),
         agent: Some(agent),
         kind: "agent.wake".to_owned(),

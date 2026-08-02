@@ -16,12 +16,12 @@
 use super::{AdmissionControl, AdmissionDecision};
 use crate::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
-    ClockPort, CommitError, CommitReceipt, ConditionFailure, DetachedStatus, DispatchTicket,
-    DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
+    ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
+    DispatchTicket, DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalPage, JournalStore,
     LeaseStore, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
-    ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SteadyInstant,
-    StoreError, StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
+    ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
+    SteadyInstant, StoreError, StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
     ToolRoutingError, WakeDelivery, WakeQueue,
 };
 use aex_brain_domain::budget::BudgetNode;
@@ -36,6 +36,7 @@ use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
 use aex_brain_domain::wire_pending::{
     CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
 };
+use aex_wire::ids::{PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -521,6 +522,7 @@ struct AgentRow {
 #[derive(Debug)]
 pub struct MemoryStore {
     agents: Mutex<BTreeMap<AgentKey, AgentRow>>,
+    authorities: Mutex<BTreeMap<SessionId, SessionAuthority>>,
     commit_faults: Mutex<VecDeque<Option<CommitError>>>,
     read_faults: Mutex<VecDeque<StoreError>>,
     clock: Arc<FixedClock>,
@@ -534,6 +536,7 @@ impl MemoryStore {
     pub fn new(clock: Arc<FixedClock>, queue: Arc<MemoryQueue>, log: Arc<Recorder>) -> Self {
         Self {
             agents: Mutex::new(BTreeMap::new()),
+            authorities: Mutex::new(BTreeMap::new()),
             commit_faults: Mutex::new(VecDeque::new()),
             read_faults: Mutex::new(VecDeque::new()),
             clock,
@@ -569,6 +572,19 @@ impl MemoryStore {
                 effects: BTreeMap::new(),
             },
         );
+        self.authorities
+            .lock()
+            .expect("not poisoned")
+            .entry(key.session)
+            .or_insert_with(fixture_authority);
+    }
+
+    /// Replaces the session-head authority a subsequent claim observes.
+    pub fn set_authority(&self, session: SessionId, authority: SessionAuthority) {
+        self.authorities
+            .lock()
+            .expect("not poisoned")
+            .insert(session, authority);
     }
 
     /// Places `effect` in the agent's effect partition, as a dead owner would have left it.
@@ -739,6 +755,7 @@ impl JournalStore for MemoryStore {
     )]
     fn commit<'a>(
         &'a self,
+        context: &'a DecisionContext,
         commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>> {
         Box::pin(async move {
@@ -749,6 +766,21 @@ impl JournalStore for MemoryStore {
                 return Err(fault);
             }
             let now = self.clock.now();
+            let authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&commit.guard.key.session)
+                .cloned()
+                .ok_or_else(|| {
+                    CommitError::Store(StoreError::Undecodable {
+                        location: "session head".to_owned(),
+                        reason: "the session does not exist".to_owned(),
+                    })
+                })?;
+            if authority != context.authority {
+                return Err(ConditionFailure::CancelEpochAdvanced.into());
+            }
             let mut agents = self.agents.lock().expect("not poisoned");
             let key = commit.guard.key;
             let row = agents.get_mut(&key).ok_or_else(|| {
@@ -956,6 +988,18 @@ impl LeaseStore for MemoryStore {
     ) -> BoxFuture<'a, Result<Claim, ClaimError>> {
         Box::pin(async move {
             self.log.note("claim");
+            let authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&key.session)
+                .cloned()
+                .ok_or_else(|| {
+                    ClaimError::Store(StoreError::Undecodable {
+                        location: "session head".to_owned(),
+                        reason: "the session does not exist".to_owned(),
+                    })
+                })?;
             let mut agents = self.agents.lock().expect("not poisoned");
             let row = agents.get_mut(key).ok_or(ClaimError::HeldByOther {
                 expires_at: Timestamp::from_millis(0),
@@ -977,6 +1021,7 @@ impl LeaseStore for MemoryStore {
                 owner,
                 fence: row.fence,
                 expires_at: row.lease_expires_at,
+                authority,
                 head: Self::head_of(row, *key),
             })
         })
@@ -1167,6 +1212,22 @@ pub fn wake_for(key: AgentKey, dedup: &str) -> DurableWake {
         reason: ParkReason::AwaitingUserMessage,
         due: None,
         priority: 1,
-        tenant: "ws-fixture".to_owned(),
+        tenant: fixture_authority().workspace.to_string(),
+    }
+}
+
+/// The tenant authority used by in-memory sessions unless a test replaces it explicitly.
+#[must_use]
+pub fn fixture_authority() -> SessionAuthority {
+    SessionAuthority {
+        workspace: aex_wire::ids::WorkspaceId::from_uuid7(Uuid7::compose(
+            1_767_225_600_002,
+            [3; 10],
+        )),
+        organization: aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(
+            1_767_225_600_003,
+            [4; 10],
+        )),
+        deletion_epoch: 0,
     }
 }

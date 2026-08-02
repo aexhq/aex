@@ -11,8 +11,8 @@
 //!   comes back as [`ConditionFailure::IdempotentReplay`].
 
 use aex_brain_application::ports::{
-    AgentHead, BoxFuture, CommitError, CommitReceipt, ConditionFailure, DispatchTicket,
-    EffectStore, FenceGuard, JournalPage, JournalStore, ReadBudget, StoreError,
+    AgentHead, BoxFuture, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
+    DispatchTicket, EffectStore, FenceGuard, JournalPage, JournalStore, ReadBudget, StoreError,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
@@ -21,7 +21,7 @@ use aex_session_dynamodb::attr::{Item, Row, n, s, stamp};
 use aex_session_dynamodb::plan::key as item_key;
 use aws_sdk_dynamodb::Client;
 
-use crate::plan::{self, DecisionContext};
+use crate::plan::{self, BrainTables};
 use crate::{control, effect, keys, translate};
 
 /// The `DynamoDB` half of the Brain store.
@@ -34,20 +34,20 @@ use crate::{control, effect, keys, translate};
 #[derive(Debug, Clone)]
 pub struct BrainStore {
     client: Client,
-    context: DecisionContext,
+    tables: BrainTables,
 }
 
 impl BrainStore {
     /// Binds the store to a client and a composition.
     #[must_use]
-    pub const fn new(client: Client, context: DecisionContext) -> Self {
-        Self { client, context }
+    pub const fn new(client: Client, tables: BrainTables) -> Self {
+        Self { client, tables }
     }
 
-    /// The composition this store was built with.
+    /// The physical tables this store was built with.
     #[must_use]
-    pub const fn context(&self) -> &DecisionContext {
-        &self.context
+    pub const fn tables(&self) -> &BrainTables {
+        &self.tables
     }
 
     /// The client, shared by the lease path.
@@ -59,7 +59,7 @@ impl BrainStore {
     /// The `session-authority` table this store addresses.
     #[must_use]
     pub fn table(&self) -> &str {
-        &self.context.tables.session_authority
+        &self.tables.session_authority
     }
 
     async fn get_control(&self, key: &AgentKey) -> Result<Option<Item>, StoreError> {
@@ -159,10 +159,12 @@ impl JournalStore for BrainStore {
 
     fn commit<'a>(
         &'a self,
+        context: &'a DecisionContext,
         commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>> {
         Box::pin(async move {
-            let compiled = plan::compile(&self.context, commit).map_err(commit_plan_error)?;
+            let compiled =
+                plan::compile(&self.tables, context, commit).map_err(commit_plan_error)?;
             let participants = compiled.participants().to_vec();
             let request = compiled
                 .compile(&self.client)
@@ -172,7 +174,7 @@ impl JournalStore for BrainStore {
                     revision: commit.control.next_revision,
                     tail: commit.control.next_tail,
                     wakes: commit.wakes.iter().map(|wake| wake.id).collect(),
-                    committed_at: self.context.now,
+                    committed_at: context.now,
                 }),
                 Err(error) => {
                     let mapped = match error.as_service_error() {

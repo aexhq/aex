@@ -9,9 +9,9 @@
 //! | Port | Bound to | Note |
 //! | --- | --- | --- |
 //! | `WakeQueue` | `aex_brain_store_aws::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
+//! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
 //! | `ToolPort` | `aex_brain_tool_catalog::CompositeToolRouter` | real, with no executor registered: nothing implements `ToolExecutor` yet, so every route refuses by its own typed error |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
-//! | `JournalStore`, `EffectStore`, `LeaseStore` | [`UnboundStore`] | refused, see below |
 //! | `ProviderPort` | [`AbsentProvider`] | `aex-brain-provider-gateway` restates its own `ProviderPort` over `aex_model_catalog::canonical` types and takes no dependency on `aex-brain-application` |
 //! | `CatalogPort` | [`AbsentCatalog`] | `aex-model-catalog` publishes no `ModelCapability` |
 //! | `HandsPort` | [`AbsentHands`] | `aex-brain-hands` takes no dependency on `aex-brain-application` |
@@ -28,11 +28,11 @@ use aex_brain_application::activation::{
 use aex_brain_application::kernel::{ActivationRegistry, DrainGate};
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
-    ClockPort, CommitError, CommitReceipt, DispatchTicket, EffectStore, FenceGuard, HandsAccepted,
-    HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort, HandsResult,
-    IdPort, JournalPage, JournalStore, LeaseStore, PreviewSink, ProviderDispatchError,
-    ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds,
-    SteadyInstant, StoreError, StreamBudget, UnknownResolution,
+    ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
+    FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
+    HandsOperationStatus, HandsPort, HandsResult, IdPort, JournalPage, JournalStore, LeaseStore,
+    PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
+    ReleaseDisposition, ResultBounds, SteadyInstant, StoreError, StreamBudget, UnknownResolution,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
@@ -47,17 +47,12 @@ use aex_brain_domain::wire_pending::{
 };
 use std::sync::Arc;
 
-/// Why the store is not bound in a deployed task.
+/// Historical refusal used by the explicit unbound-store fixture.
 ///
-/// `aex_brain_store_aws::DecisionContext` fixes the owning workspace, the paying organization
-/// and the session's deletion epoch at construction, but all three are per-session facts and
-/// a mux serves many sessions. The wake payload carries the workspace; it carries neither of
-/// the other two, and the deletion epoch lives on the session head row, which no port on this
-/// surface reads. Binding the store with a guessed value would write rows under the wrong
-/// tenant, and a mis-tenanted row succeeds silently.
-pub const STORE_UNBOUND: &str = "aex-brain-store-aws binds workspace, organization and deletion \
-                                 epoch at construction; all three are per-session and the wake \
-                                 payload carries only the workspace";
+/// Deployed composition no longer uses it: `BrainStore` now derives these facts from each
+/// claimed session. Keeping the refusal fixture proves an accidentally unbound store remains
+/// fail closed.
+pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
 
 /// Why the provider is not bound.
 pub const PROVIDER_ABSENT: &str = "aex-brain-provider-gateway restates its own ProviderPort over \
@@ -224,6 +219,7 @@ impl JournalStore for UnboundStore {
 
     fn commit<'a>(
         &'a self,
+        _context: &'a DecisionContext,
         _commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>> {
         Box::pin(async { Err(CommitError::Store(Self::refusal())) })
@@ -441,7 +437,7 @@ impl Bindings {
     #[must_use]
     pub const fn deployed() -> Self {
         Self {
-            store: false,
+            store: true,
             provider: false,
             catalog: false,
         }
@@ -470,29 +466,46 @@ impl Bindings {
     }
 }
 
-/// Binds the real `SQS` wake queue and its `DynamoDB` due backstop.
-///
-/// The queue is the one store-side adapter that needs no per-session fact, so it is the one
-/// this composition can honestly bind today.
-pub async fn sqs_queue(queue_url: &str, work_table: &str) -> aex_brain_store_aws::SqsWakeQueue {
-    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-    aex_brain_store_aws::SqsWakeQueue::new(
+/// Binds the real store and queue adapters through one `AWS` configuration.
+pub async fn aws_bindings(
+    region: &str,
+    queue_url: &str,
+    session_table: &str,
+    work_table: &str,
+) -> (
+    Arc<aex_brain_store_aws::BrainStore>,
+    Arc<aex_brain_store_aws::SqsWakeQueue>,
+) {
+    let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(aws_sdk_dynamodb::config::Region::new(region.to_owned()))
+        .load()
+        .await;
+    let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let store = Arc::new(aex_brain_store_aws::BrainStore::new(
+        dynamodb.clone(),
+        aex_brain_store_aws::BrainTables {
+            session_authority: session_table.to_owned(),
+            regional_work: work_table.to_owned(),
+        },
+    ));
+    let queue = Arc::new(aex_brain_store_aws::SqsWakeQueue::new(
         aws_sdk_sqs::Client::new(&aws),
         queue_url.to_owned(),
-        aex_brain_store_aws::DueScan::new(
-            aws_sdk_dynamodb::Client::new(&aws),
-            work_table.to_owned(),
-        ),
-    )
+        aex_brain_store_aws::DueScan::new(dynamodb, work_table.to_owned()),
+    ));
+    (store, queue)
 }
 
 /// The ports a deployed task resolves.
 #[must_use]
-pub fn deployed_ports(wakes: Arc<dyn aex_brain_application::ports::WakeQueue>) -> Ports {
+pub fn deployed_ports(
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+) -> Ports {
     Ports {
-        journal: Arc::new(UnboundStore),
-        effects: Arc::new(UnboundStore),
-        leases: Arc::new(UnboundStore),
+        journal: Arc::clone(&store) as Arc<_>,
+        effects: Arc::clone(&store) as Arc<_>,
+        leases: store,
         wakes,
         provider: Arc::new(AbsentProvider),
         // The real router. It holds no executor because nothing implements `ToolExecutor`
@@ -604,15 +617,17 @@ mod tests {
         assert!(CATALOG_ABSENT.contains("aex-model-catalog"));
     }
 
-    /// A task with an unbound store must never report ready: it would take work off the queue
-    /// only to release it, and that looks exactly like being served.
+    /// The store is now bound, while provider and catalog remain named readiness blockers.
     #[test]
-    fn a_task_with_an_unbound_store_is_never_ready_and_names_what_is_missing() {
+    fn a_deployed_task_binds_the_store_and_names_the_remaining_peers() {
         let bindings = Bindings::deployed();
         assert!(!bindings.complete());
+        assert!(bindings.store);
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 3);
-        assert!(missing.contains(&STORE_UNBOUND));
+        assert_eq!(missing.len(), 2);
+        assert!(!missing.contains(&STORE_UNBOUND));
+        assert!(missing.contains(&PROVIDER_ABSENT));
+        assert!(missing.contains(&CATALOG_ABSENT));
         assert!(
             Bindings {
                 store: true,
@@ -683,7 +698,7 @@ mod tests {
         assert!(control.should_receive());
         assert!(
             !MuxAdmission::new(admission, Bindings::deployed()).should_receive(),
-            "an unbound store must never take work off the queue"
+            "missing provider and catalog peers must never take work off the queue"
         );
         drain.start_drain();
         assert!(!control.should_receive());

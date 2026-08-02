@@ -8,7 +8,8 @@
 
 use aex_brain_application::ports::{
     AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, EffectStore,
-    FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition, StoreError,
+    FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition, SessionAuthority,
+    StoreError,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq,
@@ -16,9 +17,9 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::{FinishReason, JournalRecord};
 use aex_brain_store_aws::journal::condition_for;
-use aex_brain_store_aws::{BrainStore, DecisionContext};
+use aex_brain_store_aws::{BrainStore, BrainTables};
 use aex_session_dynamodb::attr::{ItemBuilder, b, n, s, stamp};
-use aex_session_dynamodb::plan::{Participant, RegionalTables};
+use aex_session_dynamodb::plan::Participant;
 use aex_wire::ids::{PrefixedId, Uuid7};
 use aws_smithy_http_client::test_util::{CaptureRequestReceiver, capture_request};
 
@@ -33,9 +34,8 @@ fn key() -> AgentKey {
     )
 }
 
-fn context() -> DecisionContext {
-    DecisionContext {
-        tables: RegionalTables::composed("dev", "eu-west-1"),
+fn authority() -> SessionAuthority {
+    SessionAuthority {
         workspace: aex_wire::ids::WorkspaceId::from_uuid7(Uuid7::compose(
             1_767_225_600_002,
             [3; 10],
@@ -45,8 +45,6 @@ fn context() -> DecisionContext {
             [4; 10],
         )),
         deletion_epoch: 0,
-        lease_expires_at: Timestamp::from_millis(1_767_225_615_000),
-        now: Timestamp::from_millis(1_767_225_600_000),
     }
 }
 
@@ -59,7 +57,13 @@ fn capturing() -> (BrainStore, CaptureRequestReceiver) {
         .http_client(http_client)
         .build();
     (
-        BrainStore::new(aws_sdk_dynamodb::Client::from_conf(config), context()),
+        BrainStore::new(
+            aws_sdk_dynamodb::Client::from_conf(config),
+            BrainTables {
+                session_authority: "dev-eu-west-1-session-authority".to_owned(),
+                regional_work: "dev-eu-west-1-regional-work".to_owned(),
+            },
+        ),
         receiver,
     )
 }
@@ -93,15 +97,15 @@ fn claim() -> Claim {
         owner: OwnerToken(v7(1_767_225_600_004, 5)),
         fence: Fence(3),
         expires_at: Timestamp::from_millis(1_767_225_615_000),
+        authority: authority(),
         head: head(),
     }
 }
 
-/// A claim advances the fence and returns the head in the same write. The head is what the
-/// activation folds from, so a second strongly-consistent read here would double the cost
-/// of becoming an owner for no extra information.
+/// A claim advances the fence and returns the agent head in the same write. Session authority
+/// is a different item and is read strongly consistently after this write succeeds.
 #[tokio::test]
-async fn a_claim_advances_the_fence_and_asks_for_the_head_in_one_round_trip() {
+async fn a_claim_advances_the_fence_and_returns_the_agent_head_with_the_write() {
     let (store, receiver) = capturing();
     let _ = store
         .claim(
