@@ -991,3 +991,55 @@ now available; what remains is the wire adapter itself.
 | The 16 handlers | `ApiKeysApi` (3), `BootstrapApi` (1), `CentralOperationsApi` (3), `OrganizationsApi` (5), `WorkspacesApi` (4). Each mutating one must build an eight-field `IdempotencyRecordKey` and an `AuditEvent`; each paged one must bind a `PageBinding` and mint its continuation through `aex_central_http::cursor`. |
 | The target resolver | `admit_request` needs `TargetResolver::account_state(organization_id)`, and **no port exposes it**. `AuthorizationReader` carries an account state only inside `WorkspaceKeyState` and `AccountActorState`, and `ControlStore` has no read for it at all. This is the precise next blocker: a new coarse read on one of the two ports, its statement in `aex-control-aurora`, and its row decoder. |
 | `OutboxWriter` | `MailerPort` is implemented over it; no Aurora implementation exists, because `ControlStore` has no standalone outbox insert — the invitation transaction commits its row inline. |
+
+## 11. Fourth pass — central control serving and regional control authority
+
+The remaining control surface is now composed. `central-control-api` mounts all
+16 routes owned by its five generated server traits over `AuroraControlStore`,
+`ControlStoreTargets`, the versioned API-key pepper, a separate cursor secret,
+and one direct regional Lambda authority per launch region. Startup reads each
+real dependency before binding the runtime; the public regional `apiUrl` map is
+configured independently from the private Lambda ARN map.
+
+The public projections are lossless: organization rows carry the caller's
+current role, membership rows join the identity-owned email, workspace rows
+carry the owning account's current operational profile, and operation reads bind
+organization, kind and status. Membership collections contain active members
+only because the public vocabulary has no removed state.
+
+### 11.1 Contract decisions
+
+| Decision | Result |
+| --- | --- |
+| D-56 | Dashboard bootstrap returns one account record per organization. A person may belong to several organizations, so a single unscoped account was not a coherent value. |
+| D-57 | `central_operations_list` requires `organizationId`; the organization is part of the cursor binding and store predicate, never inferred from a page of mixed tenants. |
+| D-58 | An exact successful API-key replay returns `409 api_key_secret_unavailable`. The durable row is metadata plus a keyed verifier; plaintext is returned once, is never stored or reconstructed, and a replay never mints a replacement key. |
+| D-59 | Private regional control uses one configured direct Lambda ARN per region. Public workspace `apiUrl` values use a separate configured HTTPS map; neither value is derived from the other. |
+| D-60 | Regional workspace IDs are durable tombstones after deletion. An absent delete writes a tombstone, so a delayed provision cannot resurrect the ID. A replay that reports `removed: false` has still established the required postcondition and completes centrally. |
+
+### 11.2 The regional producer
+
+`regional-control` is the direct-invoke producer that was missing from the
+consumer contract. It stores a `regional_workspace_control` row in the regional
+session authority under `CONTROL#<workspace>/WORKSPACE`. Compare-and-set writes
+bind a monotone fence, organization, region and provision intent. Stale fences,
+another organization and another intent have distinct closed refusals. An
+ambiguous DynamoDB write is resolved by a strongly consistent target read; it
+is never blindly reissued under a new workspace identity.
+
+### 11.3 The central worker
+
+`central-control-worker` now consumes SQS and scheduled Lambda events rather
+than serving an HTTP placeholder. SQS records are wakeups; Aurora operation and
+outbox claims remain truth across duplicate delivery. It advances operation
+fences, reconciles provisioning, dispatches deletion, sends invitation mail via
+SES, publishes monotone workspace/key rows to each regional authorization
+projection, confirms signing-key publication inside its configured secret
+prefix, marks committed outbox rows, releases failures with bounded backoff and
+runs replay/outbox GC on schedule. Its SQS response names only records whose
+durable drain failed.
+
+API-key revocation now commits an `authorization.epoch.changed` outbox row in
+the same serializable transaction as the key epoch advance. The adapter inserts
+the returned epoch into the payload before commit, so the regional floor is the
+authority's epoch rather than a guessed revision.
