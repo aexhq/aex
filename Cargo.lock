@@ -348,6 +348,7 @@ dependencies = [
  "async-trait",
  "aws-sdk-rdsdata",
  "aws-smithy-types",
+ "central-schema-admin",
  "futures",
  "serde",
  "serde_json",

@@ -50,6 +50,9 @@ aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+# The migration suite applies the production privilege renderer rather than a
+# copy of it, so the denial matrix it proves is the one a plane receives.
+central-schema-admin = { path = "../../workers/central-schema-admin" }
 sqlx.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync"] }
 uuid.workspace = true

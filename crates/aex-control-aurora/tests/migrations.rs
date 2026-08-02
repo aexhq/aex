@@ -5,6 +5,13 @@
 //! as written, and — most importantly — that the **role-denial matrix** is real.
 //! A grant table nobody connects as is a document, not a control.
 //!
+//! The fixture applies the whole committed chain and then
+//! `central_schema_admin::grants::GrantSet::render`, which is the same renderer
+//! `central-schema-admin grants --apply` runs against a plane. Nothing here
+//! grants a privilege of its own — not `CONNECT`, not `SELECT`, not `EXECUTE` —
+//! so a privilege these cases rely on and production lacks is a failing case
+//! rather than a fixture that quietly propped the suite up.
+//!
 //! What it cannot prove is that Aurora's Data `API` behaves like a direct
 //! connection; the `aws.rds_data.transaction` seam is claimed by the live
 //! companion.
@@ -25,11 +32,17 @@
 use std::sync::Arc;
 
 use aex_test_harness::containers::PostgresContainer;
+use central_schema_admin::grants::GrantSet;
 use sqlx::{Connection, Executor as _, PgConnection, Row as _};
 use tokio::sync::OnceCell;
 
-/// The four migration files this stream owns, in order.
-const MIGRATIONS: [(&str, &str); 4] = [
+/// The whole committed chain, identity through finance, in order.
+///
+/// There is no per-stream subset and no stub for the peer's objects: the
+/// statements this crate owns join `finance.account_state_v1` and call
+/// `finance.ensure_account`, and a fixture-shaped stand-in would prove only that
+/// the fixture agrees with itself.
+const MIGRATIONS: [(&str, &str); 8] = [
     (
         "20260801000000_bootstrap",
         include_str!("../../../migrations/central/20260801000000_bootstrap.sql"),
@@ -46,26 +59,25 @@ const MIGRATIONS: [(&str, &str); 4] = [
         "20260801000300_control_functions",
         include_str!("../../../migrations/central/20260801000300_control_functions.sql"),
     ),
+    (
+        "20260801000400_finance_roles_and_schema",
+        include_str!("../../../migrations/central/20260801000400_finance_roles_and_schema.sql"),
+    ),
+    (
+        "20260801000500_baseline_finance",
+        include_str!("../../../migrations/central/20260801000500_baseline_finance.sql"),
+    ),
+    (
+        "20260801000600_baseline_seed_platform_accounts",
+        include_str!(
+            "../../../migrations/central/20260801000600_baseline_seed_platform_accounts.sql"
+        ),
+    ),
+    (
+        "20260801000700_finance_account_state",
+        include_str!("../../../migrations/central/20260801000700_finance_account_state.sql"),
+    ),
 ];
-
-/// The finance objects this stream's statements join against.
-///
-/// A fixture only. In production their absence is `503
-/// account_state_unavailable`, which is the correct behaviour anyway; the stub
-/// exists so the join can be exercised at all before the finance stream lands.
-///
-/// TODO(cross-stream): the production grants for `aex_control_api` on
-/// `finance.account_state_v1` belong to the finance stream's migration, next to
-/// the view itself. `aex_authz` is in the same position and has been since the
-/// first pass; this stub is the only place either grant is written down.
-const FINANCE_STUB: &str = "\
-CREATE SCHEMA finance; \
-CREATE VIEW finance.account_state_v1 AS \
-  SELECT o.id AS organization_id, 'active'::text AS status, NULL::text AS reason, \
-         1::bigint AS revision, o.created_at AS changed_at \
-    FROM control.organization o; \
-GRANT USAGE ON SCHEMA finance TO aex_authz, aex_control_api; \
-GRANT SELECT ON finance.account_state_v1 TO aex_authz, aex_control_api;";
 
 /// The login roles `central-schema-admin` attaches in production.
 const LOGIN_ROLES: &str = "\
@@ -77,6 +89,15 @@ GRANT aex_identity_api   TO aex_identity_api_login; \
 GRANT aex_authz          TO aex_authz_login; \
 GRANT aex_control_api    TO aex_control_api_login; \
 GRANT aex_control_worker TO aex_control_worker_login;";
+
+/// The committed privilege model, parsed once.
+fn grants() -> &'static GrantSet {
+    static GRANTS: std::sync::OnceLock<GrantSet> = std::sync::OnceLock::new();
+    GRANTS.get_or_init(|| {
+        GrantSet::load(central_schema_admin::grants::grants_path())
+            .unwrap_or_else(|error| panic!("the committed grants.toml parses: {error}"))
+    })
+}
 
 /// The one engine this process runs against.
 ///
@@ -179,45 +200,30 @@ impl Fixture {
             .unwrap_or_else(|error| panic!("`{role}` connects: {error}"))
     }
 
-    /// Applies the bundle, the login roles and the finance fixture.
+    /// Applies the bundle, then the declared privileges, then the login roles.
     async fn migrate(&self) {
         let mut connection = self.superuser().await;
         for (name, sql) in MIGRATIONS {
-            // `0001` revokes on the database by name; the fixture database has
-            // a generated one, so the statement is retargeted rather than
-            // skipped — the revocation is the point of the file.
-            let sql = sql.replace("DATABASE aex ", &format!("DATABASE {} ", self.database));
-            let sql: &'static str = Box::leak(sql.into_boxed_str());
+            // Migration bodies carry no privilege and no database name, so they
+            // reach the fixture database exactly as they reach a plane.
             connection
                 .execute(sql)
                 .await
                 .unwrap_or_else(|error| panic!("`{name}` applies: {error}"));
         }
-        connection
-            .execute(FINANCE_STUB)
-            .await
-            .expect("the finance fixture applies");
-        // `20260801000000` revokes every database privilege from `PUBLIC` and
-        // never grants `CONNECT` back, so no application role can open a
-        // session until somebody grants it — and nothing in the bundle does.
-        // Without this line every case that connects as a role fails with
-        // `permission denied for database`, which is a fixture gap wearing the
-        // clothes of a denial-matrix result.
-        // TODO(cross-stream): `central-schema-admin` owns the grant step and
-        // this grant is not written down anywhere yet, so the production
-        // database currently locks out all four application roles.
-        let connect: &'static str = Box::leak(
-            format!(
-                "GRANT CONNECT ON DATABASE {} TO aex_identity_api, aex_authz, \
-                 aex_control_api, aex_control_worker",
-                self.database
-            )
-            .into_boxed_str(),
-        );
-        connection
-            .execute(connect)
-            .await
-            .expect("the application roles may open a session");
+        // The production privilege model, rendered from the committed document
+        // by the production renderer and pointed at this case's database. Every
+        // `CONNECT`, `USAGE`, table privilege and `EXECUTE` the cases below
+        // exercise arrives through this and nowhere else, so it also proves that
+        // every object `grants.toml` names actually exists — PostgreSQL refuses
+        // a grant on a table or function that does not.
+        for statement in grants().render(&self.database).expect("the model renders") {
+            let statement: &'static str = Box::leak(statement.into_boxed_str());
+            connection
+                .execute(statement)
+                .await
+                .unwrap_or_else(|error| panic!("`{statement}` applies: {error}"));
+        }
         let roles = connection.execute(LOGIN_ROLES).await;
         // The roles are cluster-wide, so a parallel fixture may have created
         // them already. Their existence is the point, not who created them.
@@ -259,7 +265,7 @@ async fn the_bundle_applies_and_leaves_no_public_schema() {
     .expect("the schema probe runs");
     assert_eq!(public, 0, "the public schema is dropped outright");
 
-    for schema in ["identity", "control"] {
+    for schema in ["identity", "control", "finance", "schema_admin"] {
         let present: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM information_schema.schemata WHERE schema_name = $1",
         )
@@ -268,6 +274,32 @@ async fn the_bundle_applies_and_leaves_no_public_schema() {
         .await
         .expect("the schema probe runs");
         assert_eq!(present, 1, "`{schema}` exists");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_role_can_open_a_session_without_its_declared_connect() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+
+    // `PUBLIC` lost every database privilege, so `CONNECT` reaches a role only
+    // through `grants.toml`. Both halves matter: a role that cannot connect is
+    // an outage, and a `PUBLIC` that can is the revoke undone.
+    let public: bool = sqlx::query_scalar("SELECT has_database_privilege('public', $1, 'CONNECT')")
+        .bind(&fixture.database)
+        .fetch_one(&mut connection)
+        .await
+        .expect("the database privilege probe runs");
+    assert!(!public, "PUBLIC may not open a session on the database");
+
+    for role in grants().role_names() {
+        let connects: bool = sqlx::query_scalar("SELECT has_database_privilege($1, $2, 'CONNECT')")
+            .bind(role)
+            .bind(&fixture.database)
+            .fetch_one(&mut connection)
+            .await
+            .expect("the database privilege probe runs");
+        assert!(connects, "`{role}` cannot open a session at all");
     }
 }
 
@@ -373,7 +405,7 @@ async fn the_authorization_reader_holds_no_write_anywhere() {
 
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT format('%I.%I', table_schema, table_name) FROM information_schema.tables \
-         WHERE table_schema IN ('identity','control') AND table_type = 'BASE TABLE'",
+         WHERE table_schema IN ('identity','control','finance') AND table_type = 'BASE TABLE'",
     )
     .fetch_all(&mut connection)
     .await
@@ -424,6 +456,177 @@ async fn the_control_roles_hold_nothing_in_finance_and_identity_writes() {
         assert!(
             has_privilege(&mut connection, role, "identity.user", "SELECT").await,
             "`{role}` may read identity.user"
+        );
+    }
+
+    // The whole finance surface either control role may reach is one view, and
+    // even that is read-only. Everything else — the ledger, the balances, the
+    // provider edges — is out of reach in every mode, including `SELECT`.
+    let finance: Vec<String> = sqlx::query_scalar(
+        "SELECT format('%I.%I', table_schema, table_name) FROM information_schema.tables \
+         WHERE table_schema = 'finance'",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .expect("the table probe runs");
+    assert!(
+        finance.contains(&"finance.account_state_v1".to_owned()),
+        "the published projection exists as a real object, not a fixture stub"
+    );
+
+    for role in ["aex_control_api", "aex_control_worker"] {
+        for object in &finance {
+            for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+                let expected = role == "aex_control_api"
+                    && object == "finance.account_state_v1"
+                    && privilege == "SELECT";
+                assert_eq!(
+                    has_privilege(&mut connection, role, object, privilege).await,
+                    expected,
+                    "`{role}` privilege {privilege} on {object} is wrong"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn establishing_an_account_is_idempotent_and_needs_no_finance_write() {
+    let fixture = Fixture::start().await;
+    let mut superuser = fixture.superuser().await;
+
+    let user = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0010);
+    let organization = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0011);
+    sqlx::query(
+        "INSERT INTO identity.user (id, email, status, created_at, updated_at) \
+         VALUES ($1, 'founder@b.test', 'active', now(), now())",
+    )
+    .bind(user)
+    .execute(&mut superuser)
+    .await
+    .expect("the person inserts");
+
+    let mut api = fixture.as_role("aex_control_api_login").await;
+    sqlx::query(
+        "INSERT INTO control.organization (id, name, slug, created_at, updated_at, created_by_user_id) \
+         VALUES ($1, 'Acme', 'acme', now(), now(), $2)",
+    )
+    .bind(organization)
+    .bind(user)
+    .execute(&mut api)
+    .await
+    .expect("control-api inserts the organization");
+
+    // `SECURITY DEFINER` is the whole point: the role holds no INSERT anywhere
+    // in `finance` and still establishes the account.
+    assert!(
+        !has_privilege(
+            &mut superuser,
+            "aex_control_api",
+            "finance.billing_account",
+            "INSERT"
+        )
+        .await,
+        "control-api must reach the billing account only through the wrapper"
+    );
+
+    let created: bool = sqlx::query_scalar("SELECT finance.ensure_account($1)")
+        .bind(organization)
+        .fetch_one(&mut api)
+        .await
+        .expect("the wrapper is executable by control-api");
+    assert!(created, "the first call establishes the account");
+
+    let again: bool = sqlx::query_scalar("SELECT finance.ensure_account($1)")
+        .bind(organization)
+        .fetch_one(&mut api)
+        .await
+        .expect("the wrapper is idempotent");
+    assert!(!again, "a replay converges and reports it created nothing");
+
+    // Two customer accounts, each with a balance row, exactly once.
+    let accounts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM finance.account a \
+           JOIN finance.account_balance b ON b.account_id = a.account_id \
+          WHERE a.org_id = $1",
+    )
+    .bind(organization)
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the account probe runs");
+    assert_eq!(accounts, 2, "available and reserved, and no duplicates");
+
+    let state: String = sqlx::query_scalar(
+        "SELECT status FROM finance.account_state_v1 WHERE organization_id = $1",
+    )
+    .bind(organization)
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the projection reads");
+    assert_eq!(state, "active");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_held_account_reads_as_paused_and_never_as_active() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+
+    let user = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0020);
+    sqlx::query(
+        "INSERT INTO identity.user (id, email, status, created_at, updated_at) \
+         VALUES ($1, 'held@b.test', 'active', now(), now())",
+    )
+    .bind(user)
+    .execute(&mut connection)
+    .await
+    .expect("the person inserts");
+
+    // Every state the billing account admits other than `active`. The view maps
+    // all of them, and anything added later, to the restrictive answer.
+    for (index, held) in ["payment_hold", "dispute_hold", "closed"]
+        .into_iter()
+        .enumerate()
+    {
+        let organization =
+            uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0030 + index as u128);
+        sqlx::query(
+            "INSERT INTO control.organization (id, name, slug, created_at, updated_at, created_by_user_id) \
+             VALUES ($1, 'Held', $2, now(), now(), $3)",
+        )
+        .bind(organization)
+        .bind(held.replace('_', "-"))
+        .bind(user)
+        .execute(&mut connection)
+        .await
+        .expect("the organization inserts");
+        sqlx::query("SELECT finance.ensure_account($1)")
+            .bind(organization)
+            .execute(&mut connection)
+            .await
+            .expect("the account is established");
+        sqlx::query(
+            "UPDATE finance.billing_account \
+                SET state = $2, state_reason = 'fixture', updated_at = now() WHERE org_id = $1",
+        )
+        .bind(organization)
+        .bind(held)
+        .execute(&mut connection)
+        .await
+        .expect("the hold applies");
+
+        let read: &'static str = Box::leak(
+            aex_control_aurora::sql::GET_ACCOUNT_STATE
+                .replace(":organization_id", "$1")
+                .into_boxed_str(),
+        );
+        let status: String = sqlx::query_scalar(read)
+            .bind(organization)
+            .fetch_one(&mut connection)
+            .await
+            .expect("the account-state read runs");
+        assert_eq!(
+            status, "paused_top_up_required",
+            "`{held}` must not read as active"
         );
     }
 }
@@ -587,6 +790,19 @@ async fn only_one_signing_key_can_be_active() {
         } else {
             assert!(outcome.is_err(), "a second active key is refused");
         }
+        // Counting is what stops this case regressing to what it used to be.
+        // With a `public_key` the hex parser refused, the first insert never
+        // happened either, and "the second is refused" was then true for the
+        // wrong reason — the uniqueness rule was never exercised at all.
+        let active: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM control.signing_key WHERE state = 'active'")
+                .fetch_one(&mut connection)
+                .await
+                .expect("the key probe runs");
+        assert_eq!(
+            active, 1,
+            "exactly one active key exists after attempt {index}"
+        );
     }
 }
 
@@ -660,10 +876,6 @@ async fn an_organization_with_no_finance_row_reads_as_unavailable_and_never_as_a
     let fixture = Fixture::start().await;
     let mut connection = fixture.superuser().await;
 
-    // The stub view is derived from `control.organization`, so an organization
-    // that is absent from it is the only way to model a missing finance row.
-    // Asking about an organization that does not exist at all is the same
-    // question from the edge's point of view: nobody established the state.
     // `query_scalar` wants a `'static` statement, and the input is a crate
     // constant with one parameter marker rewritten; nothing caller-supplied
     // reaches this string.
@@ -672,6 +884,9 @@ async fn an_organization_with_no_finance_row_reads_as_unavailable_and_never_as_a
             .replace(":organization_id", "$1")
             .into_boxed_str(),
     );
+
+    // An organization nobody ever created. From the edge's point of view this is
+    // the same question as the one below: nobody established the state.
     let absent: Vec<String> = sqlx::query_scalar(read)
         .bind(uuid::Uuid::from_u128(0xDEAD))
         .fetch_all(&mut connection)
@@ -680,5 +895,39 @@ async fn an_organization_with_no_finance_row_reads_as_unavailable_and_never_as_a
     assert!(
         absent.is_empty(),
         "an unknown organization must not answer a status at all, got {absent:?}"
+    );
+
+    // An organization that exists and whose `finance.ensure_account` never ran.
+    // This is the case the fixture stub could not model at all — its view was
+    // derived from `control.organization`, so every organization it knew about
+    // read `active`, which is precisely the wrong default.
+    let user = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0040);
+    let organization = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0041);
+    sqlx::query(
+        "INSERT INTO identity.user (id, email, status, created_at, updated_at) \
+         VALUES ($1, 'nofinance@b.test', 'active', now(), now())",
+    )
+    .bind(user)
+    .execute(&mut connection)
+    .await
+    .expect("the person inserts");
+    sqlx::query(
+        "INSERT INTO control.organization (id, name, slug, created_at, updated_at, created_by_user_id) \
+         VALUES ($1, 'Acme', 'acme', now(), now(), $2)",
+    )
+    .bind(organization)
+    .bind(user)
+    .execute(&mut connection)
+    .await
+    .expect("the organization inserts");
+
+    let unestablished: String = sqlx::query_scalar(read)
+        .bind(organization)
+        .fetch_one(&mut connection)
+        .await
+        .expect("the account-state read runs");
+    assert_eq!(
+        unestablished, "unavailable",
+        "a missing finance row is never active; it is `503 account_state_unavailable`"
     );
 }

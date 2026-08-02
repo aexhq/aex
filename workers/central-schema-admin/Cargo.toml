@@ -29,6 +29,13 @@ conformance = "unit"
 smoke = "smoke"
 resource_envelope = "e2e"
 
+# The bundle parser and the privilege allowlist are a library so that the
+# container-backed suite in `crates/aex-control-aurora` applies the *same*
+# renderer production applies, rather than a second copy written for the test.
+[lib]
+name = "central_schema_admin"
+path = "src/lib.rs"
+
 [[bin]]
 name = "central-schema-admin"
 path = "src/main.rs"

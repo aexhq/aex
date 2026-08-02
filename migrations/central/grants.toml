@@ -1,7 +1,202 @@
-schema_version = 1
+# Every privilege in the central database, declared once.
+#
+# A migration creates objects and grants nothing. This file is the whole
+# privilege surface — the database-wide denial, `CONNECT`, schema `USAGE`, table
+# privileges and function `EXECUTE` — and
+# `central_schema_admin::grants::GrantSet::render` turns it into the exact SQL
+# that `central-schema-admin grants --apply` executes and that
+# `crates/aex-control-aurora/tests/migrations.rs` applies to a real PostgreSQL
+# before probing the denial matrix. `aex-release-tool migration bundle` refuses a
+# migration body that contains a `GRANT` or a `REVOKE`, so there is no second
+# place for a privilege to live.
+#
+# The document is an allowlist. There is no `REVOKE` denylist to keep in step
+# with dropped tables — that is exactly how the system this replaces acquired a
+# deploy-breaking revoke against a table that no longer existed. The four
+# `revoke_public` flags below are the *baseline* denial, not a denylist: they run
+# before every grant and name only `PUBLIC`.
+#
+# Loading validates syntax, cross-references and four non-negotiable boundaries
+# (see `GrantSet::validate`), so a document that would grant a role something the
+# architecture forbids fails to parse rather than reaching a database.
 
+schema_version = 2
+
+# `20260801000000_bootstrap.sql` drops the `public` schema and creates every
+# application role `NOLOGIN`. It revokes nothing, because the revoke belongs
+# here: `REVOKE ALL ON DATABASE … FROM PUBLIC` takes `CONNECT` away from
+# everybody, and the only way back is the per-role `connect = true` below.
+# Granting `CONNECT` back to `PUBLIC` would undo the revoke's entire purpose.
+[database]
+revoke_public = true
+
+# A schema created after `public` is dropped grants `PUBLIC` nothing by default.
+# These four are stated anyway: the denial baseline is a property somebody should
+# be able to read, not one they have to infer from PostgreSQL's defaults.
+[[schema]]
+name = "identity"
+revoke_public = true
+
+[[schema]]
+name = "control"
+revoke_public = true
+
+[[schema]]
+name = "finance"
+revoke_public = true
+
+# The migration history schema. No application role holds anything in it, and
+# `validate` refuses a document that tries.
+[[schema]]
+name = "schema_admin"
+revoke_public = true
+
+# `control.authorization_epoch` receives no INSERT, UPDATE or DELETE from any
+# role, anywhere. The only way a row changes is through one of these five
+# per-kind `SECURITY DEFINER` wrappers, each of which can only ever add one, so
+# monotonicity is a database-level property rather than application care.
+#
+# The generic `control.bump_epoch(text, uuid)` is declared here so that its
+# revocation is stated rather than implied; no role names it, and `validate`
+# would reject one that did.
+[[function]]
+name = "control.bump_epoch(text, uuid)"
+revoke_public = true
+never_granted = true
+
+[[function]]
+name = "control.bump_user_epoch(uuid)"
+revoke_public = true
+
+[[function]]
+name = "control.bump_membership_epoch(uuid)"
+revoke_public = true
+
+[[function]]
+name = "control.bump_workspace_epoch(uuid)"
+revoke_public = true
+
+[[function]]
+name = "control.bump_key_epoch(uuid)"
+revoke_public = true
+
+# Published to the finance stream for the same-transaction bump on every account
+# pause and resume. No finance deployable calls it yet, so it is granted to
+# nobody; the day one does, the role goes in that role's `functions` list and
+# this comment goes away.
+[[function]]
+name = "control.bump_account_epoch(uuid)"
+revoke_public = true
+
+[[function]]
+name = "finance.ensure_account(uuid)"
+revoke_public = true
+
+# central-identity-api ---------------------------------------------------------
+# Exactly one control privilege: advancing the `user` epoch when a person is
+# disabled or loses their last live token.
+[[role]]
+name = "aex_identity_api"
+connect = true
+schemas = ["identity", "control"]
+tables = [
+  "identity.user:SELECT,INSERT,UPDATE",
+  "identity.external_identity:SELECT,INSERT,UPDATE,DELETE",
+  "identity.dashboard_session:SELECT,INSERT,UPDATE,DELETE",
+  "identity.email_challenge:SELECT,INSERT,UPDATE",
+  "identity.device_authorization:SELECT,INSERT,UPDATE",
+  "identity.account_token:SELECT,INSERT,UPDATE",
+  "identity.credential_pepper:SELECT",
+  "identity.credential_pepper_usage:SELECT",
+]
+functions = ["control.bump_user_epoch(uuid)"]
+
+# central-authz ----------------------------------------------------------------
+# Read-only, everywhere, in all three schemas. `AUTHZ_WRITE_PROBE` failing is a
+# start-up assertion, and `validate` refuses to build a document in which it
+# could succeed.
+[[role]]
+name = "aex_authz"
+connect = true
+schemas = ["identity", "control", "finance"]
+tables = [
+  "identity.user:SELECT",
+  "identity.dashboard_session:SELECT",
+  "identity.account_token:SELECT",
+  "identity.credential_pepper:SELECT",
+  "control.organization:SELECT",
+  "control.membership:SELECT",
+  "control.workspace:SELECT",
+  "control.api_key:SELECT",
+  "control.authorization_epoch:SELECT",
+  "control.signing_key:SELECT",
+  "control.credential_pepper:SELECT",
+  "finance.account_state_v1:SELECT",
+]
+functions = []
+
+# central-control-api ----------------------------------------------------------
+# `finance.account_state_v1` answers "may this account spend?" on the
+# authorization path; `finance.ensure_account` establishes the account in the
+# same transaction as the organization that owns it.
+[[role]]
+name = "aex_control_api"
+connect = true
+schemas = ["control", "identity", "finance"]
+tables = [
+  "control.organization:SELECT,INSERT,UPDATE",
+  "control.membership:SELECT,INSERT,UPDATE",
+  "control.invitation:SELECT,INSERT,UPDATE",
+  "control.workspace:SELECT,INSERT,UPDATE",
+  "control.api_key:SELECT,INSERT,UPDATE",
+  "control.durable_operation:SELECT,INSERT,UPDATE",
+  "control.idempotency_record:SELECT,INSERT,UPDATE",
+  "control.audit_event:SELECT,INSERT",
+  "control.outbox_message:SELECT,INSERT",
+  "control.authorization_epoch:SELECT",
+  "control.credential_pepper:SELECT",
+  "identity.user:SELECT",
+  "finance.account_state_v1:SELECT",
+]
+functions = [
+  "control.bump_key_epoch(uuid)",
+  "control.bump_membership_epoch(uuid)",
+  "control.bump_workspace_epoch(uuid)",
+  "finance.ensure_account(uuid)",
+]
+
+# central-control-worker -------------------------------------------------------
+# The only role that reclaims expired rows, and only from the two tables whose
+# retention is a policy rather than a fact.
+[[role]]
+name = "aex_control_worker"
+connect = true
+schemas = ["control", "identity"]
+tables = [
+  "control.workspace:SELECT,UPDATE",
+  "control.durable_operation:SELECT,UPDATE",
+  "control.invitation:SELECT,UPDATE",
+  "control.outbox_message:SELECT,UPDATE,DELETE",
+  "control.idempotency_record:SELECT,DELETE",
+  "control.audit_event:SELECT,INSERT",
+  "control.signing_key:SELECT,INSERT,UPDATE",
+  "control.authorization_epoch:SELECT",
+  "control.credential_pepper:SELECT",
+  "control.api_key:SELECT",
+  "control.organization:SELECT",
+  "control.membership:SELECT",
+  "identity.user:SELECT",
+]
+functions = [
+  "control.bump_key_epoch(uuid)",
+  "control.bump_membership_epoch(uuid)",
+  "control.bump_workspace_epoch(uuid)",
+]
+
+# finance ----------------------------------------------------------------------
 [[role]]
 name = "aex_finance_api"
+connect = true
 schemas = ["finance", "control"]
 tables = [
   "finance.account:SELECT,INSERT",
@@ -13,9 +208,11 @@ tables = [
   "finance.statement:SELECT",
   "control.organization:SELECT",
 ]
+functions = []
 
 [[role]]
 name = "aex_finance_ingest"
+connect = true
 schemas = ["finance"]
 tables = [
   "finance.provider_event_inbox:SELECT,INSERT",
@@ -26,9 +223,11 @@ tables = [
   "finance.journal_posting:SELECT,INSERT",
   "finance.billing_account:SELECT,UPDATE",
 ]
+functions = []
 
 [[role]]
 name = "aex_finance_settlement"
+connect = true
 schemas = ["finance"]
 tables = [
   "finance.usage_inbox:SELECT,INSERT,UPDATE",
@@ -41,9 +240,11 @@ tables = [
   "finance.journal_posting:SELECT,INSERT",
   "finance.receipt_outbox:SELECT,INSERT",
 ]
+functions = []
 
 [[role]]
 name = "aex_finance_reconcile"
+connect = true
 schemas = ["finance"]
 tables = [
   "finance.account:SELECT",
@@ -55,13 +256,18 @@ tables = [
   "finance.receipt_outbox:SELECT,UPDATE",
   "finance.statement:SELECT,INSERT,UPDATE",
 ]
+functions = []
 
 [[role]]
 name = "aex_receipt_dispatcher"
+connect = true
 schemas = ["finance"]
 tables = ["finance.receipt_outbox:SELECT,UPDATE"]
+functions = []
 
 [[role]]
 name = "aex_provider_cost"
+connect = true
 schemas = ["finance"]
 tables = ["finance.provider_cost_fact:SELECT,INSERT"]
+functions = []
