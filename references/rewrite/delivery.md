@@ -210,6 +210,47 @@ edges and the path map routes their directories to their real npm nodes.
   `release/policy/test-images.toml` exists, a cross-file check must assert the
   two agree.
 
+## 3.6 The local artifact run
+
+The pipeline was driven end to end on one machine, publishing nothing. What it
+produced, and what it could not, is the most useful thing this section says.
+
+**Built and described.** The two `TypeScript` edges. `bun build` produced the
+bundles, `artifact package` produced byte-stable ZIPs whose single member is the
+`handler.js` each unit declares, and `artifact describe` produced envelopes over
+real digests, real sizes, a real toolchain and a real input closure.
+
+| unit | artifact digest | bytes | closure |
+| --- | --- | --- | --- |
+| `stripe-command-edge` | `sha256:d3756c44bcf25e6c400498e944894b1005b486646affab525e152d1ea4601145` | 218697 | 91 files |
+| `stripe-webhook-edge` | `sha256:5726dd3e3a53a469c5ed870909c1280bc6f9b2697e642a233ce5124b5862c46b` | 241639 | 90 files |
+
+**One earned receipt.** `evidence new` over this crate's own `nextest` `JUnit`
+report: 317 declared, 317 collected, zero skipped, zero flaky, verdict derived
+rather than declared. `evidence attach` hashed the report onto it.
+
+**The composition.** `manifest new` refuses any deployable that is neither
+described nor recorded, so the manifest that exists names 2 units and carries 29
+recorded absences. It validates, it passes the strict environment scan, and
+`manifest diff` against a one-unit predecessor reports the added unit and
+nothing else.
+
+**The gate nobody can earn here.** No Rust Lambda `bootstrap` was produced. The
+aarch64 cross-build does not complete on Windows: zig 0.16.0's `cc` wedges while
+building `aws-lc-sys 0.43.0`, once on
+`third_party/s2n-bignum/.../arm/aes/aes-xts-enc.S` and once on a `-E`
+preprocessor probe, under `cargo lambda build`, under
+`cargo lambda build --compiler cargo-zigbuild`, under `cargo zigbuild`, and
+under plain `cargo build` with `CC_*`, `AR_*` and the linker pointed at zig by
+hand. Two host faults were found and fixed on the way — `cargo lambda`'s own
+`zig cc` wrapper resolves zig by running `python3 -m ziglang version`, and this
+host's `pyenv-win\shims\python3.bat` never returns — and the wedge outlived
+both. `AWS_LC_SYS_NO_ASM=1` is refused for a release profile, and the CMake
+builder needs a generator this host does not have (no `ninja`, no `make`, and
+Visual Studio cannot target `aarch64-linux`). A Linux or macOS runner, or a
+container, is the fix; there is no way to produce those bytes here and nothing
+to fabricate them from.
+
 ## 4. What was deliberately left undone
 
 1. **OCI and rootfs packaging.** `artifact package --form oci|rootfs` returns a
