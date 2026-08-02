@@ -1358,3 +1358,74 @@ The real-router served target now drives all five point paths and requires each
 to remain unmounted, return router `404`, and emit neither a body nor an ETag.
 The already-mounted five collection routes and their shared pointer projection
 are unchanged. PUT, DELETE, download and upload routes are unchanged and absent.
+
+## Session point/list read audit continuation (2026-08-02)
+
+`session_get` and `sessions_list` remain absent after a fresh audit of the
+current wire contract, domain model, session-head codec, read adapters, cursor
+layers, sparse index, IAM grant and real handler composition. Both routes have
+good locator mechanics, but neither locator reaches a complete public
+representation. Mounting one would turn durable omissions into invented facts.
+
+The point-read seam itself is sound and intentionally narrow.
+`SessionReads::read_head` issues one strongly consistent `GetItem` for the
+session identity and `decode_head` rechecks the asserted workspace. An absent
+identity and an identity owned by another workspace therefore cannot be turned
+into a cross-tenant resource. The retained head also keeps lifecycle,
+`deletionOperationId`, `trashedAt` and `purgedAt`, and purge removes the sparse
+index attributes while retaining the point-read fence row.
+
+That row is not a `Session`. For an active `200` it lacks every field needed to
+construct `WorkspaceContinuity` (persisted root, persist revision, last-persist
+instant and live generation), immutable lineage, caller metadata, and the
+complete `ResolvedConfig`. It stores only `resolvedConfigDigest`, which proves
+identity of bytes that are not themselves available. Status is not a total
+mapping either: the wire requires `awaiting_approval`, while the stored
+vocabulary instead contains `stopping`. A digest cannot be reversed into a
+configuration and neither status can be guessed from the other.
+
+Deletion does not make the point route independently servable. The generated
+dispatcher can render only `200 WithETag<Session>` or one of the declared error
+envelopes; `DeletingSession` and `SessionTombstone` are models, not alternate
+`session_get` response variants. The declared `session_deleted` error is a
+generic `410` with no typed deletion payload, and the retained head does not
+store the tombstone's required `cascaded` fact in any case. Consequently there
+is no exact response function over all active, deleting and purged states.
+
+The intended list locator is sparse, but the current lifecycle write sequence
+is not yet an exact listing authority. Session heads alone carry the session
+partition of `gsi_workspace_index`, ordered by `createdAt#sessionId`.
+`encode_head`, trash and restore align `wsIndexPk` with lifecycle, and purge
+completion removes both index keys. Purge admission, however, changes
+`lifecycle` to `purging` without moving `wsIndexPk`; until completion that row
+remains in its prior active or trashed partition. An unfiltered listing or a
+`status=deleting` listing would also have to merge the active, trashed and
+purging partitions in one total order, while the legacy method queries exactly
+one caller-selected lifecycle. Neither requirement can be replaced with a
+`FilterExpression` or an unbounded scan.
+
+Even after those locator semantics are fixed, the INCLUDE projection carries
+only identity, workspace, status, lifecycle, revision and timestamps. The
+required `SessionListItem.provider` and `.model` are absent. Strongly hydrating
+the selected base heads would still recover only `resolvedConfigDigest`, not
+either value, so extra reads cannot repair the decisive authority gap.
+
+There are also two cursor owners, neither of which justifies a partial route.
+The legacy write-capable `SessionStore::list_sessions` owns its own HMAC cursor
+and returns the incomplete slim index entry. The active finite API uses the
+regional request-edge key ring, whose signed binding includes route,
+credential, region, workspace, optional session, normalized query hash, order
+and snapshot. `SessionQueries`, the read-only capability composed into the
+handler, exposes no session-list method. A future implementation should use the
+active edge cursor over the complete four-part provider last-evaluated key and
+bind the normalized status filter; it must not expose the legacy cursor as a
+second wire authority.
+
+The authored table grant already permits `regional-session-api` to issue
+`GetItem` and `Query` against the session table and indexes, and the composition
+already binds `SessionReads`. IAM and constructor wiring are therefore not the
+blockers. The missing work is authoritative persistence plus a total projection
+for the complete point and collection models, followed by exact lifecycle and
+status semantics. The real-router served test names both routes explicitly and
+requires them to remain absent, return no body, and mint no ETag until that work
+lands.
