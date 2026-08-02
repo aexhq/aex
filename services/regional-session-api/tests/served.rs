@@ -955,6 +955,35 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
     );
 }
 
+/// A session read is not a slim head projection. The published point resource
+/// requires continuity, lineage and the complete resolved configuration, while
+/// the collection requires provider and model. None can be recovered from the
+/// current head or its sparse index projection, so exposing either route would
+/// turn missing authority into a successful partial resource.
+#[tokio::test]
+async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
+    let (router, mounted) = router(FakeCustody::default());
+    assert!(!mounted.contains(&RouteId::SessionGet));
+    assert!(!mounted.contains(&RouteId::SessionsList));
+
+    let session = sample::<SessionId>(31);
+    for path in [
+        "/api/sessions".to_owned(),
+        format!("/api/sessions/{session}"),
+    ] {
+        let (status, etag, body) = get(&router, &path).await;
+        assert!(
+            matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "an incomplete session projection became reachable: {status} {body}"
+        );
+        assert_eq!(etag, None, "an absent route must not mint an entity tag");
+        assert_eq!(body, serde_json::Value::Null);
+    }
+}
+
 // --- durable operations ----------------------------------------------------------
 
 #[tokio::test]
