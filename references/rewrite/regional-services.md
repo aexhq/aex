@@ -1358,3 +1358,51 @@ The real-router served target now drives all five point paths and requires each
 to remain unmounted, return router `404`, and emit neither a body nor an ETag.
 The already-mounted five collection routes and their shared pointer projection
 are unchanged. PUT, DELETE, download and upload routes are unchanged and absent.
+
+## Session run-read audit continuation (2026-08-02)
+
+`session_run_get` and `session_runs_list` remain absent after a focused audit of
+the generated `Run` model, the run key and codec, both session-store read
+surfaces, regional handler composition, the signed cursor layer and the authored
+table grant. This finding narrows the historical all-sessions blocker above:
+the physical point and collection reads are possible, but their public
+projection is not complete.
+
+The durable `run` row records the run, session and admitting message identities,
+status, spend ceiling, reservation, deadline, admission/start/terminal instants
+and an optional `resultDigest`. The public `Run` additionally publishes terminal
+output-message identities, a typed `ApiErrorBody`, telemetry completeness and
+the exact telemetry-gap identities. Those facts have no attributes in the run
+codec. The terminal transaction updates only status, terminal instant, result
+digest and usage-closure identity; it discards the typed `RunOutcome` that the
+session domain already models. A failed run can therefore be strongly read with
+no public error, and a successful run can be strongly read with no output
+message identities. Treating those absent facts as `None` would exploit optional
+wire fields to publish an incomplete terminal resource.
+
+No safe hydration closes that gap today. `resultDigest` is neither a typed
+result-record reference nor an owned decoder, and `regional-session-api`
+composes no result-body reader. Session message rows have no run-scoped index,
+so reconstructing outputs would require walking an unbounded message range.
+Telemetry gaps live under the separate observation authority, are projected
+asynchronously, and no terminal fence records that the set is complete; absence
+there cannot prove `telemetryComplete = true`. Joining those stores on a point
+GET would also violate the required one-strong-exact-read authority shape.
+
+The storage substrate is otherwise sufficient. `RUN#{runId}` is an exact key
+inside `SESSION#{sessionId}`; a list can be a strongly consistent, ascending
+base-table `Query` over `begins_with(sk, "RUN#")`, with no filter expression and
+the complete partition/sort last-evaluated key. The regional cursor codec can
+bind route, credential, region, workspace, session, order and snapshot, and the
+authored grant already gives `regional-session-api` `GetItem` and `Query` on the
+table. `SessionAuthority::load_run` already performs the point read, while the
+deliberately read-only `SessionQueries` omits run methods. Adding those methods
+before the row can project every field would create capability without a valid
+response, so this continuation does not do so and changes no table schema or
+generated digest.
+
+The real-router served target now drives both run-read paths and requires them
+to remain unmounted, return router `404`, and emit neither a body nor an ETag.
+The routes can mount only after the terminal authority durably commits the full
+public run projection (including a completeness fence for telemetry) in the run
+row or another single exact-read authority.
