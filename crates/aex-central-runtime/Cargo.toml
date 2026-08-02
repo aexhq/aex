@@ -25,14 +25,15 @@ role = "adapter"
 artifact = "none"
 live_suite = "aex-live-central-identity-api"
 layers = ["unit", "integration"]
-concerns = ["contract", "fault", "security"]
-seams = ["aws.secretsmanager.version_stage", "aws.lambda.invoke", "aws.iam.denial"]
+concerns = ["contract", "property", "fault", "security"]
+seams = ["aws.iam.denial", "aws.rds_data.transaction"]
 security_tier = "secret"
 risk = ["iam", "concurrency"]
 scenarios = []
 
 [package.metadata.aex.targets]
 conformance = "unit"
+properties = "unit"
 faults = "unit"
 security = "unit"
 integration = "integration"
@@ -64,12 +65,17 @@ aex-wire = { path = "../aex-wire" }
 [dev-dependencies]
 aws-smithy-http-client.workspace = true
 http.workspace = true
+proptest.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 
 [[test]]
 name = "conformance"
 path = "tests/conformance.rs"
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
 
 [[test]]
 name = "faults"

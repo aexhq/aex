@@ -215,6 +215,7 @@ dependencies = [
  "base64 0.23.0",
  "hex",
  "http 1.5.0",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",

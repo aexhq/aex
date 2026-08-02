@@ -36,7 +36,8 @@ struct PepperRow(PepperRecord);
 impl Row for PepperRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
         record.expect_arity(4)?;
-        let version = u16::try_from(record.i64(0)?).map_err(|_| DecodeError::Overflow { index: 0 })?;
+        let version =
+            u16::try_from(record.i64(0)?).map_err(|_| DecodeError::Overflow { index: 0 })?;
         let purpose = match record.text(1)? {
             "identity" => PepperPurpose::Identity,
             "cursor" => PepperPurpose::Cursor,
