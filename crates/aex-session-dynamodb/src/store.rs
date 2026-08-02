@@ -1,35 +1,44 @@
 //! The `session-authority` port implementations.
 //!
-//! Reads are strongly consistent without exception: an authority that answers
-//! from a replica cannot fence anything, and every read here feeds a condition
-//! that will later be committed against. Writes go through
+//! Authority point reads are strongly consistent without exception: an
+//! authority that answers from a replica cannot fence anything. The one sparse
+//! GSI listing uses the index only as an ordered locator, then strongly hydrates
+//! every selected operation before filtering or projecting it. Writes go through
 //! [`crate::plan::TransactionPlan`], so no method in this module can issue an
 //! unconditional authority write.
 
+use std::future::Future;
+
+use aex_operation_domain::operation::{CancelRejection, OperationKind, OperationStatus, cancel};
 use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{AgentId, ApprovalId, OperationId, RunId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
+use futures::{StreamExt as _, stream};
+use sha2::{Digest as _, Sha256};
 
-use crate::attr::{CodecError, Item};
+use crate::attr::{CodecError, Item, Row};
 use crate::codec;
 use crate::error::{
-    Idempotence, Resolution, StoreError, classify, decode_cancellation,
+    Idempotence, Resolution, RetryPolicy, StoreError, classify, decode_cancellation,
     decode_cancellation_with_resolution,
 };
 use crate::keys;
 use crate::paging::{CursorBinding, CursorError, CursorKey, PageBudget, PagePosition};
-use crate::plan::{RegionalTables, TransactionPlan, key};
+use crate::plan::{Participant, RegionalTables, TransactionPlan, key};
 use crate::replay::{IdempotencyScope, Receipt, ReceiptStore, key_digest};
 use crate::transactions::{
-    AdmissionForeign, Foreign, TerminalForeign, compile_admission, compile_decision,
-    compile_fanout_page, compile_lifecycle, compile_terminal,
+    AdmissionForeign, Foreign, OperationCancelRequest, TerminalForeign, compile_admission,
+    compile_decision, compile_fanout_page, compile_lifecycle, compile_terminal,
+    operation_cancel_owned, operation_cancel_requested,
 };
 use crate::wire_pending::{
     AdmissionPlan, AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry,
     LifecyclePlan, Run, SessionHead, StoredOperation, TerminalPlan,
 };
+
+const OPERATION_HYDRATION_CONCURRENCY: usize = 16;
 
 /// One page of decoded rows plus its continuation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,6 +208,81 @@ pub trait OperationAuthority: Send + Sync + 'static {
     ) -> Result<Option<StoredOperation>, StoreError>;
 }
 
+/// Exact filters on the customer-visible workspace operation collection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OperationFilter {
+    /// Restrict to one owning session.
+    pub session: Option<SessionId>,
+    /// Restrict to one public operation kind.
+    pub kind: Option<OperationKind>,
+    /// Restrict to one lifecycle status.
+    pub status: Option<OperationStatus>,
+}
+
+impl OperationFilter {
+    fn matches(self, operation: &aex_operation_domain::Operation) -> bool {
+        operation.kind.is_public()
+            && self
+                .session
+                .is_none_or(|session| operation.session == Some(session))
+            && self.kind.is_none_or(|kind| operation.kind == kind)
+            && self.status.is_none_or(|status| operation.status == status)
+    }
+}
+
+/// Result of the public cancellation command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationCancelOutcome {
+    /// The request is durably represented by this operation state.
+    Accepted(Box<StoredOperation>),
+    /// No public operation exists under the asserted workspace and identity.
+    NotFound,
+    /// The operation is terminal, committed, or never accepted cancellation.
+    NotCancelable,
+}
+
+/// The complete operation authority used by the finite regional API.
+///
+/// This remains separate from [`OperationAuthority`]. A continuation worker
+/// that only reloads one operation must not acquire the workspace index or the
+/// public cancellation surface as a side effect.
+#[async_trait]
+pub trait OperationApiStore: Send + Sync + 'static {
+    /// Strongly reads one operation under its asserted tenant.
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError>;
+
+    /// Spends one bounded, deterministic physical-row budget over the sparse
+    /// workspace index, strongly hydrates it, and applies every filter to the
+    /// authority rows.
+    ///
+    /// The result may be short while carrying `next`: the adapter examines at
+    /// most the requested number of index rows per call, continuing across
+    /// provider-short slices only while that budget remains. A rare filter can
+    /// therefore never turn one HTTP request into an unbounded workspace walk.
+    /// Iterating the authenticated continuation remains complete and skips no
+    /// examined row.
+    async fn page(
+        &self,
+        workspace: WorkspaceId,
+        filter: &OperationFilter,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<StoredOperation>, StoreError>;
+
+    /// Atomically accepts cancellation or returns the exact durable reason it
+    /// cannot be accepted.
+    async fn request_cancel(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+        now: Timestamp,
+    ) -> Result<OperationCancelOutcome, StoreError>;
+}
+
 /// Durable-operation reader and fenced step committer.
 #[derive(Debug, Clone)]
 pub struct OperationStore {
@@ -257,6 +341,275 @@ impl OperationStore {
             }
         }
     }
+
+    async fn commit_cancel_request(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
+        if plan.participants() != [Participant::SESSION_OPERATION] {
+            return Err(StoreError::Invalid {
+                detail: "an operation cancel request must update exactly the operation row"
+                    .to_owned(),
+            });
+        }
+        let request = plan.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(service) = error.as_service_error() {
+                    return Err(decode_cancellation_with_resolution(
+                        service,
+                        plan.participants(),
+                        Resolution::TargetItem,
+                    ));
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
+    }
+
+    async fn hydrate_operations(
+        &self,
+        workspace: WorkspaceId,
+        projected: &[Item],
+    ) -> Result<Vec<StoredOperation>, StoreError> {
+        let operation_ids = projected
+            .iter()
+            .map(|item| projected_operation_id(item, workspace))
+            .collect::<Result<Vec<_>, _>>()?;
+        settle_bounded_ordered(operation_ids, |operation| async move {
+            let stored = OperationAuthority::load(self, workspace, operation)
+                .await?
+                .ok_or_else(|| {
+                    malformed_operation(
+                        "operationId",
+                        "the sparse index named an operation whose authority row is absent",
+                    )
+                })?;
+            if stored.record.id != operation || !stored.record.kind.is_public() {
+                return Err(malformed_operation(
+                    "operationId",
+                    "the hydrated authority row does not match its public index locator",
+                ));
+            }
+            Ok(stored)
+        })
+        .await
+    }
+}
+
+async fn settle_bounded_ordered<I, F, Fut, T, E>(items: I, hydrate: F) -> Result<Vec<T>, E>
+where
+    I: IntoIterator,
+    F: FnMut(I::Item) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    stream::iter(items.into_iter().map(hydrate))
+        .buffered(OPERATION_HYDRATION_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect()
+}
+
+fn malformed_operation(attribute: &'static str, reason: &str) -> StoreError {
+    StoreError::Corrupt(CodecError::Malformed {
+        item_type: codec::OPERATION,
+        attribute,
+        reason: reason.to_owned(),
+    })
+}
+
+fn projected_operation_id(item: &Item, workspace: WorkspaceId) -> Result<OperationId, StoreError> {
+    let row = Row::bind_projected(item, codec::OPERATION);
+    row.owned_by("workspaceId", &workspace.to_string())?;
+    let operation = row.id::<OperationId>("operationId")?;
+    let kind = OperationKind::parse(row.string("kind")?).ok_or_else(|| {
+        malformed_operation("kind", "outside the closed operation-kind vocabulary")
+    })?;
+    if !kind.is_public() {
+        return Err(malformed_operation(
+            "kind",
+            "an internal operation entered the sparse public index",
+        ));
+    }
+    OperationStatus::parse(row.string("status")?).ok_or_else(|| {
+        malformed_operation("status", "outside the closed operation-status vocabulary")
+    })?;
+    let created_at = row.timestamp("createdAt")?;
+    let _session = row.opt_id::<SessionId>("sessionId")?;
+    let expected = keys::operation(operation);
+    if row.string(crate::attr::PK)? != expected.pk || row.string(crate::attr::SK)? != expected.sk {
+        return Err(malformed_operation(
+            "operationId",
+            "the projected base key does not match the operation identity",
+        ));
+    }
+    if row.string(keys::workspace_index::PK)?
+        != keys::workspace_index::operation_partition(workspace)
+        || row.string(keys::workspace_index::SK)?
+            != keys::workspace_index::operation_sort(created_at, operation)
+    {
+        return Err(malformed_operation(
+            keys::workspace_index::SK,
+            "the projected index key does not match the operation identity and creation time",
+        ));
+    }
+    Ok(operation)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CancelObservation {
+    Accepted(Box<StoredOperation>),
+    Retry,
+    NotFound,
+    NotCancelable,
+}
+
+fn observe_cancel(stored: Option<StoredOperation>) -> Result<CancelObservation, StoreError> {
+    let Some(stored) = stored else {
+        return Ok(CancelObservation::NotFound);
+    };
+    if !stored.record.kind.is_public() {
+        return Ok(CancelObservation::NotFound);
+    }
+    if !operation_cancel_owned(stored.record.kind) {
+        return Ok(CancelObservation::NotCancelable);
+    }
+    if stored.record.status == OperationStatus::Cancelled
+        || (stored.record.status == OperationStatus::Running && stored.record.cancel_requested)
+    {
+        return Ok(CancelObservation::Accepted(Box::new(stored)));
+    }
+    if stored.record.status == OperationStatus::Queued && stored.record.cancel_requested {
+        return Err(malformed_operation(
+            "cancelRequested",
+            "a queued cancel request must have terminalized the operation",
+        ));
+    }
+    if stored.record.cancelable() {
+        Ok(CancelObservation::Retry)
+    } else {
+        Ok(CancelObservation::NotCancelable)
+    }
+}
+
+fn cancel_token(workspace: WorkspaceId, operation: OperationId, version: u64) -> String {
+    let mut digest = Sha256::new();
+    digest.update(workspace.to_string().as_bytes());
+    digest.update([0]);
+    digest.update(operation.to_string().as_bytes());
+    digest.update([0]);
+    digest.update(version.to_be_bytes());
+    format!("oc:{}", hex::encode(&digest.finalize()[..16]))
+}
+
+#[async_trait]
+trait OperationCancelIo: Send + Sync {
+    async fn load_cancel_target(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError>;
+
+    async fn write_cancel_request(
+        &self,
+        request: &OperationCancelRequest,
+    ) -> Result<(), StoreError>;
+}
+
+#[async_trait]
+impl OperationCancelIo for OperationStore {
+    async fn load_cancel_target(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError> {
+        OperationAuthority::load(self, workspace, operation).await
+    }
+
+    async fn write_cancel_request(
+        &self,
+        request: &OperationCancelRequest,
+    ) -> Result<(), StoreError> {
+        let mut plan = TransactionPlan::new(cancel_token(
+            request.workspace,
+            request.operation,
+            request.version,
+        ));
+        plan.update(
+            Participant::SESSION_OPERATION,
+            operation_cancel_requested(&self.table, request)?,
+        )?;
+        self.commit_cancel_request(&plan).await
+    }
+}
+
+async fn request_cancel_with<I: OperationCancelIo>(
+    io: &I,
+    workspace: WorkspaceId,
+    operation: OperationId,
+    now: Timestamp,
+) -> Result<OperationCancelOutcome, StoreError> {
+    for _ in 0..RetryPolicy::PINNED.attempts {
+        let current = io.load_cancel_target(workspace, operation).await?;
+        match observe_cancel(current.clone())? {
+            CancelObservation::Accepted(stored) => {
+                return Ok(OperationCancelOutcome::Accepted(stored));
+            }
+            CancelObservation::NotFound => return Ok(OperationCancelOutcome::NotFound),
+            CancelObservation::NotCancelable => {
+                return Ok(OperationCancelOutcome::NotCancelable);
+            }
+            CancelObservation::Retry => {}
+        }
+        let current = current.expect("a retry observation always carries an operation");
+        let commit = match cancel(&current.record, now) {
+            Ok(commit) => commit,
+            Err(CancelRejection::NotCancelable { .. } | CancelRejection::AlreadyTerminal(_)) => {
+                return Ok(OperationCancelOutcome::NotCancelable);
+            }
+        };
+        let next_version = current
+            .version
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Invalid {
+                detail: "an operation version cannot advance past u64::MAX".to_owned(),
+            })?;
+        let request = OperationCancelRequest {
+            workspace,
+            operation,
+            kind: current.record.kind,
+            status: current.record.status,
+            version: current.version,
+            now,
+        };
+        match io.write_cancel_request(&request).await {
+            Ok(()) => {
+                return Ok(OperationCancelOutcome::Accepted(Box::new(
+                    StoredOperation {
+                        record: commit.operation,
+                        version: next_version,
+                    },
+                )));
+            }
+            Err(
+                StoreError::PreconditionFailed { .. }
+                | StoreError::CommitAmbiguous {
+                    resolve_by: Resolution::TargetItem,
+                },
+            ) => match observe_cancel(io.load_cancel_target(workspace, operation).await?)? {
+                CancelObservation::Accepted(stored) => {
+                    return Ok(OperationCancelOutcome::Accepted(stored));
+                }
+                CancelObservation::NotFound => return Ok(OperationCancelOutcome::NotFound),
+                CancelObservation::NotCancelable => {
+                    return Ok(OperationCancelOutcome::NotCancelable);
+                }
+                CancelObservation::Retry => {}
+            },
+            Err(error) if error.retryable() => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(StoreError::Contended)
 }
 
 #[async_trait]
@@ -280,6 +633,290 @@ impl OperationAuthority for OperationStore {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_operation(&item, workspace)?)),
         }
+    }
+}
+
+#[async_trait]
+impl OperationApiStore for OperationStore {
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError> {
+        OperationAuthority::load(self, workspace, operation).await
+    }
+
+    async fn page(
+        &self,
+        workspace: WorkspaceId,
+        filter: &OperationFilter,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<StoredOperation>, StoreError> {
+        let mut remaining = budget.items();
+        let mut start = after.cloned();
+        let mut items = Vec::new();
+        let next = loop {
+            let output = self
+                .client
+                .query()
+                .table_name(&self.table)
+                .index_name(keys::workspace_index::NAME)
+                .key_condition_expression("#workspace = :workspace")
+                .expression_attribute_names("#workspace", keys::workspace_index::PK)
+                .expression_attribute_values(
+                    ":workspace",
+                    crate::attr::s(keys::workspace_index::operation_partition(workspace)),
+                )
+                .consistent_read(false)
+                .scan_index_forward(true)
+                .limit(
+                    i32::try_from(remaining).map_err(|error| StoreError::Invalid {
+                        detail: format!("the operation page budget does not fit DynamoDB: {error}"),
+                    })?,
+                )
+                .set_exclusive_start_key(start.as_ref().map(|position| {
+                    position.to_exclusive_start(
+                        Some(keys::workspace_index::PK),
+                        Some(keys::workspace_index::SK),
+                    )
+                }))
+                .send()
+                .await
+                .map_err(|error| classify(&error, Idempotence::Read))?;
+
+            let projected = output.items.unwrap_or_default();
+            let physical = u32::try_from(projected.len()).map_err(|error| StoreError::Invalid {
+                detail: format!("the operation index page length does not fit u32: {error}"),
+            })?;
+            if physical > remaining {
+                return Err(malformed_operation(
+                    "operationId",
+                    "DynamoDB returned more index rows than the explicit read budget",
+                ));
+            }
+            let continuation = output
+                .last_evaluated_key
+                .as_ref()
+                .map(|last| {
+                    PagePosition::from_last_evaluated(
+                        last,
+                        Some(keys::workspace_index::PK),
+                        Some(keys::workspace_index::SK),
+                    )
+                })
+                .transpose()
+                .map_err(|error| cursor_error(&error))?;
+
+            if projected.is_empty() {
+                break continuation;
+            }
+            remaining -= physical;
+            items.extend(
+                self.hydrate_operations(workspace, &projected)
+                    .await?
+                    .into_iter()
+                    .filter(|stored| filter.matches(&stored.record)),
+            );
+            if remaining == 0 || continuation.is_none() {
+                break continuation;
+            }
+            start = continuation;
+        };
+        Ok(PositionPage { items, next })
+    }
+
+    async fn request_cancel(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+        now: Timestamp,
+    ) -> Result<OperationCancelOutcome, StoreError> {
+        request_cancel_with(self, workspace, operation, now).await
+    }
+}
+
+#[cfg(test)]
+mod operation_store_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use aex_operation_domain::operation::{
+        Operation, OperationKind, OperationScope, OperationStatus, cancel,
+    };
+    use aex_wire::idempotency::IntentDigest;
+    use aex_wire::ids::{OperationId, Uuid7, WorkspaceId};
+
+    use super::{
+        OPERATION_HYDRATION_CONCURRENCY, OperationCancelIo, OperationCancelOutcome,
+        OperationCancelRequest, Resolution, StoreError, StoredOperation, Timestamp, async_trait,
+        request_cancel_with, settle_bounded_ordered,
+    };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_maximum_operation_page_hydrates_in_order_with_at_most_sixteen_reads() {
+        let current = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let page = (0..100).collect::<Vec<_>>();
+        let hydrated = settle_bounded_ordered(page.clone(), |value| {
+            let current = Arc::clone(&current);
+            let peak = Arc::clone(&peak);
+            async move {
+                let in_flight = current.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(in_flight, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                current.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, ()>(value)
+            }
+        })
+        .await
+        .expect("the full page hydrates");
+
+        assert_eq!(hydrated, page);
+        assert_eq!(peak.load(Ordering::SeqCst), OPERATION_HYDRATION_CONCURRENCY);
+        assert_eq!(current.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn bounded_hydration_settles_every_started_read_before_returning_an_error() {
+        let completed = Arc::new(AtomicUsize::new(0));
+        let result = settle_bounded_ordered(0..32, |value| {
+            let completed = Arc::clone(&completed);
+            async move {
+                tokio::task::yield_now().await;
+                completed.fetch_add(1, Ordering::SeqCst);
+                if value == 3 {
+                    Err("injected read failure")
+                } else {
+                    Ok(value)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result, Err("injected read failure"));
+        assert_eq!(completed.load(Ordering::SeqCst), 32);
+    }
+
+    fn sample<I: aex_wire::ids::PrefixedId>(seed: u8) -> I {
+        I::from_uuid7(Uuid7::compose(1_754_051_696_789, [seed; 10]))
+    }
+
+    fn now() -> Timestamp {
+        Timestamp::parse("2026-08-02T12:00:00.000Z").expect("a fixture instant")
+    }
+
+    fn stored(status: OperationStatus) -> StoredOperation {
+        let workspace = sample::<WorkspaceId>(1);
+        StoredOperation {
+            record: Operation {
+                id: sample::<OperationId>(2),
+                workspace,
+                session: None,
+                kind: OperationKind::SessionPersist,
+                status,
+                intent: IntentDigest::from_bytes([3; 32]),
+                scope: OperationScope::Workspace(workspace),
+                progress: None,
+                cursor: None,
+                cancel_requested: false,
+                result: None,
+                error: None,
+                created_at: now(),
+                started_at: (status == OperationStatus::Running).then_some(now()),
+                updated_at: now(),
+                committed_at: None,
+                terminal_at: None,
+            },
+            version: 7,
+        }
+    }
+
+    struct AmbiguousLanding {
+        state: Mutex<StoredOperation>,
+        reads: AtomicUsize,
+        writes: AtomicUsize,
+    }
+
+    impl AmbiguousLanding {
+        fn new(status: OperationStatus) -> Self {
+            Self {
+                state: Mutex::new(stored(status)),
+                reads: AtomicUsize::new(0),
+                writes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl OperationCancelIo for AmbiguousLanding {
+        async fn load_cancel_target(
+            &self,
+            workspace: WorkspaceId,
+            operation: OperationId,
+        ) -> Result<Option<StoredOperation>, StoreError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let stored = self.state.lock().expect("an uncontended fixture").clone();
+            Ok(
+                (stored.record.workspace == workspace && stored.record.id == operation)
+                    .then_some(stored),
+            )
+        }
+
+        async fn write_cancel_request(
+            &self,
+            request: &OperationCancelRequest,
+        ) -> Result<(), StoreError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            let mut stored = self.state.lock().expect("an uncontended fixture");
+            assert_eq!(stored.record.workspace, request.workspace);
+            assert_eq!(stored.record.id, request.operation);
+            assert_eq!(stored.record.status, request.status);
+            assert_eq!(stored.version, request.version);
+            stored.record = cancel(&stored.record, request.now)
+                .expect("the injected write lands")
+                .operation;
+            stored.version = stored.version.checked_add(1).expect("a fixture version");
+            Err(StoreError::CommitAmbiguous {
+                resolve_by: Resolution::TargetItem,
+            })
+        }
+    }
+
+    async fn assert_ambiguous_landing(status: OperationStatus, expected: OperationStatus) {
+        let io = AmbiguousLanding::new(status);
+        let initial = io.state.lock().expect("an uncontended fixture").clone();
+        let outcome = request_cancel_with(&io, initial.record.workspace, initial.record.id, now())
+            .await
+            .expect("the strong reread resolves the ambiguous write");
+        let OperationCancelOutcome::Accepted(stored) = outcome else {
+            panic!("the landed cancellation must be accepted");
+        };
+        assert_eq!(stored.record.status, expected);
+        assert!(stored.record.cancel_requested);
+        assert_eq!(
+            stored.version,
+            initial.version.checked_add(1).expect("a fixture version")
+        );
+        assert_eq!(io.reads.load(Ordering::Relaxed), 2);
+        assert_eq!(io.writes.load(Ordering::Relaxed), 1);
+
+        let replay = request_cancel_with(&io, initial.record.workspace, initial.record.id, now())
+            .await
+            .expect("the durable state answers an idempotent replay");
+        assert!(matches!(replay, OperationCancelOutcome::Accepted(_)));
+        assert_eq!(io.writes.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_queued_terminal_is_resolved_by_one_strong_reread() {
+        assert_ambiguous_landing(OperationStatus::Queued, OperationStatus::Cancelled).await;
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_running_latch_is_resolved_by_one_strong_reread() {
+        assert_ambiguous_landing(OperationStatus::Running, OperationStatus::Running).await;
     }
 }
 

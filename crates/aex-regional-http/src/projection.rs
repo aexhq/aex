@@ -433,29 +433,37 @@ registry_projections! {
 
 /// Renders an authority page position as the cursor's ordered sort tuple.
 ///
-/// The regional cursor carries an ordered tuple of authority fields, and a
-/// `DynamoDB` position without an index is exactly its two key attributes.
-/// Nothing else is carried, so a cursor can never hold a body or a receipt even
-/// if the row it points at does.
+/// The regional cursor carries an ordered tuple of authority fields. A base
+/// table position is its two key attributes; a secondary-index position is the
+/// base pair followed by the complete index pair. Nothing else is carried, so
+/// a cursor can never hold a body or a receipt even if the row it points at
+/// does.
 ///
 /// # Errors
 ///
 /// [`ProjectionError::Cursor`] when a key attribute is outside the tuple bound.
 pub fn position_tuple(position: &PagePosition) -> Result<SortTuple, ProjectionError> {
-    Ok(SortTuple::new(vec![
-        position.pk.clone(),
-        position.sk.clone(),
-    ])?)
+    let parts = match (&position.index_pk, &position.index_sk) {
+        (None, None) => vec![position.pk.clone(), position.sk.clone()],
+        (Some(secondary_partition), Some(secondary_sort)) => vec![
+            position.pk.clone(),
+            position.sk.clone(),
+            secondary_partition.clone(),
+            secondary_sort.clone(),
+        ],
+        _ => return Err(ProjectionError::Cursor(CursorError::Malformed)),
+    };
+    Ok(SortTuple::new(parts)?)
 }
 
 /// Reads an authority page position back out of a verified sort tuple.
 ///
 /// # Errors
 ///
-/// [`ProjectionError::Cursor`] when the tuple is not the two-part key this
-/// codec issues. The tuple is authenticated before it reaches here, so a wrong
-/// arity is a cursor minted for another collection rather than a parse
-/// accident — the same refusal either way.
+/// [`ProjectionError::Cursor`] when the tuple is neither a two-part base key nor
+/// a four-part index position. The tuple is authenticated before it reaches
+/// here, so a wrong arity is a cursor minted for another collection rather than
+/// a parse accident — the same refusal either way.
 pub fn tuple_position(tuple: &SortTuple) -> Result<PagePosition, ProjectionError> {
     match tuple.parts() {
         [pk, sk] => Ok(PagePosition {
@@ -463,6 +471,12 @@ pub fn tuple_position(tuple: &SortTuple) -> Result<PagePosition, ProjectionError
             sk: sk.clone(),
             index_pk: None,
             index_sk: None,
+        }),
+        [pk, sk, secondary_partition, secondary_sort] => Ok(PagePosition {
+            pk: pk.clone(),
+            sk: sk.clone(),
+            index_pk: Some(secondary_partition.clone()),
+            index_sk: Some(secondary_sort.clone()),
         }),
         _ => Err(ProjectionError::Cursor(CursorError::Malformed)),
     }

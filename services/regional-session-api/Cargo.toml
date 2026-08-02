@@ -44,6 +44,7 @@ aws-sdk-ssm.workspace = true
 lambda_http.workspace = true
 tokio.workspace = true
 aex-content-domain = { path = "../../crates/aex-content-domain" }
+aex-operation-domain = { path = "../../crates/aex-operation-domain" }
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
 aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }

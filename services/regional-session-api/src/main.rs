@@ -129,6 +129,10 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             dynamodb.clone(),
             stores.session_table.clone(),
         )),
+        operations: Arc::new(aex_session_dynamodb::store::OperationStore::new(
+            dynamodb.clone(),
+            stores.session_table.clone(),
+        )),
         cursor_keys: Arc::new(cursor_keys),
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(edge), limits(config))?;

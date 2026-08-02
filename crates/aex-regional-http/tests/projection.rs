@@ -277,6 +277,19 @@ fn a_page_position_round_trips_through_the_cursor_tuple() {
 }
 
 #[test]
+fn an_index_page_position_round_trips_with_every_last_evaluated_key_part() {
+    let position = PagePosition {
+        pk: "operation-partition".to_owned(),
+        sk: "STATE".to_owned(),
+        index_pk: Some("workspace-operations".to_owned()),
+        index_sk: Some("2026-08-02T12:00:00.000Z#operation-key".to_owned()),
+    };
+    let tuple = position_tuple(&position).expect("a bounded index tuple");
+    assert_eq!(tuple.parts().len(), 4);
+    assert_eq!(tuple_position(&tuple).expect("resumes"), position);
+}
+
+#[test]
 fn a_tuple_of_the_wrong_arity_is_refused_rather_than_padded() {
     let tuple = SortTuple::new(vec!["only-one".to_owned()]).expect("a bounded tuple");
     let refusal = tuple_position(&tuple).expect_err("refused");

@@ -133,6 +133,143 @@ pub fn operation_cancelled(
         .expression_attribute_values(":now", stamp(request.now)))
 }
 
+/// Authority fields observed by the public cancellation command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationCancelRequest {
+    /// Tenant bound into the authority-row condition.
+    pub workspace: aex_wire::ids::WorkspaceId,
+    /// Operation bound into both the key and the condition.
+    pub operation: aex_wire::ids::OperationId,
+    /// Immutable operation kind observed by the strong read.
+    pub kind: aex_operation_domain::OperationKind,
+    /// Exact nonterminal status observed by the strong read.
+    pub status: aex_operation_domain::OperationStatus,
+    /// Exact optimistic version observed by the strong read.
+    pub version: u64,
+    /// Acceptance instant.
+    pub now: aex_wire::types::Timestamp,
+}
+
+/// Whether cancellation for this kind is owned by session authority.
+///
+/// Telemetry exports are public and cancelable in the product model, but their
+/// effect fence is the observation export row. Treating an operation-row
+/// update as their cancellation would acknowledge a command that cannot stop
+/// the export launcher or task.
+#[must_use]
+pub const fn operation_cancel_owned(kind: aex_operation_domain::OperationKind) -> bool {
+    use aex_operation_domain::OperationKind;
+
+    match kind {
+        OperationKind::SessionPersist
+        | OperationKind::SessionClone
+        | OperationKind::WorkspaceDiscard
+        | OperationKind::CredentialRebind
+        | OperationKind::SessionRestore => true,
+        OperationKind::SessionStop
+        | OperationKind::SessionTrash
+        | OperationKind::SessionPurge
+        | OperationKind::WorkspaceDelete
+        | OperationKind::TelemetryExport
+        | OperationKind::ContentGc => false,
+    }
+}
+
+/// Builds the one-row transaction that accepts a public cancellation.
+///
+/// A queued operation terminalizes here. A running operation only latches the
+/// request; its next fenced worker step atomically terminalizes the operation
+/// and retires the exact work claim through [`operation_cancelled`]. Both
+/// shapes condition on the complete observed identity, version, kind, status,
+/// open commit latch and previously-unset cancel flag, so a worker crossing the
+/// commit point wins the race rather than being overwritten.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] for a terminal input, an internal, non-cancelable or
+/// separately-owned kind, or version exhaustion.
+pub fn operation_cancel_requested(
+    table: &str,
+    request: &OperationCancelRequest,
+) -> Result<UpdateBuilder, StoreError> {
+    use aex_operation_domain::{OperationKind, OperationStatus};
+
+    if !request.kind.is_public()
+        || !request.kind.cancelable_on_accept()
+        || !operation_cancel_owned(request.kind)
+    {
+        return Err(StoreError::Invalid {
+            detail: "a session-authority cancellation requires an owned customer-visible cancelable kind"
+                .to_owned(),
+        });
+    }
+    if request.status.is_terminal() {
+        return Err(StoreError::Invalid {
+            detail: "a public cancellation cannot update a terminal operation".to_owned(),
+        });
+    }
+    let next_version = request
+        .version
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "an operation version cannot advance past u64::MAX".to_owned(),
+        })?;
+    let operation_key = keys::operation(request.operation);
+    let mut builder = aws_sdk_dynamodb::types::Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&operation_key.pk, &operation_key.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND workspaceId = :workspaceId AND operationId = :operationId \
+             AND kind = :kind AND version = :version AND #status = :status \
+             AND cancelRequested = :false AND attribute_not_exists(committedAt)",
+        )
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":workspaceId", s(request.workspace.to_string()))
+        .expression_attribute_values(":operationId", s(request.operation.to_string()))
+        .expression_attribute_values(":kind", s(request.kind.as_str()))
+        .expression_attribute_values(":version", n(request.version))
+        .expression_attribute_values(":status", s(request.status.as_str()))
+        .expression_attribute_values(":false", boolean(false))
+        .expression_attribute_values(":true", boolean(true))
+        .expression_attribute_values(":nextVersion", n(next_version))
+        .expression_attribute_values(":now", stamp(request.now));
+    builder = match request.status {
+        OperationStatus::Queued => builder
+            .update_expression(
+                "SET #status = :cancelled, cancelRequested = :true, version = :nextVersion, \
+                 updatedAt = :now, terminalAt = :now",
+            )
+            .expression_attribute_values(":cancelled", s("cancelled")),
+        OperationStatus::Running => builder.update_expression(
+            "SET cancelRequested = :true, version = :nextVersion, updatedAt = :now",
+        ),
+        OperationStatus::Succeeded | OperationStatus::Failed | OperationStatus::Cancelled => {
+            return Err(StoreError::Invalid {
+                detail: "a public cancellation cannot update a terminal operation".to_owned(),
+            });
+        }
+    };
+    // Keep this match exhaustive if a new internal kind is introduced: the
+    // validation above owns the policy, while the match makes the dependency
+    // on the closed vocabulary visible to the compiler.
+    match request.kind {
+        OperationKind::SessionPersist
+        | OperationKind::SessionClone
+        | OperationKind::WorkspaceDiscard
+        | OperationKind::CredentialRebind
+        | OperationKind::SessionRestore => Ok(builder),
+        OperationKind::SessionStop
+        | OperationKind::SessionTrash
+        | OperationKind::SessionPurge
+        | OperationKind::WorkspaceDelete
+        | OperationKind::TelemetryExport
+        | OperationKind::ContentGc => Err(StoreError::Invalid {
+            detail: "a session-authority cancellation requires an owned customer-visible cancelable kind"
+                .to_owned(),
+        }),
+    }
+}
+
 /// The foreign participants of the admission transaction.
 #[derive(Debug, Clone, Default)]
 pub struct AdmissionForeign {

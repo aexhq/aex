@@ -93,6 +93,42 @@ fn no_index_on_this_table_projects_all() {
 }
 
 #[test]
+fn the_session_api_role_can_query_the_index_cancel_and_resolve_by_point_read() {
+    let definition = table_definition();
+    let grant = definition["iam"]
+        .as_array()
+        .expect("an IAM grant list")
+        .iter()
+        .find(|grant| grant["role"].as_str() == Some("regional-session-api"))
+        .expect("the regional session API grant");
+    let actions = grant["actions"]
+        .as_array()
+        .expect("an action list")
+        .iter()
+        .map(|action| action.as_str().expect("an action"))
+        .collect::<Vec<_>>();
+    for required in [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:TransactWriteItems",
+    ] {
+        assert!(
+            actions.contains(&required),
+            "the route set requires {required}"
+        );
+    }
+    assert!(
+        !actions.contains(&"dynamodb:BatchGetItem"),
+        "operation hydration deliberately uses the already-granted strong GetItem"
+    );
+    assert_eq!(
+        grant["resources"],
+        serde_json::json!(["table", "index/*"]),
+        "the sparse operation GSI must be reachable without naming it twice"
+    );
+}
+
+#[test]
 fn only_the_idempotency_receipt_is_reclaimed_by_ttl() {
     let definition = table_definition();
     let applies_to: Vec<&str> = definition["timeToLive"]["appliesTo"]

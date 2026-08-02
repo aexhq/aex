@@ -121,11 +121,25 @@ impl PagePosition {
                 reason: "the last evaluated key carries no base table key",
             });
         };
+        let index_pk = index_pk
+            .map(|name| {
+                read(name).ok_or(CursorError::Malformed {
+                    reason: "the last evaluated key carries no index partition key",
+                })
+            })
+            .transpose()?;
+        let index_sk = index_sk
+            .map(|name| {
+                read(name).ok_or(CursorError::Malformed {
+                    reason: "the last evaluated key carries no index sort key",
+                })
+            })
+            .transpose()?;
         Ok(Self {
             pk,
             sk,
-            index_pk: index_pk.and_then(read),
-            index_sk: index_sk.and_then(read),
+            index_pk,
+            index_sk,
         })
     }
 
@@ -346,6 +360,8 @@ impl PageBudget {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use aex_wire::ids::{OrganizationId, PrefixedId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
@@ -395,6 +411,46 @@ mod tests {
         let resumed =
             verify(&key(), binding("sessions", 1, 1), &cursor, stamp(2_000)).expect("verifies");
         assert_eq!(resumed, position());
+    }
+
+    #[test]
+    fn an_index_continuation_requires_and_preserves_all_four_key_attributes() {
+        let last = HashMap::from([
+            (crate::attr::PK.to_owned(), crate::attr::s("OP#one")),
+            (crate::attr::SK.to_owned(), crate::attr::s("STATE")),
+            (
+                crate::keys::workspace_index::PK.to_owned(),
+                crate::attr::s("WS#one#OP"),
+            ),
+            (
+                crate::keys::workspace_index::SK.to_owned(),
+                crate::attr::s("2026-08-02T12:00:00.000Z#OP#one"),
+            ),
+        ]);
+        let position = PagePosition::from_last_evaluated(
+            &last,
+            Some(crate::keys::workspace_index::PK),
+            Some(crate::keys::workspace_index::SK),
+        )
+        .expect("the complete provider key is resumable");
+        assert_eq!(
+            position.to_exclusive_start(
+                Some(crate::keys::workspace_index::PK),
+                Some(crate::keys::workspace_index::SK)
+            ),
+            last
+        );
+
+        let mut partial = last;
+        partial.remove(crate::keys::workspace_index::SK);
+        assert!(matches!(
+            PagePosition::from_last_evaluated(
+                &partial,
+                Some(crate::keys::workspace_index::PK),
+                Some(crate::keys::workspace_index::SK)
+            ),
+            Err(CursorError::Malformed { .. })
+        ));
     }
 
     #[test]
