@@ -60,10 +60,9 @@ pub const LISTEN_HEARTBEAT: Duration = Duration::from_secs(15);
 
 /// Runtime policy for long-lived observation streams.
 ///
-/// The finite Lambda surface uses [`StreamPolicy::default`], although its
-/// streaming routes are not mounted. `regional-stream` supplies the deployed
-/// socket budgets and shares its drain flag so every producer can finish with
-/// an exact reconnect cursor.
+/// Both production composition roots must supply a regional authorization
+/// revalidator. There is deliberately no unauthenticated default: a service
+/// that cannot renew mutable authorization facts cannot be constructed.
 #[derive(Clone)]
 pub struct StreamPolicy {
     /// Maximum lifetime of one follow connection.
@@ -85,7 +84,7 @@ pub struct StreamPolicy {
     /// Shared keyed wake hints, when the serving process has a wake reader.
     pub wakes: Option<crate::wake::WakeHub>,
     /// Fail-closed projection lease for a long-lived socket.
-    pub revalidator: Option<Arc<dyn StreamRevalidator>>,
+    pub revalidator: Arc<dyn StreamRevalidator>,
 }
 
 impl std::fmt::Debug for StreamPolicy {
@@ -100,7 +99,7 @@ impl std::fmt::Debug for StreamPolicy {
             .field("buffered_frames", &self.buffered_frames)
             .field("write_stall", &self.write_stall)
             .field("wakes", &self.wakes.is_some())
-            .field("revalidator", &self.revalidator.is_some())
+            .field("revalidator", &"<regional authorization lease>")
             .finish_non_exhaustive()
     }
 }
@@ -117,8 +116,11 @@ pub trait StreamRevalidator: Send + Sync {
     ) -> WireResult<()>;
 }
 
-impl Default for StreamPolicy {
-    fn default() -> Self {
+impl StreamPolicy {
+    /// Builds the default bounded stream policy around a mandatory regional
+    /// authorization lease.
+    #[must_use]
+    pub fn new(revalidator: Arc<dyn StreamRevalidator>) -> Self {
         Self {
             connection_budget: LISTEN_BUDGET,
             poll_min: LISTEN_POLL_MIN,
@@ -129,7 +131,7 @@ impl Default for StreamPolicy {
             write_stall: Duration::from_secs(10),
             draining: Arc::new(AtomicBool::new(false)),
             wakes: None,
-            revalidator: None,
+            revalidator,
         }
     }
 }
@@ -168,6 +170,7 @@ impl ObservationService {
         metric_scan: u64,
         cursor_ring: CursorKeyRing,
         region: Region,
+        stream: StreamPolicy,
     ) -> Self {
         Self {
             reader,
@@ -175,7 +178,7 @@ impl ObservationService {
             metric_scan,
             cursor_ring,
             region,
-            stream: StreamPolicy::default(),
+            stream,
         }
     }
 
@@ -1029,10 +1032,12 @@ async fn produce(mut task: Produce) {
             return;
         }
         if std::time::Instant::now() >= next_authorization_check {
-            if let Some(revalidator) = task.service.stream.revalidator.as_ref()
-                && let Err(error) = revalidator
-                    .revalidate(&task.authorization, &task.scope)
-                    .await
+            if let Err(error) = task
+                .service
+                .stream
+                .revalidator
+                .revalidate(&task.authorization, &task.scope)
+                .await
             {
                 let cursor = task.sender.sent().cloned();
                 let (_, envelope, _) = error.into_response_parts(&task.request_id, None);

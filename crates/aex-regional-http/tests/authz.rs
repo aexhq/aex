@@ -1217,6 +1217,124 @@ async fn a_request_with_no_credential_never_reaches_the_projection() {
     );
 }
 
+#[derive(Clone)]
+struct MutableProjection {
+    key_floor: std::sync::Arc<Mutex<ProjectedEpochs>>,
+    placement: std::sync::Arc<Mutex<Result<ProjectedState, ProjectionError>>>,
+}
+
+#[async_trait]
+impl ProjectionReader for MutableProjection {
+    async fn project_key(
+        &self,
+        _key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(*self.key_floor.lock().expect("an uncontended fixture"))
+    }
+
+    async fn project(
+        &self,
+        _credential: &PresentedCredential,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(*self.key_floor.lock().expect("an uncontended fixture"))
+    }
+
+    async fn placement(&self, _workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError> {
+        *self.placement.lock().expect("an uncontended fixture")
+    }
+}
+
+#[tokio::test]
+async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
+    let (token, _) = workspace_key(Region::EuWest1, 5);
+    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
+    let id = plain_route();
+    let key_floor = std::sync::Arc::new(Mutex::new(ProjectedEpochs::default()));
+    let placement = std::sync::Arc::new(Mutex::new(Ok(projected(
+        AccountState::Active,
+        Region::EuWest1,
+    ))));
+    let claims = claims(
+        &credential,
+        AssertionAudience::RegionalSession,
+        scoped(id),
+        u64::try_from(NOW_MS).expect("positive"),
+    );
+    let edge = RegionalEdge::new(
+        StubSource {
+            assertion: envelope(&claims),
+            calls: Mutex::new(0),
+        },
+        keys(),
+        MutableProjection {
+            key_floor: std::sync::Arc::clone(&key_floor),
+            placement: std::sync::Arc::clone(&placement),
+        },
+        FixedClock(NOW_MS + 2_000),
+        binding(),
+    )
+    .expect("the cache budget holds an entry");
+    let request_id = RequestId::parse("edge-fixture").expect("a request id");
+    let request_headers = headers(&token);
+    let authorization = edge
+        .admit(&AdmissionRequest {
+            request_id: &request_id,
+            route: id,
+            method: route(id).method,
+            headers: &request_headers,
+            body: &[],
+        })
+        .await
+        .expect("the initial request is current")
+        .auth;
+
+    edge.revalidate(&authorization)
+        .await
+        .expect("unchanged authority renews the lease");
+
+    *key_floor.lock().expect("an uncontended fixture") = ProjectedEpochs {
+        key: Epoch::new(11),
+        ..ProjectedEpochs::default()
+    };
+    assert_eq!(
+        edge.revalidate(&authorization)
+            .await
+            .err()
+            .map(|error| error.code),
+        Some(ErrorCode::TokenRevoked)
+    );
+
+    *key_floor.lock().expect("an uncontended fixture") = ProjectedEpochs::default();
+    *placement.lock().expect("an uncontended fixture") =
+        Ok(projected(AccountState::Paused, Region::EuWest1));
+    assert_eq!(
+        edge.revalidate(&authorization)
+            .await
+            .err()
+            .map(|error| error.code),
+        Some(ErrorCode::AccountPaused)
+    );
+
+    *placement.lock().expect("an uncontended fixture") =
+        Ok(projected(AccountState::Active, Region::UsEast1));
+    assert_eq!(
+        edge.revalidate(&authorization)
+            .await
+            .err()
+            .map(|error| error.code),
+        Some(ErrorCode::WrongWorkspaceRegion)
+    );
+
+    *placement.lock().expect("an uncontended fixture") = Err(ProjectionError::Unavailable);
+    assert_eq!(
+        edge.revalidate(&authorization)
+            .await
+            .err()
+            .map(|error| error.code),
+        Some(ErrorCode::AccountStateUnavailable)
+    );
+}
+
 /// A projection reader that counts how often the placement is consulted.
 struct CountingProjection {
     reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,

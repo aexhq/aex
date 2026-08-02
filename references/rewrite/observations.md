@@ -627,12 +627,6 @@ remaining release blockers are exact:
   protocol before the measured action claim can be true;
 - staged pages are retained, but no crash-recovery duty reconstructs and
   materializes a committed batch from them without the original request;
-- the Lambda composition still installs `StreamPolicy::default()` with no
-  authorization revalidator, so long-lived authorization renewal remains
-  uncomposed even though deletion is now strongly re-read by the follower;
-- the read-byte budget is checked before a concurrent refill, not reserved
-  across its up-to-16 provider reads, so a page can overshoot the configured
-  byte ceiling by several prefetched pages.
 
 ### 9.9 Admission, directory and recovery audit on 2026-08-02
 
@@ -791,3 +785,54 @@ Rust wire artifacts were regenerated from the schema.
   live suites. The default tests cover strict codec round trips and corruption,
   stable replay/successor laws, exact spool candidates, atomic transaction and
   claim-fence shape, coverage semantics, and stream revision deduplication.
+
+## 11. Observation authorization renewal and exact read-byte budget
+
+Branch `rw/observation-auth-budget`, off the integrated public `main`. This pass
+closes the two independent blockers removed from §9.8. It does not change or
+claim any of the admission, directory or recovery items that remain in §9.9.
+
+### 11.1 A stream cannot exist without a regional authorization lease
+
+`StreamPolicy` has no default and its `revalidator` is no longer optional.
+`ObservationService::new` takes the complete policy, so a composition root that
+cannot renew authorization cannot construct the service. The producer invokes
+the lease before its first authority read and at every authorization interval;
+any refusal becomes the terminal typed failure frame.
+
+Both production roots use `RegionalEdge::revalidate`. The finite Lambda now
+adapts the same edge it uses for request admission; `regional-stream` retains
+its existing adapter and additional session-head check. Renewal keeps only the
+verified `RegionalAuthorization`, never credential plaintext, and makes no new
+central-plane call. It strongly rereads the projected key floor and workspace
+placement, so key/workspace/account epoch advance, organization drift, account
+pause, and placement or region change fail the connection closed. Session
+deletion remains independently strongly reread by the observation follower.
+
+### 11.2 A refill reserves its whole required-head set before any read
+
+One exact merge step still establishes a head for every live segment before it
+selects a tuple. The refill planner now reserves the whole set first. For a
+provider page with request limit `L`, the query reservation is
+`min(L × 400 KiB, 1 MiB)`: the existing shared DynamoDB item ceiling supplies
+the first bound and DynamoDB's Query ceiling supplies the second. A slim index
+page that needs strong base-row hydration additionally reserves
+`L × 400 KiB`; a dense base-table row is counted only once. The planner chooses
+the largest common `L` whose per-segment reservations fit both the remaining
+item count and the remaining configured byte budget. If one head per required
+segment cannot fit, it issues no provider read and returns the existing typed
+no-progress error or a complete short-page cursor.
+
+At most sixteen reserved futures execute at once. They are collected as
+independent results rather than short-circuited, so one provider failure does
+not cancel siblings that were already admitted. Only after every future settles
+does the reader verify each actual query-plus-hydration size against its own
+reservation, verify the wave against the remaining ceiling, reconcile unused
+bytes, and add actual spend. Segment cursor state still advances only when its
+candidate is popped; prefetched but unreturned rows remain unadvanced and are
+therefore reread on continuation.
+
+The provider bounds are the published DynamoDB constraints: one item is at
+most 400 KiB and one Query evaluates at most 1 MiB. `BatchGetItem` hydration is
+also key-count bounded and retries only its unprocessed subset, so at most `L`
+distinct base rows are added to the reservation.

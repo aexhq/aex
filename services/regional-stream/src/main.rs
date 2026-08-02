@@ -116,7 +116,7 @@ async fn main() -> ExitCode {
     };
     let settings = aex_platform_telemetry::Settings::default();
     let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry).await;
+    let outcome = Box::pin(run(&config, &telemetry)).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {
@@ -164,8 +164,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         config.content_bucket.clone(),
         config.observation_index_settle_ms,
     );
-    reader
-        .probe()
+    Box::pin(reader.probe())
         .await
         .map_err(|error| RunError::Probe(error.to_string()))?;
     dynamodb
@@ -219,25 +218,25 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let edge = Arc::new(build_edge(config, &aws, &dynamodb, anchors)?);
     let frames =
         (config.connection_buffer_bytes / aex_regional_http::stream::MAX_FRAME_BYTES).max(1);
+    let stream_policy = StreamPolicy {
+        buffered_frames: frames,
+        write_stall: Duration::from_millis(config.write_stall_ms),
+        draining: Arc::clone(&draining),
+        wakes: (config.wake_mode == WakeMode::DdbStreams).then_some(wake_hub),
+        ..StreamPolicy::new(Arc::new(EdgeRevalidator {
+            edge: Arc::clone(&edge),
+            dynamodb: dynamodb.clone(),
+            session_table: config.session_table.clone(),
+        }))
+    };
     let service = ObservationService::new(
         reader,
         config.observation_budget,
         aex_observation_domain::limits::METRIC_AGGREGATE_SCAN,
         cursor_ring,
         config.region,
-    )
-    .with_stream_policy(StreamPolicy {
-        buffered_frames: frames,
-        write_stall: Duration::from_millis(config.write_stall_ms),
-        draining: Arc::clone(&draining),
-        wakes: (config.wake_mode == WakeMode::DdbStreams).then_some(wake_hub),
-        revalidator: Some(Arc::new(EdgeRevalidator {
-            edge: Arc::clone(&edge),
-            dynamodb: dynamodb.clone(),
-            session_table: config.session_table.clone(),
-        })),
-        ..StreamPolicy::default()
-    });
+        stream_policy,
+    );
     let quotas = QuotaManager::new(QuotaLimits {
         total: quota(config.max_connections)?,
         session: quota(config.max_connections_session)?,

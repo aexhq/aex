@@ -19,17 +19,18 @@ use aex_observation_domain::order::{Direction, OrderTuple, order_sort_key};
 use aex_observation_domain::signal::Signal;
 use aex_observation_query::ast::MapRow;
 use aex_observation_query::coverage::Snapshot;
-use aex_observation_query::plan::{Access, Budget, NormalizedQuery, Spend};
+use aex_observation_query::plan::{Access, NormalizedQuery, Spend};
 use aex_observation_query::{ObservationResume, ResumeKey, SegmentResume, SegmentState};
 use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
 use aex_observation_store_aws::gap::decode as decode_gap;
+use aex_session_dynamodb::measure::DYNAMODB_ITEM_CEILING;
 use aex_wire::ids::{
     ObservationId, RunId, SessionId, SpanId, TelemetryGapId, TraceId, WorkspaceId,
 };
 use aex_wire::models::{Observation, ObservationSignal};
 use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
-use futures::{StreamExt as _, TryStreamExt as _};
+use futures::StreamExt as _;
 
 /// The shard count one bucket is written across, matching the admission edge.
 ///
@@ -45,6 +46,8 @@ const BATCH_GET_UNPROCESSED_RETRIES: u8 = 3;
 /// The maximum provider reads allowed to execute at once while filling the
 /// heads needed for an exact k-way merge.
 const MAX_PARALLEL_SEGMENT_READS: usize = 16;
+/// `DynamoDB` stops one `Query` after at most one mebibyte of evaluated items.
+const DDB_QUERY_MAX_BYTES: u64 = 1024 * 1024;
 
 /// Maximum immutable gap revisions one query may inspect before failing closed.
 pub const GAP_REVISION_BUDGET: u32 = 5_000;
@@ -148,6 +151,137 @@ struct SegmentLoad {
     provider_exhausted: bool,
     items_scanned: u32,
     bytes_read: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RefillReservation {
+    max_items: u32,
+    max_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefillOutcome {
+    Loaded,
+    Blocked(&'static str),
+}
+
+/// Reserves the provider-hard maximum for one query and its optional base-row
+/// hydration. The query limit is sent to `DynamoDB`, so at most `max_items`
+/// index/table items and the same number of hydrated base items can arrive.
+fn provider_read_reservation(max_items: u32, hydrate: bool) -> u64 {
+    let provider_item_max = u64::try_from(DYNAMODB_ITEM_CEILING).unwrap_or(u64::MAX);
+    let item_bound = u64::from(max_items).saturating_mul(provider_item_max);
+    let query = item_bound.min(DDB_QUERY_MAX_BYTES);
+    query.saturating_add(if hydrate { item_bound } else { 0 })
+}
+
+/// Finds the largest common provider page that can be reserved for every head
+/// the exact merge needs. A refill either reserves the whole wave before any
+/// future starts or issues no read at all.
+fn reserve_refill_wave(
+    hydration: &[bool],
+    max_items: u32,
+    remaining_bytes: u64,
+) -> Option<Vec<RefillReservation>> {
+    if hydration.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut lo = 1_u32;
+    let mut hi = max_items;
+    let mut admitted = 0_u32;
+    while lo <= hi {
+        let middle = lo + (hi - lo) / 2;
+        let reserved = hydration.iter().fold(0_u64, |total, hydrate| {
+            total.saturating_add(provider_read_reservation(middle, *hydrate))
+        });
+        if reserved <= remaining_bytes {
+            admitted = middle;
+            lo = middle.saturating_add(1);
+        } else {
+            hi = middle.saturating_sub(1);
+        }
+    }
+    (admitted > 0).then(|| {
+        hydration
+            .iter()
+            .map(|hydrate| RefillReservation {
+                max_items: admitted,
+                max_bytes: provider_read_reservation(admitted, *hydrate),
+            })
+            .collect()
+    })
+}
+
+async fn settle_refills<I, F, T>(refills: I) -> Vec<T>
+where
+    I: IntoIterator<Item = F>,
+    F: std::future::Future<Output = T>,
+{
+    futures::stream::iter(refills)
+        .buffered(MAX_PARALLEL_SEGMENT_READS)
+        .collect()
+        .await
+}
+
+fn validate_refills(
+    settled: Vec<(RefillReservation, Result<SegmentLoad, ReadError>)>,
+    remaining_items: u32,
+    remaining_bytes: u64,
+) -> Result<Vec<SegmentLoad>, ReadError> {
+    let mut loads = Vec::with_capacity(settled.len());
+    let mut failure = None;
+    for (reservation, result) in settled {
+        match result {
+            Ok(load)
+                if load.items_scanned <= reservation.max_items
+                    && load.bytes_read <= reservation.max_bytes =>
+            {
+                loads.push(load);
+            }
+            Ok(load) => {
+                failure.get_or_insert_with(|| ReadError::Provider {
+                    operation: "QueryBudget",
+                    reason: format!(
+                        "provider returned {} items / {} bytes after {} items / {} bytes were reserved",
+                        load.items_scanned,
+                        load.bytes_read,
+                        reservation.max_items,
+                        reservation.max_bytes
+                    ),
+                });
+            }
+            Err(error) => {
+                failure.get_or_insert(error);
+            }
+        }
+    }
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    let wave_bytes = loads
+        .iter()
+        .fold(0_u64, |total, load| total.saturating_add(load.bytes_read));
+    let wave_items = loads.iter().fold(0_u32, |total, load| {
+        total.saturating_add(load.items_scanned)
+    });
+    if wave_items > remaining_items || wave_bytes > remaining_bytes {
+        return Err(ReadError::Provider {
+            operation: "QueryBudget",
+            reason: format!(
+                "settled refill used {wave_items} items / {wave_bytes} bytes with \
+                 {remaining_items} items / {remaining_bytes} bytes remaining"
+            ),
+        });
+    }
+    Ok(loads)
+}
+
+fn segment_needs_hydration(
+    descriptor: SegmentDescriptor,
+    plan: &aex_observation_query::plan::Plan,
+) -> bool {
+    matches!(descriptor.access, Access::Metric | Access::Trace)
+        || (plan.needs_base_fetch && descriptor.access.index_name().is_some())
 }
 
 /// The safe complete and retained frontiers of one query selection.
@@ -481,13 +615,13 @@ impl ObservationReader {
             }
 
             loop {
-                if !self
+                if let RefillOutcome::Blocked(dimension) = self
                     .refill_segments(scope, workspace, query, plan, &mut open, &mut spend)
                     .await?
                 {
                     if !progressed_this_page {
                         return Err(ReadError::BudgetExhausted {
-                            dimension: budget_dimension(&plan.budget, &spend),
+                            dimension,
                             scanned: spend.items_scanned,
                         });
                     }
@@ -638,7 +772,7 @@ impl ObservationReader {
         plan: &aex_observation_query::plan::Plan,
         open: &mut [OpenSegment],
         spend: &mut Spend,
-    ) -> Result<bool, ReadError> {
+    ) -> Result<RefillOutcome, ReadError> {
         let needy = open
             .iter()
             .enumerate()
@@ -646,7 +780,7 @@ impl ObservationReader {
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         if needy.is_empty() {
-            return Ok(true);
+            return Ok(RefillOutcome::Loaded);
         }
         let newly_opened = needy
             .iter()
@@ -657,14 +791,26 @@ impl ObservationReader {
             .budget
             .max_items_scanned
             .saturating_sub(spend.items_scanned);
-        if usize::from(remaining_segments) < newly_opened
-            || usize::try_from(remaining_items).unwrap_or(usize::MAX) < needy.len()
-            || spend.bytes_read >= plan.budget.max_bytes_read
-        {
-            return Ok(false);
+        if usize::from(remaining_segments) < newly_opened {
+            return Ok(RefillOutcome::Blocked("segments"));
         }
-        let batch_items = (remaining_items / u32::try_from(needy.len()).unwrap_or(u32::MAX))
+        if usize::try_from(remaining_items).unwrap_or(usize::MAX) < needy.len() {
+            return Ok(RefillOutcome::Blocked("scanned_items"));
+        }
+        if spend.bytes_read >= plan.budget.max_bytes_read {
+            return Ok(RefillOutcome::Blocked("bytes"));
+        }
+        let max_batch_items = (remaining_items / u32::try_from(needy.len()).unwrap_or(u32::MAX))
             .min(u32::from(query.limit).max(1));
+        let remaining_bytes = plan.budget.max_bytes_read.saturating_sub(spend.bytes_read);
+        let hydration = needy
+            .iter()
+            .map(|index| segment_needs_hydration(open[*index].descriptor, plan))
+            .collect::<Vec<_>>();
+        let Some(reservations) = reserve_refill_wave(&hydration, max_batch_items, remaining_bytes)
+        else {
+            return Ok(RefillOutcome::Blocked("bytes"));
+        };
         for index in &needy {
             if !open[*index].opened_this_page {
                 open[*index].opened_this_page = true;
@@ -673,29 +819,38 @@ impl ObservationReader {
         }
         let requests = needy
             .iter()
-            .map(|index| (open[*index].descriptor, open[*index].state.clone()))
+            .zip(reservations)
+            .map(|(index, reservation)| {
+                (
+                    open[*index].descriptor,
+                    open[*index].state.clone(),
+                    reservation,
+                )
+            })
             .collect::<Vec<_>>();
         // Every live segment needs a head before the k-way merge may choose its
         // next row, but polling every provider request at once would make the
         // fanout itself unbounded. `buffered` preserves request order while
         // limiting in-flight reads; waiting for the complete set preserves the
         // merge invariant.
-        let loads =
-            futures::stream::iter(requests.into_iter().map(|(descriptor, state)| async move {
-                self.load_segment(
-                    scope,
-                    workspace,
-                    query,
-                    plan,
-                    descriptor,
-                    &state,
-                    batch_items,
-                )
-                .await
-            }))
-            .buffered(MAX_PARALLEL_SEGMENT_READS)
-            .try_collect::<Vec<_>>()
-            .await?;
+        let settled = settle_refills(requests.into_iter().map(
+            |(descriptor, state, reservation)| async move {
+                let result = self
+                    .load_segment(
+                        scope,
+                        workspace,
+                        query,
+                        plan,
+                        descriptor,
+                        &state,
+                        reservation.max_items,
+                    )
+                    .await;
+                (reservation, result)
+            },
+        ))
+        .await;
+        let loads = validate_refills(settled, remaining_items, remaining_bytes)?;
         for (index, load) in needy.into_iter().zip(loads) {
             spend.items_scanned = spend.items_scanned.saturating_add(load.items_scanned);
             spend.bytes_read = spend.bytes_read.saturating_add(load.bytes_read);
@@ -705,7 +860,7 @@ impl ObservationReader {
                 open[index].state = SegmentState::Exhausted;
             }
         }
-        Ok(true)
+        Ok(RefillOutcome::Loaded)
     }
 
     #[allow(
@@ -749,8 +904,7 @@ impl ObservationReader {
             .iter()
             .map(|item| item_resume_key(item, descriptor, scope))
             .collect::<Result<Vec<_>, _>>()?;
-        let needs_hydration = matches!(descriptor.access, Access::Metric | Access::Trace)
-            || (plan.needs_base_fetch && descriptor.access.index_name().is_some());
+        let needs_hydration = segment_needs_hydration(descriptor, plan);
         let items = if needs_hydration {
             let hydrated = self.hydrate_base_rows(batch.items).await?;
             bytes_read = bytes_read.saturating_add(
@@ -1699,18 +1853,6 @@ fn page_resume(
     .map_err(|_| ReadError::InvalidResume)
 }
 
-fn budget_dimension(budget: &Budget, spend: &Spend) -> &'static str {
-    if spend.items_scanned >= budget.max_items_scanned {
-        "scanned_items"
-    } else if spend.bytes_read >= budget.max_bytes_read {
-        "bytes"
-    } else if spend.segments >= budget.max_segments {
-        "segments"
-    } else {
-        "provider_progress"
-    }
-}
-
 fn item_resume_key(
     item: &HashMap<String, AttributeValue>,
     descriptor: SegmentDescriptor,
@@ -2045,6 +2187,7 @@ mod tests {
     use aex_observation_domain::order::{Direction, OrderBy, OrderTuple, order_sort_key};
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_observation_query::plan::{Access, Budget, NormalizedQuery, ScopeAxis, plan};
+    use aex_session_dynamodb::measure::DYNAMODB_ITEM_CEILING;
     use aex_wire::ids::{ObservationId, PrefixedId as _, SessionId, WorkspaceId};
     use aex_wire::models::ObservationSignal;
     use aex_wire::types::Timestamp;
@@ -2057,8 +2200,8 @@ mod tests {
     use super::{
         BUCKET_SHARDS, Frontier, MAX_PARALLEL_SEGMENT_READS, ObservationReader, ReadError,
         ScopeDeletionState, SegmentDescriptor, combine_frontiers, filter_row,
-        is_export_control_key, item_resume_key, resume_key_map, segment_key,
-        validate_export_control_item,
+        is_export_control_key, item_resume_key, provider_read_reservation, reserve_refill_wave,
+        resume_key_map, segment_key, settle_refills, validate_export_control_item,
     };
 
     fn workspace() -> WorkspaceId {
@@ -2540,6 +2683,135 @@ mod tests {
             1
         );
         assert_eq!(groups[0].1.len(), MAX_PARALLEL_SEGMENT_READS + 1);
+    }
+
+    #[test]
+    fn sixteen_hydrated_refills_reserve_the_whole_wave_below_the_byte_ceiling() {
+        let ceiling = 32 * 1024 * 1024;
+        let hydration = vec![true; MAX_PARALLEL_SEGMENT_READS];
+        let reservations = reserve_refill_wave(&hydration, 1_000, ceiling).expect("the wave fits");
+
+        assert_eq!(reservations.len(), MAX_PARALLEL_SEGMENT_READS);
+        assert_eq!(reservations[0].max_items, 2);
+        assert!(
+            reservations
+                .iter()
+                .map(|reservation| reservation.max_bytes)
+                .sum::<u64>()
+                <= ceiling
+        );
+        assert!(
+            hydration
+                .iter()
+                .map(|hydrate| provider_read_reservation(3, *hydrate))
+                .sum::<u64>()
+                > ceiling,
+            "the next larger common provider page must be refused"
+        );
+    }
+
+    #[test]
+    fn a_hydrated_refill_starts_at_the_exact_reservation_boundary() {
+        let minimum = provider_read_reservation(1, true);
+        assert_eq!(
+            minimum,
+            2 * u64::try_from(DYNAMODB_ITEM_CEILING).expect("the provider limit fits u64")
+        );
+        assert!(reserve_refill_wave(&[true], 1, minimum - 1).is_none());
+        assert_eq!(
+            reserve_refill_wave(&[true], 1, minimum).expect("the exact boundary is admitted")[0]
+                .max_bytes,
+            minimum
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreservable_required_head_fails_before_any_provider_read() {
+        let (reader, _replay) = replaying_reader_responses(&[]);
+        let mut query = normalized_query();
+        query.signals = SignalSet::from_signal(Signal::Spans);
+        query.metric_name = None;
+        let minimum = provider_read_reservation(1, true);
+        let planned = plan(
+            &query,
+            Budget {
+                max_bytes_read: minimum - 1,
+                ..Budget::default()
+            },
+        )
+        .expect("the query plans");
+
+        let error = reader
+            .read_page(
+                &ScopeKey::Workspace(workspace()),
+                workspace(),
+                &query,
+                &planned,
+                aex_observation_query::coverage::Snapshot::at(query.time_lt),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect_err("one required hydrated head cannot be reserved");
+
+        assert!(matches!(
+            error,
+            ReadError::BudgetExhausted {
+                dimension: "bytes",
+                scanned: 0
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn parallel_refills_are_capped_and_every_failure_sibling_settles() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let refill_active = Arc::clone(&active);
+        let refill_maximum = Arc::clone(&maximum);
+        let refill_completed = Arc::clone(&completed);
+        let refill_release = Arc::clone(&release);
+        let refills = (0..=MAX_PARALLEL_SEGMENT_READS).map(move |index| {
+            let active = Arc::clone(&refill_active);
+            let maximum = Arc::clone(&refill_maximum);
+            let completed = Arc::clone(&refill_completed);
+            let release = Arc::clone(&refill_release);
+            async move {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(current, Ordering::SeqCst);
+                let permit = release.acquire().await.expect("the fixture stays open");
+                permit.forget();
+                active.fetch_sub(1, Ordering::SeqCst);
+                completed.fetch_add(1, Ordering::SeqCst);
+                if index == 0 { Err(index) } else { Ok(index) }
+            }
+        });
+        let task = tokio::spawn(async move { settle_refills(refills).await });
+
+        for _ in 0..1_000 {
+            if active.load(Ordering::SeqCst) == MAX_PARALLEL_SEGMENT_READS {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            active.load(Ordering::SeqCst),
+            MAX_PARALLEL_SEGMENT_READS,
+            "one more provider future must wait outside the concurrency window"
+        );
+        release.add_permits(MAX_PARALLEL_SEGMENT_READS + 1);
+        let results = task.await.expect("the refill set joins");
+
+        assert_eq!(maximum.load(Ordering::SeqCst), MAX_PARALLEL_SEGMENT_READS);
+        assert_eq!(completed.load(Ordering::SeqCst), results.len());
+        assert_eq!(results.len(), MAX_PARALLEL_SEGMENT_READS + 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
     }
 
     #[test]

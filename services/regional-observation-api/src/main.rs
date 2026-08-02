@@ -17,8 +17,8 @@ use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
 use aex_observation_store_aws::health::{Probe, Readiness, readiness};
 use aex_wire::dispatch::RequestLimits;
 
-use crate::mount::{AUDIENCE, AppState};
-use regional_observation_api::api::ObservationService;
+use crate::mount::{AUDIENCE, AppState, Edge};
+use regional_observation_api::api::{ObservationService, StreamPolicy, StreamRevalidator};
 use regional_observation_api::config::{Config, ConfigError, REQUIRED_VARS};
 use regional_observation_api::reader::ObservationReader;
 
@@ -32,6 +32,22 @@ pub const REQUIRED_PROBES: &[Probe] = &[
     Probe::CursorKeyRing,
     Probe::SessionAuthority,
 ];
+
+#[derive(Clone)]
+struct EdgeRevalidator {
+    edge: Arc<Edge>,
+}
+
+#[async_trait::async_trait]
+impl StreamRevalidator for EdgeRevalidator {
+    async fn revalidate(
+        &self,
+        authorization: &aex_regional_http::context::RegionalAuthorization,
+        _scope: &aex_observation_domain::keys::ScopeKey,
+    ) -> Result<(), aex_wire::error::WireError> {
+        self.edge.revalidate(authorization).await
+    }
+}
 
 /// Why `regional-observation-api` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -145,33 +161,35 @@ pub async fn run(config: Config) -> Result<(), RunError> {
     // IAM-invoked rather than routed, so this is a direct invoke and the caller's
     // execution role is the authentication; the credential is named by
     // `(keyId, presentedDigest)` and never sent.
-    let edge = aex_regional_http::edge::RegionalEdge::new(
-        aex_regional_http::authz::LambdaAssertionSource::new(
-            aws_sdk_lambda::Client::new(&aws),
-            config.authz_function_arn.clone(),
-            AUDIENCE,
-            config.region,
-        ),
-        anchors,
-        aex_regional_http::authz::RegionalProjection::new(
-            aex_session_dynamodb::projection::ProjectionReader::new(
-                dynamodb.clone(),
-                config.authz_projection_table.clone(),
+    let edge = Arc::new(
+        aex_regional_http::edge::RegionalEdge::new(
+            aex_regional_http::authz::LambdaAssertionSource::new(
+                aws_sdk_lambda::Client::new(&aws),
+                config.authz_function_arn.clone(),
+                AUDIENCE,
+                config.region,
             ),
-            config.region,
-        ),
-        aex_regional_http::edge::SystemClock,
-        aex_regional_http::edge::EdgeBinding {
-            plane: config.plane,
-            audience: AUDIENCE,
-            region: config.region,
-            cache_budget_bytes: config.assertion_cache_bytes,
-            limits: config.effective_limits(),
-        },
-    )
-    .map_err(|error| RunError::Edge {
-        reason: error.to_string(),
-    })?;
+            anchors,
+            aex_regional_http::authz::RegionalProjection::new(
+                aex_session_dynamodb::projection::ProjectionReader::new(
+                    dynamodb.clone(),
+                    config.authz_projection_table.clone(),
+                ),
+                config.region,
+            ),
+            aex_regional_http::edge::SystemClock,
+            aex_regional_http::edge::EdgeBinding {
+                plane: config.plane,
+                audience: AUDIENCE,
+                region: config.region,
+                cache_budget_bytes: config.assertion_cache_bytes,
+                limits: config.effective_limits(),
+            },
+        )
+        .map_err(|error| RunError::Edge {
+            reason: error.to_string(),
+        })?,
+    );
 
     let service = ObservationService::new(
         reader,
@@ -179,9 +197,12 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         config.metric_aggregate_scan,
         ring,
         config.region,
+        StreamPolicy::new(Arc::new(EdgeRevalidator {
+            edge: Arc::clone(&edge),
+        })),
     );
     let state = Arc::new(AppState {
-        edge: Arc::new(edge),
+        edge,
         service: Arc::new(service),
         limits: RequestLimits::DEFAULT,
         ready: true,

@@ -56,3 +56,20 @@ fn the_query_role_is_reserved_separately_from_admission() {
     assert!(reserved("regional-observation-api") > 0);
     assert!(reserved("regional-otlp") > 0);
 }
+
+#[test]
+fn the_production_stream_renews_through_the_shared_regional_edge() {
+    let composition = include_str!("../src/main.rs");
+    assert!(
+        composition.contains("StreamPolicy::new(Arc::new(EdgeRevalidator"),
+        "the mounted stream/listen routes need an explicit authorization lease"
+    );
+    assert!(
+        composition.contains("self.edge.revalidate(authorization).await"),
+        "renewal must use the shared key/placement/account authority"
+    );
+    assert!(
+        !composition.contains("StreamPolicy::default"),
+        "there is no safe stream policy without a revalidator"
+    );
+}
