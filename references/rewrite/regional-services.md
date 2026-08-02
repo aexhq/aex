@@ -1245,3 +1245,54 @@ workspace structural check initially found one inherited target-classification
 gap outside this change. Public `main` closes it in `14109eb1` by mapping the
 existing `session-operation-worker` reconciliation target to its declared unit
 layer; `aex-workspace-check` is green at 136 members and 143 packages.
+
+## Registry point-read audit continuation (2026-08-02)
+
+The five registry point GET routes remain absent after a fresh audit of the
+current wire models, registry pointer codec, content stores, service composition
+and active IAM generation. This is a per-kind conclusion, not a blanket deferral:
+none of the five current point models is complete from the facts the read path
+can durably recover.
+
+The accepted wire contract requires `RegisteredResource<T>.value` on a point
+read and permits collection rows alone to omit it. The generated Rust models use
+`Option<T>` so those same models can represent collections; the authored field
+documentation still says exactly "Omitted in collection rows." A point response
+with `value = None` would therefore validate structurally while publishing a
+collection projection as if it were the complete resource.
+
+`RegistryPointer` durably supplies the workspace, kind, name, revision, stored
+pointer tag, content digest, size and creation/update instants. Its
+`RegisteredValueRef` supplies only a content digest or a consumed upload id. The
+content authority adds a descriptor and either sealed inline ciphertext or an
+encrypted object location. `ContentMetadataStore` returns `ContentDescriptor`
+and `SealedBytes`; no registry plaintext-hydration port or typed decoder exists,
+and `regional-session-api`'s request `Shared` value exposes neither content nor
+decrypt capability to a handler. Descriptor/ciphertext presence is not a value.
+
+| Point route | Facts absent from the pointer/read composition |
+| --- | --- |
+| file | Blob data/encoding (or another accepted readable content representation), mount path and mode; only descriptor media type may exist |
+| instruction | instruction text |
+| MCP server | URL, transport and secret-backed header metadata |
+| skill | description, bundle format and readable bundle representation |
+| tool | description, input schema, entry path, bundle format and readable bundle representation |
+
+The stored pointer ETag is not substituted for the missing response tag.
+Regional projection decision RS-29 defines a point ETag as a domain-separated
+hash of the exact projected representation. Until a complete value can be
+projected, there is no exact representation from which to derive that tag.
+
+The active IAM path was also audited so an obsolete Terraform module did not
+become a false blocker. The public generated regional-table bundle grants
+`regional-session-api` strongly readable access to both the registry and content
+tables. The active platform dev root decodes that generated bundle and also
+attaches content-object read and content-key grants, plus the corresponding
+environment bindings. IAM is therefore not the reason these routes remain
+absent. The missing piece is the owned plaintext hydration and typed decode
+path; this slice does not invent it or widen itself into content cryptography.
+
+The real-router served target now drives all five point paths and requires each
+to remain unmounted, return router `404`, and emit neither a body nor an ETag.
+The already-mounted five collection routes and their shared pointer projection
+are unchanged. PUT, DELETE, download and upload routes are unchanged and absent.
