@@ -1,6 +1,6 @@
 ---
 title: Central-finance Rust-native rewrite handoff
-description: Implemented authority, exact rating, central finance schema, provider edges, evidence, peer requests, and explicit deferred work on rw/central-finance.
+description: Implemented authority, exact rating, central finance schema, provider edges, deployable composition, evidence, and remaining peer requests.
 status: accepted
 keywords:
   - finance
@@ -9,7 +9,7 @@ keywords:
   - stripe
   - schema administration
 audience: implementation agents and maintainers
-last_verified: 2026-08-01
+last_verified: 2026-08-02
 related:
   - references/rewrite/contracts.md
   - references/rewrite/usage.md
@@ -39,8 +39,8 @@ Branch: `rw/central-finance`
 - `aex-finance-aurora`: strict integer/string Data API row decoding, no floating-value accessor,
   64 KiB row and 1 MiB response rejection, database config validation, finance SQL constants, and
   business-key resolution for a lost commit response.
-- `migrations/central`: one linear seven-file chain from `20260801000000` through
-  `20260801000600`, preserving the merged peer bootstrap/identity/control/control-functions bodies
+- `migrations/central`: one linear eight-file chain from `20260801000000` through
+  `20260801000700`, preserving the merged peer bootstrap/identity/control/control-functions bodies
   before the finance roles/schema/DDL/seed bodies,
   declarative `grants.toml`, immutable journal tables, a deferred balanced-transaction constraint
   trigger, reversal-only mutation guard, customer prepaid balance fence, finance inbox/outbox/effect,
@@ -65,39 +65,26 @@ Branch: `rw/central-finance`
   Rust package, complete AEX metadata for both TypeScript edges, Stripe companion seam claims, no
   skips, regenerated `release/test-registry.json` and `release/unearned-evidence.json`.
 
-## Deliberately deferred
+## Remaining gaps
 
-Depth was landed in the plan's authority/rating/schema priority order. The following generated
-composition shells remain fail-fast and retain their `not_applicable.targets` evidence debt:
+The recovered composition pass replaced every finance deployable's fail-fast shell and gave
+`central-schema-admin` re-entrant online execution. Its grant reconciler now probes and applies the
+whole schema-v2 allowlist: database `CONNECT`, schema `USAGE`, function `EXECUTE`, table/view
+privileges, and the declared `PUBLIC` revocations. The exact deployable behavior and the narrower
+remaining implementation gaps are recorded in [Composition](#composition).
 
-- `services/finance-ingest`
-- `workers/finance-settlement-worker`
-- `workers/finance-reconcile`
-- `workers/usage-receipt-dispatcher`
-- `workers/provider-cost-reconciler`
-- all nine live companions (they cannot earn remote evidence before deployment)
+The following work still depends on peers or deployment:
 
-The following portions of otherwise-started deployables are also not complete:
-
-- The eight generated billing HTTP operations, authorization, Aurora role probe, prepare/execute/
-  finalize orchestration, and statements are not mounted in `finance-api`; it intentionally never
-  reports ready in this branch.
-- `central-schema-admin plan` is complete and credential-free. Mutating/verification/grant/backfill/
-  repair commands validate their CLI and bundle but return stable `SecretUnavailable` rather than
-  resolving a credential or touching AWS/Aurora. Re-entrant online execution and grant application
-  therefore remain.
 - The Stripe command edge's unknown-effect lookup currently searches PaymentIntents only. Customer,
   Checkout Session, Portal Session, and Refund lookup/search behavior still needs the exact generated
   lookup vocabulary and reconciliation policy.
 - The webhook edge produces the accepted eight-event bounded envelope, but the landed generated Rust
   payment event contract represents only five events; it cannot yet be consumed byte-for-byte by
   `finance-ingest`.
-- No workload descriptor was assigned to `central-finance` by the current workload registry. No
-  remote/live Stripe, AWS, Aurora, queue, IAM, load, or soak evidence was attempted.
-- Lambda memory, timeout, and reserved-concurrency values cannot be added to `[package.metadata.aex]`
-  because the binding test-architecture schema has a closed thirteen-key vocabulary and rejects them.
-  The deployment/infrastructure owner must provide the sanctioned manifest location. Direct-invoke
-  Rust Lambdas also do not yet expose HTTP health routes; only the HTTP `finance-api` does.
+- All nine live companions remain unearned evidence because no remote Stripe, AWS, Aurora, queue,
+  IAM, load, or soak evidence can be earned before deployment.
+- Direct-invoke Rust Lambdas expose invocation probes rather than HTTP health routes. Resource shapes
+  live in the sanctioned `[unit.lambda]` and `[unit.fargate]` rows of `release/units.toml`.
 
 ## Published peer types
 
@@ -193,3 +180,177 @@ Temporary cross-stream types, all carrying the required replacement comment:
 The final gate commands and their verbatim terminal output are reported in the implementation-agent
 handoff message. This file is intentionally kept stable rather than embedding machine-specific build
 timings.
+
+---
+
+# Composition
+
+Branch: `rw/deploy-finance`, off `main` after the four-stream merge. This pass
+replaces the typed `NotImplemented` in every finance deployable's `run()` with a
+real composition root. The seven binaries now build their adapters, prove their
+own database grants, and enter their real runtime.
+
+## What each deployable now does
+
+| Deployable | Entry | What `run()` does now |
+| --- | --- | --- |
+| `services/finance-api` | `lambda_http::run` | Mounts every route of `RouteGroup::Billing` by iterating the generated table, dispatches through `dispatch_billing`, and serves `/internal/healthz` and `/internal/readyz`. Builds the Aurora billing authority, the Stripe command-edge gateway and the S3 statement presigner. |
+| `services/finance-ingest` | `lambda_runtime::run` | One serializable transaction claims the provider event on `provider_event_id`, posts the balanced transition it implies, and binds the transaction to the inbox row. Answers success only after that commit. |
+| `workers/finance-settlement-worker` | `lambda_runtime::run` over `SqsEventObj` | Partitions the batch into one group per organization, settles each group in one serializable transaction, and returns a partial-batch response naming only uncommitted messages. |
+| `workers/finance-reconcile` | `lambda_runtime::run` | Runs the `R-BAL` and `R-SUM` conservation sweeps and the unresolved-effect sweep, escalates an effect past its replay window to `manual_review`, and publishes every finding to the operations topic. |
+| `workers/usage-receipt-dispatcher` | `lambda_runtime::run` | Reads one pending page per category and replays it to the regional receipt queue, retiring a receipt only after the queue accepted it. |
+| `workers/provider-cost-reconciler` | `lambda_runtime::run` | Reads one bounded provider cost export, normalises it on `(source, source_row_id)`, and reports the period margin in exact integer basis points. |
+| `workers/central-schema-admin` | `clap` one-shot | Resolves the DDL credential, opens a `verify-full` session against the pinned CA bundle, takes the outer advisory lock without waiting, and runs `plan`/`migrate`/`verify`/`grants`/`backfill`/`repair` under the numbered exit contract. |
+
+## Composition decisions
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| D-01 | Every deployable reads its configuration under the namespace `release/units.toml` already registers for it (`AEX_FINANCE_API_`, `AEX_FINANCE_INGEST_`, …), replacing the earlier unnamespaced `AEX_AURORA_*` variables | Two deployables on one plane share an environment; an unnamespaced cluster ARN makes a wrong binding silent. The registry already named the namespace and nothing read it. |
+| D-02 | Readiness is a **grant** fact, not a liveness fact: each startup probe asserts the process holds its own role, can reach the relations it needs, and **cannot** reach the ones it must not | A grant table nobody connects as is a document. `finance-api` refuses to report ready if its role holds `UPDATE` on `finance.journal_transaction`; `provider-cost-reconciler` refuses to start at all if it can reach a customer posting (F-26). |
+| D-03 | The Lambda and Fargate resource shapes are declared in `release/units.toml` `[unit.lambda]` / `[unit.fargate]`, not in `[package.metadata.aex]` | `graph verify` reads `release/units.toml`; the `[package.metadata.aex]` schema is a closed thirteen-key vocabulary that rejects them, which is what the previous handoff recorded as blocked. This resolves that block by using the location the tool actually checks. |
+| D-04 | `finance-ingest` no longer declares `health_path` / `ready_path` in `release/units.toml`; its probes are `{"request":"healthz"}` and `{"request":"readyz"}` invoke arms | It is a direct-invoke Lambda behind `stripe-webhook-edge` and serves no HTTP. A declared HTTP path nothing answers is drift. |
+| D-05 | `finance-api` mounts against a one-method `CentralEdge` trait it owns, and composes `UnresolvedPrincipalEdge`, which refuses every request with `unauthenticated` | `aex-central-http`'s router is still a documentation stub and is owned by a parallel stream. Inventing a principal in a money authority is the worst available defect, so the surface fails closed. Every route is mounted and reachable; only the principal is unresolved. |
+| D-06 | A per-organization `finance.account` identity is **derived** (`blake3` over organization and account kind, stamped to a v7 shape) rather than minted | Two concurrent first postings for one account converge on one row instead of racing to two. |
+| D-07 | `CommandKind::CreatePortalSession` prepares no durable `provider_effect` row | `finance.provider_effect.kind` has no `portal_session` value and a hosted portal page creates no money effect. The derived provider idempotency key still fences a duplicate object inside the provider's replay window. Recorded rather than worked around by widening the DDL enum. |
+| D-08 | Only a serialization race is retried inside a settlement invocation; an unknown commit outcome goes back to the queue | The transaction body is replay-safe with no external effect, so a `40001` retry is free. An unknown outcome must be resolved against durable state on redelivery, not by a second attempt in the same process. |
+| D-09 | `aws-sdk-lambda` (1.138.0) and `aws-sdk-sns` (1.107.0) were added to `[workspace.dependencies]` | The only Rust-to-Stripe path is a synchronous invoke of `stripe-command-edge`, and the sweeps report through the operations topic. Both are in the plan's permission model and neither had a workspace entry. |
+| D-10 | `finance-settlement-worker` declares seam `aws.sqs.redrive` rather than `aws.sqs.partial_batch` | `aws.sqs.partial_batch` is not in `release/policy/seams.toml`; the registered redrive seam covers the same behaviour. Adding a seam row is the seam registry owner's call. |
+
+## Environment variables, per deployable
+
+Every variable below is **required**; there is no default for any of them, and
+start-up names the first one that is absent or unusable.
+
+### `finance-api` (12)
+
+```
+AEX_FINANCE_API_PLANE                     dev | prd
+AEX_FINANCE_API_REGION                    AWS region name
+AEX_FINANCE_API_AURORA_CLUSTER_ARN        arn:aws:rds:...:cluster:...
+AEX_FINANCE_API_AURORA_SECRET_ARN         arn:aws:secretsmanager:...
+AEX_FINANCE_API_DATABASE_NAME             logical database
+AEX_FINANCE_API_DATABASE_ROLE             must equal `aex_finance_api`
+AEX_FINANCE_API_STRIPE_COMMAND_EDGE_ARN   arn:aws:lambda:...
+AEX_FINANCE_API_DEFAULT_PRICING_VERSION   e.g. `synthetic-zero-v1`
+AEX_FINANCE_API_STATEMENT_BUCKET          statement artifact bucket
+AEX_FINANCE_API_TX_DEADLINE_MS            positive integer
+AEX_FINANCE_API_PAGE_LIMIT                1..=1000
+AEX_FINANCE_API_DOWNLOAD_GRANT_TTL_MS     1..=300000  (OD-17)
+```
+
+### `finance-ingest` (8)
+
+```
+AEX_FINANCE_INGEST_PLANE                        dev | prd
+AEX_FINANCE_INGEST_REGION                       AWS region name
+AEX_FINANCE_INGEST_AURORA_CLUSTER_ARN           arn:aws:rds:...
+AEX_FINANCE_INGEST_AURORA_SECRET_ARN            arn:aws:secretsmanager:...
+AEX_FINANCE_INGEST_DATABASE_NAME                logical database
+AEX_FINANCE_INGEST_DATABASE_ROLE                must equal `aex_finance_ingest`
+AEX_FINANCE_INGEST_PINNED_STRIPE_API_VERSION    `2026-06-24.dahlia`
+AEX_FINANCE_INGEST_TX_DEADLINE_MS               positive integer
+```
+
+### `finance-settlement-worker` (10)
+
+```
+AEX_FINANCE_SETTLEMENT_PLANE                     dev | prd
+AEX_FINANCE_SETTLEMENT_REGION                    AWS region name
+AEX_FINANCE_SETTLEMENT_AURORA_CLUSTER_ARN        arn:aws:rds:...
+AEX_FINANCE_SETTLEMENT_AURORA_SECRET_ARN         arn:aws:secretsmanager:...
+AEX_FINANCE_SETTLEMENT_DATABASE_NAME             logical database
+AEX_FINANCE_SETTLEMENT_DATABASE_ROLE             must equal `aex_finance_settlement`
+AEX_FINANCE_SETTLEMENT_QUEUE_URL                 must end `.fifo`  (F-10)
+AEX_FINANCE_SETTLEMENT_MAX_GROUP_BATCH           1..=10000
+AEX_FINANCE_SETTLEMENT_SERIALIZATION_RETRY_MAX   1..=3
+AEX_FINANCE_SETTLEMENT_TX_DEADLINE_MS            1..=900000
+```
+
+### `finance-reconcile` (12)
+
+```
+AEX_FINANCE_RECONCILE_PLANE                                dev | prd
+AEX_FINANCE_RECONCILE_REGION                               AWS region name
+AEX_FINANCE_RECONCILE_AURORA_CLUSTER_ARN                   arn:aws:rds:...
+AEX_FINANCE_RECONCILE_AURORA_SECRET_ARN                    arn:aws:secretsmanager:...
+AEX_FINANCE_RECONCILE_DATABASE_NAME                        logical database
+AEX_FINANCE_RECONCILE_DATABASE_ROLE                        must equal `aex_finance_reconcile`
+AEX_FINANCE_RECONCILE_STRIPE_COMMAND_EDGE_ARN              arn:aws:lambda:...
+AEX_FINANCE_RECONCILE_UNKNOWN_EFFECT_RETRY_WINDOW_HOURS    1..=12  (F-15)
+AEX_FINANCE_RECONCILE_SWEEP_PAGE                           1..=10000
+AEX_FINANCE_RECONCILE_ALARM_TOPIC_ARN                      arn:aws:sns:...
+AEX_FINANCE_RECONCILE_STATEMENT_BUCKET                     statement artifact bucket
+AEX_FINANCE_RECONCILE_TX_DEADLINE_MS                       1..=900000
+```
+
+### `usage-receipt-dispatcher` (12)
+
+```
+AEX_USAGE_RECEIPT_PLANE                  dev | prd
+AEX_USAGE_RECEIPT_REGION                 AWS region name
+AEX_USAGE_RECEIPT_AURORA_CLUSTER_ARN     arn:aws:rds:...
+AEX_USAGE_RECEIPT_AURORA_SECRET_ARN      arn:aws:secretsmanager:...
+AEX_USAGE_RECEIPT_DATABASE_NAME          logical database
+AEX_USAGE_RECEIPT_DATABASE_ROLE          must equal `aex_receipt_dispatcher`
+AEX_USAGE_RECEIPT_QUEUE_URL_COMPUTE      https://sqs...
+AEX_USAGE_RECEIPT_QUEUE_URL_STORAGE      https://sqs...
+AEX_USAGE_RECEIPT_QUEUE_URL_TRANSFER     https://sqs...
+AEX_USAGE_RECEIPT_BATCH_SIZE             1..=10
+AEX_USAGE_RECEIPT_MAX_ATTEMPTS           1..=100
+AEX_USAGE_RECEIPT_TX_DEADLINE_MS         1..=900000
+```
+
+### `provider-cost-reconciler` (12)
+
+```
+AEX_PROVIDER_COST_PLANE                        dev | prd
+AEX_PROVIDER_COST_REGION                       AWS region name
+AEX_PROVIDER_COST_AURORA_CLUSTER_ARN           arn:aws:rds:...
+AEX_PROVIDER_COST_AURORA_SECRET_ARN            arn:aws:secretsmanager:...
+AEX_PROVIDER_COST_DATABASE_NAME                logical database
+AEX_PROVIDER_COST_DATABASE_ROLE                must equal `aex_provider_cost`
+AEX_PROVIDER_COST_CUR_BUCKET                   cost export bucket
+AEX_PROVIDER_COST_CUR_PREFIX                   normalized object prefix
+AEX_PROVIDER_COST_MARGIN_ALERT_THRESHOLD_BPS   0..=10000
+AEX_PROVIDER_COST_ALARM_TOPIC_ARN              arn:aws:sns:...
+AEX_PROVIDER_COST_MAX_SCAN_BYTES               positive integer
+AEX_PROVIDER_COST_TX_DEADLINE_MS               1..=900000
+```
+
+### `central-schema-admin`
+
+No environment variables: every input is an explicit CLI argument, so a
+migration run is reproducible from its recorded argv alone. The one credential
+is resolved from `--database-secret-arn` at run time and never enters argv,
+output or a log line.
+
+## Declared resource shapes
+
+| Unit | Shape |
+| --- | --- |
+| `finance-api` | 512 MiB, 15 s, reserved concurrency 40 |
+| `finance-ingest` | 512 MiB, 10 s, reserved concurrency 20 |
+| `finance-settlement-worker` | 1024 MiB, 60 s, reserved concurrency 30 |
+| `finance-reconcile` | 1024 MiB, 300 s, reserved concurrency 2 |
+| `usage-receipt-dispatcher` | 512 MiB, 60 s, reserved concurrency 10 |
+| `provider-cost-reconciler` | 2048 MiB, 900 s, reserved concurrency 1 |
+| `central-schema-admin` | Fargate: 512 CPU, 1024 MiB, desired count 0, stop timeout 120 s |
+
+The reservations are ordered, and the ordering is asserted by test:
+`finance-reconcile` and `usage-receipt-dispatcher` are each strictly below the
+lanes they depend on, so reconciliation and replay can never consume the budget
+that produces the work they exist to repair (F-29).
+
+## What is still owed
+
+| Gap | Owner | Note |
+| --- | --- | --- |
+| `aex-central-http` has no router, so `finance-api` composes `UnresolvedPrincipalEdge` and answers `401` on every billing route | central identity/control | The seam is one method, `CentralEdge::admit`. Swapping it in is a wrapper, not a translation. |
+| No billing route declares an unavailability error code, so an unreachable Aurora renders as `internal_error` through `dispatch::declared` | contracts | `finance-api` emits `account_state_unavailable` honestly; the gap closes the moment the route table admits it. |
+| `finance-settlement-worker` claims and validates inbox facts but does not yet rate or post them | central finance, next pass | Rating needs `RateContext` loading from `finance.pricing_context`; the claim, the intent fence and the quarantine path are complete. |
+| `finance-reconcile` classifies unresolved effects but does not yet invoke the command edge to resolve one | central finance, next pass | The classification is the domain's `recovery_action`; the invoke path is the same gateway `finance-api` already composes. |
+| `release/schema-head.json` is absent, so `aex-release-tool migration verify` has no declared cross-plane head to consume | central finance and regional stores | The central bundle is reproducible at `20260801000700`; the regional table document has a digest but no authoritative generation, so the head cannot be invented locally. |
+| `crates/aex-control-aurora/tests/migrations.rs` still `include_str!`s `migrations/central/0001_bootstrap.sql`, which this repository renamed to `20260801000000_bootstrap.sql` | central identity | The suite is behind `required-features = ["integration-engines"]`, so `cargo check --all-targets` does not build it and the breakage is invisible in the default lane. |
+| `graph verify` reports 147 workspace-wide gaps: one live-companion metadata gap and 146 uncovered routes | test architecture and route owners | The finance composition does not add a new graph violation; these are the current global scenario-ownership debts. |
+| Every `tests/live/aex-live-*` companion is still an unearned-evidence row | central finance | No live evidence can be earned before deployment (OD-07). |

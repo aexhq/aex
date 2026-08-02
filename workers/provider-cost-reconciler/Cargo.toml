@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [lints]
 workspace = true
@@ -24,8 +25,10 @@ security_tier = "money"
 risk = ["money"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "awaiting the central-finance stream; the cases land with the binary's own implementation"
+[package.metadata.aex.targets]
+conformance = "unit"
+smoke = "smoke"
+resource_envelope = "e2e"
 
 [[bin]]
 name = "provider-cost-reconciler"
@@ -33,5 +36,32 @@ path = "src/main.rs"
 
 [dependencies]
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-rds-data = { path = "../../crates/aex-rds-data" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-rdsdata.workspace = true
+aws-sdk-s3.workspace = true
+lambda_runtime.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+
+[[test]]
+name = "resource_envelope"
+path = "tests/resource_envelope.rs"

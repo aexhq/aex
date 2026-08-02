@@ -318,6 +318,49 @@ impl GrantSet {
         self.role.iter().map(|role| role.name.as_str()).collect()
     }
 
+    /// Database-wide `PUBLIC` policy.
+    #[must_use]
+    pub const fn database_policy(&self) -> &DatabaseGrant {
+        &self.database
+    }
+
+    /// Every declared schema policy, in declaration order.
+    #[must_use]
+    pub fn schemas(&self) -> &[SchemaGrant] {
+        &self.schema
+    }
+
+    /// Every declared function policy, in declaration order.
+    #[must_use]
+    pub fn functions(&self) -> &[FunctionGrant] {
+        &self.function
+    }
+
+    /// Every declared role, in declaration order.
+    #[must_use]
+    pub fn roles(&self) -> &[RoleGrant] {
+        &self.role
+    }
+
+    /// Whether the allowlist gives `role` exactly `privilege` on `relation`.
+    ///
+    /// Deny by default: a relation the role does not name at all holds no
+    /// privilege, which is what makes a new money table safe on the day it is
+    /// created rather than on the day somebody remembers to revoke it.
+    #[must_use]
+    pub fn declares(&self, role: &str, relation: &str, privilege: &str) -> bool {
+        self.role(role).is_some_and(|role| {
+            role.tables.iter().any(|entry| {
+                entry.split_once(':').is_some_and(|(named, privileges)| {
+                    named.eq_ignore_ascii_case(relation)
+                        && privileges
+                            .split(',')
+                            .any(|declared| declared.eq_ignore_ascii_case(privilege))
+                })
+            })
+        })
+    }
+
     /// Looks up a declared role.
     #[must_use]
     pub fn role(&self, name: &str) -> Option<&RoleGrant> {
@@ -568,5 +611,41 @@ mod tests {
     fn an_unsupported_document_version_is_refused() {
         let error = edited("schema_version = 2", "schema_version = 1");
         assert!(matches!(error, GrantError::Version(1)), "{error}");
+    }
+
+    #[test]
+    fn the_allowlist_denies_by_default() {
+        let grants = GrantSet::load(grants_path()).expect("the committed allowlist parses");
+        assert!(grants.declares("aex_finance_api", "finance.account_balance", "SELECT"));
+        assert!(
+            !grants.declares("aex_finance_api", "finance.journal_transaction", "UPDATE"),
+            "no role may mutate journal history"
+        );
+        assert!(
+            !grants.declares("aex_finance_api", "finance.provider_cost_fact", "SELECT"),
+            "a relation the role does not name carries no privilege at all"
+        );
+        assert!(
+            !grants.declares("aex_authz", "finance.account_balance", "SELECT"),
+            "the authorization reader holds no finance grant"
+        );
+    }
+
+    #[test]
+    fn the_cost_reconciler_can_never_write_a_customer_charge() {
+        let grants = GrantSet::load(grants_path()).expect("the committed allowlist parses");
+        for relation in [
+            "finance.journal_transaction",
+            "finance.journal_posting",
+            "finance.account_balance",
+            "finance.billing_account",
+        ] {
+            for privilege in ["INSERT", "UPDATE", "DELETE"] {
+                assert!(
+                    !grants.declares("aex_provider_cost", relation, privilege),
+                    "aex_provider_cost holds {privilege} on {relation}"
+                );
+            }
+        }
     }
 }
