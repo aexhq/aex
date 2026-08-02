@@ -1731,6 +1731,48 @@ const REGISTRY_LISTINGS: &[(RouteId, &str, RegistryKind)] = &[
     ),
 ];
 
+/// The five point reads whose published representation requires the value that
+/// the registry pointer does not carry.
+const REGISTRY_POINTS: &[(RouteId, &str)] = &[
+    (RouteId::RegistryFilesGet, "/api/workspace/files/notes.md"),
+    (
+        RouteId::RegistryInstructionsGet,
+        "/api/workspace/instructions/house-style",
+    ),
+    (
+        RouteId::RegistryMcpServersGet,
+        "/api/workspace/mcp-servers/docs",
+    ),
+    (RouteId::RegistrySkillsGet, "/api/workspace/skills/review"),
+    (RouteId::RegistryToolsGet, "/api/workspace/tools/search"),
+];
+
+/// A point read must not be mounted until it can publish the complete value.
+///
+/// The shared registry projection is intentionally a collection-row
+/// projection: it sets `value` to `None` because a pointer carries only the
+/// digest and size of a sealed body. Driving all five paths through the real
+/// router makes an accidental `SERVED` addition fail as a wire-visible response
+/// rather than only as a list mismatch.
+#[tokio::test]
+async fn every_registry_point_read_stays_absent_until_plaintext_hydration_exists() {
+    for (id, path) in REGISTRY_POINTS {
+        let (router, mounted) = router(FakeCustody::default());
+        assert!(
+            !mounted.contains(id),
+            "{id} has no complete point projection"
+        );
+
+        let (status, etag, body) = get(&router, path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        assert!(
+            etag.is_none(),
+            "{id} must not mint a tag over a partial row"
+        );
+        assert_eq!(body, serde_json::Value::Null, "{id}");
+    }
+}
+
 #[tokio::test]
 async fn every_registry_listing_reads_its_own_collection_and_publishes_its_rows() {
     for (id, path, _) in REGISTRY_LISTINGS {
