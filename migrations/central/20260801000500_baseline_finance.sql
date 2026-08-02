@@ -1,4 +1,4 @@
--- aex-migration: 20260801000500 baseline_finance | tx=yes | destructive=no | phase=baseline
+-- aex-migration: tx=yes destructive=no phase=baseline
 
 CREATE TYPE finance.currency AS ENUM ('USD');
 CREATE TYPE finance.account_side AS ENUM ('debit', 'credit');

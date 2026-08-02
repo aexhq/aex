@@ -1,4 +1,4 @@
--- aex-migration: 20260801000300 control_functions | tx=yes | destructive=no | phase=baseline
+-- aex-migration: tx=yes destructive=no phase=baseline
 -- 0004_control_functions.sql — the epoch write path and every control grant.
 --
 -- `control.authorization_epoch` receives no `UPDATE` or `DELETE` grant from any
