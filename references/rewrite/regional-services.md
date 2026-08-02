@@ -993,7 +993,7 @@ generated models rather than in the adapters.
 | the 1 `usage` | The public regional model now reports the quantities the fold actually produces. Monetary rating remains on central finance surfaces backed by private rate books; `publishedSequence` / `projectedSequence` match the domain frontier and `serviceThrough` is optional. The remaining blocker is a query planner that implements the full multi-category, time-range, grouping and continuation contract rather than exposing the store's one-row primitive. | usage application + regional services |
 | the 3 `approvals` | `cancelled` and `expired` are distinct reachable states and every approval carries a caller-supplied future deadline. `GET` and list are served through strongly consistent reads and a session-bound cursor. Only response remains blocked on the atomic write/revalidation adapter. | regional services write path |
 | the 3 `operations` | The domain and row codec now preserve phase, exact typed result payload, durable failure, lifecycle timestamps and `WorkspaceDelete`; public projection parses payload under the authoritative envelope kind. `ContentGc` is excluded from both point projection and the sparse public index. The remaining blocker is a `SessionQueries` point/list adapter with complete filter and pagination semantics; no operation route is mounted yet. | regional stores + regional services |
-| the 3 `workspace` | `AEX_REGIONAL_API_URL` is validated configuration. Profile and effective-limit records have separate, typed cold projection rows and a read-only port, keeping placement narrow. Routes remain absent because `central-control-worker` does not yet write those rows and the verified assertion still lacks the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). No reader invents defaults or pause facts. | central identity/control producer |
+| the 3 `workspace` | All three remain absent. The cold reader can decode effective-limit rows, but `ProjectionWriter` exposes only placement, profile and key-revocation writes; `central-control-worker::project_view` calls only profile and placement. Central control has no authoritative default, override or effective-limit authority to produce a `workspace_limit` row. Mounting the limit routes would therefore publish permanent `not_found`/empty answers as if they were authoritative. `WorkspaceCurrentGet` is separately blocked because the verified assertion and cold profile do not supply the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). | central identity/control authority + producer |
 | the 10 registry `*_get`/`*_put`, 6 `files`, 4 `uploads` | Unchanged: the content decrypt path, the session's persisted root, and presigning. | as recorded above |
 
 ### Where the missing `Workspace` fields belong
@@ -1025,6 +1025,51 @@ The recommended split, for `central-control-worker` to confirm:
   `changedAt`, revision, pause reason or optional restoration/deletion facts.
 - `status`, `region`, `id` and `organizationId` are already on the placement row.
 
+### Why the workspace-limit readers remain unmounted
+
+The regional half is mechanically ready but not end-to-end authoritative:
+`WorkspaceProjection::read_limit` and `page_limits` perform strongly consistent,
+tenant-checked reads, and the stored row carries every field in
+`EffectiveWorkspaceLimit`. The producing half does not exist. The concrete
+`ProjectionWriter` has `put_placement`, `put_profile` and `put_revocation` only;
+the worker's `project_view` invokes profile then placement, and no central
+control table or port owns default, override or effective-limit values.
+
+An absent effective row cannot mean "use the registry default": the registry
+describes identity and shape, not an authoritative value, source, revision or
+change instant. Serving the point route as `not_found` and the collection as an
+empty page would therefore convert an incomplete projection into a confident
+customer answer. RS-18 keeps both routes out of `SERVED` until central control
+defines the authority and publishes the rows. This is a missing producer, not a
+missing invocation of an existing one.
+
+### Why the usage store is not yet a complete public query planner
+
+`UsageQueryStore` is now a real, read-only adapter, but mounting `usage_query`
+directly over its `aggregates` method would still publish a narrower operation
+than the contract declares:
+
+- one adapter call reads exactly one generation, workspace, category, month and
+  granularity, while `UsageQuery` accepts up to four categories and an arbitrary
+  half-open time range that can cross month partitions;
+- only hourly and daily rollups are readable. An arbitrary timestamp boundary
+  can cut through either bucket, and the store exposes no detail read with which
+  to answer that boundary exactly;
+- stored rows retain `service`, resource kind, receipt source, basis, session,
+  run and operation. The public `groupBy` set names only category, region,
+  workspace, session, run and operation, while every published attribution still
+  requires one `source`. Collapsing rows therefore needs an explicit source
+  projection rule; selecting a convenient stored value would be a guess;
+- a continuation must bind the generation, normalized filters and grouping,
+  every category/month partition already exhausted, and the current keyset
+  position. The adapter exposes only the last sort key of one partition.
+
+Consequently there is no smaller exact planner to compose today. The route stays
+unmounted until the usage application owns those multi-partition, boundary,
+grouping and continuation semantics. This conclusion does not depend on money:
+the regional model correctly contains quantities only, and no rate or monetary
+default is introduced here.
+
 ### Decisions taken beyond the sections above
 
 | # | Decision | Rationale |
@@ -1038,3 +1083,5 @@ The recommended split, for `central-control-worker` to confirm:
 | RD-07 | Approval expiry is explicit input, not a hidden default | The policy owner supplies a future deadline. The domain refuses an absent window and turns a response racing the deadline into an `Expired` commit. |
 | RD-08 | Public operation payloads are decoded under the envelope kind | Stored content has no second discriminant. A mismatch is typed corruption, while internal `ContentGc` never enters the public index or point result. |
 | RD-09 | Workspace profile and limits use cold rows and a separate port | Placement stays the narrow per-request authorization item. Effective values are durable feed records, including their source; generated registry metadata is never treated as a value. |
+| RD-10 | The two effective-limit reads remain unmounted after auditing the producer | The reader is complete, but central control owns no authoritative limit values and writes no limit row. Returning permanent `not_found` or empty answers would conceal that missing authority rather than serve the contract. |
+| RD-11 | `usage_query` remains unmounted after auditing the landed read store | A single-partition aggregate primitive cannot exactly implement the published multi-category, arbitrary-range, grouping and continuation contract. The regional edge neither guesses a source/default nor widens the contract to fit the store. |
