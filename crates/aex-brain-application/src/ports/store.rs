@@ -21,6 +21,7 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
 use aex_wire::ids::{GenerationId, OrganizationId, WorkspaceId};
+use std::collections::BTreeMap;
 
 /// The session-head facts that own every Brain row written for one activation.
 ///
@@ -217,8 +218,9 @@ pub trait LeaseStore: Send + Sync + 'static {
 
     /// Gives up ownership.
     ///
-    /// [`ReleaseDisposition::Drain`] sets the expiry to zero so a surviving task claims
-    /// immediately instead of waiting out the whole TTL.
+    /// Every disposition ends this ownership scope and expires the lease immediately. The
+    /// exact fence and owner still guard the release, so a delayed predecessor cannot clear
+    /// a successor's claim.
     fn release(
         &self,
         claim: Claim,
@@ -256,9 +258,9 @@ pub enum ReleaseDisposition {
     Committed,
     /// The activation parked on a durable wait.
     Parked,
-    /// The process is draining. The lease expiry is set to zero.
-    Abandoned,
     /// The activation gave up without committing.
+    Abandoned,
+    /// The process is draining.
     Drain,
 }
 
@@ -328,6 +330,54 @@ pub struct DurableWake {
     pub tenant: String,
 }
 
+/// An opaque continuation returned by one due-index adapter.
+///
+/// The application never interprets the parts. It retains at most one cursor per shard and
+/// returns it to the same port on the next bounded query. A map is used instead of a vendor
+/// attribute type so the port stays SDK-independent while preserving the complete native
+/// continuation tuple.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueScanCursor {
+    parts: BTreeMap<String, String>,
+}
+
+impl DueScanCursor {
+    /// Builds a cursor from adapter-owned string parts.
+    #[must_use]
+    pub fn new<I, K, V>(parts: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        Self {
+            parts: parts
+                .into_iter()
+                .map(|(name, value)| (name.into(), value.into()))
+                .collect(),
+        }
+    }
+
+    /// Returns the adapter-owned parts unchanged.
+    #[must_use]
+    pub fn parts(&self) -> &BTreeMap<String, String> {
+        &self.parts
+    }
+}
+
+/// One bounded page from a due shard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueScanPage {
+    /// Valid pending agent wakes decoded from this page.
+    pub wakes: Vec<DurableWake>,
+    /// Native continuation when more rows remain in this shard pass. `None` wraps the next
+    /// pass to the shard head.
+    pub next: Option<DueScanCursor>,
+    /// Rows isolated because they were malformed. They do not discard valid siblings and
+    /// the continuation advances past them.
+    pub malformed: usize,
+}
+
 /// Wake **delivery**. Creation lives in [`DecisionCommit`] and nowhere else.
 pub trait WakeQueue: Send + Sync + 'static {
     /// Receives up to `max` deliveries, long-polling for `wait`.
@@ -372,7 +422,8 @@ pub trait WakeQueue: Send + Sync + 'static {
         shard: WorkShard,
         now: Timestamp,
         max: usize,
-    ) -> BoxFuture<'_, Result<Vec<DurableWake>, StoreError>>;
+        after: Option<DueScanCursor>,
+    ) -> BoxFuture<'_, Result<DueScanPage, StoreError>>;
 }
 
 /// Why a conditional write was refused.

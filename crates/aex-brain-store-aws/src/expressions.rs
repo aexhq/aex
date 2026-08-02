@@ -153,13 +153,13 @@ pub fn claim_conditions(
     conditions
 }
 
-/// The condition `mark_dispatch_started` is admitted under.
+/// The effect-row condition `mark_dispatch_started` is admitted under.
 ///
-/// Both halves matter: the effect must still be `Prepared`, so one pre-send write
-/// authorizes one attempt, and the agent's fence must still be ours, so a fenced-out owner
-/// cannot mint a ticket for work it is no longer allowed to do.
+/// The prepare-time effect fence is not a condition: a successor must take over a prepared
+/// identity after advancing agent control. Current ownership is checked on the control item
+/// by [`dispatch_control_conditions`] in the same transaction.
 #[must_use]
-pub fn dispatch_started_conditions(effect: EffectId, fence: u64) -> Vec<Condition> {
+pub fn dispatch_started_conditions(effect: EffectId) -> Vec<Condition> {
     vec![
         Condition::Equals {
             attribute: "state",
@@ -169,9 +169,20 @@ pub fn dispatch_started_conditions(effect: EffectId, fence: u64) -> Vec<Conditio
             attribute: "effect_id",
             value: effect.to_hex(),
         },
+    ]
+}
+
+/// The current-control half of `mark_dispatch_started`'s transaction.
+#[must_use]
+pub fn dispatch_control_conditions(fence: u64, owner: &str) -> Vec<Condition> {
+    vec![
         Condition::Equals {
-            attribute: "agent_fence",
+            attribute: "fence",
             value: fence.to_string(),
+        },
+        Condition::Equals {
+            attribute: "claimOwner",
+            value: owner.to_owned(),
         },
     ]
 }
@@ -267,7 +278,8 @@ pub struct WakeItem {
 mod tests {
     use super::{
         Condition, activation_preconditions, claim_child_conditions, claim_conditions,
-        dispatch_started_conditions, response_started_conditions, stop_conditions,
+        dispatch_control_conditions, dispatch_started_conditions, response_started_conditions,
+        stop_conditions,
     };
     use aex_brain_domain::commit::FenceGuardRef;
     use aex_brain_domain::ids::{
@@ -372,15 +384,18 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_started_requires_both_the_effect_state_and_the_agent_fence() {
-        let conditions = dispatch_started_conditions(EffectId([7; 16]), 4);
-        assert_eq!(
-            names(&conditions),
-            vec!["state", "effect_id", "agent_fence"]
-        );
+    fn dispatch_started_checks_current_control_and_allows_prepared_takeover() {
+        let conditions = dispatch_started_conditions(EffectId([7; 16]));
+        assert_eq!(names(&conditions), vec!["state", "effect_id"]);
         assert!(conditions.contains(&Condition::Equals {
             attribute: "state",
             value: "prepared".to_owned()
+        }));
+        let control = dispatch_control_conditions(4, "owner-4");
+        assert_eq!(names(&control), vec!["fence", "claimOwner"]);
+        assert!(control.contains(&Condition::Equals {
+            attribute: "claimOwner",
+            value: "owner-4".to_owned()
         }));
     }
 

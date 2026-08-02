@@ -9,7 +9,8 @@
 //! redelivers rather than loses.
 
 use aex_brain_application::ports::{
-    BoxFuture, DurableWake, StoreError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    BoxFuture, DueScanCursor, DueScanPage, DurableWake, StoreError, WakeDelivery, WakeOrigin,
+    WakeQueue, WakeState,
 };
 use aex_brain_domain::ids::{AgentId, AgentKey, SessionId, Timestamp, WakeId, WorkShard};
 use aex_brain_domain::journal::ParkReason;
@@ -212,7 +213,8 @@ impl WakeQueue for SqsWakeQueue {
         shard: WorkShard,
         now: Timestamp,
         max: usize,
-    ) -> BoxFuture<'_, Result<Vec<DurableWake>, StoreError>> {
+        after: Option<DueScanCursor>,
+    ) -> BoxFuture<'_, Result<DueScanPage, StoreError>> {
         Box::pin(async move {
             let due_before =
                 aex_wire::types::Timestamp::from_unix_millis(now.millis()).map_err(|_| {
@@ -221,6 +223,7 @@ impl WakeQueue for SqsWakeQueue {
                         reason: "the scan instant is outside the wire range".to_owned(),
                     }
                 })?;
+            let exclusive_start_key = after.as_ref().map(cursor_key).transpose()?;
             let output = self
                 .due
                 .client
@@ -236,22 +239,26 @@ impl WakeQueue for SqsWakeQueue {
                 )
                 .expression_attribute_values(
                     ":due",
-                    aex_session_dynamodb::attr::s(format!("{}#", due_before.to_wire())),
+                    aex_session_dynamodb::attr::s(format!("{}#\u{10ffff}", due_before.to_wire())),
                 )
                 .limit(i32::try_from(max).unwrap_or(50))
+                .set_exclusive_start_key(exclusive_start_key)
                 .send()
                 .await
                 .map_err(|error| StoreError::Transport {
                     reason: format!("due_scan: {error}"),
                     retryable: true,
                 })?;
-            let mut wakes = Vec::new();
-            for item in output.items() {
-                if let Some(wake) = decode_due_entry(item)? {
-                    wakes.push(wake);
-                }
-            }
-            Ok(wakes)
+            let next = output
+                .last_evaluated_key()
+                .map(cursor_from_key)
+                .transpose()?;
+            let decoded = decode_due_entries(output.items());
+            Ok(DueScanPage {
+                wakes: decoded.wakes,
+                next,
+                malformed: decoded.malformed,
+            })
         })
     }
 }
@@ -431,6 +438,61 @@ fn due_priority(item: &aex_session_dynamodb::attr::Item) -> Result<u8, StoreErro
         })
 }
 
+const DUE_CURSOR_PARTS: [&str; 4] = [
+    aex_session_dynamodb::attr::PK,
+    aex_session_dynamodb::attr::SK,
+    aex_work_dynamodb::keys::DUE_PK,
+    aex_work_dynamodb::keys::DUE_SK,
+];
+
+fn cursor_key(cursor: &DueScanCursor) -> Result<aex_session_dynamodb::attr::Item, StoreError> {
+    DUE_CURSOR_PARTS
+        .into_iter()
+        .map(|name| {
+            cursor
+                .parts()
+                .get(name)
+                .cloned()
+                .map(|value| (name.to_owned(), aex_session_dynamodb::attr::s(value)))
+                .ok_or_else(|| {
+                    undecodable(
+                        "regional-work/gsi_due cursor",
+                        format!("`{name}` is absent"),
+                    )
+                })
+        })
+        .collect()
+}
+
+fn cursor_from_key(key: &aex_session_dynamodb::attr::Item) -> Result<DueScanCursor, StoreError> {
+    let parts = DUE_CURSOR_PARTS
+        .into_iter()
+        .map(|name| due_string(key, name).map(|value| (name, value.to_owned())))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(DueScanCursor::new(parts))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DecodedDueEntries {
+    wakes: Vec<DurableWake>,
+    malformed: usize,
+}
+
+fn decode_due_entries<'a>(
+    items: impl IntoIterator<Item = &'a aex_session_dynamodb::attr::Item>,
+) -> DecodedDueEntries {
+    let mut wakes = Vec::new();
+    let mut malformed = 0;
+    for item in items {
+        match decode_due_entry(item) {
+            Ok(Some(wake)) => wakes.push(wake),
+            Ok(None) => {}
+            Err(_) => malformed += 1,
+        }
+    }
+    DecodedDueEntries { wakes, malformed }
+}
+
 fn decode_due_entry(
     item: &aex_session_dynamodb::attr::Item,
 ) -> Result<Option<DurableWake>, StoreError> {
@@ -473,7 +535,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_body, decode_due_entry, decode_message};
+    use super::{
+        cursor_from_key, cursor_key, decode_body, decode_due_entries, decode_due_entry,
+        decode_message,
+    };
     use aex_session_dynamodb::attr::{Item, n, s, stamp};
     use aex_wire::ids::{PrefixedId, Uuid7};
 
@@ -603,6 +668,40 @@ mod tests {
         let (mut item, _, _) = due_entry();
         item.remove("agentId");
         assert!(decode_due_entry(&item).is_err());
+    }
+
+    #[test]
+    fn one_malformed_due_row_does_not_discard_its_valid_siblings() {
+        let (first, _, _) = due_entry();
+        let mut malformed = first.clone();
+        malformed.remove("agentId");
+        let mut last = first.clone();
+        last.insert("workId".to_owned(), s("wrk_after_bad"));
+
+        let decoded = decode_due_entries([&first, &malformed, &last]);
+        assert_eq!(decoded.malformed, 1);
+        assert_eq!(decoded.wakes.len(), 2);
+        assert_eq!(decoded.wakes[1].work_id, "wrk_after_bad");
+    }
+
+    #[test]
+    fn a_native_due_cursor_round_trips_every_base_and_index_key_part() {
+        let key = [
+            ("pk".to_owned(), s("WORK#wrk_10")),
+            ("sk".to_owned(), s("STATE")),
+            ("dueShardPk".to_owned(), s("DUE#0007")),
+            (
+                "dueShardSk".to_owned(),
+                s("2026-01-01T00:00:00.000Z#wrk_10"),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let cursor = cursor_from_key(&key).expect("the native key becomes an opaque cursor");
+        assert_eq!(
+            cursor_key(&cursor).expect("the opaque cursor becomes an exclusive start key"),
+            key
+        );
     }
 
     #[test]

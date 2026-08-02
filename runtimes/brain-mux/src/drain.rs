@@ -117,9 +117,9 @@ pub fn disposition(
 
 /// The disposition every released lease carries during drain.
 ///
-/// [`ReleaseDisposition::Drain`] sets the durable expiry to zero, so a surviving task claims
-/// immediately rather than waiting out the whole 15-second TTL. Over a fleet-wide roll that
-/// difference is the whole recovery time.
+/// [`ReleaseDisposition::Drain`] removes the durable owner and expiry under their exact
+/// fence, so a surviving task claims immediately rather than waiting out the whole
+/// 15-second TTL. Over a fleet-wide roll that difference is the whole recovery time.
 #[must_use]
 pub const fn release_disposition() -> ReleaseDisposition {
     ReleaseDisposition::Drain

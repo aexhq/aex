@@ -19,16 +19,17 @@ use super::{
 };
 use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
-    ClockPort as _, CommitError, ConditionFailure, ProviderDispatchError, ProviderFailureClass,
-    ProviderOutcome, RedactedDetail, StoreError, WakeQueue as _,
+    CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure, EffectStore as _,
+    FenceGuard, LeaseStore as _, ProviderDispatchError, ProviderFailureClass, ProviderOutcome,
+    RedactedDetail, ReleaseDisposition, StoreError, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{
     DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind, EffectState,
 };
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
-    WorkShard,
+    AgentId, AgentKey, CatalogPin, ContentHash, EffectId, JournalSeq, ModelSlug, OwnerToken,
+    SessionId, Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{
     FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
@@ -767,6 +768,203 @@ fn a_lost_stream_hint_is_recovered_by_the_due_scan() {
         "a due-scan delivery has no queue receipt to acknowledge"
     );
     assert_eq!(harness.queue.durable_depth(), 0);
+}
+
+/// One malformed oldest row and nine permanently held rows fill the first page. The cursor
+/// must still advance so the younger eleventh row runs, then wrap only after the shard end.
+#[test]
+fn bad_and_held_oldest_rows_cannot_starve_younger_due_work() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.policy.due_shards = 1;
+    harness.policy.receive_batch = 10;
+
+    let held = block_on(harness.store.claim(
+        &key(),
+        OwnerToken(Uuid::from_u128(0x1111)),
+        harness.policy.lease_ttl,
+        harness.clock.now(),
+    ))
+    .expect("the oldest agent is held for the whole test");
+    assert_eq!(held.fence.0, 1);
+
+    harness
+        .queue
+        .persist_malformed_due(WakeId(Uuid::from_u128(1)), WorkShard(0));
+    for ordinal in 2_u128..=10 {
+        let mut wake = wake_for(key(), &format!("wrk-held-{ordinal:02}"));
+        wake.id = WakeId(Uuid::from_u128(ordinal));
+        wake.due = Some(harness.clock.now());
+        harness.queue.persist(wake, WorkShard(0));
+    }
+
+    let younger = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_2001)));
+    harness.store.seed(younger, history());
+    let mut younger_wake = wake_for(younger, "wrk-younger");
+    younger_wake.id = WakeId(Uuid::from_u128(11));
+    younger_wake.due = Some(harness.clock.now());
+    harness.queue.persist(younger_wake, WorkShard(0));
+
+    let pump = WakeLoop::new(harness.activation(), Arc::new(AlwaysAdmit));
+    let first = block_on(pump.poll_once()).expect("the malformed row is isolated");
+    assert_eq!(first.malformed, 1);
+    assert_eq!(first.recovered, 9);
+    assert_eq!(first.released, 9, "all nine valid old rows remain held");
+    assert!(harness.provider.dispatched().is_empty());
+
+    let second = block_on(pump.poll_once()).expect("the scan resumes after page one");
+    assert_eq!(second.recovered, 1);
+    assert_eq!(second.driven, 1);
+    assert_eq!(harness.provider.dispatched().len(), 1);
+
+    let wrapped = block_on(pump.poll_once()).expect("the completed pass wraps");
+    assert_eq!(wrapped.malformed, 1);
+    assert_eq!(wrapped.recovered, 9);
+}
+
+/// `Committed`, `Parked` and `Abandoned` all end this ownership scope. A successor must be
+/// able to claim at the same wall-clock instant, and a delayed release from the predecessor
+/// must not clear that successor's exact fence/owner.
+#[test]
+fn every_completed_release_is_immediately_claimable_and_stale_release_is_harmless() {
+    for disposition in [
+        ReleaseDisposition::Committed,
+        ReleaseDisposition::Parked,
+        ReleaseDisposition::Abandoned,
+    ] {
+        let harness = Harness::new(Vec::new());
+        let first_owner = OwnerToken(Uuid::from_u128(0x21));
+        let first = block_on(harness.store.claim(
+            &key(),
+            first_owner,
+            harness.policy.lease_ttl,
+            harness.clock.now(),
+        ))
+        .expect("the predecessor claims");
+        block_on(harness.store.release(first.clone(), disposition))
+            .expect("the predecessor releases");
+
+        let successor_owner = OwnerToken(Uuid::from_u128(0x22));
+        let successor = block_on(harness.store.claim(
+            &key(),
+            successor_owner,
+            harness.policy.lease_ttl,
+            harness.clock.now(),
+        ))
+        .unwrap_or_else(|error| panic!("{disposition:?} was not immediately claimable: {error}"));
+        assert!(successor.fence.0 > first.fence.0);
+
+        block_on(harness.store.release(first, disposition))
+            .expect("the delayed stale release is an idempotent no-op");
+        let third = block_on(harness.store.claim(
+            &key(),
+            OwnerToken(Uuid::from_u128(0x23)),
+            harness.policy.lease_ttl,
+            harness.clock.now(),
+        ));
+        assert!(
+            matches!(third, Err(ClaimError::HeldByOther { .. })),
+            "a stale release cleared the successor under {disposition:?}: {third:?}"
+        );
+    }
+}
+
+/// A successor owns the current control row even though the prepared effect was written by
+/// its predecessor. The stale and forged-owner guards fail; the live guard takes over the
+/// same effect identity and mints the only dispatch ticket.
+#[test]
+fn prepared_effect_takeover_requires_the_current_fence_and_owner() {
+    let harness = Harness::new(Vec::new());
+    let effect = EffectId([0x33; 16]);
+    harness.store.seed_effect(
+        key(),
+        DurableEffect {
+            id: effect,
+            kind: EffectKind::ModelCall,
+            generation: None,
+            class: EffectClass::NonReplayable,
+            request_hash: ContentHash::of(b"prepared by predecessor"),
+            state: EffectState::Prepared { attempt: 1 },
+            deadline: Timestamp::from_millis(START + 60_000),
+            evidence: None,
+        },
+    );
+
+    let predecessor = block_on(harness.store.claim(
+        &key(),
+        OwnerToken(Uuid::from_u128(0x31)),
+        harness.policy.lease_ttl,
+        harness.clock.now(),
+    ))
+    .expect("the predecessor claims");
+    let stale = FenceGuard::new(
+        key(),
+        predecessor.owner,
+        predecessor.fence,
+        predecessor.head.revision,
+        predecessor.head.journal_tail,
+        predecessor.head.cancel_epoch,
+        CancelToken::new(),
+    );
+    block_on(
+        harness
+            .store
+            .release(predecessor, ReleaseDisposition::Abandoned),
+    )
+    .expect("the predecessor dies before dispatch");
+
+    let successor = block_on(harness.store.claim(
+        &key(),
+        OwnerToken(Uuid::from_u128(0x32)),
+        harness.policy.lease_ttl,
+        harness.clock.now(),
+    ))
+    .expect("the successor takes ownership");
+    let live = FenceGuard::new(
+        key(),
+        successor.owner,
+        successor.fence,
+        successor.head.revision,
+        successor.head.journal_tail,
+        successor.head.cancel_epoch,
+        CancelToken::new(),
+    );
+    let forged_owner = FenceGuard::new(
+        key(),
+        OwnerToken(Uuid::from_u128(0x31)),
+        successor.fence,
+        successor.head.revision,
+        successor.head.journal_tail,
+        successor.head.cancel_epoch,
+        CancelToken::new(),
+    );
+
+    for losing in [&stale, &forged_owner] {
+        let error = block_on(harness.store.mark_dispatch_started(
+            losing,
+            &effect,
+            2,
+            harness.clock.now(),
+        ))
+        .expect_err("only current control ownership may mint a ticket");
+        assert!(
+            matches!(error, CommitError::Condition(ConditionFailure::StaleFence)),
+            "{error:?}"
+        );
+    }
+
+    let ticket = block_on(harness.store.mark_dispatch_started(
+        &live,
+        &effect,
+        2,
+        harness.clock.now(),
+    ))
+    .expect("the live successor takes over the prepared identity");
+    assert_eq!(ticket.effect(), effect);
+    assert_eq!(ticket.fence(), successor.fence);
+    assert!(matches!(
+        harness.store.effects(key())[0].state,
+        EffectState::DispatchStarted { attempt: 2 }
+    ));
 }
 
 /// Removing both sparse-index keys in the fenced retirement is what prevents a completed

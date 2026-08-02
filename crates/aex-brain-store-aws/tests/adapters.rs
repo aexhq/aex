@@ -7,8 +7,8 @@
 //! to observe.
 
 use aex_brain_application::ports::{
-    AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, DurableWake,
-    EffectStore, FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition,
+    AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, DueScanCursor,
+    DurableWake, EffectStore, FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition,
     SessionAuthority, StoreError, WakeQueue,
 };
 use aex_brain_domain::ids::{
@@ -204,32 +204,44 @@ async fn a_renewal_extends_the_lease_without_touching_the_fence() {
     assert!(condition.contains("claimOwner = :owner"), "{condition}");
 }
 
-/// Drain sets the expiry to zero so a surviving task claims immediately rather than waiting
-/// out the whole TTL. Every other disposition leaves the expiry where it was.
+/// Every completed ownership scope gives the lease back immediately. Removing the owner
+/// while retaining a future expiry creates an ownerless interval in which nobody can claim.
 #[tokio::test]
-async fn a_drained_release_expires_the_lease_immediately() {
-    let (store, receiver) = capturing();
-    let _ = store.release(claim(), ReleaseDisposition::Drain).await;
-    let drained = captured(receiver);
-    assert_eq!(
-        drained["ExpressionAttributeValues"][":expiry"]["S"],
-        "1970-01-01T00:00:00.000Z"
-    );
-
-    let (store, receiver) = capturing();
-    let _ = store.release(claim(), ReleaseDisposition::Parked).await;
-    let parked = captured(receiver);
-    assert_ne!(
-        parked["ExpressionAttributeValues"][":expiry"]["S"],
-        "1970-01-01T00:00:00.000Z"
-    );
+async fn every_release_disposition_expires_the_exact_owned_lease_immediately() {
+    for disposition in [
+        ReleaseDisposition::Committed,
+        ReleaseDisposition::Parked,
+        ReleaseDisposition::Drain,
+        ReleaseDisposition::Abandoned,
+    ] {
+        let (store, receiver) = capturing();
+        let _ = store.release(claim(), disposition).await;
+        let released = captured(receiver);
+        let update = released["UpdateExpression"]
+            .as_str()
+            .expect("a release update");
+        assert!(
+            update.contains("REMOVE claimOwner, leaseExpiresAt"),
+            "{update}"
+        );
+        assert!(
+            released["ExpressionAttributeValues"][":expiry"].is_null(),
+            "{disposition:?} retained an expiry value"
+        );
+        let condition = released["ConditionExpression"]
+            .as_str()
+            .expect("a conditional release");
+        assert!(condition.contains("fence = :fence"), "{condition}");
+        assert!(condition.contains("claimOwner = :owner"), "{condition}");
+    }
 }
 
-/// The durable pre-send write conditions on the effect state **and** the agent fence. A
-/// fenced-out owner that could still mint a ticket would send a second generation of a
-/// request the new owner is already responsible for.
+/// The durable pre-send transition is a two-item transaction: current agent ownership is
+/// checked independently of the fence stamped when the effect was prepared, and the effect
+/// is then taken over under the current fence. This rejects the stale owner while allowing a
+/// successor to dispatch the same prepared identity.
 #[tokio::test]
-async fn the_pre_send_write_conditions_on_both_the_effect_state_and_the_fence() {
+async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the_effect() {
     let (store, receiver) = capturing();
     let guard = FenceGuard::new(
         key(),
@@ -249,10 +261,73 @@ async fn the_pre_send_write_conditions_on_both_the_effect_state_and_the_fence() 
         )
         .await;
     let body = captured(receiver);
-    let condition = body["ConditionExpression"].as_str().expect("conditional");
-    assert!(condition.contains("#state = :prepared"), "{condition}");
-    assert!(condition.contains("agentFence = :fence"), "{condition}");
-    assert_eq!(body["ExpressionAttributeValues"][":fence"]["N"], "7");
+    let actions = body["TransactItems"]
+        .as_array()
+        .expect("a transaction action list");
+    assert_eq!(actions.len(), 2, "{body}");
+
+    let control = &actions[0]["ConditionCheck"];
+    let control_condition = control["ConditionExpression"]
+        .as_str()
+        .expect("a control condition");
+    assert!(
+        control_condition.contains("fence = :fence"),
+        "{control_condition}"
+    );
+    assert!(
+        control_condition.contains("claimOwner = :owner"),
+        "{control_condition}"
+    );
+    assert_eq!(control["ExpressionAttributeValues"][":fence"]["N"], "7");
+    assert_eq!(
+        control["ExpressionAttributeValues"][":owner"]["S"],
+        v7(1_767_225_600_004, 5).as_hyphenated().to_string()
+    );
+
+    let effect = &actions[1]["Update"];
+    let effect_condition = effect["ConditionExpression"]
+        .as_str()
+        .expect("an effect condition");
+    assert!(
+        effect_condition.contains("#state = :prepared"),
+        "{effect_condition}"
+    );
+    assert!(
+        !effect_condition.contains("agentFence"),
+        "the predecessor's prepare fence must not prevent takeover: {effect_condition}"
+    );
+    let update = effect["UpdateExpression"].as_str().expect("an update");
+    assert!(update.contains("agentFence = :fence"), "{update}");
+}
+
+/// A cursor returned by `DynamoDB` must be sent back verbatim as the next query's native
+/// `ExclusiveStartKey`; restarting at the shard head lets a full page of held rows starve
+/// every younger row forever.
+#[tokio::test]
+async fn a_due_scan_resumes_from_the_native_per_shard_continuation() {
+    let (queue, receiver) = capturing_wake_queue();
+    let cursor = DueScanCursor::new([
+        ("pk", "WORK#wrk_10"),
+        ("sk", "STATE"),
+        ("dueShardPk", "DUE#0007"),
+        ("dueShardSk", "2026-01-01T00:00:00.000Z#wrk_10"),
+    ]);
+    let _ = queue
+        .due_scan(
+            aex_brain_domain::ids::WorkShard(7),
+            Timestamp::from_millis(1_767_225_600_000),
+            10,
+            Some(cursor),
+        )
+        .await;
+    let body = captured(receiver);
+    assert_eq!(body["ExclusiveStartKey"]["pk"]["S"], "WORK#wrk_10");
+    assert_eq!(body["ExclusiveStartKey"]["sk"]["S"], "STATE");
+    assert_eq!(body["ExclusiveStartKey"]["dueShardPk"]["S"], "DUE#0007");
+    assert_eq!(
+        body["ExclusiveStartKey"]["dueShardSk"]["S"],
+        "2026-01-01T00:00:00.000Z#wrk_10"
+    );
 }
 
 /// Every attribute the decoder reads back is written. The operation id in particular is the

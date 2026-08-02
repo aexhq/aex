@@ -205,33 +205,68 @@ impl EffectStore for BrainStore {
     ) -> BoxFuture<'a, Result<DispatchTicket, CommitError>> {
         Box::pin(async move {
             let key = guard.key();
+            let control_key =
+                keys::control(&key).map_err(|error| CommitError::Store(store_key_error(&error)))?;
             let effect_key = keys::effect(&key, *id)
                 .map_err(|error| CommitError::Store(store_key_error(&error)))?;
             let now = translate::at(at, "at")
                 .map_err(|error| CommitError::Store(translate_error(&error)))?;
-            self.client
-                .update_item()
-                .table_name(self.table())
-                .set_key(Some(item_key(&effect_key.pk, &effect_key.sk)))
-                // Both halves matter. The effect must still be `prepared`, so one durable
-                // pre-send write authorizes exactly one attempt; and the agent fence must
-                // still be ours, so a fenced-out owner cannot mint permission to dispatch.
-                .condition_expression(
-                    "#state = :prepared AND effectId = :id AND agentFence = :fence",
-                )
-                .update_expression(
-                    "SET #state = :next, attempt = :attempt, dispatchStartedAt = :now",
-                )
-                .expression_attribute_names("#state", "state")
-                .expression_attribute_values(":prepared", s("prepared"))
-                .expression_attribute_values(":id", s(id.to_hex()))
-                .expression_attribute_values(":fence", n(guard.fence().0))
-                .expression_attribute_values(":next", s("dispatched"))
-                .expression_attribute_values(":attempt", n(u64::from(attempt)))
-                .expression_attribute_values(":now", stamp(now))
+            let material = format!(
+                "{}:{}:{}:{}",
+                key.agent.0.as_hyphenated(),
+                id.to_hex(),
+                guard.fence().0,
+                attempt
+            );
+            let digest = blake3::hash(material.as_bytes()).to_hex().to_string();
+            let mut plan = aex_session_dynamodb::plan::TransactionPlan::new(format!(
+                "brain-dispatch-{}",
+                &digest[..21]
+            ));
+            // The control check and effect takeover are one transaction. The effect's
+            // prepare-time `agentFence` is deliberately not a condition: after a crash it
+            // belongs to the predecessor, while current control ownership belongs to the
+            // successor that is now responsible for this same prepared identity.
+            plan.condition_check(
+                aex_session_dynamodb::plan::Participant::AGENT_CONTROL,
+                aws_sdk_dynamodb::types::ConditionCheck::builder()
+                    .table_name(self.table())
+                    .set_key(Some(item_key(&control_key.pk, &control_key.sk)))
+                    .condition_expression("fence = :fence AND claimOwner = :owner")
+                    .expression_attribute_values(":fence", n(guard.fence().0))
+                    .expression_attribute_values(
+                        ":owner",
+                        s(guard.as_ref().owner.0.as_hyphenated().to_string()),
+                    ),
+            )
+            .map_err(|error| commit_store_error(&error))?;
+            plan.update(
+                aex_session_dynamodb::plan::Participant::AGENT_EFFECT,
+                aws_sdk_dynamodb::types::Update::builder()
+                    .table_name(self.table())
+                    .set_key(Some(item_key(&effect_key.pk, &effect_key.sk)))
+                    .condition_expression("#state = :prepared AND effectId = :id")
+                    .update_expression(
+                        "SET #state = :next, attempt = :attempt, dispatchStartedAt = :now, \
+                         agentFence = :fence",
+                    )
+                    .expression_attribute_names("#state", "state")
+                    .expression_attribute_values(":prepared", s("prepared"))
+                    .expression_attribute_values(":id", s(id.to_hex()))
+                    .expression_attribute_values(":fence", n(guard.fence().0))
+                    .expression_attribute_values(":next", s("dispatched"))
+                    .expression_attribute_values(":attempt", n(u64::from(attempt)))
+                    .expression_attribute_values(":now", stamp(now)),
+            )
+            .map_err(|error| commit_store_error(&error))?;
+            let participants = plan.participants().to_vec();
+            let request = plan
+                .compile(&self.client)
+                .map_err(|error| commit_store_error(&error))?;
+            request
                 .send()
                 .await
-                .map_err(|error| effect_condition(*id, "mark_dispatch_started", &error))?;
+                .map_err(|error| dispatch_transaction_error(*id, &participants, &error))?;
             Ok(DispatchTicket::mint(guard, *id, attempt, at))
         })
     }
@@ -432,6 +467,36 @@ fn effect_condition<R>(
         return CommitError::Condition(ConditionFailure::EffectStateMismatch { effect: id });
     }
     CommitError::Store(transport(operation, error))
+}
+
+fn dispatch_transaction_error<R>(
+    id: EffectId,
+    participants: &[aex_session_dynamodb::plan::Participant],
+    error: &aws_sdk_dynamodb::error::SdkError<
+        aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError,
+        R,
+    >,
+) -> CommitError {
+    let mapped = match error.as_service_error() {
+        Some(service) => aex_session_dynamodb::error::decode_cancellation(service, participants),
+        None => aex_session_dynamodb::error::classify(
+            error,
+            aex_session_dynamodb::error::Idempotence::Write(
+                aex_session_dynamodb::error::Resolution::TargetItem,
+            ),
+        ),
+    };
+    match mapped {
+        aex_session_dynamodb::error::StoreError::PreconditionFailed {
+            participant: aex_session_dynamodb::plan::Participant::AGENT_CONTROL,
+            ..
+        } => CommitError::Condition(ConditionFailure::StaleFence),
+        aex_session_dynamodb::error::StoreError::PreconditionFailed {
+            participant: aex_session_dynamodb::plan::Participant::AGENT_EFFECT,
+            ..
+        } => CommitError::Condition(ConditionFailure::EffectStateMismatch { effect: id }),
+        other => commit_store_error(&other),
+    }
 }
 
 fn commit_plan_error(error: crate::plan::PlanError) -> CommitError {

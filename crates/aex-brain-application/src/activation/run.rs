@@ -24,8 +24,8 @@ use super::{
 use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
     ClaimError, CommitError, ConditionFailure, ControlStateView, DecisionContext, DetachedStatus,
-    FenceGuard, NullPreviewSink, PreparedToolCall, ReleaseDisposition, SessionAuthority,
-    StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
+    DueScanCursor, FenceGuard, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
+    SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -46,7 +46,7 @@ use aex_brain_domain::planner::{OwedStep, PlanPolicy, model_effect_id, plan};
 use aex_brain_domain::wire_pending::{
     CanonicalBlock, CanonicalModelRequest, DurableOperationSupport, ResolvedAgentConfig,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -286,6 +286,7 @@ pub struct WakeLoop {
     admission: Arc<dyn AdmissionControl>,
     inflight: Arc<Mutex<BTreeSet<String>>>,
     due_shard: Arc<AtomicU16>,
+    due_cursors: Arc<Mutex<BTreeMap<u16, DueScanCursor>>>,
 }
 
 /// What one pass over the queue did.
@@ -301,6 +302,8 @@ pub struct PollReport {
     pub refused: usize,
     /// How many of the deliveries came from the durable due backstop.
     pub recovered: usize,
+    /// How many malformed due rows were isolated while valid siblings continued.
+    pub malformed: usize,
 }
 
 impl WakeLoop {
@@ -312,6 +315,7 @@ impl WakeLoop {
             admission,
             inflight: Arc::new(Mutex::new(BTreeSet::new())),
             due_shard: Arc::new(AtomicU16::new(0)),
+            due_cursors: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -339,7 +343,13 @@ impl WakeLoop {
         let policy = self.activation.policy();
         let shard_count = policy.due_shards.max(1);
         let shard = self.due_shard.fetch_add(1, Ordering::Relaxed) % shard_count;
-        let recovered = self
+        let after = self
+            .due_cursors
+            .lock()
+            .expect("not poisoned")
+            .get(&shard)
+            .cloned();
+        let page = self
             .activation
             .ports()
             .wakes
@@ -347,9 +357,23 @@ impl WakeLoop {
                 aex_brain_domain::ids::WorkShard(shard),
                 self.activation.ports().clock.now(),
                 policy.receive_batch,
+                after,
             )
             .await?;
+        {
+            let mut cursors = self.due_cursors.lock().expect("not poisoned");
+            match page.next.clone() {
+                Some(next) => {
+                    cursors.insert(shard, next);
+                }
+                None => {
+                    cursors.remove(&shard);
+                }
+            }
+        }
+        let recovered = page.wakes;
         report.recovered = recovered.len();
+        report.malformed = page.malformed;
         let remaining = policy.receive_batch.saturating_sub(recovered.len());
         let wait = if recovered.is_empty() {
             policy.long_poll

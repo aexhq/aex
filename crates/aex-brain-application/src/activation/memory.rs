@@ -17,12 +17,13 @@ use super::{AdmissionControl, AdmissionDecision};
 use crate::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
-    DispatchTicket, DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
-    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalPage, JournalStore,
-    LeaseStore, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
-    ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
-    SteadyInstant, StoreError, StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
-    ToolRoutingError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    DispatchTicket, DueScanCursor, DueScanPage, DurableWake, EffectStore, FenceGuard,
+    HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort,
+    IdPort, JournalPage, JournalStore, LeaseStore, PreparedToolCall, PreviewSink,
+    ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
+    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError, StreamBudget,
+    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeDelivery,
+    WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -927,7 +928,7 @@ impl EffectStore for MemoryStore {
             let row = agents
                 .get_mut(&guard.key())
                 .ok_or(CommitError::Condition(ConditionFailure::StaleFence))?;
-            if row.fence != guard.fence() {
+            if row.fence != guard.fence() || row.lease_owner != Some(guard.as_ref().owner) {
                 return Err(ConditionFailure::StaleFence.into());
             }
             let durable = row.effects.get_mut(effect).ok_or(CommitError::Condition(
@@ -1018,7 +1019,7 @@ impl LeaseStore for MemoryStore {
             let row = agents.get_mut(key).ok_or(ClaimError::HeldByOther {
                 expires_at: Timestamp::from_millis(0),
             })?;
-            if row.lease_owner.is_some() && row.lease_expires_at.millis() > now.millis() {
+            if row.lease_expires_at.millis() > now.millis() && row.lease_owner != Some(owner) {
                 return Err(ClaimError::HeldByOther {
                     expires_at: row.lease_expires_at,
                 });
@@ -1062,7 +1063,7 @@ impl LeaseStore for MemoryStore {
     fn release(
         &self,
         claim: Claim,
-        disposition: ReleaseDisposition,
+        _disposition: ReleaseDisposition,
     ) -> BoxFuture<'_, Result<(), StoreError>> {
         Box::pin(async move {
             self.log.note("release_lease");
@@ -1072,11 +1073,7 @@ impl LeaseStore for MemoryStore {
                 && row.lease_owner == Some(claim.owner)
             {
                 row.lease_owner = None;
-                row.lease_expires_at = if matches!(disposition, ReleaseDisposition::Drain) {
-                    Timestamp::from_millis(0)
-                } else {
-                    row.lease_expires_at
-                };
+                row.lease_expires_at = Timestamp::from_millis(0);
             }
             Ok(())
         })
@@ -1091,6 +1088,7 @@ impl LeaseStore for MemoryStore {
 #[derive(Debug, Default)]
 pub struct MemoryQueue {
     durable: Mutex<BTreeMap<WakeId, (DurableWake, WorkShard)>>,
+    malformed_due: Mutex<BTreeMap<WakeId, WorkShard>>,
     visible: Mutex<VecDeque<WakeDelivery>>,
     acked: Mutex<Vec<WakeDelivery>>,
     ack_faults: Mutex<VecDeque<StoreError>>,
@@ -1104,6 +1102,7 @@ impl MemoryQueue {
     pub fn new(log: Arc<Recorder>) -> Self {
         Self {
             durable: Mutex::new(BTreeMap::new()),
+            malformed_due: Mutex::new(BTreeMap::new()),
             visible: Mutex::new(VecDeque::new()),
             acked: Mutex::new(Vec::new()),
             ack_faults: Mutex::new(VecDeque::new()),
@@ -1125,6 +1124,17 @@ impl MemoryQueue {
             .lock()
             .expect("not poisoned")
             .insert(wake.id, (wake, shard));
+    }
+
+    /// Persists one malformed due-index projection for isolation/starvation tests.
+    ///
+    /// It has an index identity and shard but no decodable wake body, matching a malformed
+    /// projected row closely enough to assert that the page cursor advances past it.
+    pub fn persist_malformed_due(&self, id: WakeId, shard: WorkShard) {
+        self.malformed_due
+            .lock()
+            .expect("not poisoned")
+            .insert(id, shard);
     }
 
     fn project_in_shard(&self, wake: DurableWake, shard: WorkShard) {
@@ -1278,21 +1288,70 @@ impl WakeQueue for MemoryQueue {
         shard: WorkShard,
         now: Timestamp,
         max: usize,
-    ) -> BoxFuture<'_, Result<Vec<DurableWake>, StoreError>> {
+        after: Option<DueScanCursor>,
+    ) -> BoxFuture<'_, Result<DueScanPage, StoreError>> {
         Box::pin(async move {
             self.note("due_scan");
-            Ok(self
+            let after = after
+                .as_ref()
+                .map(|cursor| {
+                    cursor
+                        .parts()
+                        .get("wakeId")
+                        .ok_or_else(|| StoreError::Undecodable {
+                            location: "memory due cursor".to_owned(),
+                            reason: "`wakeId` is absent".to_owned(),
+                        })?
+                        .parse::<Uuid>()
+                        .map(WakeId)
+                        .map_err(|_| StoreError::Undecodable {
+                            location: "memory due cursor".to_owned(),
+                            reason: "`wakeId` is malformed".to_owned(),
+                        })
+                })
+                .transpose()?;
+            let mut rows: Vec<(WakeId, Option<DurableWake>)> = self
                 .durable
                 .lock()
                 .expect("not poisoned")
-                .values()
-                .filter(|(wake, stored_shard)| {
-                    *stored_shard == shard
+                .iter()
+                .filter(|(id, (wake, stored_shard))| {
+                    after.is_none_or(|after| **id > after)
+                        && *stored_shard == shard
                         && wake.due.is_some_and(|due| due.millis() <= now.millis())
                 })
-                .take(max)
-                .map(|(wake, _)| wake.clone())
-                .collect())
+                .map(|(id, (wake, _))| (*id, Some(wake.clone())))
+                .collect();
+            rows.extend(
+                self.malformed_due
+                    .lock()
+                    .expect("not poisoned")
+                    .iter()
+                    .filter(|(id, stored_shard)| {
+                        after.is_none_or(|after| **id > after) && **stored_shard == shard
+                    })
+                    .map(|(id, _)| (*id, None)),
+            );
+            rows.sort_by_key(|(id, _)| *id);
+            let has_more = rows.len() > max;
+            rows.truncate(max);
+            let last = rows.last().map(|(id, _)| *id);
+            let malformed = rows.iter().filter(|(_, wake)| wake.is_none()).count();
+            let wakes = rows.into_iter().filter_map(|(_, wake)| wake).collect();
+            let next = has_more.then(|| {
+                DueScanCursor::new([(
+                    "wakeId",
+                    last.expect("a truncated page has a last row")
+                        .0
+                        .as_hyphenated()
+                        .to_string(),
+                )])
+            });
+            Ok(DueScanPage {
+                wakes,
+                next,
+                malformed,
+            })
         })
     }
 }

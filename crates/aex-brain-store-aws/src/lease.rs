@@ -219,30 +219,23 @@ impl LeaseStore for BrainStore {
     fn release(
         &self,
         claim: Claim,
-        disposition: ReleaseDisposition,
+        _disposition: ReleaseDisposition,
     ) -> BoxFuture<'_, Result<(), StoreError>> {
         Box::pin(async move {
             let control_key = keys::control(&claim.key).map_err(|error| store_key_error(&error))?;
-            // Drain sets the expiry to zero so a surviving task claims immediately instead
-            // of waiting out the whole TTL. Every other disposition simply stops renewing.
-            let expiry = match disposition {
-                ReleaseDisposition::Drain => 0,
-                ReleaseDisposition::Committed
-                | ReleaseDisposition::Parked
-                | ReleaseDisposition::Abandoned => claim.expires_at.millis().max(0),
-            };
-            let wire_expiry = translate::at(Timestamp::from_millis(expiry), "expiry")
-                .map_err(|error| translate_error(&error))?;
+            // Every disposition ends this ownership scope. Removing `claimOwner` while
+            // retaining a future expiry creates an ownerless interval in which the claim
+            // condition still rejects every successor. The exact old fence/owner condition
+            // makes immediate expiry safe: a delayed predecessor cannot clear a successor.
             match self
                 .client()
                 .update_item()
                 .table_name(self.table())
                 .set_key(Some(item_key(&control_key.pk, &control_key.sk)))
                 .condition_expression("fence = :fence AND claimOwner = :owner")
-                .update_expression("SET leaseExpiresAt = :expiry REMOVE claimOwner")
+                .update_expression("REMOVE claimOwner, leaseExpiresAt")
                 .expression_attribute_values(":fence", n(claim.fence.0))
                 .expression_attribute_values(":owner", s(claim.owner.0.as_hyphenated().to_string()))
-                .expression_attribute_values(":expiry", stamp(wire_expiry))
                 .send()
                 .await
             {
