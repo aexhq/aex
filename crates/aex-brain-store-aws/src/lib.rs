@@ -26,6 +26,6 @@ pub mod wake;
 pub use expressions::{Action, ActionKind, Condition, Table, WakeItem, WorkExpressions};
 pub use journal::BrainStore;
 pub use keys::{BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, BrainKeyError};
-pub use plan::{DecisionContext, PlanError};
+pub use plan::{BrainTables, PlanError};
 pub use translate::TranslateError;
 pub use wake::{DueScan, SqsWakeQueue};

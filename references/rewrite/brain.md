@@ -453,11 +453,16 @@ and none of it is attributed.
 | BR-27 | `mark_response_started` writes every attribute `effect::decode` reads back | the decoder read `operationId`, `providerRequestId` and `receiptHash`; the writer wrote none of them. A detached effect therefore decoded with no operation, and `recover` would interrupt a run the upstream was still working on |
 | BR-28 | The wake loop's step bound counts **committed decisions**, not planner steps | it exists to stop one activation holding a lease indefinitely, and a lease is held across commits. The planner's own limits are what stop a run |
 
+### 13.1 Decision taken in the continuation pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-29 | Workspace, organization and deletion epoch are read from the claimed session head and passed explicitly into every decision commit; a wake's tenant is only a projection assertion | a mux serves many sessions, so fixing any of these facts at process construction can silently write one tenant's rows under another tenant. All three are rechecked by the transaction's session-head condition, so a mismatched tenant or a trash/purge racing the activation refuses the whole decision. |
+
 ### 14. Still deferred, with what unblocks each
 
 | Deferred | Unblocked by |
 | --- | --- |
-| Binding `JournalStore`/`EffectStore`/`LeaseStore` in a deployed task, and with it the first live vertical run | `aex_brain_store_aws::DecisionContext` fixes the workspace, the organization and the session's deletion epoch at construction. All three are per-session; the wake payload carries only the workspace, and the deletion epoch lives on the session head row that no port on this surface reads. Either the payload grows an organization and `AgentHead` grows a deletion epoch, or the context becomes a per-commit parameter |
 | The `env_brain_mux` terraform binding | `platform/.../roots/dev-eu-west-1/env.tf` still declares "exactly the four variables `brain-mux` validates", and `local.queues` has no Brain wake queue at all. §10 recorded these bindings as existing; they do not |
 | `ProviderPort`, `CatalogPort` and `HandsPort` implementations | unchanged from §4 and §10: the gateway restates its own port over `aex_model_catalog::canonical` types, the catalog publishes no `ModelCapability`, and `aex-brain-hands` takes no dependency on `aex-brain-application` |
 | A `ToolExecutor` for any route | `aex-brain-managed-web` and `aex-brain-mcp` implement none, so the composed router is linked with zero executors and refuses by its own typed error |
@@ -481,6 +486,25 @@ cargo check --workspace --all-targets                                  clean
 cargo run -p aex-workspace-check
     133 member(s) and 140 package(s) satisfy every structural and registry rule
 cargo run -p aex-workspace-check -- registry build      no change to either file
+```
+
+### 16. Continuation-pass gate output
+
+```text
+cargo fmt -p aex-brain-application -p aex-brain-store-aws -p brain-mux  clean
+cargo clippy -p aex-brain-application -p aex-brain-store-aws \
+             -p brain-mux --all-targets -- -D warnings                 clean
+cargo nextest run -p aex-brain-domain -p aex-brain-application \
+                  -p aex-brain-store-aws -p brain-mux
+    Summary [136.307s] 388 tests run: 388 passed, 0 skipped
+cargo nextest run -p aex-brain-application --features loom \
+                  --test concurrency  (LOOM_MAX_PREEMPTIONS=3)
+    Summary [21.599s] 6 tests run: 6 passed, 0 skipped
+cargo check --workspace --all-targets                                  clean
+cargo run -p aex-workspace-check
+    134 member(s) and 141 package(s) satisfy every structural and registry rule
+cargo run -p aex-workspace-check -- registry build      no change to either file
+git diff --check                                         clean
 ```
 
 `cargo fmt --all` still fails in this worktree with `os error 206`, so the three

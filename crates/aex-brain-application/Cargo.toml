@@ -45,6 +45,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 aex-brain-domain = { path = "../aex-brain-domain" }
+aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }

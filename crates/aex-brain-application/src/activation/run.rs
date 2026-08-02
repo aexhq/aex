@@ -23,8 +23,9 @@ use super::{
 };
 use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
-    ClaimError, CommitError, ConditionFailure, ControlStateView, DetachedStatus, FenceGuard,
-    NullPreviewSink, PreparedToolCall, ReleaseDisposition, StreamBudget, ToolOutcome, WakeDelivery,
+    ClaimError, CommitError, ConditionFailure, ControlStateView, DecisionContext, DetachedStatus,
+    FenceGuard, NullPreviewSink, PreparedToolCall, ReleaseDisposition, SessionAuthority,
+    StoreError, StreamBudget, ToolOutcome, WakeDelivery,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -131,6 +132,16 @@ impl Activation {
             }
         };
 
+        if delivery.wake.tenant != claim.authority.workspace.to_string() {
+            let _ = self
+                .ports
+                .leases
+                .release(claim, ReleaseDisposition::Abandoned)
+                .await;
+            self.release(&delivery, self.policy.requeue_after).await;
+            return Err(StoreError::WakeTenantMismatch.into());
+        }
+
         let guard = FenceGuard::new(
             key,
             claim.owner,
@@ -144,7 +155,8 @@ impl Activation {
             ports: &self.ports,
             policy: &self.policy,
             key,
-            tenant: delivery.wake.tenant.clone(),
+            authority: claim.authority.clone(),
+            lease_expires_at: claim.expires_at,
             stop_requested: claim.head.stop_requested,
             guard,
             state: FoldState::empty(),
@@ -361,7 +373,8 @@ struct Session<'a> {
     ports: &'a Ports,
     policy: &'a ActivationPolicy,
     key: AgentKey,
-    tenant: String,
+    authority: SessionAuthority,
+    lease_expires_at: Timestamp,
     stop_requested: bool,
     guard: FenceGuard,
     state: FoldState,
@@ -575,7 +588,7 @@ impl Session<'_> {
                 reason: QueuedReason::RegionalCapacity,
             },
             self.ports.clock.now(),
-            self.tenant.clone(),
+            self.authority.workspace.to_string(),
             self.policy.shard_for(self.agent()),
         );
         self.commit(draft).await
@@ -597,7 +610,12 @@ impl Session<'_> {
         let first_seq = self.guard.tail().map_or(JournalSeq::ZERO, JournalSeq::next);
         let records = draft.records().to_vec();
         let commit = draft.into_commit();
-        match self.ports.journal.commit(&commit).await {
+        let context = DecisionContext {
+            authority: self.authority.clone(),
+            lease_expires_at: self.lease_expires_at,
+            now: recorded_at,
+        };
+        match self.ports.journal.commit(&context, &commit).await {
             Ok(receipt) => {
                 let mut seq = first_seq;
                 for record in records {
@@ -930,7 +948,7 @@ impl Session<'_> {
                     self.ports.ids.wake_id(),
                     reason,
                     due,
-                    self.tenant.clone(),
+                    self.authority.workspace.to_string(),
                     self.policy.shard_for(self.agent()),
                 );
                 self.commit(draft).await?;
@@ -991,7 +1009,7 @@ impl Session<'_> {
                     self.ports.ids.wake_id(),
                     ParkReason::AwaitingToolResult { call },
                     due,
-                    self.tenant.clone(),
+                    self.authority.workspace.to_string(),
                     self.policy.shard_for(self.agent()),
                 );
                 self.commit(draft).await?;

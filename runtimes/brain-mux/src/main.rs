@@ -257,8 +257,9 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
     // them; readiness stays false until every one of them has.
     composition.health.bindings_validated();
     composition.health.schema_matched();
-    // The three that are not proved, and are therefore not claimed. `Bindings::deployed`
-    // names each one; readiness reports the names rather than a bare false.
+    // Provider and catalog remain unproved and are therefore not claimed.
+    // `Bindings::deployed` names each missing peer; readiness reports names rather than a
+    // bare false.
     let bindings = wake::Bindings::deployed();
     composition.health.store_reachable(bindings.store);
     if bindings.catalog {
@@ -283,13 +284,18 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
 /// Receives wakes and drives them until drain starts.
 ///
 /// The loop asks admission before every receive, and admission is false while any binding is
-/// unsatisfied. That is deliberate: a task whose store is unbound would take work off the
-/// queue only to release it, and after enough redeliveries the poison policy would ack a wake
-/// nothing had served. Not receiving is the only behaviour that cannot lose work.
+/// unsatisfied. Provider and catalog are still absent, so the newly bound store remains idle
+/// rather than taking work that cannot complete.
 async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config) {
-    let queue = wake::sqs_queue(&config.wake_queue_url, &config.work_table).await;
+    let (store, queue) = wake::aws_bindings(
+        &config.region,
+        &config.wake_queue_url,
+        &config.resource,
+        &config.work_table,
+    )
+    .await;
     let pump = wake::wake_loop(
-        wake::deployed_ports(std::sync::Arc::new(queue)),
+        wake::deployed_ports(store, queue),
         aex_brain_application::activation::ActivationPolicy::default(),
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),

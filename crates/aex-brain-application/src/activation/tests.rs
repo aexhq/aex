@@ -283,6 +283,33 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     assert_eq!(harness.queue.depth(), 0, "nothing was left outstanding");
 }
 
+/// A wake's tenant is a projection hint, never authority. A forged or stale projection is
+/// released before any journal read or write; the session-head workspace returned by claim
+/// is the only value an activation may propagate.
+#[test]
+fn a_wake_for_another_tenant_is_refused_before_any_decision() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let mut wake = wake_for(key(), "wrk-wrong-tenant");
+    wake.tenant = "ws_forged".to_owned();
+    harness.queue.project(wake);
+
+    let error = harness
+        .run_next()
+        .expect_err("the tenant assertion is refused");
+    assert!(
+        matches!(
+            error,
+            ActivationError::Store(StoreError::WakeTenantMismatch)
+        ),
+        "{error:?}"
+    );
+    assert_eq!(harness.log.count("commit"), 0);
+    assert_eq!(harness.log.count("read_page"), 0);
+    assert!(harness.provider.dispatched().is_empty());
+    assert_eq!(harness.queue.depth(), 1, "the wake remains retryable");
+    assert!(harness.queue.acked().is_empty());
+}
+
 /// Deleting a message is not a commit. If the ack came first, a crash between them would
 /// lose the wake and the agent would sit with work owed and nothing to wake it.
 #[test]

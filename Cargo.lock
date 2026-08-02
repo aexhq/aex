@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-wire",
  "loom",
  "serde",
  "serde_json",

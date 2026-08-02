@@ -20,6 +20,33 @@ use aex_brain_domain::ids::{
     Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
+use aex_wire::ids::{OrganizationId, WorkspaceId};
+
+/// The session-head facts that own every Brain row written for one activation.
+///
+/// This is read from `session-authority` for the claimed session. It is deliberately not
+/// part of process configuration: one mux serves sessions from many tenants, and a deletion
+/// epoch is valid only for the session head it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionAuthority {
+    /// The workspace that owns every row and wake.
+    pub workspace: WorkspaceId,
+    /// The organization charged for the work.
+    pub organization: OrganizationId,
+    /// The deletion generation the decision must still observe.
+    pub deletion_epoch: u64,
+}
+
+/// Per-decision facts supplied to the durable transaction compiler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionContext {
+    /// Authority derived from this activation's session head.
+    pub authority: SessionAuthority,
+    /// The lease expiry the control update carries forward.
+    pub lease_expires_at: Timestamp,
+    /// The activation clock reading used by this decision.
+    pub now: Timestamp,
+}
 
 /// The agent control item, as one conditional read returns it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +135,7 @@ pub trait JournalStore: Send + Sync + 'static {
     /// caller treats as success.
     fn commit<'a>(
         &'a self,
+        context: &'a DecisionContext,
         commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>>;
 }
@@ -153,17 +181,19 @@ pub struct Claim {
     pub fence: Fence,
     /// When the lease expires.
     pub expires_at: Timestamp,
-    /// The head, returned by the same conditional write.
+    /// The authoritative tenant and deletion generation read from this session's head.
+    pub authority: SessionAuthority,
+    /// The agent head, returned by the same conditional write.
     ///
     /// Carried here rather than fetched separately because the measured cost of becoming
-    /// an owner was dominated by redundant strongly-consistent reads. There is exactly one
-    /// round trip.
+    /// an owner was dominated by redundant agent-control reads. The session authority above
+    /// requires its own strongly-consistent head read because it lives on another item.
     pub head: AgentHead,
 }
 
 /// Activation ownership.
 pub trait LeaseStore: Send + Sync + 'static {
-    /// Takes ownership, bumping the fence, and returns the head in the same write.
+    /// Takes ownership, bumping the fence, and returns both agent and session authority.
     fn claim<'a>(
         &'a self,
         key: &'a AgentKey,
@@ -363,6 +393,9 @@ pub enum CommitError {
 /// Why a store operation failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
+    /// A queue projection asserted a different tenant from the session head.
+    #[error("wake tenant does not match session authority")]
+    WakeTenantMismatch,
     /// The journal is not contiguous. The agent does not fold and does not act.
     #[error("journal gap at {missing}")]
     JournalGap {
