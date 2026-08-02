@@ -245,21 +245,43 @@ impl EffectStore for BrainStore {
                 .map_err(|error| CommitError::Store(store_key_error(&error)))?;
             let now = translate::at(ticket.issued_at(), "at")
                 .map_err(|error| CommitError::Store(translate_error(&error)))?;
-            self.client
+            // Every attribute `effect::decode` reads back is written here. The three optional
+            // ones are the whole recovery matrix: without the operation id a detached effect
+            // decodes with no operation and `recover` interrupts a run the upstream is still
+            // happily working on, and without the receipt a settled outcome is re-fetched
+            // from a provider that has already been paid.
+            let mut update = "SET #state = :next, responseStartedAt = :now, \
+                              dispatchStage = :stage, dispatchProof = :proof"
+                .to_owned();
+            let mut request = self
+                .client
                 .update_item()
                 .table_name(self.table())
                 .set_key(Some(item_key(&effect_key.pk, &effect_key.sk)))
                 .condition_expression("#state = :dispatched")
-                .update_expression(
-                    "SET #state = :next, responseStartedAt = :now, dispatchStage = :stage, \
-                     dispatchProof = :proof",
-                )
                 .expression_attribute_names("#state", "state")
                 .expression_attribute_values(":dispatched", s("dispatched"))
                 .expression_attribute_values(":next", s("responding"))
                 .expression_attribute_values(":now", stamp(now))
                 .expression_attribute_values(":stage", s(format!("{:?}", evidence.stage)))
-                .expression_attribute_values(":proof", s(format!("{:?}", evidence.proof)))
+                .expression_attribute_values(":proof", s(format!("{:?}", evidence.proof)));
+            if let Some(operation) = evidence.operation.as_ref() {
+                update.push_str(", operationId = :operation");
+                request = request.expression_attribute_values(":operation", s(operation.0.clone()));
+            }
+            if let Some(provider_request) = evidence.provider_request_id.as_ref() {
+                update.push_str(", providerRequestId = :providerRequestId");
+                request = request.expression_attribute_values(
+                    ":providerRequestId",
+                    s(provider_request.0.clone()),
+                );
+            }
+            if let Some(receipt) = evidence.receipt {
+                update.push_str(", receiptHash = :receipt");
+                request = request.expression_attribute_values(":receipt", s(receipt.to_hex()));
+            }
+            request
+                .update_expression(update)
                 .send()
                 .await
                 .map_err(|error| {

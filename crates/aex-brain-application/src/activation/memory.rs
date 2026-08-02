@@ -733,6 +733,10 @@ impl JournalStore for MemoryStore {
         clippy::too_many_lines,
         reason = "the fixture enforces the whole precondition set in one place; splitting it would let a reader believe a precondition is checked somewhere it is not"
     )]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the fixture enforces the whole precondition set in one place; splitting it would let a reader believe a precondition is checked somewhere it is not"
+    )]
     fn commit<'a>(
         &'a self,
         commit: &'a DecisionCommit,

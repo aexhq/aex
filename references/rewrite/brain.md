@@ -10,7 +10,7 @@ keywords:
   - loom
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-02
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -387,3 +387,101 @@ Child-count coverage: the fanout planner is asserted at 1, 5, 10, 15, 50, 100
 and 200 children in the unit lane, including the page boundaries at 32 and 33.
 The same seven counts are declared as shapes in `brain-swarm-fanout.toml` and
 are asserted to be present there; executing that campaign needs a plane.
+
+## Third pass
+
+The first pass landed the pure half and the synchronization kernel; the second
+landed the store adapter, the subagent scheduler and the composition's shape.
+This pass landed the loop that drives them.
+
+### 12. What the third pass implemented
+
+#### `aex-brain-application::activation` — the loop
+
+`activation` was an empty placeholder. It now holds the whole cycle:
+
+```
+receive -> dedupe -> local slot -> claim -> recover -> fold -> plan
+        -> dispatch -> settle -> commit -> release lease -> ack
+```
+
+- `decide` is the pure half: one owed step in, one `DecisionCommit` out. Every
+  settlement writes both the journal record and the durable effect row, so an
+  outcome and the record it produced land in one transaction.
+- `run` is the asynchronous half. Nothing in it names a runtime; every wait is a
+  port call, which is what lets the whole loop be asserted with a block-on that
+  *panics* on `Pending`.
+- `memory` publishes in-memory ports behind a `testing` feature. They refuse
+  rather than invent — the provider never fabricates a generation, the store
+  enforces the whole precondition set — so the crash-boundary assertions are not
+  vacuous. `brain-mux` consumes the same fixtures, so the engine and its
+  composition are asserted against one behaviour rather than two.
+
+Four crash boundaries are each asserted by interrupting a run at a named durable
+point and running a second activation against what the first left:
+
+| Interrupted at | Asserted |
+| --- | --- |
+| after the pre-send write, before the settlement commits | the effect settles `OutcomeUnknown`, the run terminalizes `interrupted`, and the provider is dispatched exactly once |
+| after the commit, before the ack | the redelivery finds a terminal agent, acks, and does not run the turn again |
+| the commit loses its fence | nothing is appended, no byte leaves, the delivery is released and never acked |
+| the page read observes a gap | the agent does not fold, does not plan, does not act and does not ack |
+
+Each of the four was confirmed to fail with the surviving code removed.
+
+#### `runtimes/brain-mux` — the composition
+
+`Config` grows the two variables §10 named. `wake` resolves each port to an
+adapter or refuses it by name; `pump` receives and drives until drain;
+`drain_sequence` walks all seven stages and joins the receive task, so the
+process proves it stopped receiving rather than merely intended to.
+
+A11-MUX is asserted through the composition and not only inside the probe: the
+loop's future is metered across a provider that is pending for a scripted 999 ms
+and none of it is attributed.
+
+### 13. Decisions taken in the third pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-21 | Recovery runs before the planner, on every activation | the planner has no dispatch evidence and its `Effecting` arm cannot distinguish a prepared model call from a prepared tool call. Letting it decide a dispatched effect would be a guess with a bill attached |
+| BR-22 | A `NotSent` provider failure settles `KnownFailure` **and** prepares the replacement in the same commit | the fold moves a settled effect to `AwaitingFinish`, so settling alone would have the planner report `Completed` for a call that never happened. The replacement is what keeps the fold honest, and `max_provider_attempts` is what keeps it bounded |
+| BR-23 | An effect already `Prepared` is dispatched, never re-prepared | the planner returns `ModelCall` for a prepared effect and a fresh one alike. Preparing a second would charge the reservation twice and leave the first identity open for the agent's life |
+| BR-24 | A failed ack releases the delivery instead of consuming it | the decision has already committed; consuming the delivery would strand an agent with work owed and nothing to wake it. This was a real defect the boundary test caught |
+| BR-25 | Admission stops receiving entirely while any binding is unsatisfied | a task that took deliveries only to release them would, after `max_receives` redeliveries, have the poison policy ack a wake nothing ever served. Not receiving is the only behaviour that cannot lose work |
+| BR-26 | A tool that could not be dispatched is recorded as a `ToolResult` with `is_error`, not as a terminal | the alternative ends a whole session because one optional tool was unavailable, and the manifest already says a failed tool is a result the model decides about |
+| BR-27 | `mark_response_started` writes every attribute `effect::decode` reads back | the decoder read `operationId`, `providerRequestId` and `receiptHash`; the writer wrote none of them. A detached effect therefore decoded with no operation, and `recover` would interrupt a run the upstream was still working on |
+| BR-28 | The wake loop's step bound counts **committed decisions**, not planner steps | it exists to stop one activation holding a lease indefinitely, and a lease is held across commits. The planner's own limits are what stop a run |
+
+### 14. Still deferred, with what unblocks each
+
+| Deferred | Unblocked by |
+| --- | --- |
+| Binding `JournalStore`/`EffectStore`/`LeaseStore` in a deployed task, and with it the first live vertical run | `aex_brain_store_aws::DecisionContext` fixes the workspace, the organization and the session's deletion epoch at construction. All three are per-session; the wake payload carries only the workspace, and the deletion epoch lives on the session head row that no port on this surface reads. Either the payload grows an organization and `AgentHead` grows a deletion epoch, or the context becomes a per-commit parameter |
+| The `env_brain_mux` terraform binding | `platform/.../roots/dev-eu-west-1/env.tf` still declares "exactly the four variables `brain-mux` validates", and `local.queues` has no Brain wake queue at all. §10 recorded these bindings as existing; they do not |
+| `ProviderPort`, `CatalogPort` and `HandsPort` implementations | unchanged from §4 and §10: the gateway restates its own port over `aex_model_catalog::canonical` types, the catalog publishes no `ModelCapability`, and `aex-brain-hands` takes no dependency on `aex-brain-application` |
+| A `ToolExecutor` for any route | `aex-brain-managed-web` and `aex-brain-mcp` implement none, so the composed router is linked with zero executors and refuses by its own typed error |
+| The recovery controller's `RetrySameEffect` on a *dispatched* effect | nothing moves a dispatched effect back to `prepared`, so the arm is a named refusal. Unreachable for the classes this loop prepares, which a test asserts |
+| `ReconstructFromReceipt` | `aex-content-aws`'s placement API: the receipt is a digest, and the body it names lives in the content authority |
+| `OwedStep::SpawnChildren` | the `create_subagent` tool, which is the only thing that produces a fanout request for `subagent::plan_spawn`. The planner has no arm that reaches it today |
+| Concurrent activation of one batch | the loop drives a batch sequentially. The local slot already refuses a concurrent duplicate, and the composition root can spawn per delivery; nothing asserts the fan-out yet |
+
+### 15. Third-pass gate output
+
+```
+cargo fmt -p aex-brain-application -p aex-brain-store-aws -p brain-mux  clean
+cargo clippy -p aex-brain-application -p aex-brain-store-aws \
+             -p brain-mux --all-targets -- -D warnings                 clean
+cargo nextest run -p aex-brain-domain -p aex-brain-application \
+                  -p aex-brain-store-aws -p brain-mux
+    Summary [311.890s] 384 tests run: 384 passed, 0 skipped
+cargo nextest run -p aex-brain-application --features loom \
+                  --test concurrency  (LOOM_MAX_PREEMPTIONS=3)         6 passed
+cargo check --workspace --all-targets                                  clean
+cargo run -p aex-workspace-check
+    133 member(s) and 140 package(s) satisfy every structural and registry rule
+cargo run -p aex-workspace-check -- registry build      no change to either file
+```
+
+`cargo fmt --all` still fails in this worktree with `os error 206`, so the three
+owned packages are formatted individually.

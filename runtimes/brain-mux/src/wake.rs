@@ -28,9 +28,9 @@ use aex_brain_application::activation::{
 use aex_brain_application::kernel::{ActivationRegistry, DrainGate};
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
-    ClockPort, CommitError, CommitReceipt, DispatchTicket, DurableWake, EffectStore, FenceGuard,
-    HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort,
-    HandsResult, IdPort, JournalPage, JournalStore, LeaseStore, PreviewSink, ProviderDispatchError,
+    ClockPort, CommitError, CommitReceipt, DispatchTicket, EffectStore, FenceGuard, HandsAccepted,
+    HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort, HandsResult,
+    IdPort, JournalPage, JournalStore, LeaseStore, PreviewSink, ProviderDispatchError,
     ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds,
     SteadyInstant, StoreError, StreamBudget, UnknownResolution,
 };
@@ -518,17 +518,6 @@ pub fn wake_loop(
     WakeLoop::new(
         Activation::new(ports, policy, registry, drain),
         Arc::new(MuxAdmission::new(admission, bindings)),
-    )
-}
-
-/// The wake this task would run, for a diagnostic that names an agent rather than a receipt.
-#[must_use]
-pub fn describe(wake: &DurableWake) -> String {
-    format!(
-        "{}#{} ({})",
-        wake.key.session.0.as_hyphenated(),
-        wake.key.agent.0.as_hyphenated(),
-        wake.dedup_key
     )
 }
 

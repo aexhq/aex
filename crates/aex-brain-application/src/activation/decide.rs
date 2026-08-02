@@ -21,8 +21,7 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::fold::{FoldState, Phase};
 use aex_brain_domain::ids::{
-    AgentKey, AgentRevision, ContentHash, EffectId, JournalSeq, ModelSlug, Timestamp, WakeId,
-    WorkShard,
+    AgentKey, ContentHash, EffectId, JournalSeq, ModelSlug, Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalRecord, ParkReason, TypedFailure,
@@ -49,19 +48,6 @@ pub const fn phase_tag(phase: &Phase) -> &'static str {
         Phase::AwaitingFinish => "awaiting_finish",
         Phase::Finished => "finished",
     }
-}
-
-/// What the activation does after committing a decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Continuation {
-    /// Plan again under the same claim.
-    Continue,
-    /// A durable wait opened; release everything and end.
-    Park,
-    /// The agent is terminal.
-    Finish(FinishReason),
-    /// A continuation wake was committed; hand the agent back.
-    HandBack,
 }
 
 /// One decision under construction.
@@ -208,12 +194,6 @@ impl Draft {
             session: None,
             idempotency: None,
         }
-    }
-
-    /// The revision this draft will write, for advancing the guard afterwards.
-    #[must_use]
-    pub fn next_revision(&self) -> AgentRevision {
-        self.guard.revision.next()
     }
 }
 
