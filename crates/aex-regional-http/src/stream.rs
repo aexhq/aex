@@ -1,85 +1,20 @@
 //! Whole-frame NDJSON writes and the durable sent-cursor invariant.
 
-use aex_wire::error::ApiError;
-use aex_wire::types::Timestamp;
+use aex_wire::models::{Observation, ObservationFrameRecords};
 use async_trait::async_trait;
-use serde::Serialize;
-use serde_json::Value;
+
+pub use aex_wire::models::{ObservationFrame as Frame, RotateReason};
 
 /// Maximum records in one frame.
 pub const MAX_FRAME_RECORDS: usize = 200;
 /// Maximum encoded bytes in one frame.
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
-/// Why a stream rotates after `200 OK`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RotateReason {
-    /// Fixed connection rotation.
-    Rotation,
-    /// Host is draining.
-    Draining,
-    /// Writer failed the stall deadline.
-    SlowReader,
-    /// Credential assertion expired.
-    AssertionExpired,
-    /// Credential epoch advanced.
-    Revoked,
-    /// Account became paused.
-    AccountPaused,
-    /// Session was tombstoned.
-    SessionDeleted,
-    /// Capacity must be released.
-    Capacity,
-}
-
-/// The closed NDJSON frame vocabulary.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Frame {
-    /// A bounded record page.
-    Records {
-        /// Stored records in authority order.
-        records: Vec<Value>,
-        /// Resume token valid after the whole frame arrives.
-        cursor: String,
-    },
-    /// A durable telemetry gap.
-    Gap {
-        /// Stable gap identifier.
-        gap_id: String,
-        /// Resume token.
-        cursor: String,
-    },
-    /// Heartbeat carrying current resume state.
-    Cursor {
-        /// Resume token.
-        cursor: String,
-        /// Authority time.
-        at: Timestamp,
-    },
-    /// The only terminal frame after headers were flushed.
-    Rotate {
-        /// Resume token.
-        cursor: String,
-        /// Terminal reason.
-        reason: RotateReason,
-        /// Whether reconnect is meaningful.
-        retryable: bool,
-        /// Typed terminal error when retry is not meaningful.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<ApiError>,
-    },
-}
-
-impl Frame {
-    fn cursor(&self) -> &str {
-        match self {
-            Self::Records { cursor, .. }
-            | Self::Gap { cursor, .. }
-            | Self::Cursor { cursor, .. }
-            | Self::Rotate { cursor, .. } => cursor,
-        }
+fn resumable_cursor(frame: &Frame) -> Option<&str> {
+    match frame {
+        Frame::Cursor(frame) => Some(frame.cursor.as_str()),
+        Frame::Rotate(frame) => frame.cursor.as_ref().map(aex_wire::cursor::Cursor::as_str),
+        Frame::Records(_) | Frame::Gap(_) => None,
     }
 }
 
@@ -95,12 +30,12 @@ pub trait FrameSink: Send {
     async fn flush(&mut self) -> Result<(), Self::Error>;
 }
 
-/// Cursor from the last fully written and flushed frame.
+/// Cursor from the last fully written and flushed cursor-bearing frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SentCursor(Option<String>);
 
 impl SentCursor {
-    /// Borrow the token, when a frame has completed.
+    /// Borrow the token, when a cursor-bearing frame has completed.
     #[must_use]
     pub fn as_deref(&self) -> Option<&str> {
         self.0.as_deref()
@@ -132,7 +67,7 @@ where
     ///
     /// Returns [`StreamWriteError`] without advancing the sent cursor.
     pub async fn send(&mut self, frame: Frame) -> Result<(), StreamWriteError<S::Error>> {
-        let adopted = frame.cursor().to_owned();
+        let adopted = resumable_cursor(&frame).map(str::to_owned);
         let mut bytes = serde_json::to_vec(&frame).map_err(StreamWriteError::Serialize)?;
         bytes.push(b'\n');
         self.sink
@@ -143,11 +78,13 @@ where
             .flush()
             .await
             .map_err(StreamWriteError::Transport)?;
-        self.sent = SentCursor(Some(adopted));
+        if adopted.is_some() {
+            self.sent = SentCursor(adopted);
+        }
         Ok(())
     }
 
-    /// Last completely flushed frame cursor.
+    /// Last completely flushed cursor-bearing frame cursor.
     #[must_use]
     pub fn sent(&self) -> SentCursor {
         self.sent.clone()
@@ -175,71 +112,59 @@ pub enum StreamWriteError<E> {
     Transport(E),
 }
 
-/// Splits records without dropping any item and refuses a single oversize record.
+/// Splits observations without dropping any item and refuses a single oversize record.
+///
+/// Cursors are emitted in their own generated wire frame after a records frame has
+/// been delivered; embedding one in every records frame would create a second wire
+/// contract and falsely advance resumability before the cursor frame is flushed.
 ///
 /// # Errors
 ///
-/// Returns [`FrameSplitError`] for cursor-count, serialization or size violations.
-pub fn split_records(
-    records: Vec<Value>,
-    cursors: &[String],
-) -> Result<Vec<Frame>, FrameSplitError> {
-    if records.len() != cursors.len() {
-        return Err(FrameSplitError::CursorCountMismatch);
-    }
+/// Returns [`FrameSplitError`] for serialization or size violations.
+pub fn split_records(records: Vec<Observation>) -> Result<Vec<Frame>, FrameSplitError> {
     let mut frames = Vec::new();
     let mut current = Vec::new();
-    for (record, cursor) in records.into_iter().zip(cursors) {
-        let mut candidate = current.clone();
-        candidate.push(record.clone());
-        let frame = Frame::Records {
-            records: candidate,
-            cursor: cursor.clone(),
-        };
-        let size = serde_json::to_vec(&frame)
-            .map_err(|_| FrameSplitError::Serialization)?
-            .len()
-            + 1;
-        if current.len() == MAX_FRAME_RECORDS || size > MAX_FRAME_BYTES {
+
+    for record in records {
+        if current.len() == MAX_FRAME_RECORDS {
+            frames.push(records_frame(std::mem::take(&mut current)));
+        }
+
+        current.push(record);
+        if encoded_records_size(&current)? > MAX_FRAME_BYTES {
+            let Some(record) = current.pop() else {
+                return Err(FrameSplitError::Serialization);
+            };
             if current.is_empty() {
                 return Err(FrameSplitError::RecordTooLarge);
             }
-            let previous_cursor = cursors
-                [frames.iter().map(frame_record_count).sum::<usize>() + current.len() - 1]
-                .clone();
-            frames.push(Frame::Records {
-                records: std::mem::take(&mut current),
-                cursor: previous_cursor,
-            });
+            frames.push(records_frame(std::mem::take(&mut current)));
+            current.push(record);
+            if encoded_records_size(&current)? > MAX_FRAME_BYTES {
+                return Err(FrameSplitError::RecordTooLarge);
+            }
         }
-        current.push(record);
     }
+
     if !current.is_empty() {
-        let cursor = cursors
-            .last()
-            .cloned()
-            .ok_or(FrameSplitError::CursorCountMismatch)?;
-        frames.push(Frame::Records {
-            records: current,
-            cursor,
-        });
+        frames.push(records_frame(current));
     }
     Ok(frames)
 }
 
-fn frame_record_count(frame: &Frame) -> usize {
-    match frame {
-        Frame::Records { records, .. } => records.len(),
-        _ => 0,
-    }
+fn records_frame(items: Vec<Observation>) -> Frame {
+    Frame::Records(ObservationFrameRecords { items })
+}
+
+fn encoded_records_size(items: &[Observation]) -> Result<usize, FrameSplitError> {
+    serde_json::to_vec(&records_frame(items.to_vec()))
+        .map(|encoded| encoded.len() + 1)
+        .map_err(|_| FrameSplitError::Serialization)
 }
 
 /// Why records could not be split into valid frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FrameSplitError {
-    /// Each record must have the cursor after that record.
-    #[error("record and cursor counts differ")]
-    CursorCountMismatch,
     /// One stored record exceeds the frame limit by itself.
     #[error("one record exceeds the stream frame byte limit")]
     RecordTooLarge,

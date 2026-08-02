@@ -567,6 +567,20 @@ impl<P> RegionalProjection<P> {
 
 #[async_trait]
 impl<P: AuthorizationProjection> ProjectionReader for RegionalProjection<P> {
+    async fn project_key(
+        &self,
+        key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        match self.projection.read_key_revocation(key).await {
+            Ok(None) => Ok(ProjectedEpochs::default()),
+            Ok(Some(revocation)) => Ok(ProjectedEpochs {
+                key: Epoch::new(revocation.revoked_epoch),
+                ..ProjectedEpochs::default()
+            }),
+            Err(_) => Err(ProjectionError::Unavailable),
+        }
+    }
+
     async fn project(
         &self,
         credential: &PresentedCredential,

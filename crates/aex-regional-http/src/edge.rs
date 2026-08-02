@@ -11,7 +11,7 @@ use aex_identity_domain::assertion::{Audience, Plane, PrincipalKind, Verificatio
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::{IdempotencyKey, IdempotencyKind, PrincipalScope};
-use aex_wire::ids::{OrganizationId, Uuid7, WorkspaceId};
+use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::routes::route;
 use aex_wire::types::{ETag, Region, Timestamp};
 use http::HeaderMap;
@@ -47,6 +47,13 @@ use crate::mount::{AdmissionRequest, EdgeAdmission};
 /// revocation or a pause published a moment ago.
 #[async_trait::async_trait]
 pub trait ProjectionReader: Send + Sync + 'static {
+    /// Reads the current revocation floor for a known workspace-key identity.
+    ///
+    /// Long-lived transports no longer retain credential plaintext after
+    /// admission. The projected key identity is sufficient for every later
+    /// revocation check and avoids retaining a bearer token for the socket life.
+    async fn project_key(&self, key: ApiKeyId) -> Result<ProjectedEpochs, ProjectionError>;
+
     /// Reads the revocation floors bound to the presented credential alone.
     ///
     /// This runs before any assertion exists, so it can only speak for the
@@ -191,6 +198,53 @@ where
             region: binding.region,
             limits: binding.limits,
         })
+    }
+
+    /// Re-checks mutable regional authorization facts for a long-lived request.
+    ///
+    /// This deliberately uses the key identity retained in the principal, not
+    /// the credential plaintext. Revocation, workspace/account epoch advance,
+    /// pause, ownership drift, and placement change all terminate the lease;
+    /// an unavailable projection fails closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the public typed authorization failure that should terminate the
+    /// already-open transport.
+    pub async fn revalidate(&self, auth: &RegionalAuthorization) -> Result<(), WireError> {
+        let PrincipalScope::WorkspaceKey {
+            key,
+            workspace,
+            organization,
+        } = auth.principal
+        else {
+            return Err(WireError::new(ErrorCode::Unauthenticated));
+        };
+        let key_floor = self
+            .projection
+            .project_key(key)
+            .await
+            .map_err(projection_error)?;
+        let projected = self
+            .projection
+            .placement(workspace)
+            .await
+            .map_err(projection_error)?;
+        let organization_raw = Uuid::from_bytes(*organization.uuid7().as_bytes());
+        let stale = key_floor.key.get() > auth.epochs.key
+            || projected.epochs.key.get() > auth.epochs.key
+            || projected.epochs.workspace.get() > auth.epochs.workspace
+            || projected.epochs.account.get() > auth.epochs.account;
+        if stale || projected.organization_id != organization_raw {
+            return Err(WireError::new(ErrorCode::TokenRevoked));
+        }
+        if projected.region != self.region || auth.placement != self.region {
+            return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
+        }
+        if projected.account_state == AccountState::Paused {
+            return Err(WireError::new(ErrorCode::AccountPaused));
+        }
+        Ok(())
     }
 }
 

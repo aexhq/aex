@@ -719,6 +719,13 @@ struct StubProjectionReader {
 
 #[async_trait]
 impl ProjectionReader for StubProjectionReader {
+    async fn project_key(
+        &self,
+        _key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(self.credential_floor)
+    }
+
     async fn project(
         &self,
         _credential: &PresentedCredential,
@@ -1218,6 +1225,13 @@ struct CountingProjection {
 
 #[async_trait]
 impl ProjectionReader for CountingProjection {
+    async fn project_key(
+        &self,
+        _key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(ProjectedEpochs::default())
+    }
+
     async fn project(
         &self,
         _credential: &PresentedCredential,

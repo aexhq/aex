@@ -22,8 +22,8 @@ use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
 };
 use aex_regional_http::cursor::{
-    CursorBinding, CursorError, CursorKey, CursorKeyRing, Order, SNAPSHOT_MILLIS, SnapshotToken,
-    SortTuple, decode, encode,
+    CursorBinding, CursorError, CursorKey, CursorKeyRing, CursorRequestBinding, Order,
+    SNAPSHOT_MILLIS, SnapshotToken, SortTuple, decode, decode_resume, encode,
 };
 use aex_regional_http::envelope::{ENVELOPE_BYTES, EnvelopeError, check_content_type, check_size};
 use aex_regional_http::error::{EdgeError, IntoWireError};
@@ -33,14 +33,20 @@ use aex_regional_http::page::{PageError, Paginator};
 use aex_regional_http::stream::{
     Frame, FrameSink, FrameSplitError, FrameWriter, RotateReason, split_records,
 };
+use aex_wire::canonical::CanonicalJson;
+use aex_wire::cursor::Cursor as WireCursor;
 use aex_wire::error::{ErrorCode, PrecedenceStage};
 use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{
-    OperationId, OrganizationId, PrefixedId, SessionId, UserId, Uuid7, WorkspaceId,
+    ObservationId, OperationId, OrganizationId, PrefixedId, SessionId, UserId, Uuid7, WorkspaceId,
+};
+use aex_wire::models::{
+    Observation, ObservationCoverage, ObservationFrameCursor, ObservationFrameRecords,
+    ObservationFrameRotate, ObservationSignal,
 };
 use aex_wire::routes::{BodyClass, Plane, RouteId, route};
 use aex_wire::scopes::ScopeSet;
-use aex_wire::types::{HttpMethod, Region, RequestId, Timestamp};
+use aex_wire::types::{DecimalU128, HttpMethod, Region, RequestId, Timestamp};
 use async_trait::async_trait;
 use base64::Engine as _;
 use http::{HeaderMap, HeaderValue};
@@ -195,6 +201,31 @@ fn cursor_round_trips_and_rotation_accepts_the_overlap_key() {
     let ring = CursorKeyRing::new(key("current", 4), vec![old]).expect("ring");
     let decoded = decode(&ring, &token, &binding(), stamp(20)).expect("overlap verifies");
     assert_eq!(decoded.parts(), &["2026-08-01", "ses_1"]);
+}
+
+#[test]
+fn a_stream_reconnect_recovers_its_authenticated_snapshot() {
+    let signing = key("current", 5);
+    let original = binding();
+    let token = encode(
+        &signing,
+        &original,
+        &SortTuple::new(vec!["last-row".into()]).expect("tuple"),
+        stamp(10),
+    )
+    .expect("encode");
+    let ring = CursorKeyRing::new(signing, vec![]).expect("ring");
+    let request = CursorRequestBinding::from(&original);
+    let resumed = decode_resume(&ring, &token, &request, stamp(20)).expect("resume");
+    assert_eq!(resumed.snapshot.as_str(), "authority-revision-7");
+    assert_eq!(resumed.tuple.parts(), &["last-row"]);
+
+    let mut wrong = request;
+    wrong.query_hash = [99; 32];
+    assert_eq!(
+        decode_resume(&ring, &token, &wrong, stamp(20)),
+        Err(CursorError::NotBound)
+    );
 }
 
 #[test]
@@ -754,22 +785,29 @@ impl FrameSink for ScriptedSink {
 async fn sent_cursor_advances_only_after_a_whole_flushed_frame() {
     let mut writer = FrameWriter::new(ScriptedSink::default());
     writer
-        .send(Frame::Cursor {
-            cursor: "cur_first".into(),
-            at: stamp(1),
-        })
+        .send(Frame::Cursor(ObservationFrameCursor {
+            coverage: coverage(1),
+            cursor: WireCursor::parse("cur_first").expect("cursor"),
+        }))
         .await
         .expect("sent");
+    assert_eq!(writer.sent().as_deref(), Some("cur_first"));
+    writer
+        .send(Frame::Records(ObservationFrameRecords {
+            items: vec![observation(1, &json!({"value": 1}))],
+        }))
+        .await
+        .expect("records sent");
     assert_eq!(writer.sent().as_deref(), Some("cur_first"));
     writer.sink_mut().fail_flush = true;
     assert!(
         writer
-            .send(Frame::Rotate {
-                cursor: "cur_second".into(),
-                reason: RotateReason::Draining,
+            .send(Frame::Rotate(ObservationFrameRotate {
+                cursor: Some(WireCursor::parse("cur_second").expect("cursor")),
+                reason: RotateReason::ServerRotating,
                 retryable: true,
                 error: None
-            })
+            }))
             .await
             .is_err()
     );
@@ -783,29 +821,63 @@ async fn sent_cursor_advances_only_after_a_whole_flushed_frame() {
     );
 }
 
+fn coverage(value: u128) -> ObservationCoverage {
+    ObservationCoverage {
+        accepted: DecimalU128::new(value),
+        caught_up: true,
+        complete: true,
+        earliest_replay: DecimalU128::ZERO,
+        indexed: DecimalU128::new(value),
+        missing_intervals: Vec::new(),
+        snapshot: DecimalU128::new(value),
+        unbounded_gaps: Vec::new(),
+    }
+}
+
+fn observation(value: u64, body: &serde_json::Value) -> Observation {
+    Observation {
+        accepted_at: stamp(i64::try_from(value).expect("fixture millis")),
+        body: CanonicalJson::from_value(body).expect("canonical fixture"),
+        id: ObservationId::from_uuid7(Uuid7::compose(value, [1; 10])),
+        observed_at: stamp(i64::try_from(value).expect("fixture millis")),
+        run_id: None,
+        sequence: DecimalU128::new(u128::from(value)),
+        session_id: None,
+        signal: ObservationSignal::Logs,
+        span_id: None,
+        trace_id: None,
+        workspace_id: workspace(1),
+    }
+}
+
 #[test]
 fn record_frames_split_at_two_hundred_without_dropping() {
     let records = (0..201)
-        .map(|value| json!({"value": value}))
+        .map(|value| observation(value, &json!({"value": value})))
         .collect::<Vec<_>>();
-    let cursors = (0..201)
-        .map(|value| format!("cur_{value}"))
-        .collect::<Vec<_>>();
-    let frames = split_records(records.clone(), &cursors).expect("split");
+    let frames = split_records(records.clone()).expect("split");
     let flattened = frames
         .iter()
         .flat_map(|frame| match frame {
-            Frame::Records { records, .. } => records.clone(),
+            Frame::Records(ObservationFrameRecords { items }) => items.clone(),
             _ => Vec::new(),
         })
         .collect::<Vec<_>>();
     assert_eq!(frames.len(), 2);
     assert_eq!(flattened, records);
+    for frame in &frames {
+        let encoded = serde_json::to_vec(frame).expect("generated frame encodes");
+        let decoded: Frame = serde_json::from_slice(&encoded).expect("generated frame decodes");
+        assert_eq!(&decoded, frame);
+        let value = serde_json::to_value(frame).expect("frame value");
+        assert!(value.get("cursor").is_none());
+        assert!(value.get("items").is_some());
+    }
     assert_eq!(
-        split_records(
-            vec![json!({"body": "x".repeat(1024 * 1024)})],
-            &["cur_1".into()]
-        ),
+        split_records(vec![observation(
+            1,
+            &json!({"body": "x".repeat(1024 * 1024)})
+        )]),
         Err(FrameSplitError::RecordTooLarge)
     );
 }
