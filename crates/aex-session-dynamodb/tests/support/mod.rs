@@ -17,8 +17,8 @@ use aex_session_dynamodb::wire_pending::{
 };
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::{
-    AgentId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId, RunId, SessionId,
-    Uuid7, WorkspaceId,
+    AgentId, GenerationId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId,
+    RunId, SessionId, Uuid7, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
@@ -108,6 +108,11 @@ pub fn root_agent() -> AgentId {
 }
 
 #[must_use]
+pub fn generation() -> GenerationId {
+    GenerationId::from_uuid7(Uuid7::compose(1_754_051_696_789, [8; 10]))
+}
+
+#[must_use]
 pub fn child_agent(byte: u8) -> AgentId {
     AgentId::from_uuid7(Uuid7::compose(1_754_051_696_790, [byte; 10]))
 }
@@ -148,7 +153,7 @@ pub fn control() -> AgentControl {
         agent: root_agent(),
         session: session(),
         workspace: workspace(),
-        generation: "gen_01j0000000000000000000000".to_owned(),
+        generation: generation(),
         revision: 4,
         journal_tail: 9,
         claim_owner: Some("worker-1".to_owned()),
@@ -315,7 +320,7 @@ pub fn fanout(children: usize) -> FanoutPagePlan {
         children: (0..children)
             .map(|index| aex_session_dynamodb::wire_pending::ChildAgent {
                 agent: child_agent(u8::try_from(index).unwrap_or(u8::MAX)),
-                generation: "gen_01j0000000000000000000000".to_owned(),
+                generation: generation(),
                 child_budget: 4,
                 wake: wake(),
             })

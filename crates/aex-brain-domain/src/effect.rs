@@ -8,6 +8,7 @@
 //! The whole point of this module is that **a possibly-received provider request never
 //! becomes a silent retry or a second generation**.
 
+use aex_wire::ids::GenerationId;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ContentHash, DetachedOperationId, EffectId, ProviderRequestId, Timestamp};
@@ -227,6 +228,8 @@ pub struct DurableEffect {
     pub id: EffectId,
     /// What kind of work it performs.
     pub kind: EffectKind,
+    /// Exact runtime generation for Hands work; absent for every other effect kind.
+    pub generation: Option<GenerationId>,
     /// Its recovery contract.
     pub class: EffectClass,
     /// `blake3` over the canonical request. A second request under the same id is a fork.
@@ -413,6 +416,7 @@ mod tests {
         DurableEffect {
             id: EffectId([7; 16]),
             kind: EffectKind::ModelCall,
+            generation: None,
             class,
             request_hash: ContentHash::of(b"request"),
             state,

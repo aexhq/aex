@@ -9,7 +9,7 @@
 use crate::admission::{Admission, AdmissionBounds};
 use crate::drain::Stage;
 use crate::measure::Measurement;
-use crate::wake::{Bindings, MuxAdmission};
+use crate::wake::{BindingState, Bindings, MuxAdmission};
 use aex_brain_application::activation::memory::{
     AbsentHands, CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore, ProviderScript,
     Recorder, ScriptedProvider, ScriptedTools, wake_for,
@@ -30,8 +30,8 @@ use aex_brain_domain::ids::{
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
-    ContentBlockRef, HandsGenerationRef, ModelCapability, NormalizedUsage, ProviderId,
-    ProviderReceipt, ResolvedAgentConfig, StopReason,
+    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
+    ResolvedAgentConfig, StopReason,
 };
 use aex_usage_application::probe::{
     ActivationKey, ActivationScoped, CpuInstant, PhysicalCpuSource, ProbeContext, ProbeError,
@@ -42,6 +42,7 @@ use aex_usage_domain::wire_pending::{
     ActivationId, AgentId as UsageAgentId, OrganizationId, PricingVersion, RegionId, ServiceId,
     SessionId as UsageSessionId, WorkspaceId,
 };
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -67,7 +68,7 @@ fn config() -> ResolvedAgentConfig {
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
-        hands_generation: HandsGenerationRef::Unbound,
+        hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
         limits: AgentLimits {
             max_turns: 4,
             max_steps_per_turn: 8,
@@ -140,9 +141,11 @@ fn produced() -> ProviderOutcome {
 
 fn bound() -> Bindings {
     Bindings {
-        store: true,
-        provider: true,
-        catalog: true,
+        store: BindingState::Ready,
+        provider: BindingState::Ready,
+        catalog: BindingState::Ready,
+        tools: BindingState::Ready,
+        hands: BindingState::Ready,
     }
 }
 

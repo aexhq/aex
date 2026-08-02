@@ -21,6 +21,7 @@
 //! on this crate, so the one marker naming that direction is a cycle rather than a pending
 //! delete.
 
+use aex_wire::ids::GenerationId;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{
@@ -511,20 +512,10 @@ pub struct ResolvedAgentConfig {
     pub system: Option<ContentRef>,
     /// Digests of the admitted tool manifests.
     pub tool_manifest_digests: Vec<ContentHash>,
-    /// The Hands generation every agent in the session shares.
-    pub hands_generation: HandsGenerationRef,
+    /// The canonical Hands generation every agent in the session shares.
+    pub hands_generation: GenerationId,
     /// Per-agent run limits.
     pub limits: AgentLimits,
-}
-
-/// The Hands generation an agent inherits, and whether one exists yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HandsGenerationRef {
-    /// No Hands `MicroVM` has been required yet.
-    Unbound,
-    /// The exact generation this agent's Hands work is fenced to.
-    Bound(crate::ids::HandsGeneration),
 }
 
 /// Per-agent structural limits carried by the pinned config.

@@ -280,6 +280,7 @@ pub fn prepare(
     draft.effect(EffectWrite::Prepare {
         id: effect,
         kind,
+        generation: None,
         class,
         request_hash,
         deadline,

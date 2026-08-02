@@ -20,7 +20,7 @@ use aex_brain_domain::ids::{
     Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_wire::ids::{OrganizationId, WorkspaceId};
+use aex_wire::ids::{GenerationId, OrganizationId, WorkspaceId};
 
 /// The session-head facts that own every Brain row written for one activation.
 ///
@@ -53,6 +53,8 @@ pub struct DecisionContext {
 pub struct AgentHead {
     /// Which agent.
     pub key: AgentKey,
+    /// The canonical Hands generation inherited from the session authority.
+    pub generation: GenerationId,
     /// The commit counter.
     pub revision: AgentRevision,
     /// The ownership generation.

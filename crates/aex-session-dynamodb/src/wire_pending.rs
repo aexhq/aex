@@ -296,7 +296,7 @@ pub struct AgentControl {
     /// Its workspace.
     pub workspace: WorkspaceId,
     /// The Hands generation it is bound to.
-    pub generation: String,
+    pub generation: GenerationId,
     /// Its optimistic revision.
     pub revision: u64,
     /// The highest journal sequence committed.
@@ -669,7 +669,7 @@ pub struct ChildAgent {
     /// Its identity.
     pub agent: AgentId,
     /// The generation it is bound to.
-    pub generation: String,
+    pub generation: GenerationId,
     /// The budget carved from the parent.
     pub child_budget: u64,
     /// Its wake.

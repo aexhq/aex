@@ -35,9 +35,9 @@ use aex_brain_domain::journal::{
 };
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CompleteAssistantMessage, CompleteProof, ContentBlockRef,
-    HandsGenerationRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
-    ResolvedAgentConfig, StopReason,
+    ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt, ResolvedAgentConfig, StopReason,
 };
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -79,7 +79,7 @@ fn config() -> ResolvedAgentConfig {
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
-        hands_generation: HandsGenerationRef::Unbound,
+        hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
         limits: AgentLimits {
             max_turns: 4,
             max_steps_per_turn: 8,
@@ -672,6 +672,7 @@ fn recovery_runs_before_the_planner_and_interrupts_a_dispatched_effect() {
         DurableEffect {
             id,
             kind: EffectKind::ModelCall,
+            generation: None,
             class: EffectClass::NonReplayable,
             request_hash: ContentHash::of(b"whatever the dead owner sent"),
             state: EffectState::DispatchStarted { attempt: 1 },

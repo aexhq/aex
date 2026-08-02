@@ -20,7 +20,7 @@ use aex_brain_store_aws::journal::condition_for;
 use aex_brain_store_aws::{BrainStore, BrainTables, DueScan, SqsWakeQueue};
 use aex_session_dynamodb::attr::{ItemBuilder, b, n, s, stamp};
 use aex_session_dynamodb::plan::Participant;
-use aex_wire::ids::{PrefixedId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 use aws_smithy_http_client::test_util::{CaptureRequestReceiver, capture_request};
 
 fn v7(millis: u64, seed: u8) -> uuid::Uuid {
@@ -106,6 +106,7 @@ fn captured(receiver: CaptureRequestReceiver) -> serde_json::Value {
 fn head() -> AgentHead {
     AgentHead {
         key: key(),
+        generation: GenerationId::from_uuid7(Uuid7::compose(1_767_225_600_000, [9; 10])),
         revision: AgentRevision(1),
         fence: Fence(3),
         journal_tail: Some(JournalSeq(4)),

@@ -273,6 +273,7 @@ pub fn compile(
             EffectWrite::Prepare {
                 id,
                 kind,
+                generation,
                 class,
                 request_hash,
                 deadline,
@@ -289,6 +290,10 @@ pub fn compile(
                                 .set(aex_session_dynamodb::attr::SK, s(effect_key.sk))
                                 .set("effectId", s(id.to_hex()))
                                 .set("kind", s(format!("{kind:?}")))
+                                .set_opt(
+                                    "generationId",
+                                    generation.map(|value| s(value.to_string())),
+                                )
                                 .set("effectClass", s(format!("{class:?}")))
                                 .set("requestHash", s(request_hash.to_hex()))
                                 .set("attempt", n(u64::from(*attempt)))

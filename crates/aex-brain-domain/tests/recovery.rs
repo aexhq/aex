@@ -13,6 +13,7 @@ use aex_brain_domain::ids::{
     ContentHash, DetachedOperationId, EffectId, ProviderRequestId, Timestamp,
 };
 use aex_brain_domain::wire_pending::DurableOperationSupport;
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 
 const STATES: [fn() -> EffectState; 6] = [
     || EffectState::Prepared { attempt: 1 },
@@ -62,6 +63,8 @@ fn effect(
     DurableEffect {
         id: EffectId([7; 16]),
         kind,
+        generation: matches!(kind, EffectKind::HandsOperation)
+            .then(|| GenerationId::from_uuid7(Uuid7::compose(1, [7; 10]))),
         class,
         request_hash: ContentHash::of(b"request"),
         state,

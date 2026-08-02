@@ -4,6 +4,7 @@
 //! by `DynamoDB` for size gives no usable diagnosis and costs a round trip. A fanout that
 //! would exceed the envelope pages instead.
 
+use aex_wire::ids::GenerationId;
 use serde::{Deserialize, Serialize};
 
 use crate::budget::{BudgetDelta, BudgetGrant};
@@ -83,6 +84,8 @@ pub enum EffectWrite {
         id: EffectId,
         /// What kind of work.
         kind: EffectKind,
+        /// Exact runtime generation for a Hands operation; absent for every other kind.
+        generation: Option<GenerationId>,
         /// Its recovery contract.
         class: EffectClass,
         /// `blake3` over the canonical request.
@@ -297,6 +300,12 @@ pub struct DecisionCommit {
 /// Why a decision would not fit one transaction.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeViolation {
+    /// Hands effects must bind exactly one canonical generation and other effects must not.
+    #[error("effect kind {kind:?} has an invalid runtime generation binding")]
+    InvalidGenerationBinding {
+        /// The effect kind whose binding was invalid.
+        kind: EffectKind,
+    },
     /// More actions than one transaction admits.
     #[error("{actions} actions exceeds the {MAX_TRANSACTION_ACTIONS} permitted")]
     TooManyActions {
@@ -441,10 +450,21 @@ impl DecisionCommit {
     ///
     /// # Errors
     ///
-    /// Returns [`EnvelopeViolation`] when the decision exceeds the action, aggregate-byte
-    /// or per-item ceiling, when its appends are not contiguous from the guard's tail, or
-    /// when it carries no action at all.
+    /// Returns [`EnvelopeViolation`] when the decision has an invalid Hands-generation
+    /// binding, exceeds the action, aggregate-byte or per-item ceiling, when its appends
+    /// are not contiguous from the guard's tail, or when it carries no action at all.
     pub fn validate(&self) -> Result<EnvelopeCost, EnvelopeViolation> {
+        for effect in &self.effects {
+            if let EffectWrite::Prepare {
+                kind, generation, ..
+            } = effect
+            {
+                let valid = matches!(kind, EffectKind::HandsOperation) == generation.is_some();
+                if !valid {
+                    return Err(EnvelopeViolation::InvalidGenerationBinding { kind: *kind });
+                }
+            }
+        }
         let expected = self.guard.tail.map_or(JournalSeq::ZERO, JournalSeq::next);
         if self.control.next_tail.get() + 1
             < expected.get() + u64::try_from(self.appends.len()).unwrap_or(u64::MAX)

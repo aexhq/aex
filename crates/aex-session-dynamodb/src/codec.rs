@@ -336,7 +336,7 @@ pub fn encode_control(control: &AgentControl) -> Item {
         .set("agentId", s(control.agent.to_string()))
         .set("sessionId", s(control.session.to_string()))
         .set("workspaceId", s(control.workspace.to_string()))
-        .set("generationId", s(control.generation.clone()))
+        .set("generationId", s(control.generation.to_string()))
         .set("status", s(control.status.clone()))
         .set("revision", n(control.revision))
         .set("journalTail", n(control.journal_tail))
@@ -365,7 +365,7 @@ pub fn decode_control(item: &Item, asserted: WorkspaceId) -> Result<AgentControl
         agent: row.id::<AgentId>("agentId")?,
         session: row.id::<SessionId>("sessionId")?,
         workspace: asserted,
-        generation: row.string("generationId")?.to_owned(),
+        generation: row.id::<GenerationId>("generationId")?,
         revision: row.u64("revision")?,
         journal_tail: row.u64("journalTail")?,
         claim_owner: row.opt_string("claimOwner")?.map(str::to_owned),
@@ -836,21 +836,21 @@ mod tests {
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{
-        AgentId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId, RunId,
-        SessionId, Uuid7, WorkspaceId,
+        AgentId, GenerationId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId,
+        RunId, SessionId, Uuid7, WorkspaceId,
     };
     use aex_wire::types::Timestamp;
 
     use super::{
-        SESSION_HEAD, decode_approval, decode_event, decode_head, decode_message, decode_operation,
-        decode_run, encode_approval, encode_event, encode_head, encode_message, encode_operation,
-        encode_run,
+        SESSION_HEAD, decode_approval, decode_control, decode_event, decode_head, decode_message,
+        decode_operation, decode_run, encode_approval, encode_control, encode_event, encode_head,
+        encode_message, encode_operation, encode_run,
     };
     use crate::attr::CodecError;
     use crate::keys;
     use crate::wire_pending::{
-        Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body, Message, Run,
-        SessionEvent, SessionHead, SessionLifecycle, SessionStatus, StoredOperation,
+        AgentControl, Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body,
+        Message, Run, SessionEvent, SessionHead, SessionLifecycle, SessionStatus, StoredOperation,
     };
 
     fn stamp(millis: i64) -> Timestamp {
@@ -918,6 +918,43 @@ mod tests {
             },
             version: 4,
         }
+    }
+
+    fn control() -> AgentControl {
+        AgentControl {
+            agent: AgentId::from_uuid7(Uuid7::compose(1, [3; 10])),
+            session: SessionId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            workspace: workspace(1),
+            generation: GenerationId::from_uuid7(Uuid7::compose(1, [5; 10])),
+            revision: 2,
+            journal_tail: 7,
+            claim_owner: None,
+            lease_expires_at: None,
+            fence: 3,
+            child_budget_remaining: 4,
+            child_budget_granted: 5,
+            status: "running".to_owned(),
+            created_at: stamp(1_000),
+            updated_at: stamp(2_000),
+        }
+    }
+
+    #[test]
+    fn an_agent_control_round_trips_one_canonical_generation_and_rejects_malformed_text() {
+        let control = control();
+        let mut item = encode_control(&control);
+        assert_eq!(
+            decode_control(&item, control.workspace).expect("decodes"),
+            control
+        );
+        item.insert("generationId".to_owned(), crate::attr::s("generation-5"));
+        assert!(matches!(
+            decode_control(&item, control.workspace),
+            Err(CodecError::Malformed {
+                attribute: "generationId",
+                ..
+            })
+        ));
     }
 
     #[test]

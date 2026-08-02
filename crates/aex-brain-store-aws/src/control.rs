@@ -11,6 +11,7 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::FinishReason;
 use aex_session_dynamodb::attr::{CodecError, Item, Row};
+use aex_wire::ids::GenerationId;
 
 use crate::plan::{limit_attribute, reserved_attribute, used_attribute};
 
@@ -37,6 +38,7 @@ pub fn decode(
     let has_journal = row.boolean("hasJournal").unwrap_or(tail > 0);
     Ok(AgentHead {
         key,
+        generation: row.id::<GenerationId>("generationId")?,
         revision: AgentRevision(row.u64("revision")?),
         fence: Fence(row.u64("fence")?),
         journal_tail: has_journal.then_some(JournalSeq(tail)),
@@ -115,7 +117,11 @@ mod tests {
     };
     use aex_brain_domain::journal::FinishReason;
     use aex_session_dynamodb::attr::{ItemBuilder, n, s, stamp};
-    use aex_wire::ids::Uuid7;
+    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+
+    fn generation() -> GenerationId {
+        GenerationId::from_uuid7(Uuid7::compose(1_767_225_600_002, [3; 10]))
+    }
 
     fn key() -> AgentKey {
         AgentKey::new(
@@ -130,6 +136,7 @@ mod tests {
 
     fn row() -> ItemBuilder {
         ItemBuilder::new(AGENT_CONTROL)
+            .set("generationId", s(generation().to_string()))
             .set("revision", n(7))
             .set("fence", n(3))
             .set("journalTail", n(11))
@@ -149,6 +156,7 @@ mod tests {
     fn a_control_row_decodes_into_the_head_a_claim_returns() {
         let head = decode(&row().build(), key(), Vec::new()).expect("a well-formed row");
         assert_eq!(head.revision, AgentRevision(7));
+        assert_eq!(head.generation, generation());
         assert_eq!(head.fence, Fence(3));
         assert_eq!(head.journal_tail, Some(JournalSeq(11)));
         assert_eq!(head.phase, "awaiting_model");
@@ -165,6 +173,7 @@ mod tests {
     #[test]
     fn an_agent_with_no_journal_reports_absence_rather_than_zero() {
         let item = ItemBuilder::new(AGENT_CONTROL)
+            .set("generationId", s(generation().to_string()))
             .set("revision", n(0))
             .set("fence", n(0))
             .set("journalTail", n(0))
