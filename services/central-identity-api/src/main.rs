@@ -8,6 +8,10 @@
 //! The mounted public surface is `CentralServiceId::IdentityApi.routes()` and
 //! nothing else, which `the_mounted_set_is_exactly_the_declared_one` asserts.
 
+mod api;
+mod startup;
+mod targets;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -252,17 +256,11 @@ pub const PERMISSIONS: &[&str] = &[
 
 /// What each start-up probe answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "one field per start-up probe; a bitfield would hide which probe failed"
-)]
 pub struct Probes {
     /// `SELECT 1` as `aex_identity_api` succeeded.
     pub aurora: bool,
     /// The active identity pepper loaded.
     pub pepper: bool,
-    /// The dashboard BFF's `JWKS` fetched.
-    pub jwks: bool,
 }
 
 impl Probes {
@@ -270,7 +268,12 @@ impl Probes {
     pub const NONE: Self = Self {
         aurora: false,
         pepper: false,
-        jwks: false,
+    };
+
+    /// Every probe answered.
+    pub const READY: Self = Self {
+        aurora: true,
+        pepper: true,
     };
 }
 
@@ -288,10 +291,6 @@ pub fn readiness(probes: Probes) -> Readiness {
                 name: "identity-pepper",
                 resolved: probes.pepper,
             },
-            Dependency {
-                name: "dashboard-jwks",
-                resolved: probes.jwks,
-            },
         ],
     )
 }
@@ -305,6 +304,12 @@ pub enum RunError {
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] CompositionError),
+    /// A start-up probe did not answer, so the process refuses to serve.
+    ///
+    /// Naming the dependency is the whole point: "not ready" without a name is
+    /// a page nobody can action.
+    #[error("the `{0}` dependency did not answer: {1}")]
+    Dependency(&'static str, String),
     /// The listener stopped.
     #[error("the listener stopped: {0}")]
     Listener(String),
@@ -328,6 +333,7 @@ pub async fn run<A: AuthApi>(
     config: &Config,
     api: Arc<A>,
     edge: EdgeStack,
+    probes: Probes,
     telemetry: &aex_platform_telemetry::Handle,
 ) -> Result<(), RunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
@@ -344,30 +350,139 @@ pub async fn run<A: AuthApi>(
             config.http.region.as_str().to_owned(),
         ),
     );
-    lambda_http::run(app(api, edge, readiness(Probes::NONE)))
+    lambda_http::run(app(api, edge, readiness(probes)))
         .await
         .map_err(|error| RunError::Listener(error.to_string()))
 }
 
-fn main() -> std::process::ExitCode {
-    // The Aurora-backed `AuthApi` implementation is the one remaining piece:
-    // `run` is generic over it, and configuration, capability admission, the
-    // mounted route set and both probes are exercised by this binary's own
-    // suite. Starting with a placeholder implementation would be worse than
-    // refusing — a device-flow route that answers without an identity store is
-    // one that mints nothing and says it did.
-    match Config::from_env() {
-        Ok(config) => {
-            eprintln!(
-                "central-identity-api: configuration accepted for plane `{}` in `{}`; \
-                 the identity service is not composed yet",
-                config.http.plane.as_str(),
-                config.http.region.as_str()
-            );
-        }
-        Err(error) => eprintln!("central-identity-api: refusing to start: {error}"),
+/// Builds the real adapters, proves each one answers, and serves.
+///
+/// Both probes run **before** the listener binds, and either failing refuses the
+/// process. The alternative — serving with a false readiness flag — admits
+/// requests this deployable can only fail, and a device-flow route that answers
+/// without an identity store is one that mints nothing and says it did.
+async fn compose(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RunError> {
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let data_api = aex_rds_data::DataApiConfig::new(
+        aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::DatabaseName::parse(&config.database)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+    );
+    let client = aex_rds_data::DataApiClient::new(
+        Arc::new(aex_rds_data::AwsTransport::new(
+            aws_sdk_rdsdata::Client::new(&aws),
+            &data_api,
+        )),
+        data_api,
+    );
+
+    // Probe one: the login role can read. `SELECT 1` as `aex_identity_api` is
+    // the cheapest statement that proves the cluster is awake, the credential
+    // resolves and the role exists.
+    client
+        .query::<Ok1>(aex_rds_data::Statement::new(
+            aex_identity_aurora::sql::READINESS_PROBE,
+        ))
+        .await
+        .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
+
+    let peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+        aws_sdk_secretsmanager::Client::new(&aws),
+        config.pepper_secret_id.clone(),
+        Arc::new(aex_central_runtime::DataApiPepperDirectory::new(
+            client.clone(),
+            aex_central_runtime::PepperStatements {
+                active: aex_identity_aurora::sql::ACTIVE_IDENTITY_PEPPER,
+                by_version: aex_identity_aurora::sql::IDENTITY_PEPPER_BY_VERSION,
+            },
+        )),
+    ));
+
+    // Probe two: the active identity pepper resolves, end to end — the
+    // lifecycle row, then its material by that row's version id. A process that
+    // cannot load it can verify nothing and mint nothing.
+    peppers
+        .probe(aex_identity_app::ports::PepperPurpose::Identity)
+        .await
+        .map_err(|error| RunError::Dependency("identity-pepper", error.to_string()))?;
+
+    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_runtime::SystemClock);
+    let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
+        client,
+        Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
+    ));
+    let verification_uri = aex_wire::types::HttpsUrl::parse(&config.device_verification_uri)
+        .map_err(|error| RunError::Dependency("device-verification-uri", error.to_string()))?;
+    let api = Arc::new(api::AuthService::new(
+        store,
+        Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
+        Arc::clone(&clock),
+        Arc::new(aex_central_runtime::Uuid7Factory),
+        Arc::new(aex_central_runtime::OsSecretRng),
+        verification_uri,
+    ));
+
+    // The cursor secret is per-process and never leaves it: this deployable
+    // mounts no paged route, so a cursor it minted could only be redeemed by
+    // itself, and a configured shared secret would be one more credential to
+    // hold for no reader.
+    let mut cursor_bytes = [0_u8; 32];
+    aex_identity_domain::SecretRng::fill(&aex_central_runtime::OsSecretRng, &mut cursor_bytes);
+    let edge = EdgeStack::new(
+        config.http.clone(),
+        Arc::new(targets::NoOrganizationTargets),
+        clock,
+        Arc::new(aex_control_domain::CursorSecret::new(cursor_bytes)),
+    );
+
+    run(config, api, edge, Probes::READY, telemetry).await
+}
+
+/// The one-column `SELECT 1` the readiness probe issues.
+struct Ok1;
+
+impl aex_rds_data::Row for Ok1 {
+    fn from_record(record: &aex_rds_data::Record<'_>) -> Result<Self, aex_rds_data::DecodeError> {
+        record.expect_arity(1)?;
+        record.i64(0)?;
+        Ok(Self)
     }
-    std::process::ExitCode::FAILURE
+}
+
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("central-identity-api: refusing to start: {error}");
+            eprintln!(
+                "central-identity-api: required configuration: {}",
+                keys::ALL.join(", ")
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = compose(&config, &telemetry).await;
+    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
+        telemetry.flush(settings.flush_deadline)
+    {
+        eprintln!("central-identity-api: telemetry flush left {pending} record(s) undelivered");
+    }
+    match outcome {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("central-identity-api: stopped: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]

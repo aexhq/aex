@@ -89,3 +89,135 @@ pub struct ControlEnvelope<T> {
     /// The command itself.
     pub payload: T,
 }
+
+/// Why a region refused a fenced control request.
+///
+/// A closed vocabulary rather than a free-text code. The caller turns each arm
+/// into a retry decision, and a code it has never seen is a decision it cannot
+/// make: an open vocabulary would leave the central plane guessing whether an
+/// unfamiliar refusal is worth retrying, and guessing wrong in either direction
+/// either wedges a workspace or provisions it twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegionalRefusal {
+    /// The workspace exists in the region under a different organization.
+    OrganizationMismatch,
+    /// A newer fence already ran; this attempt is stale.
+    FenceSuperseded,
+    /// The region recognised the workspace but not this intent.
+    IntentConflict,
+    /// The region is admitting nothing right now.
+    RegionUnavailable,
+    /// The region failed in a way it could not classify.
+    Internal,
+}
+
+impl RegionalRefusal {
+    /// Every arm, for the totality test.
+    pub const ALL: [Self; 5] = [
+        Self::OrganizationMismatch,
+        Self::FenceSuperseded,
+        Self::IntentConflict,
+        Self::RegionUnavailable,
+        Self::Internal,
+    ];
+
+    /// The stable machine code.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::OrganizationMismatch => "regional_organization_mismatch",
+            Self::FenceSuperseded => "regional_fence_superseded",
+            Self::IntentConflict => "regional_intent_conflict",
+            Self::RegionUnavailable => "regional_region_unavailable",
+            Self::Internal => "regional_internal",
+        }
+    }
+
+    /// Whether the identical request may be sent again.
+    ///
+    /// A superseded fence is **not** retryable under the same fence: a newer
+    /// attempt already owns the workspace, and repeating this one would race it.
+    #[must_use]
+    pub const fn retryable(self) -> bool {
+        matches!(self, Self::RegionUnavailable | Self::Internal)
+    }
+}
+
+/// One fenced request the central control plane makes of a region.
+///
+/// Both arms carry the fence, so a region can refuse a stale attempt rather
+/// than apply it out of order, and both name the workspace the central plane
+/// preassigned, so a reconciler asks about *that* workspace rather than
+/// creating a second one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "request",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum RegionalControlRequest {
+    /// Create the regional half of a workspace.
+    ProvisionWorkspace {
+        /// Which workspace.
+        workspace: WorkspaceId,
+        /// Its owning organization.
+        organization: OrganizationId,
+        /// Where it lives, forever.
+        region: Region,
+        /// The fence this attempt runs under.
+        fence: u64,
+        /// The canonical intent, hex-encoded, so a replay is recognisable.
+        intent_hash: String,
+    },
+    /// Remove the regional half of a workspace.
+    DeleteWorkspace {
+        /// Which workspace.
+        workspace: WorkspaceId,
+        /// Where it lives.
+        region: Region,
+        /// The fence this attempt runs under.
+        fence: u64,
+    },
+}
+
+/// What a region answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum RegionalControlOutcome {
+    /// The regional half exists.
+    WorkspaceProvisioned {
+        /// Which workspace, echoed so a mismatched answer is detectable.
+        workspace: WorkspaceId,
+        /// Whether this call created it.
+        created: bool,
+    },
+    /// The regional half is gone.
+    WorkspaceDeleted {
+        /// Which workspace, echoed for the same reason.
+        workspace: WorkspaceId,
+        /// Whether the regional half is gone.
+        removed: bool,
+    },
+    /// The region refused, and said why.
+    Refused {
+        /// Which refusal.
+        reason: RegionalRefusal,
+    },
+}
+
+/// One regional control request or answer, versioned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegionalControlEnvelope<T> {
+    /// Which envelope version this is.
+    pub schema_version: SchemaVersion,
+    /// The request identity, stable across retries of the same fence.
+    pub request_id: aex_wire::Uuid7,
+    /// The request or the answer.
+    pub payload: T,
+}

@@ -1485,6 +1485,20 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "crates/aex-central-runtime",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-central-runtime",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "crates/aex-content-aws",
     "owner": "regional-stores",
     "blocking_rule": "aex-unearned-evidence",

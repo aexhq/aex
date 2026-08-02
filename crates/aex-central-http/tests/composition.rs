@@ -933,3 +933,66 @@ async fn a_workspace_key_may_not_reach_a_route_that_admits_only_a_person() {
     assert_eq!(sent.status, StatusCode::FORBIDDEN);
     assert_eq!(api.calls.load(Ordering::SeqCst), 0);
 }
+
+/// A clock that advances one millisecond on every read.
+///
+/// This is not a pathological fixture: `SystemClock` truncates to whole
+/// milliseconds, so two reads inside one request differ whenever the
+/// millisecond happens to tick between them. Under a wall clock that is an
+/// intermittent failure; here it is every time.
+#[derive(Debug)]
+struct TickingClock {
+    reads: AtomicUsize,
+}
+
+impl Clock for TickingClock {
+    fn now(&self) -> OffsetDateTime {
+        let tick = self.reads.fetch_add(1, Ordering::SeqCst);
+        OffsetDateTime::from_unix_timestamp_nanos(
+            (i128::from(NOW_MS) + i128::try_from(tick).unwrap_or(0)) * 1_000_000,
+        )
+        .expect("a representable instant")
+    }
+}
+
+#[tokio::test]
+async fn an_anonymous_request_is_admitted_even_when_the_millisecond_ticks_mid_request() {
+    // The credential-free context is minted with a one-millisecond window and
+    // then verified. Reading the clock twice made that window lapse whenever
+    // the two readings straddled a millisecond, which refused both public
+    // device-flow routes with `401 unauthenticated` — the two routes an
+    // unauthenticated CLI has nothing else to call.
+    let api = Api::new(Answer::Declared);
+    let stack = EdgeStack::new(
+        HttpConfig::resolve("dev", "eu-west-1", "central-identity-api", 4_096, 5_000)
+            .expect("a valid configuration"),
+        Resolver::new(AccountState::Active),
+        Arc::new(TickingClock {
+            reads: AtomicUsize::new(0),
+        }),
+        Arc::new(aex_control_domain::CursorSecret::new([3_u8; 32])),
+    );
+    let router = plane(Arc::clone(&api), stack);
+    for id in [
+        RouteId::DeviceAuthorizationCreate,
+        RouteId::DeviceTokenCreate,
+    ] {
+        let sent = send(router.clone(), request_for(id, None)).await;
+        assert_ne!(
+            sent.status,
+            StatusCode::UNAUTHORIZED,
+            "`{id:?}` refused an anonymous caller it declares as anonymous: {}",
+            sent.body
+        );
+        assert!(
+            !sent.body.contains("\"code\":\"unauthenticated\""),
+            "`{id:?}`: {}",
+            sent.body
+        );
+    }
+    assert_eq!(
+        api.calls.load(Ordering::SeqCst),
+        2,
+        "both anonymous routes must reach their handler"
+    );
+}

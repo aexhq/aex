@@ -11,7 +11,7 @@
     "awaiting_owner": 48,
     "capacity_gates": 19,
     "live_targets": 34,
-    "packages": 140,
+    "packages": 141,
     "seams_claimed": 32,
     "seams_declared": 34,
     "workloads": 8
@@ -472,6 +472,46 @@
         "not_applicable": {
           "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
         }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-central-runtime": {
+      "name": "aex-central-runtime",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-central-identity-api",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam",
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "integration": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false

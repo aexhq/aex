@@ -857,3 +857,133 @@ $ git diff --check
 
 No test is `#[ignore]`d, self-skipping or retried to green, and nothing in this
 pass was deployed, credentialed or run against AWS.
+## 10. Third pass — the surrounding ports, and `central-identity-api` serving
+
+The second pass left both central APIs printing "not composed yet" and
+returning `FAILURE`. The database half was landed; what was missing was every
+port around it. This pass landed those ports and composed the first of the two
+binaries.
+
+### 10.1 `aex-central-runtime`, the 65th library crate
+
+One adapter crate for the central plane's non-Aurora ports, because three
+separate crates for six small adapters would have been three manifests, three
+role profiles and three seam declarations for one dependency graph.
+
+| Module | Port | Over |
+| --- | --- | --- |
+| `ambient` | `Clock`, `IdFactory`, `SecretRng` | `time`, `UUIDv7`, `aws-lc-rs` |
+| `pepper` | `PepperKeystore` | `aws-sdk-secretsmanager` + a lifecycle directory |
+| `directory` | `PepperDirectory` | the Data `API`, statements passed in |
+| `regional` | `RegionalControlPort` | `aws-sdk-lambda` |
+| `mail` | `MailerPort` | a durable outbox row |
+
+`SecretRng` is the `aws-lc-rs` `SystemRandom` rather than `rand`: it is already
+this workspace's CSPRNG in `aex-secret-aws`, and a second generator for the same
+job is a second thing to audit. `fill` returns no error, so a refusing source
+aborts — the alternative is minting a credential from bytes the generator did
+not produce.
+
+### 10.2 The pepper contract as landed (OD-39)
+
+`AEX_CENTRAL_IDENTITY_PEPPER_SECRET_ID` names one Secrets Manager secret whose
+payload is a version, a purpose and 32 base64 bytes.
+`identity.credential_pepper.secret_ref` holds that secret's **version id**.
+
+- the table owns lifecycle — version, purpose, state, rotation;
+- the secret owns material only;
+- a verifier resolves *exactly one version* by fetching that version id, so two
+  peppers coexist for as long as a rotation takes. Reading the current stage
+  instead would make every credential minted before a rotation unverifiable the
+  instant the secret moved, and report them as *invalid* — a lie the caller acts
+  on by signing the person out.
+
+`ACTIVE_CONTROL_PEPPER` and `CONTROL_PEPPER_BY_VERSION` now project `purpose` as
+well as binding it. They projected only version, secret_ref and state, which
+would have made the payload check compare the bound parameter to itself.
+
+Material is held in a bounded (8) zeroizing cache keyed by version id. The bound
+is a security property, not a memory one: an unbounded cache keyed by
+caller-supplied version is how a process ends up holding every pepper that ever
+existed. `tests/security.rs` drives the four renderings material has escaped
+through before — `Debug`, the alternate `Debug`, an error `Display`, and a
+telemetry attribute built from one — including a scripted denial whose vendor
+message quotes the material, which is why the service **code** crosses the
+boundary and the service message never does.
+
+### 10.3 `MailerPort` is a durable intent, not a send (OD-40)
+
+No email vendor is chosen anywhere in the accepted design, and this pass did not
+choose one. `central-control-worker` is the deployable that holds `MailSend` and
+the `ses:SendEmail` permission, and its `invitation.email.deliver` duty already
+claims the `invitation.email.requested` topic. An adapter in the API that opened
+a vendor client would be a second sender in a deployable whose reviewable
+`PERMISSIONS` list says it cannot send at all — so it would be either dead code
+or an over-privileged role.
+
+`OutboxMailer` therefore promises what the API can honestly promise: the intent
+becomes durable, keyed by the outbox message id the invitation transaction
+preassigned, under a unique `(topic, dedupe_key)`. `send_invitation` returning
+`Ok` means "this will be delivered". A dedupe conflict is success, because
+durability is the promise and the index already kept it. A source test asserts
+no vendor name appears below the module documentation.
+
+### 10.4 `RegionalControlPort` never infers an outcome from a timeout
+
+The envelope lands in `aex-internal-contracts::control`, where cross-process
+envelopes live, with a **closed** refusal vocabulary (`RegionalRefusal`). An open
+one would leave the central plane guessing whether an unfamiliar code is worth
+retrying, and guessing wrong in either direction either wedges a workspace or
+provisions it twice.
+
+The classification is deliberately pessimistic. `nothing_was_dispatched` is the
+only path to `Unavailable`: a construction failure, a dispatch failure, or one
+of the eight Lambda refusals issued before the handler is entered. Everything
+else — a client-side timeout, an unreadable response, a raised handler, a schema
+version this process cannot read — is `Unknown`, and `Unknown` is the **default**
+arm rather than one somebody has to remember to add.
+
+### 10.5 `central-identity-api` starts and serves
+
+`main()` returns `SUCCESS`. Both start-up probes run before the listener binds
+and either failing refuses the process:
+
+1. `SELECT 1` as `aex_identity_api`;
+2. the active identity pepper, resolved end to end — the lifecycle row, then its
+   material by that row's version id.
+
+Readiness dropped its `dashboard-jwks` dependency. The dashboard trust anchor
+gates the internal ceremony routes, which this deployable does not mount, so
+probing it would gate the two anonymous routes on something they never touch.
+The two Vercel variables stay required configuration.
+
+The mounted surface is unchanged: 2 of the 27 central routes. `src/startup.rs`
+drives both of them end to end through the composed router over in-memory
+substrate — mint a device code, poll it pending, approve it, redeem exactly one
+account token, refuse the second redemption, and refuse a forged code before any
+store round trip.
+
+`NoOrganizationTargets` refuses `account_state` rather than answering `Active`.
+This binary's login role holds no privilege on the `control` schema, so a
+resolver that answered would be guessing, and the guess admits a paused account.
+
+### 10.6 One defect the composition suite found
+
+`aex-central-http` minted the credential-free context with a one-millisecond
+window and then verified it against a **second** clock reading. Any request whose
+two readings straddled a millisecond was refused `401 unauthenticated` — that is
+both public device-flow routes, intermittently, for the only caller that has
+nothing else to present. `admit_edge` now reads the clock once for the whole
+request, and a `TickingClock` regression test in the composition suite fails
+without the fix.
+
+### 10.7 Still undone
+
+`central-control-api` is unchanged and still refuses to start. Its four ports are
+now available; what remains is the wire adapter itself.
+
+| Blocker | Detail |
+| --- | --- |
+| The 16 handlers | `ApiKeysApi` (3), `BootstrapApi` (1), `CentralOperationsApi` (3), `OrganizationsApi` (5), `WorkspacesApi` (4). Each mutating one must build an eight-field `IdempotencyRecordKey` and an `AuditEvent`; each paged one must bind a `PageBinding` and mint its continuation through `aex_central_http::cursor`. |
+| The target resolver | `admit_request` needs `TargetResolver::account_state(organization_id)`, and **no port exposes it**. `AuthorizationReader` carries an account state only inside `WorkspaceKeyState` and `AccountActorState`, and `ControlStore` has no read for it at all. This is the precise next blocker: a new coarse read on one of the two ports, its statement in `aex-control-aurora`, and its row decoder. |
+| `OutboxWriter` | `MailerPort` is implemented over it; no Aurora implementation exists, because `ControlStore` has no standalone outbox insert — the invitation transaction commits its row inline. |

@@ -36,20 +36,27 @@ path = "src/main.rs"
 
 [dependencies]
 aex-central-http = { path = "../../crates/aex-central-http" }
+aex-central-runtime = { path = "../../crates/aex-central-runtime" }
+aex-control-app = { path = "../../crates/aex-control-app" }
+aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-app = { path = "../../crates/aex-identity-app" }
 aex-identity-aurora = { path = "../../crates/aex-identity-aurora" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-rds-data = { path = "../../crates/aex-rds-data" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-rdsdata.workspace = true
+aws-sdk-secretsmanager.workspace = true
 axum.workspace = true
 lambda_http.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-aex-control-app = { path = "../../crates/aex-control-app" }
-aex-control-domain = { path = "../../crates/aex-control-domain" }
-async-trait.workspace = true
-time.workspace = true
+serde_json.workspace = true
 tower.workspace = true
-uuid.workspace = true

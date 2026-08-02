@@ -148,14 +148,18 @@ SELECT kid, public_key, secret_ref, state, \
  LIMIT 1";
 
 /// The control pepper for one version.
+///
+/// `purpose` is projected as well as bound, so the row the keystore validates
+/// the secret payload against carries every field the payload names. Trusting
+/// the bound parameter instead would make the check compare a value to itself.
 pub const CONTROL_PEPPER_BY_VERSION: &str = "\
-SELECT version, secret_ref, state \
+SELECT version, purpose, state, secret_ref \
   FROM control.credential_pepper \
  WHERE purpose = :purpose AND version = :version";
 
 /// The one active control pepper.
 pub const ACTIVE_CONTROL_PEPPER: &str = "\
-SELECT version, secret_ref, state \
+SELECT version, purpose, state, secret_ref \
   FROM control.credential_pepper \
  WHERE purpose = :purpose AND state = 'active'";
 
