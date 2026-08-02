@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use aex_content_domain::identity::RegistryKind;
+use aex_operation_domain::operation::{OperationKind, OperationStatus};
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::cursor::{CursorBinding, CursorKeyRing, Order, SnapshotToken, SortTuple};
 use aex_regional_http::mount::{UnaryDispatch, not_served};
@@ -30,18 +31,21 @@ use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
-use aex_session_dynamodb::store::SessionQueries;
-use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus};
+use aex_session_dynamodb::store::{
+    OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries,
+};
+use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus, StoredOperation};
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::ids::{ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
+use aex_wire::ids::{OperationId, ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, ApprovalsApi, Created, NoContent, ProviderCredentialsApi, RegistryApi,
-    RequestContext as WireContext, RouteGroup, SecretsApi, WithETag, dispatch_approvals,
-    dispatch_provider_credentials, dispatch_registry, dispatch_secrets,
+    AcceptKind, ApprovalsApi, Created, NoContent, ProviderCredentialsApi, RegionalOperationsApi,
+    RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi, WithETag,
+    dispatch_approvals, dispatch_provider_credentials, dispatch_regional_operations,
+    dispatch_registry, dispatch_secrets,
 };
 use aex_wire::types::Timestamp;
 
@@ -66,6 +70,8 @@ pub struct Shared {
     pub registry: Arc<dyn RegistryStore>,
     /// The strongly consistent, read-only session-authority surface.
     pub sessions: Arc<dyn SessionQueries>,
+    /// The durable-operation point, list and conditional cancellation authority.
+    pub operations: Arc<dyn OperationApiStore>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
 }
@@ -116,6 +122,9 @@ const SERVED: &[RouteId] = &[
     RouteId::ProviderCredentialGet,
     RouteId::ProviderCredentialRevoke,
     RouteId::ProviderCredentialsList,
+    RouteId::RegionalOperationCancel,
+    RouteId::RegionalOperationGet,
+    RouteId::RegionalOperationsList,
     RouteId::RegistryFilesList,
     RouteId::RegistryInstructionsList,
     RouteId::RegistryMcpServersList,
@@ -157,17 +166,23 @@ impl Routes {
         snapshot: &str,
         session_id: Option<SessionId>,
     ) -> WireResult<CursorBinding> {
+        self.cursor_binding_for_query(route, snapshot, session_id, [0; 32])
+    }
+
+    fn cursor_binding_for_query(
+        &self,
+        route: RouteId,
+        snapshot: &str,
+        session_id: Option<SessionId>,
+        query_hash: [u8; 32],
+    ) -> WireResult<CursorBinding> {
         Ok(CursorBinding {
             route,
             principal_scope: self.cx.auth.credential_binding,
             region: self.cx.auth.placement,
             workspace_id: self.cx.auth.workspace_id,
             session_id,
-            // The listings served here take no filter, so the normalized query
-            // is empty and its digest is a constant for the route. A route that
-            // grows a filter must digest it here or a cursor would replay across
-            // two different queries.
-            query_hash: [0; 32],
+            query_hash,
             order: Order::Ascending,
             snapshot: SnapshotToken::new(snapshot)
                 .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?,
@@ -215,6 +230,118 @@ impl Routes {
         self.cx
             .now()
             .map_err(|_| WireError::new(ErrorCode::InternalError))
+    }
+}
+
+fn public_operation(stored: &StoredOperation) -> WireResult<Option<models::Operation>> {
+    stored
+        .record
+        .public()
+        .map_err(|_| WireError::new(ErrorCode::InternalError))
+}
+
+fn operation_query_hash(query: &models::RegionalOperationsListQuery) -> WireResult<[u8; 32]> {
+    use sha2::Digest as _;
+
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Normalized<'a> {
+        kind: Option<&'a str>,
+        session_id: Option<String>,
+        status: Option<&'a str>,
+    }
+
+    let normalized = Normalized {
+        kind: query.kind.map(models::OperationKind::as_str),
+        session_id: query.session_id.map(|session| session.to_string()),
+        status: query.status.map(models::OperationStatus::as_str),
+    };
+    let bytes = aex_wire::canonical::to_jcs_bytes(&normalized)
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"aex.regional.operations.list.filters.v1\0");
+    digest.update(bytes);
+    Ok(digest.finalize().into())
+}
+
+impl RegionalOperationsApi for Routes {
+    async fn regional_operation_cancel(
+        &self,
+        _cx: &WireContext,
+        operation_id: OperationId,
+        _body: models::EmptyRequest,
+    ) -> WireResult<models::Operation> {
+        match self
+            .shared
+            .operations
+            .request_cancel(self.cx.auth.workspace_id, operation_id, self.now()?)
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            OperationCancelOutcome::Accepted(stored) => {
+                public_operation(&stored)?.ok_or_else(|| WireError::new(ErrorCode::InternalError))
+            }
+            OperationCancelOutcome::NotFound => Err(WireError::new(ErrorCode::NotFound)),
+            OperationCancelOutcome::NotCancelable => {
+                Err(WireError::new(ErrorCode::OperationNotCancelable))
+            }
+        }
+    }
+
+    async fn regional_operation_get(
+        &self,
+        _cx: &WireContext,
+        operation_id: OperationId,
+    ) -> WireResult<models::Operation> {
+        let stored = self
+            .shared
+            .operations
+            .load(self.cx.auth.workspace_id, operation_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+            .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
+        public_operation(&stored)?.ok_or_else(|| WireError::new(ErrorCode::NotFound))
+    }
+
+    async fn regional_operations_list(
+        &self,
+        _cx: &WireContext,
+        query: models::RegionalOperationsListQuery,
+    ) -> WireResult<models::OperationPage> {
+        let filter = OperationFilter {
+            session: query.session_id,
+            kind: query.kind.map(OperationKind::from_public),
+            status: query.status.map(OperationStatus::from_public),
+        };
+        let binding = self.cursor_binding_for_query(
+            RouteId::RegionalOperationsList,
+            "operations",
+            query.session_id,
+            operation_query_hash(&query)?,
+        )?;
+        let after = self.resume(query.cursor.as_ref(), &binding)?;
+        let page = self
+            .shared
+            .operations
+            .page(
+                self.cx.auth.workspace_id,
+                &filter,
+                budget(query.limit)?,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?;
+        let items = page
+            .items
+            .iter()
+            .map(|stored| {
+                public_operation(stored)?.ok_or_else(|| WireError::new(ErrorCode::InternalError))
+            })
+            .collect::<WireResult<Vec<_>>>()?;
+        Ok(models::OperationPage {
+            items,
+            next_cursor: self.continuation(page.next.as_ref(), &binding)?,
+        })
     }
 }
 
@@ -828,6 +955,7 @@ impl UnaryDispatch for Routes {
             "provider-credentials" => {
                 dispatch_provider_credentials(self, &wire, raw, limits).await?
             }
+            "operations" => dispatch_regional_operations(self, &wire, raw, limits).await?,
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),

@@ -1166,6 +1166,68 @@ Those are authority-contract gaps, not calls the Lambda may replace with local
 best effort. Until they land, nonterminal provider effects are retried and the
 scheduled path fails loudly.
 
+## Regional operation routes continuation (2026-08-02)
+
+All three regional operation routes are now mounted, taking
+`regional-session-api` from twelve to fifteen served routes. This section
+supersedes only the `operations` row in the historical blocker table above; the
+remaining usage, approval-response, workspace, registry-content, file, upload,
+session and secret write blockers are unchanged.
+
+`regional_operation_get` is one strongly consistent, workspace-checked read of
+the complete operation envelope. Projection is owned by the operation domain,
+so a typed result is decoded under the authoritative envelope kind, a mismatch
+is corruption, and internal `ContentGc` answers `not_found` even if its identity
+is guessed.
+
+`regional_operations_list` queries the sparse public-operation partition of
+`gsi_workspace_index` in ascending `createdAt#operationId` order without a
+`FilterExpression`. The index is only an ordered locator: each selected base
+row is then read strongly with `GetItem`, in projected order and with at most 16
+reads in flight, before the exact session, kind and status filters are applied.
+Every launched read settles before an error is returned. A request spends at
+most its explicit physical-row budget, continuing across provider-short slices
+while budget remains. A short or empty filtered page still carries the provider
+continuation whenever physical rows remain; it never signals a false end. The
+cursor preserves the complete four-part last-evaluated key (base partition/sort
+plus index partition/sort) and authenticates route, credential binding, region,
+workspace, session and the canonical normalized
+`{kind, sessionId, status}` filter digest.
+
+`regional_operation_cancel` accepts only a strongly observed, public,
+session-authority-owned, cancelable, nonterminal, pre-commit operation. Its
+one-row transaction
+conditions workspace, operation identity, immutable kind, exact status and
+version, `cancelRequested = false`, and absent `committedAt`. A queued operation
+terminalizes to `cancelled` in that transaction. This does **not** retire
+associated work immediately. For the session-table continuation shape served
+here, the canonical `operation.step` reconciler later sees the terminal
+authority row, takes the work fence and retires the exact row. A running
+operation only latches `cancelRequested`; its next fenced worker step
+terminalizes the operation and retires the exact work claim together in the
+existing two-row transaction. Thus queued cleanup for this owned work shape is
+durable and eventual, while running cleanup stays atomic with the worker
+transition. Observation telemetry exports still use their separate export-row
+authority and cancellation fence, so session-authority cancellation explicitly
+refuses that kind rather than claiming to retire rows it does not own.
+
+A conditional loss or transport-ambiguous cancel is resolved with a strongly
+consistent reread of the target operation before any further decision. Tests
+inject a landed ambiguous write for both the queued-terminal and running-latch
+shapes, prove that the reread returns the durable answer, and prove that an
+idempotent replay issues no second write.
+
+The public authored table grant already gives `regional-session-api`
+`GetItem`, `Query` and `TransactWriteItems` on the session table and its indexes,
+so no table schema or generated-table digest changes in this continuation. The
+active dev composition consumes the generated thirteen-table public bundle,
+passes its index definitions to `regional-dynamodb-tables`, and derives each
+`index/*` IAM resource from the same bundle. It therefore already has the
+required operation-list and ambiguity-reread capability; integration only owes
+the ordinary final bundle-digest pin. A legacy platform module still spells an
+older `workspace-created-index`, but that module is not the active composition
+and is not a deployment blocker for these routes.
+
 ## Content expiry performance review continuation (2026-08-02)
 
 The scheduled download-grant path no longer waits for all writes from one shard

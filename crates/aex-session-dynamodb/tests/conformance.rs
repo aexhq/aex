@@ -10,29 +10,35 @@ mod support;
 
 use std::collections::HashMap;
 
+use aex_operation_domain::operation::{OperationKind, OperationStatus};
 use aex_session_dynamodb::attr::{n, s};
 use aex_session_dynamodb::error::StoreError;
+use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan, key};
-use aex_session_dynamodb::store::{OperationAuthority, OperationStore};
+use aex_session_dynamodb::store::{
+    OperationApiStore, OperationAuthority, OperationFilter, OperationStore,
+};
 use aex_session_dynamodb::transactions::{
-    ADMISSION_ORDER, AdmissionForeign, DECISION_ORDER, Foreign, ForeignAction, OperationStepCancel,
-    TERMINAL_ORDER, TerminalForeign, compile_admission, compile_decision, compile_fanout_page,
-    compile_lifecycle, compile_terminal, operation_cancelled,
+    ADMISSION_ORDER, AdmissionForeign, DECISION_ORDER, Foreign, ForeignAction,
+    OperationCancelRequest, OperationStepCancel, TERMINAL_ORDER, TerminalForeign,
+    compile_admission, compile_decision, compile_fanout_page, compile_lifecycle, compile_terminal,
+    operation_cancel_requested, operation_cancelled,
 };
 use aex_session_dynamodb::wire_pending::LifecycleTransition;
+use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7};
 use aex_wire::types::Timestamp;
 use serde_json::Value;
 
 use support::{
-    admission, captured_body, capturing_client, decision, fanout, lifecycle, operation, tables,
-    terminal, workspace,
+    admission, captured_body, capturing_client, decision, fanout, lifecycle, operation,
+    scripted_client, tables, terminal, workspace,
 };
 
 #[tokio::test]
 async fn an_operation_authority_read_is_strongly_consistent_and_targets_the_exact_key() {
     let (client, receiver) = capturing_client();
     let store = OperationStore::new(client, &tables().session_authority);
-    let _ignored = store.load(workspace(), operation()).await;
+    let _ignored = OperationAuthority::load(&store, workspace(), operation()).await;
 
     let body = captured_body(receiver);
     let expected_operation = format!("OP#{}", operation());
@@ -46,6 +52,227 @@ async fn an_operation_authority_read_is_strongly_consistent_and_targets_the_exac
         Some(expected_operation.as_str())
     );
     assert_eq!(body["Key"]["sk"]["S"].as_str(), Some("STATE"));
+}
+
+#[tokio::test]
+async fn an_operation_listing_uses_the_sparse_workspace_index_without_a_filter_expression() {
+    let (client, receiver) = capturing_client();
+    let store = OperationStore::new(client, &tables().session_authority);
+    let index_partition =
+        aex_session_dynamodb::keys::workspace_index::operation_partition(workspace());
+    let after = PagePosition {
+        pk: format!("OP#{}", operation()),
+        sk: "STATE".to_owned(),
+        index_pk: Some(index_partition.clone()),
+        index_sk: Some(format!("2026-08-01T12:34:56.789Z#{}", operation())),
+    };
+    let _ignored = store
+        .page(
+            workspace(),
+            &OperationFilter {
+                session: None,
+                kind: Some(OperationKind::SessionPersist),
+                status: Some(OperationStatus::Running),
+            },
+            PageBudget::new(25).expect("a page"),
+            Some(&after),
+        )
+        .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(
+        body["IndexName"].as_str(),
+        Some(aex_session_dynamodb::keys::workspace_index::NAME)
+    );
+    assert_eq!(body["ConsistentRead"].as_bool(), Some(false));
+    assert_eq!(body["ScanIndexForward"].as_bool(), Some(true));
+    assert_eq!(body["Limit"].as_u64(), Some(25));
+    assert!(body["FilterExpression"].is_null());
+    assert_eq!(
+        body["ExpressionAttributeValues"][":workspace"]["S"].as_str(),
+        Some(index_partition.as_str())
+    );
+    for attribute in ["pk", "sk", "wsIndexPk", "wsIndexSk"] {
+        assert!(
+            body["ExclusiveStartKey"][attribute]["S"].is_string(),
+            "the continuation must carry `{attribute}`"
+        );
+    }
+}
+
+fn operation_row(operation: OperationId, created_at: &str) -> Value {
+    let workspace = workspace().to_string();
+    serde_json::json!({
+        "pk": {"S": format!("OP#{operation}")},
+        "sk": {"S": "STATE"},
+        "itemType": {"S": "operation"},
+        "operationId": {"S": operation.to_string()},
+        "workspaceId": {"S": workspace.clone()},
+        "kind": {"S": "session_persist"},
+        "status": {"S": "queued"},
+        "intentHash": {"S": "03".repeat(32)},
+        "scopeKind": {"S": "workspace"},
+        "scopeId": {"S": workspace.clone()},
+        "version": {"N": "7"},
+        "claimsSessionDeletion": {"BOOL": false},
+        "cancelRequested": {"BOOL": false},
+        "resultPresent": {"BOOL": false},
+        "createdAt": {"S": created_at},
+        "updatedAt": {"S": created_at},
+        "wsIndexPk": {"S": format!("WS#{workspace}#OP")},
+        "wsIndexSk": {"S": format!("{created_at}#{operation}")}
+    })
+}
+
+fn projected_operation_row(operation: OperationId, created_at: &str) -> Value {
+    let mut row = operation_row(operation, created_at);
+    let object = row.as_object_mut().expect("an item object");
+    for attribute in [
+        "itemType",
+        "intentHash",
+        "scopeKind",
+        "scopeId",
+        "version",
+        "claimsSessionDeletion",
+        "cancelRequested",
+        "resultPresent",
+    ] {
+        object.remove(attribute);
+    }
+    row
+}
+
+#[tokio::test]
+async fn a_provider_short_slice_spends_the_remaining_physical_budget_before_ending() {
+    let first = OperationId::from_uuid7(Uuid7::compose(1_754_051_696_790, [8; 10]));
+    let second = OperationId::from_uuid7(Uuid7::compose(1_754_051_696_791, [9; 10]));
+    let first_at = "2026-08-01T12:34:56.790Z";
+    let second_at = "2026-08-01T12:34:56.791Z";
+    let first_projected = projected_operation_row(first, first_at);
+    let first_last = serde_json::json!({
+        "pk": {"S": format!("OP#{first}")},
+        "sk": {"S": "STATE"},
+        "wsIndexPk": {"S": format!("WS#{}#OP", workspace())},
+        "wsIndexSk": {"S": format!("{first_at}#{first}")}
+    });
+    let responses = vec![
+        serde_json::json!({"Items": [first_projected], "LastEvaluatedKey": first_last}).to_string(),
+        serde_json::json!({"Item": operation_row(first, first_at)}).to_string(),
+        serde_json::json!({"Items": [projected_operation_row(second, second_at)]}).to_string(),
+        serde_json::json!({"Item": operation_row(second, second_at)}).to_string(),
+    ];
+    let (client, replay) = scripted_client(responses);
+    let store = OperationStore::new(client, &tables().session_authority);
+    let page = store
+        .page(
+            workspace(),
+            &OperationFilter::default(),
+            PageBudget::new(2).expect("a two-row read budget"),
+            None,
+        )
+        .await
+        .expect("both provider slices hydrate");
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|stored| stored.record.id)
+            .collect::<Vec<_>>(),
+        [first, second]
+    );
+    assert_eq!(page.next, None);
+
+    let requests = replay
+        .actual_requests()
+        .map(|request| {
+            serde_json::from_slice::<Value>(
+                request
+                    .body()
+                    .bytes()
+                    .expect("the DynamoDB request body is in memory"),
+            )
+            .expect("the request body is JSON")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0]["Limit"].as_u64(), Some(2));
+    assert_eq!(requests[2]["Limit"].as_u64(), Some(1));
+    assert!(requests[0]["FilterExpression"].is_null());
+    assert!(requests[2]["FilterExpression"].is_null());
+    assert_eq!(requests[1]["ConsistentRead"].as_bool(), Some(true));
+    assert_eq!(requests[3]["ConsistentRead"].as_bool(), Some(true));
+    for attribute in ["pk", "sk", "wsIndexPk", "wsIndexSk"] {
+        assert_eq!(
+            requests[2]["ExclusiveStartKey"][attribute], first_last[attribute],
+            "the second slice resumes from the complete first LEK"
+        );
+    }
+}
+
+#[test]
+fn a_public_cancel_request_fences_the_exact_observed_operation() {
+    let request = OperationCancelRequest {
+        workspace: workspace(),
+        operation: operation(),
+        kind: OperationKind::SessionPersist,
+        status: OperationStatus::Running,
+        version: 4,
+        now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
+    };
+    let update = operation_cancel_requested(&tables().session_authority, &request)
+        .expect("the public cancellation update builds")
+        .build()
+        .expect("the update is complete");
+    let condition = update.condition_expression().expect("a condition");
+    for fence in [
+        "workspaceId = :workspaceId",
+        "operationId = :operationId",
+        "kind = :kind",
+        "version = :version",
+        "#status = :status",
+        "cancelRequested = :false",
+        "attribute_not_exists(committedAt)",
+    ] {
+        assert!(
+            condition.contains(fence),
+            "missing `{fence}` from `{condition}`"
+        );
+    }
+    assert!(
+        update
+            .update_expression()
+            .contains("cancelRequested = :true")
+    );
+    assert!(
+        !update.update_expression().contains("terminalAt"),
+        "a running cancellation is a request for the next fenced step"
+    );
+
+    let queued = operation_cancel_requested(
+        &tables().session_authority,
+        &OperationCancelRequest {
+            status: OperationStatus::Queued,
+            ..request
+        },
+    )
+    .expect("a queued cancel builds")
+    .build()
+    .expect("the update is complete");
+    assert!(queued.update_expression().contains("#status = :cancelled"));
+    assert!(queued.update_expression().contains("terminalAt = :now"));
+}
+
+#[test]
+fn a_telemetry_export_cancel_is_refused_by_the_session_authority_owner() {
+    let request = OperationCancelRequest {
+        workspace: workspace(),
+        operation: operation(),
+        kind: OperationKind::TelemetryExport,
+        status: OperationStatus::Queued,
+        version: 4,
+        now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
+    };
+
+    assert!(operation_cancel_requested(&tables().session_authority, &request).is_err());
 }
 
 #[test]

@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use aex_content_domain::identity::{RegistryKind, Revision};
+use aex_operation_domain::operation::{
+    Operation, OperationKind, OperationResult, OperationScope, OperationStatus,
+};
 use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
 };
@@ -32,10 +35,17 @@ use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::replay::Receipt;
+use aex_session_dynamodb::store::{OperationApiStore, OperationCancelOutcome, OperationFilter};
 use aex_session_dynamodb::store::{PositionPage, SessionQueries};
-use aex_session_dynamodb::wire_pending::{Approval, ApprovalBinding, ApprovalStatus, SessionHead};
+use aex_session_dynamodb::transactions::operation_cancel_owned;
+use aex_session_dynamodb::wire_pending::{
+    Approval, ApprovalBinding, ApprovalStatus, SessionHead, StoredOperation,
+};
+use aex_wire::CanonicalJson;
 use aex_wire::error::{ErrorCode, WireError};
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::idempotency::PrincipalScope;
+use aex_wire::ids::OperationId;
 use aex_wire::ids::{
     AgentId, ApiKeyId, ApprovalId, GenerationId, PrefixedId, ProviderCredentialId, ResourceName,
     RunId, SessionId, ToolCallId, Uuid7, WorkspaceId,
@@ -127,6 +137,173 @@ fn stored_approval(status: ApprovalStatus) -> Approval {
         expires_at: moment("2026-08-01T12:44:56.789Z"),
         resolved_at: (status != ApprovalStatus::Pending)
             .then(|| moment("2026-08-01T12:35:56.789Z")),
+    }
+}
+
+fn stored_operation(
+    seed: u8,
+    kind: OperationKind,
+    status: OperationStatus,
+    session: Option<SessionId>,
+) -> StoredOperation {
+    let created_at = moment(&format!("2026-08-01T12:34:{seed:02}.000Z"));
+    let result =
+        (kind == OperationKind::SessionStop && status == OperationStatus::Succeeded).then(|| {
+            OperationResult {
+                measurement: None,
+                content: Some(
+                    CanonicalJson::parse(&format!(
+                        r#"{{"changed":true,"sessionId":"{}","sessionRevision":9}}"#,
+                        session.expect("a stop operation is session scoped")
+                    ))
+                    .expect("a typed stop result"),
+                ),
+            }
+        });
+    StoredOperation {
+        record: Operation {
+            id: sample::<OperationId>(seed),
+            workspace: workspace(),
+            session,
+            kind,
+            status,
+            intent: IntentDigest::from_bytes([seed; 32]),
+            scope: session.map_or(
+                OperationScope::Workspace(workspace()),
+                OperationScope::Session,
+            ),
+            progress: None,
+            cursor: None,
+            cancel_requested: false,
+            result,
+            error: None,
+            created_at,
+            started_at: (status != OperationStatus::Queued).then_some(created_at),
+            updated_at: created_at,
+            committed_at: (status == OperationStatus::Succeeded).then_some(created_at),
+            terminal_at: status.is_terminal().then_some(created_at),
+        },
+        version: 4,
+    }
+}
+
+#[derive(Debug, Default)]
+struct FakeOperations {
+    rows: std::sync::Mutex<Vec<StoredOperation>>,
+    page_size: usize,
+    filters: std::sync::Mutex<Vec<OperationFilter>>,
+    writes: std::sync::Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl OperationApiStore for FakeOperations {
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError> {
+        Ok(self
+            .rows
+            .lock()
+            .expect("an uncontended fixture")
+            .iter()
+            .find(|row| row.record.workspace == workspace && row.record.id == operation)
+            .cloned())
+    }
+
+    async fn page(
+        &self,
+        workspace: WorkspaceId,
+        filter: &OperationFilter,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<StoredOperation>, StoreError> {
+        self.filters
+            .lock()
+            .expect("an uncontended fixture")
+            .push(*filter);
+        let mut rows: Vec<_> = self
+            .rows
+            .lock()
+            .expect("an uncontended fixture")
+            .iter()
+            .filter(|row| row.record.workspace == workspace && row.record.kind.is_public())
+            .cloned()
+            .collect();
+        rows.sort_unstable_by_key(|row| (row.record.created_at, row.record.id));
+        let start = after
+            .and_then(|position| position.index_sk.as_ref())
+            .and_then(|sort| {
+                rows.iter().position(|row| {
+                    aex_session_dynamodb::keys::workspace_index::operation_sort(
+                        row.record.created_at,
+                        row.record.id,
+                    ) == *sort
+                })
+            })
+            .map_or(0, |index| index + 1);
+        let page_size = self
+            .page_size
+            .max(1)
+            .min(usize::try_from(budget.items()).expect("the page budget fits usize"));
+        let end = rows.len().min(start + page_size);
+        let items = rows[start..end]
+            .iter()
+            .filter(|row| {
+                filter.kind.is_none_or(|kind| row.record.kind == kind)
+                    && filter
+                        .status
+                        .is_none_or(|status| row.record.status == status)
+                    && filter
+                        .session
+                        .is_none_or(|session| row.record.session == Some(session))
+            })
+            .cloned()
+            .collect();
+        let next = (end < rows.len()).then(|| {
+            let last = &rows[end - 1].record;
+            PagePosition {
+                pk: format!("OP#{}", last.id),
+                sk: "STATE".to_owned(),
+                index_pk: Some(
+                    aex_session_dynamodb::keys::workspace_index::operation_partition(workspace),
+                ),
+                index_sk: Some(aex_session_dynamodb::keys::workspace_index::operation_sort(
+                    last.created_at,
+                    last.id,
+                )),
+            }
+        });
+        Ok(PositionPage { items, next })
+    }
+
+    async fn request_cancel(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+        now: Timestamp,
+    ) -> Result<OperationCancelOutcome, StoreError> {
+        let mut rows = self.rows.lock().expect("an uncontended fixture");
+        let Some(stored) = rows.iter_mut().find(|row| {
+            row.record.workspace == workspace
+                && row.record.id == operation
+                && row.record.kind.is_public()
+        }) else {
+            return Ok(OperationCancelOutcome::NotFound);
+        };
+        if stored.record.status == OperationStatus::Cancelled || stored.record.cancel_requested {
+            return Ok(OperationCancelOutcome::Accepted(Box::new(stored.clone())));
+        }
+        if !operation_cancel_owned(stored.record.kind) {
+            return Ok(OperationCancelOutcome::NotCancelable);
+        }
+        let Ok(commit) = aex_operation_domain::operation::cancel(&stored.record, now) else {
+            return Ok(OperationCancelOutcome::NotCancelable);
+        };
+        stored.record = commit.operation;
+        stored.version = stored.version.checked_add(1).expect("a fixture version");
+        *self.writes.lock().expect("an uncontended fixture") += 1;
+        Ok(OperationCancelOutcome::Accepted(Box::new(stored.clone())))
     }
 }
 
@@ -574,11 +751,39 @@ fn build_with_sessions(
     registry: Arc<FakeRegistry>,
     sessions: Arc<FakeSessions>,
 ) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
+    build_with_authorities(
+        custody,
+        registry,
+        sessions,
+        Arc::new(FakeOperations::default()),
+    )
+}
+
+fn build_with_operations(
+    custody: Arc<FakeCustody>,
+    registry: Arc<FakeRegistry>,
+    operations: Arc<FakeOperations>,
+) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
+    build_with_authorities(
+        custody,
+        registry,
+        Arc::new(FakeSessions::default()),
+        operations,
+    )
+}
+
+fn build_with_authorities(
+    custody: Arc<FakeCustody>,
+    registry: Arc<FakeRegistry>,
+    sessions: Arc<FakeSessions>,
+    operations: Arc<FakeOperations>,
+) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
     let shared = Arc::new(Shared {
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: registry as Arc<dyn RegistryStore>,
         sessions: sessions as Arc<dyn SessionQueries>,
+        operations: operations as Arc<dyn OperationApiStore>,
         cursor_keys: Arc::new(cursor_keys()),
     });
     let mounted = mount_unary(
@@ -747,6 +952,281 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
         ),
         "`{unserved}` answered {}",
         response.status()
+    );
+}
+
+// --- durable operations ----------------------------------------------------------
+
+#[tokio::test]
+async fn operation_get_projects_the_typed_result_and_hides_internal_gc() {
+    let session = sample::<SessionId>(40);
+    let public = stored_operation(
+        41,
+        OperationKind::SessionStop,
+        OperationStatus::Succeeded,
+        Some(session),
+    );
+    let internal = stored_operation(42, OperationKind::ContentGc, OperationStatus::Running, None);
+    let operations = Arc::new(FakeOperations {
+        rows: std::sync::Mutex::new(vec![public.clone(), internal.clone()]),
+        ..FakeOperations::default()
+    });
+    let ((router, mounted), _) = build_with_operations(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        operations,
+    );
+    assert!(mounted.contains(&RouteId::RegionalOperationGet));
+
+    let (status, _, body) = get(&router, &format!("/api/operations/{}", public.record.id)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let decoded: models::Operation =
+        serde_json::from_value(body.clone()).expect("the published operation schema");
+    assert_eq!(decoded.workspace_id, workspace());
+    assert_eq!(decoded.session_id, Some(session));
+    assert_eq!(decoded.kind, models::OperationKind::SessionStop);
+    assert_eq!(decoded.status, models::OperationStatus::Succeeded);
+    assert!(matches!(
+        decoded.result,
+        Some(models::OperationResult::SessionStop(
+            models::SessionStopResult {
+                changed: true,
+                session_revision: 9,
+                ..
+            }
+        ))
+    ));
+
+    let (status, _, body) = get(&router, &format!("/api/operations/{}", internal.record.id)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::NotFound.as_str());
+}
+
+fn operation_list_fixture(
+    session: SessionId,
+    other_session: SessionId,
+) -> (Arc<FakeOperations>, OperationId, OperationId) {
+    let first = stored_operation(
+        45,
+        OperationKind::SessionStop,
+        OperationStatus::Succeeded,
+        Some(session),
+    );
+    let second = stored_operation(
+        46,
+        OperationKind::SessionStop,
+        OperationStatus::Succeeded,
+        Some(session),
+    );
+    let first_id = first.record.id;
+    let second_id = second.record.id;
+    let operations = Arc::new(FakeOperations {
+        rows: std::sync::Mutex::new(vec![
+            first.clone(),
+            second.clone(),
+            stored_operation(
+                47,
+                OperationKind::SessionPersist,
+                OperationStatus::Succeeded,
+                Some(session),
+            ),
+            stored_operation(
+                48,
+                OperationKind::SessionStop,
+                OperationStatus::Running,
+                Some(session),
+            ),
+            stored_operation(
+                49,
+                OperationKind::SessionStop,
+                OperationStatus::Succeeded,
+                Some(other_session),
+            ),
+            stored_operation(
+                50,
+                OperationKind::ContentGc,
+                OperationStatus::Succeeded,
+                None,
+            ),
+        ]),
+        page_size: 1,
+        ..FakeOperations::default()
+    });
+    (operations, first_id, second_id)
+}
+
+#[tokio::test]
+async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
+    let session = sample::<SessionId>(43);
+    let other_session = sample::<SessionId>(44);
+    let (operations, first_id, second_id) = operation_list_fixture(session, other_session);
+    let ((router, mounted), _) = build_with_operations(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::clone(&operations),
+    );
+    assert!(mounted.contains(&RouteId::RegionalOperationsList));
+    let query =
+        format!("/api/operations?sessionId={session}&kind=session_stop&status=succeeded&limit=1");
+
+    let (status, _, body) = get(&router, &query).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let first_page: models::OperationPage =
+        serde_json::from_value(body).expect("the published page schema");
+    assert_eq!(first_page.items.len(), 1);
+    assert_eq!(first_page.items[0].id, first_id);
+    let cursor = first_page.next_cursor.expect("another exact match remains");
+
+    let (status, _, body) = get(&router, &format!("{query}&cursor={}", cursor.as_str())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let second_page: models::OperationPage =
+        serde_json::from_value(body).expect("the published page schema");
+    assert_eq!(second_page.items.len(), 1);
+    assert_eq!(second_page.items[0].id, second_id);
+    let empty_cursor = second_page
+        .next_cursor
+        .expect("unexamined physical rows remain behind the exact matches");
+
+    let (status, _, body) = get(
+        &router,
+        &format!("{query}&cursor={}", empty_cursor.as_str()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let empty_page: models::OperationPage =
+        serde_json::from_value(body).expect("the published page schema");
+    assert!(
+        empty_page.items.is_empty(),
+        "the next physical row is filtered"
+    );
+    assert!(
+        empty_page.next_cursor.is_some(),
+        "a filtered empty page must not signal a false end while physical rows remain"
+    );
+
+    let (status, _, body) = get(
+        &router,
+        &format!(
+            "/api/operations?sessionId={session}&kind=session_stop&status=running&limit=1&cursor={}",
+            cursor.as_str()
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::InvalidCursor.as_str());
+
+    let (status, _, body) = get(
+        &router,
+        &format!(
+            "/api/operations?sessionId={session}&kind=session_persist&status=succeeded&limit=1&cursor={}",
+            cursor.as_str()
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::InvalidCursor.as_str());
+
+    let (status, _, body) = get(
+        &router,
+        &format!(
+            "/api/operations?sessionId={other_session}&kind=session_stop&status=succeeded&limit=1&cursor={}",
+            cursor.as_str()
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::InvalidCursor.as_str());
+
+    let filters = operations.filters.lock().expect("an uncontended fixture");
+    assert_eq!(
+        filters.len(),
+        3,
+        "invalid cursors never reach the authority"
+    );
+    assert!(filters.iter().all(|filter| {
+        filter.session == Some(session)
+            && filter.kind == Some(OperationKind::SessionStop)
+            && filter.status == Some(OperationStatus::Succeeded)
+    }));
+}
+
+#[tokio::test]
+async fn operation_cancel_is_idempotent_and_refuses_non_cancelable_or_internal_work() {
+    let session = sample::<SessionId>(51);
+    let running = stored_operation(
+        52,
+        OperationKind::SessionPersist,
+        OperationStatus::Running,
+        Some(session),
+    );
+    let queued = stored_operation(
+        53,
+        OperationKind::SessionPersist,
+        OperationStatus::Queued,
+        Some(session),
+    );
+    let fixed = stored_operation(
+        54,
+        OperationKind::SessionStop,
+        OperationStatus::Running,
+        Some(session),
+    );
+    let internal = stored_operation(55, OperationKind::ContentGc, OperationStatus::Running, None);
+    let telemetry = stored_operation(
+        56,
+        OperationKind::TelemetryExport,
+        OperationStatus::Queued,
+        Some(session),
+    );
+    let operations = Arc::new(FakeOperations {
+        rows: std::sync::Mutex::new(vec![
+            running.clone(),
+            queued.clone(),
+            fixed.clone(),
+            internal.clone(),
+            telemetry.clone(),
+        ]),
+        ..FakeOperations::default()
+    });
+    let ((router, mounted), _) = build_with_operations(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::clone(&operations),
+    );
+    assert!(mounted.contains(&RouteId::RegionalOperationCancel));
+
+    let cancel = |operation: OperationId| format!("/api/operations/{operation}/cancellations");
+    let (status, body) = post(&router, &cancel(running.record.id), "{}").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "running");
+    let (status, body) = post(&router, &cancel(running.record.id), "{}").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        *operations.writes.lock().expect("an uncontended fixture"),
+        1,
+        "the accepted running cancellation is idempotent"
+    );
+
+    let (status, body) = post(&router, &cancel(queued.record.id), "{}").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "cancelled");
+
+    let (status, body) = post(&router, &cancel(fixed.record.id), "{}").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["code"],
+        ErrorCode::OperationNotCancelable.as_str()
+    );
+
+    let (status, body) = post(&router, &cancel(internal.record.id), "{}").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::NotFound.as_str());
+
+    let (status, body) = post(&router, &cancel(telemetry.record.id), "{}").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["code"],
+        ErrorCode::OperationNotCancelable.as_str()
     );
 }
 

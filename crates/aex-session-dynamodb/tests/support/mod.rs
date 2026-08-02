@@ -23,7 +23,10 @@ use aex_wire::ids::{
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
-use aws_smithy_http_client::test_util::{CaptureRequestReceiver, capture_request};
+use aws_smithy_http_client::test_util::{
+    CaptureRequestReceiver, ReplayEvent, StaticReplayClient, capture_request,
+};
+use aws_smithy_types::body::SdkBody;
 
 /// A `DynamoDB` client whose transport captures exactly one request.
 #[must_use]
@@ -42,6 +45,41 @@ pub fn capturing_client() -> (Client, CaptureRequestReceiver) {
         .http_client(http_client)
         .build();
     (Client::from_conf(config), receiver)
+}
+
+/// A client that answers a scripted response sequence and records each request.
+#[must_use]
+pub fn scripted_client(responses: Vec<String>) -> (Client, StaticReplayClient) {
+    let events = responses
+        .into_iter()
+        .map(|response| {
+            ReplayEvent::new(
+                http::Request::builder()
+                    .method("POST")
+                    .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                    .body(SdkBody::empty())
+                    .expect("a request"),
+                http::Response::builder()
+                    .status(200)
+                    .body(SdkBody::from(response))
+                    .expect("a response"),
+            )
+        })
+        .collect();
+    let replay = StaticReplayClient::new(events);
+    let config = aws_sdk_dynamodb::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("eu-west-1"))
+        .credentials_provider(Credentials::new(
+            "AKIDTESTTESTTESTTEST",
+            "test-secret",
+            None,
+            None,
+            "aex-tests",
+        ))
+        .http_client(replay.clone())
+        .build();
+    (Client::from_conf(config), replay)
 }
 
 /// The captured request body, parsed as JSON.

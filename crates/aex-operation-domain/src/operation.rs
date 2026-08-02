@@ -149,6 +149,26 @@ impl OperationKind {
         })
     }
 
+    /// Resolves one generated customer kind to the authority vocabulary.
+    ///
+    /// Internal `ContentGc` has no generated arm, so this direction is total
+    /// without making the maintenance kind customer-addressable.
+    #[must_use]
+    pub const fn from_public(kind: models::OperationKind) -> Self {
+        match kind {
+            models::OperationKind::SessionStop => Self::SessionStop,
+            models::OperationKind::SessionPersist => Self::SessionPersist,
+            models::OperationKind::SessionClone => Self::SessionClone,
+            models::OperationKind::WorkspaceDiscard => Self::WorkspaceDiscard,
+            models::OperationKind::CredentialRebind => Self::CredentialRebind,
+            models::OperationKind::SessionTrash => Self::SessionTrash,
+            models::OperationKind::SessionRestore => Self::SessionRestore,
+            models::OperationKind::SessionPurge => Self::SessionPurge,
+            models::OperationKind::WorkspaceDelete => Self::WorkspaceDelete,
+            models::OperationKind::TelemetryExport => Self::TelemetryExport,
+        }
+    }
+
     /// Whether the kind claims the session's deletion guard.
     #[must_use]
     pub const fn claims_session_deletion(self) -> bool {
@@ -272,6 +292,18 @@ impl OperationStatus {
             Self::Succeeded => models::OperationStatus::Succeeded,
             Self::Failed => models::OperationStatus::Failed,
             Self::Cancelled => models::OperationStatus::Cancelled,
+        }
+    }
+
+    /// Resolves one generated customer status to the authority vocabulary.
+    #[must_use]
+    pub const fn from_public(status: models::OperationStatus) -> Self {
+        match status {
+            models::OperationStatus::Queued => Self::Queued,
+            models::OperationStatus::Running => Self::Running,
+            models::OperationStatus::Succeeded => Self::Succeeded,
+            models::OperationStatus::Failed => Self::Failed,
+            models::OperationStatus::Cancelled => Self::Cancelled,
         }
     }
 }
