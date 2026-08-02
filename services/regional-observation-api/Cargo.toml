@@ -73,6 +73,7 @@ uuid.workspace = true
 [dev-dependencies]
 aws-smithy-http-client.workspace = true
 aws-smithy-types.workspace = true
+tower.workspace = true
 
 [[test]]
 name = "routes"

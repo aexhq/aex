@@ -322,7 +322,7 @@ Nothing here is deployed, credentialed or published. No AWS call was made and no
 
 | Deployable | Host | What `run()` now does |
 | --- | --- | --- |
-| `regional-observation-api` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts every route of `RouteGroup::Observations` (39) and `RouteGroup::TelemetryLifecycle` (12) by iterating each group's route constant, dispatches through the generated `dispatch_observations` / `dispatch_telemetry_lifecycle`, and serves them over a bounded `DynamoDB`/`S3` reader: frontier read, snapshot pin, per-index segment walk, residual predicate evaluation, budget classification, signed cursor, gap reads, export admission, export read, revoke and download grant. |
+| `regional-observation-api` | Rust Lambda ZIP, `axum` + `lambda_http` | Owns the finite routes in `RouteGroup::Observations` and `RouteGroup::TelemetryLifecycle`, narrows them through one reviewed served predicate, dispatches through the generated `dispatch_observations` / `dispatch_telemetry_lifecycle`, and serves them over a bounded `DynamoDB`/`S3` reader: frontier read, snapshot pin, per-index segment walk, residual predicate evaluation, budget classification, signed cursor, gap reads, export read, revoke and download grant. The two export-admission routes are contained in §12. |
 | `regional-otlp` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts `RouteGroup::Otlp` (3), reserves the worst-case decoded footprint **before the first decode byte**, decodes and normalizes under the reservation, redacts against the keyed digest manifest, then runs the whole staged admission protocol: ingress gate, deletion fence, frontier allocation, transaction P, staging, transaction C, replayable materialization. |
 | `observation-reconciler` | scheduled Rust Lambda, `lambda_runtime` | One duty per deployment, selected by `AEX_OBS_DUTY` from the closed `ControlDomain` vocabulary. Due-scans the sparse `gsi_control` index, takes a durable per-item claim, runs the duty body, and answers with a partial-batch failure body rather than throwing. |
 | `observation-export-launcher` | Rust Lambda, `lambda_runtime` | Due-scans `export.launch`, takes the fenced lease under an `admitted`-or-`launching` state with an expired lease and no cancellation, `RunTask`s with `clientToken = startedBy = export_id`, and reconciles every ambiguous outcome through `ListTasks{startedBy}` — never through a second `RunTask`. |
@@ -836,3 +836,36 @@ The provider bounds are the published DynamoDB constraints: one item is at
 most 400 KiB and one Query evaluates at most 1 MiB. `BatchGetItem` hydration is
 also key-count bounded and retries only its unprocessed subset, so at most `L`
 distinct base rows are added to the reservation.
+
+## 12. Telemetry-export operation containment
+
+The two telemetry-export admission routes are deliberately absent from the
+production router. The dormant handler creates only an `export` row in
+`observation-authority`, but returns a generic public `Operation`. Regional
+operation GET, list and cancellation are owned by `session-authority`, so that
+operation cannot subsequently be read, listed or cancelled there. Reporting
+`cancelable: true` does not repair the missing authority. The admission also
+mints a fresh `ExportId` on every call, so replaying the same caller-minted
+`Aex-Operation-Id` can create a second export instead of resolving the first.
+
+Serving that handler would therefore publish two false guarantees at once. The
+workspace and session export-create paths now answer the router's bare `404`
+with no body and no `Location`; they perform no authentication or authority
+write. The other 25 finite observation routes remain mounted, including export
+read, download and revocation for a future correctly admitted export. The
+authored route and dormant handler remain visible so the missing product surface
+cannot be mistaken for a completed redesign.
+
+Re-enabling admission requires one authority protocol, not another local
+adapter workaround. At minimum, admission must atomically create the public
+operation row in `session-authority` and the export state in
+`observation-authority` with one request-intent identity; an exact replay must
+return the original pair and a different intent must conflict. Every lifecycle
+and cancellation transition must then update or fence both rows in one
+cross-table `TransactWriteItems`, so generic operation reads and the dedicated
+export read can never disagree. That redesign needs explicit table-item and IAM
+review and is not hidden inside this no-schema containment.
+
+The production-router regression drives both concrete POST paths and requires
+`404`, an empty body and no `Location`. Ownership tests retain all 27 generated
+finite routes while the served-set test pins the narrowed count at 25.
