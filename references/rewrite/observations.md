@@ -600,9 +600,9 @@ cargo run -p aex-regional-test-support --example emit-regional-tables
 cargo test -p aex-regional-test-support --lib tables::tests   21 passed
 ```
 
-The deterministic regional bundle digest after adding the session event index
-and regenerating all concurrent table-definition changes is
-`blake3:ac6ff61cc3de929d52a3c778951ed080e2401e57e8f276d6103ad6c01efbe978`.
+The deterministic regional bundle digest after merging current main and
+regenerating all concurrent table-definition changes is
+`blake3:bc50c6a9339dab0f30c48876d5ed4e68b9322e89c225aab2e0024ac00b9c2fb4`.
 Live DynamoDB latency/throttling evidence is still an environment-backed gate,
 not a local claim. The reconciler's spool verification remains exact and
 bounded but filters `acceptedSeq` within one accepted-hour/shard partition now
@@ -633,6 +633,70 @@ remaining release blockers are exact:
 - the read-byte budget is checked before a concurrent refill, not reserved
   across its up-to-16 provider reads, so a page can overshoot the configured
   byte ceiling by several prefetched pages.
+
+### 9.9 Admission, directory and recovery audit on 2026-08-02
+
+`00a45730` composes the cursor/tuple continuation with main's durable gap
+ledger. The composed focused suites are green: `regional-observation-api` has
+49 passing library tests (including both the deletion-epoch cursor binding and
+gap revision read/stream cases), `regional-otlp` has 31 passing binary tests,
+and `aex-regional-test-support` has 21 passing regional-table tests. The table
+generator rebuilt 13 tables with the digest above. This is merge and local
+structural evidence only; it is not a claim of a DynamoDB transaction or live
+AWS proof.
+
+One independently safe receipt-integrity step landed: C now commits the ordered
+page digest manifest and both immediate durable-winner consumption and
+equal-intent replay verify it before materialization. The remaining
+admission/directory/recovery items below deliberately remain blocked. The
+accepted plan requires them together, and the current durable facts do not
+support a sound partial directory or recovery implementation:
+
+- `AdmissionPlan::commit_envelope` names a receipt, frontier, `SEG#` and
+  `SEGT#` updates, spool/outbox, quota finalization and a series-counter shard;
+  `regional-otlp` transaction C currently writes only the receipt, per-signal
+  frontiers, deletion condition, spool and outbox. C now also commits the
+  ordered `pageDigests` calculated from the exact staged bytes, and an
+  equal-intent replay recomputes and checks that manifest before it
+  rematerializes. P still reserves quota without C finalizing it, and
+  `AdmissionPlan::new` is passed zero new-series claims. The plan's measured G7
+  number is therefore not an execution proof until one shared transaction-plan
+  value drives both the envelope and emitted `TransactWriteItems`.
+- The accepted table layout has one flat `SEGT#{scope}#{signal}` row for every
+  event-time hour, while an OTLP batch is allowed to contain up to 2,000 records
+  with arbitrary event times. Such a batch can require up to 2,000 distinct
+  time-directory updates, exceeding DynamoDB's 100-action transaction limit
+  and the plan's 24-action C ceiling. There is no public event-time-hour bound
+  to enforce, and none may be invented as a hidden admission limit. A correct
+  successor needs an accepted publication protocol that makes a bounded,
+  paged time-directory manifest visible under the same deletion/receipt fence;
+  it must then revise both the G7 model and reader cursor state. It cannot be
+  manufactured by separately updating `SEGT#` rows after C, since an
+  authoritative reader could then omit already committed observations.
+- The reader still derives hourly descriptors from the requested range and
+  stops at `u16::MAX`; it does not read `SEG#`/`SEGT#` at all. The table source
+  also omits these control item types, so adding a query over a directory that
+  C never writes would be a false completion. Removing the cap without the
+  directory would replace silent loss with unbounded allocation and provider
+  fan-out, which is equally invalid.
+- Staged pages currently retain only newline-delimited canonical observation
+  bodies. The committed receipt now binds their ordered digests, but neither
+  durable form retains the signal, event time, indexed fields, body placement or
+  deterministic materialization identity required to rebuild an `OBS#` row.
+  `replay_committed` consequently depends on the original in-memory request and
+  restages bodies. A reconciler cannot reconstruct a committed batch after that
+  process has crashed. A recovery implementation must first define a
+  size-accounted, immutable staged-record codec and receipt digest manifest,
+  then verify every page before materializing; corruption must produce the
+  existing exact `pipeline_loss` gap path, never guessed observations.
+
+The next split is therefore one accepted protocol/design slice, not four local
+TODOs: define the visibility-fenced paged time-directory authority, its exact
+receipt/staged-record codec, transaction participants and crash recovery
+reader; change `AdmissionPlan` to own that full input and update G7 against the
+actual action sequence; then make the reader page that authority and remove the
+synthetic-hour walk. Until that lands, the current code must not advertise
+earliest replay or directory-backed reads as complete.
 
 ## 10. Durable telemetry-gap continuation
 

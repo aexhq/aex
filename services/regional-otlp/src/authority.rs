@@ -378,7 +378,7 @@ impl AdmissionAuthority {
         for observation in &request.observations {
             placements.push(self.stage_body(request.workspace, observation).await?);
         }
-        self.stage_pages(request, &pages, &staged).await?;
+        let page_digests = self.stage_pages(request, &pages, &staged).await?;
 
         // Step 8 — transaction C.
         let mut allocations = Vec::new();
@@ -406,8 +406,15 @@ impl AdmissionAuthority {
                 limit: limits::OBS_CLOCK_SKEW_MAX_MS,
             });
         }
-        self.commit(request, &plan, &allocations, pinned_epoch, now)
-            .await?;
+        self.commit(
+            request,
+            &plan,
+            &allocations,
+            &page_digests,
+            pinned_epoch,
+            now,
+        )
+        .await?;
 
         // Always consume the durable winner, including after an ambiguous C
         // outcome or a concurrent retry won the receipt race. Local allocation
@@ -420,6 +427,7 @@ impl AdmissionAuthority {
                 item: "admission_receipt",
                 attribute: "state",
             })?;
+        confirm_page_manifest(&page_digests, &receipt.page_digests)?;
 
         // Step 9 — materialize, idempotently, from the staged pages.
         let accepted_at = receipt.accepted_at.ok_or(AuthorityError::Malformed {
@@ -454,6 +462,16 @@ impl AdmissionAuthority {
             item: "admission_receipt",
             attribute: "acceptedAt",
         })?;
+        let staged = request
+            .observations
+            .iter()
+            .map(|observation| StagedRecord {
+                signal: observation.signal,
+                canonical: observation.canonical.clone(),
+            })
+            .collect::<Vec<_>>();
+        let pages = pack_pages(&staged)?;
+        confirm_page_manifest(&staged_page_digests(&pages, &staged), &receipt.page_digests)?;
         let mut placements = Vec::with_capacity(request.observations.len());
         for observation in &request.observations {
             placements.push(self.stage_body(request.workspace, observation).await?);
@@ -564,7 +582,7 @@ impl AdmissionAuthority {
             });
         }
         let state = StoredReceipt::parse(string(&item, "state").unwrap_or("preparing"));
-        let (accepted_at, allocations) = if state == StoredReceipt::Committed {
+        let (accepted_at, allocations, page_digests) = if state == StoredReceipt::Committed {
             (
                 Some(
                     timestamp(&item, "acceptedAt").ok_or(AuthorityError::Malformed {
@@ -573,14 +591,16 @@ impl AdmissionAuthority {
                     })?,
                 ),
                 decode_allocations(request, &item)?,
+                decode_page_digests(request, &item)?,
             )
         } else {
-            (None, Vec::new())
+            (None, Vec::new(), Vec::new())
         };
         Ok(Some(StoredReceiptRecord {
             state,
             accepted_at,
             allocations,
+            page_digests,
         }))
     }
 
@@ -633,15 +653,12 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         pages: &[aex_observation_store_aws::PageSpan],
         staged: &[StagedRecord],
-    ) -> Result<(), AuthorityError> {
+    ) -> Result<Vec<String>, AuthorityError> {
         let expires = seconds_from_now(limits::OBS_PREPARE_TTL_MS);
         let mut writes = Vec::new();
+        let mut digests = Vec::with_capacity(pages.len());
         for (ordinal, span) in pages.iter().enumerate() {
-            let mut encoded = Vec::with_capacity(span.bytes);
-            for record in &staged[span.start..span.end] {
-                encoded.extend_from_slice(&record.canonical);
-                encoded.push(b'\n');
-            }
+            let encoded = staged_page_bytes(span, staged);
             let digest = sha256_hex(&encoded);
             let mut item = HashMap::new();
             item.insert(
@@ -659,7 +676,7 @@ impl AdmissionAuthority {
                 AttributeValue::S("staged_page".to_owned()),
             );
             item.insert("page".to_owned(), AttributeValue::N(ordinal.to_string()));
-            item.insert("pageDigest".to_owned(), AttributeValue::S(digest));
+            item.insert("pageDigest".to_owned(), AttributeValue::S(digest.clone()));
             item.insert(
                 "records".to_owned(),
                 AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(encoded)),
@@ -686,8 +703,10 @@ impl AdmissionAuthority {
                     )
                     .build(),
             );
+            digests.push(digest);
         }
-        self.batch_write(writes).await
+        self.batch_write(writes).await?;
+        Ok(digests)
     }
 
     /// Transaction C: publish the accepted range and the durable spool chunk.
@@ -700,10 +719,11 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         plan: &AdmissionPlan,
         allocations: &[Allocation],
+        page_digests: &[String],
         pinned_epoch: u64,
         now: Timestamp,
     ) -> Result<(), AuthorityError> {
-        let mut actions = vec![self.publish_receipt(request, allocations, now)?];
+        let mut actions = vec![self.publish_receipt(request, allocations, page_digests, now)?];
         for allocation in allocations {
             actions.push(self.advance_frontier(request, allocation, now)?);
         }
@@ -739,6 +759,7 @@ impl AdmissionAuthority {
         &self,
         request: &AdmissionRequest,
         allocations: &[Allocation],
+        page_digests: &[String],
         now: Timestamp,
     ) -> Result<TransactWriteItem, AuthorityError> {
         let mut receipt = ExpressionBuilder::new();
@@ -748,6 +769,14 @@ impl AdmissionAuthority {
         let at = receipt.string(now.to_wire());
         let allocation_ranges = receipt.name("allocations");
         let ranges = receipt.value(encode_allocations(allocations));
+        let page_digests_name = receipt.name("pageDigests");
+        let page_digests_value = receipt.value(AttributeValue::L(
+            page_digests
+                .iter()
+                .cloned()
+                .map(AttributeValue::S)
+                .collect(),
+        ));
         let preparing = receipt.string("preparing");
         let state_condition = receipt.name("state");
         Ok(TransactWriteItem::builder()
@@ -761,7 +790,8 @@ impl AdmissionAuthority {
                     .key(SK, AttributeValue::S("RECEIPT".to_owned()))
                     .update_expression(format!(
                         "SET {state} = {committed}, {accepted_at} = {at}, \
-                         {allocation_ranges} = {ranges}"
+                         {allocation_ranges} = {ranges}, \
+                         {page_digests_name} = {page_digests_value}"
                     ))
                     .condition_expression(format!("{state_condition} = {preparing}"))
                     .set_expression_attribute_names(Some(receipt.names()))
@@ -968,6 +998,34 @@ impl AdmissionAuthority {
     }
 }
 
+/// Serializes one staged page exactly as its immutable `DynamoDB` row stores it.
+///
+/// A canonical JCS value contains no literal newlines outside its escaped
+/// strings, so the delimiter preserves the page's exact record boundaries.
+/// The committed receipt binds the digest of these exact bytes.
+fn staged_page_bytes(
+    span: &aex_observation_store_aws::PageSpan,
+    staged: &[StagedRecord],
+) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(span.bytes.saturating_add(span.end - span.start));
+    for record in &staged[span.start..span.end] {
+        encoded.extend_from_slice(&record.canonical);
+        encoded.push(b'\n');
+    }
+    encoded
+}
+
+/// Returns the ordered digest manifest a committed receipt binds.
+fn staged_page_digests(
+    pages: &[aex_observation_store_aws::PageSpan],
+    staged: &[StagedRecord],
+) -> Vec<String> {
+    pages
+        .iter()
+        .map(|span| sha256_hex(&staged_page_bytes(span, staged)))
+        .collect()
+}
+
 /// The `preparing` receipt item.
 fn receipt_item(
     request: &AdmissionRequest,
@@ -1169,7 +1227,7 @@ fn observed_window(
     ]))
 }
 
-/// Derives one UUIDv7 gap id from the immutable batch id and concrete signal.
+/// Derives one `UUIDv7` gap id from the immutable batch id and concrete signal.
 fn gap_id_for(batch: TelemetryBatchId, signal: Signal) -> TelemetryGapId {
     let mut bytes = *batch.uuid7().as_bytes();
     bytes[15] ^= signal.rank().saturating_add(1);
@@ -1666,12 +1724,66 @@ fn decode_allocations(
     Ok(allocations)
 }
 
+/// Decodes the committed ordered staged-page digest manifest.
+fn decode_page_digests(
+    request: &AdmissionRequest,
+    item: &HashMap<String, AttributeValue>,
+) -> Result<Vec<String>, AuthorityError> {
+    let digests = item
+        .get("pageDigests")
+        .and_then(|value| value.as_l().ok())
+        .ok_or(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "pageDigests",
+        })?
+        .iter()
+        .map(|value| {
+            let digest = value.as_s().map_err(|_| AuthorityError::Malformed {
+                item: "admission_receipt",
+                attribute: "pageDigests",
+            })?;
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(AuthorityError::Malformed {
+                    item: "admission_receipt",
+                    attribute: "pageDigests",
+                });
+            }
+            Ok(digest.clone())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if !request.observations.is_empty() && digests.is_empty() {
+        return Err(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "pageDigests",
+        });
+    }
+    Ok(digests)
+}
+
+/// Refuses a committed winner whose manifest is not the staged batch's proof.
+fn confirm_page_manifest(expected: &[String], committed: &[String]) -> Result<(), AuthorityError> {
+    if expected == committed {
+        Ok(())
+    } else {
+        Err(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "pageDigests",
+        })
+    }
+}
+
 /// The complete durable result needed to replay a committed admission.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoredReceiptRecord {
     state: StoredReceipt,
     accepted_at: Option<Timestamp>,
     allocations: Vec<Allocation>,
+    /// Ordered staged-page digests committed with the visibility boundary.
+    page_digests: Vec<String>,
 }
 
 /// The durable state a stored receipt is in.
@@ -1704,13 +1816,14 @@ impl StoredReceipt {
 mod tests {
     use super::{
         AdmissionRequest, Allocation, AuthorityError, BODY_PREFIX, BUCKET_SHARDS,
-        MATERIALIZE_CHUNK, PreparedObservation, decode_allocations, encode_allocations, gap_id_for,
-        spool_item, spool_shard, stable_observation_id,
+        MATERIALIZE_CHUNK, PreparedObservation, confirm_page_manifest, decode_allocations,
+        decode_page_digests, encode_allocations, gap_id_for, spool_item, spool_shard,
+        stable_observation_id, staged_page_digests,
     };
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::signal::Signal;
-    use aex_observation_store_aws::store::StoreError;
+    use aex_observation_store_aws::store::{PageSpan, StagedRecord, StoreError};
     use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
     use aws_sdk_dynamodb::types::AttributeValue;
@@ -1773,6 +1886,81 @@ mod tests {
         let logs = gap_id_for(batch, Signal::Logs);
         assert_eq!(logs, gap_id_for(batch, Signal::Logs));
         assert_ne!(logs, gap_id_for(batch, Signal::Metrics));
+    }
+
+    #[test]
+    fn committed_page_digests_bind_the_exact_ordered_staged_bytes() {
+        let staged = vec![
+            StagedRecord {
+                signal: Signal::Logs,
+                canonical: b"{\"a\":1}".to_vec(),
+            },
+            StagedRecord {
+                signal: Signal::Logs,
+                canonical: b"{\"b\":2}".to_vec(),
+            },
+        ];
+        let pages = vec![
+            PageSpan {
+                start: 0,
+                end: 1,
+                bytes: staged[0].canonical.len(),
+            },
+            PageSpan {
+                start: 1,
+                end: 2,
+                bytes: staged[1].canonical.len(),
+            },
+        ];
+        let manifest = staged_page_digests(&pages, &staged);
+        assert_eq!(manifest.len(), 2);
+        assert!(manifest.iter().all(|digest| digest.len() == 64));
+
+        let swapped = staged_page_digests(&pages, &[staged[1].clone(), staged[0].clone()]);
+        assert_ne!(manifest, swapped, "page order is part of the receipt proof");
+
+        let item = std::collections::HashMap::from([(
+            "pageDigests".to_owned(),
+            AttributeValue::L(manifest.iter().cloned().map(AttributeValue::S).collect()),
+        )]);
+        let workspace =
+            WorkspaceId::parse("wsp_0000000001e40r2081040g2081").expect("workspace fixture");
+        let request = AdmissionRequest {
+            batch_id: TelemetryBatchId::parse("bch_0000000001e40r2081040g2081")
+                .expect("batch fixture"),
+            organization: OrganizationId::parse("org_0000000001e40r2081040g2081")
+                .expect("organization fixture"),
+            workspace,
+            scope: ScopeKey::Workspace(workspace),
+            intent_digest: "0".repeat(64),
+            observations: vec![observation(Signal::Logs, 1, 1)],
+        };
+        assert_eq!(
+            decode_page_digests(&request, &item).expect("strict manifest"),
+            manifest
+        );
+        assert!(confirm_page_manifest(&manifest, &manifest).is_ok());
+        assert!(
+            confirm_page_manifest(&manifest, &swapped).is_err(),
+            "an ambiguous or concurrent C winner may not materialize another page set"
+        );
+
+        let upper = std::collections::HashMap::from([(
+            "pageDigests".to_owned(),
+            AttributeValue::L(vec![AttributeValue::S(format!("A{}", &manifest[0][1..]))]),
+        )]);
+        assert!(
+            decode_page_digests(&request, &upper).is_err(),
+            "the receipt uses one lowercase digest spelling"
+        );
+        let empty = std::collections::HashMap::from([(
+            "pageDigests".to_owned(),
+            AttributeValue::L(Vec::new()),
+        )]);
+        assert!(
+            decode_page_digests(&request, &empty).is_err(),
+            "a non-empty committed admission must bind at least one staged page"
+        );
     }
 
     #[test]
