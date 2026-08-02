@@ -162,7 +162,12 @@ fn admits_anonymous(id: RouteId) -> bool {
 /// The credential-free context the two device-flow routes run under.
 ///
 /// The window is one millisecond wide because there is nothing to cache: no
-/// credential was resolved, so nothing about it can go stale.
+/// credential was resolved, so nothing about it can go stale. `[now, now+1)`
+/// therefore admits exactly the instant it was minted for, which is why
+/// [`admit_edge`] reads the clock **once** and verifies against that same
+/// reading. A second reading would lapse the window whenever the millisecond
+/// happened to tick between the two, refusing every anonymous request — which
+/// is to say both public device-flow routes, intermittently.
 fn anonymous_context(now_ms: i64) -> CentralAuthorizerContext {
     CentralAuthorizerContext {
         request_id: fallback_request_id(),
@@ -206,6 +211,12 @@ async fn admit_edge(
     body_len: usize,
 ) -> Result<(RouteId, Admitted), (RequestId, EdgeError)> {
     let fallback = fallback_request_id();
+    // One reading, for the whole request. Every window comparison below is
+    // against this instant, so a request cannot be inside its assertion's
+    // window at one stage and outside it at the next — and a credential-free
+    // context cannot lapse in the microseconds between being minted and being
+    // verified.
+    let now_ms = edge.now_ms();
 
     // 1. Transport envelope: the route comes from the one table.
     let Some((id, binding)) = match_route(Plane::Central, method, uri.path()) else {
@@ -221,11 +232,11 @@ async fn admit_edge(
     // looks like.
     let context = match context {
         Some(context) => context,
-        None if admits_anonymous(id) => anonymous_context(edge.now_ms()),
+        None if admits_anonymous(id) => anonymous_context(now_ms),
         None => return Err((fallback, unauthenticated())),
     };
     let request_id = context.request_id.clone();
-    if let Err(error) = context.verify(edge.now_ms()) {
+    if let Err(error) = context.verify(now_ms) {
         return Err((request_id, EdgeError::Context(error)));
     }
 
