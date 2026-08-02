@@ -11,7 +11,7 @@
 //! mechanism that could expire a replay; the wire keeps the value for
 //! vocabulary stability and [`GapRevision::try_open`] refuses it outright.
 
-use aex_wire::ids::TelemetryGapId;
+use aex_wire::ids::{TelemetryGapId, WorkspaceId};
 use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::Timestamp;
 
@@ -30,6 +30,17 @@ pub const PRODUCIBLE_REASONS: &[TelemetryGapReason] = &[
 /// Why a gap could not be constructed or appended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum GapError {
+    /// A gap without a signal could never intersect a query.
+    #[error("a gap must affect at least one concrete signal")]
+    EmptySignals,
+    /// A workspace-scoped key was paired with another workspace owner.
+    #[error("workspace scope {scope} does not match owning workspace {workspace}")]
+    WorkspaceMismatch {
+        /// Workspace encoded by the scope.
+        scope: WorkspaceId,
+        /// Workspace supplied by the owning record.
+        workspace: WorkspaceId,
+    },
     /// The reason is in the wire vocabulary but is not one this codebase mints.
     #[error("`{reason}` is not a reason this codebase can produce")]
     UnproducibleReason {
@@ -87,10 +98,10 @@ pub struct TimeWindow {
 }
 
 impl TimeWindow {
-    /// Builds a window, or `None` when the bounds are inverted.
+    /// Builds a non-empty window, or `None` when the bounds are equal or inverted.
     #[must_use]
     pub fn new(from: Timestamp, to: Timestamp) -> Option<Self> {
-        (from <= to).then_some(Self { from, to })
+        (from < to).then_some(Self { from, to })
     }
 
     /// The inclusive lower bound.
@@ -196,6 +207,65 @@ pub struct GapRevision {
     pub repair_source: Option<Box<str>>,
 }
 
+/// One scoped durable gap revision and its accounting evidence.
+///
+/// Scope and workspace are deliberately carried together: a session identifier
+/// does not encode its owning workspace, while the workspace gap index needs
+/// that owner on every revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GapRecord {
+    /// Owning workspace used by the sparse workspace index.
+    pub workspace: WorkspaceId,
+    /// Session or direct-workspace scope affected by the gap.
+    pub scope: crate::keys::ScopeKey,
+    /// Immutable lifecycle revision.
+    pub revision: GapRevision,
+    /// Number of attempted observations, when known.
+    pub attempted_records: Option<u64>,
+    /// Number of attempted canonical bytes, when known.
+    pub attempted_bytes: Option<u64>,
+    /// Whether retained evidence can still repair the gap.
+    pub recoverable: bool,
+}
+
+impl GapRecord {
+    /// Binds one revision to its owning workspace and scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GapError::WorkspaceMismatch`] when a direct workspace scope is
+    /// paired with another workspace, or [`GapError::EmptySignals`] when the
+    /// revision could never intersect a query.
+    pub fn try_new(
+        workspace: WorkspaceId,
+        scope: crate::keys::ScopeKey,
+        revision: GapRevision,
+        attempted_records: Option<u64>,
+        attempted_bytes: Option<u64>,
+        recoverable: bool,
+    ) -> Result<Self, GapError> {
+        if revision.signals.is_empty() {
+            return Err(GapError::EmptySignals);
+        }
+        if let crate::keys::ScopeKey::Workspace(scope_workspace) = scope
+            && scope_workspace != workspace
+        {
+            return Err(GapError::WorkspaceMismatch {
+                scope: scope_workspace,
+                workspace,
+            });
+        }
+        Ok(Self {
+            workspace,
+            scope,
+            revision,
+            attempted_records,
+            attempted_bytes,
+            recoverable,
+        })
+    }
+}
+
 impl GapRevision {
     /// Opens a gap.
     ///
@@ -210,6 +280,9 @@ impl GapRevision {
         time_range: Option<TimeWindow>,
         at: Timestamp,
     ) -> Result<Self, GapError> {
+        if signals.is_empty() {
+            return Err(GapError::EmptySignals);
+        }
         if !PRODUCIBLE_REASONS.contains(&reason) {
             return Err(GapError::UnproducibleReason {
                 reason: reason.as_str(),
@@ -316,7 +389,7 @@ impl GapLedger {
     pub fn append(&mut self, revision: GapRevision) -> Result<(), GapError> {
         let entry = self.revisions.entry(revision.gap_id).or_default();
         if let Some(latest) = entry.last() {
-            if revision.revision <= latest.revision {
+            if latest.revision.checked_add(1) != Some(revision.revision) {
                 return Err(GapError::RevisionNotMonotone {
                     latest: latest.revision,
                     attempted: revision.revision,
@@ -396,7 +469,9 @@ impl GapLedger {
 
 #[cfg(test)]
 mod tests {
-    use super::{GapError, GapLedger, GapRevision, GapState, OrdinalRange, PRODUCIBLE_REASONS};
+    use super::{
+        GapError, GapLedger, GapRevision, GapState, OrdinalRange, PRODUCIBLE_REASONS, TimeWindow,
+    };
     use crate::signal::{Signal, SignalSet};
     use aex_wire::ids::{PrefixedId, TelemetryGapId};
     use aex_wire::models::TelemetryGapReason;
@@ -453,6 +528,35 @@ mod tests {
         assert!(!range.is_empty());
         assert_eq!(range.lo(), 4);
         assert_eq!(range.hi(), 8);
+    }
+
+    #[test]
+    fn a_gap_window_must_not_be_empty() {
+        assert_eq!(TimeWindow::new(instant(7), instant(7)), None);
+    }
+
+    #[test]
+    fn revisions_must_be_contiguous() {
+        let mut ledger = GapLedger::new();
+        let opened = GapRevision::open(
+            gap_id(),
+            SignalSet::from_signal(Signal::Logs),
+            TelemetryGapReason::SpoolLost,
+            None,
+            instant(0),
+        );
+        ledger
+            .append(opened.clone())
+            .expect("revision zero appends");
+        let mut skipped = opened.revised(instant(2));
+        skipped.revision = 2;
+        assert_eq!(
+            ledger.append(skipped),
+            Err(GapError::RevisionNotMonotone {
+                latest: 0,
+                attempted: 2,
+            })
+        );
     }
 
     #[test]

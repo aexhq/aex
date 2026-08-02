@@ -35,7 +35,7 @@ pub use canonical::{BatchBinding, CanonicalValue, batch_intent_digest, canonical
 pub use frontier::{
     AcceptedRange, DeletionState, DeletionTransitionError, Frontier, FrontierError, ScopeDeletion,
 };
-pub use gap::{GapError, GapLedger, GapRevision, GapState, OrdinalRange, TimeWindow};
+pub use gap::{GapError, GapLedger, GapRecord, GapRevision, GapState, OrdinalRange, TimeWindow};
 pub use keys::{BucketHour, ObservationWakeKey, ScopeKey};
 pub use order::{Direction, OrderBy, OrderTuple};
 pub use series::{ClaimOutcome, SeriesClaims, SeriesError, SeriesHash};

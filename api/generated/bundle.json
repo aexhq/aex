@@ -11221,7 +11221,7 @@
         },
         "timeRange": {
           "$ref": "aex:schema:TimeRange",
-          "description": "The affected observation-time window."
+          "description": "The affected observation-time window, when its extent is known."
         },
         "toSequence": {
           "description": "Last affected position, when known.",
@@ -11242,7 +11242,6 @@
         "recoverable",
         "revision",
         "signals",
-        "timeRange",
         "workspaceId"
       ],
       "type": "object"

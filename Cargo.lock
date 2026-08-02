@@ -818,6 +818,7 @@ dependencies = [
 name = "aex-observation-store-aws"
 version = "0.1.0"
 dependencies = [
+ "aex-observation-application",
  "aex-observation-domain",
  "aex-wire",
  "async-trait",
@@ -5347,7 +5348,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]

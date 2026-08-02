@@ -87,7 +87,7 @@ pub struct Coverage {
     /// Known holes with a provable extent.
     pub missing_intervals: Vec<(String, Timestamp, Timestamp)>,
     /// Open gaps whose extent is unknown.
-    pub unbounded_gaps: u32,
+    pub unbounded_gaps: Vec<String>,
 }
 
 impl Coverage {
@@ -107,7 +107,7 @@ impl Coverage {
             caught_up: accepted_wire == snapshot_wire,
             complete: true,
             missing_intervals: Vec::new(),
-            unbounded_gaps: 0,
+            unbounded_gaps: Vec::new(),
         }
     }
 
@@ -116,9 +116,9 @@ impl Coverage {
     pub fn with_gaps(
         mut self,
         missing: Vec<(String, Timestamp, Timestamp)>,
-        unbounded: u32,
+        unbounded: Vec<String>,
     ) -> Self {
-        self.complete = missing.is_empty() && unbounded == 0;
+        self.complete = missing.is_empty() && unbounded.is_empty();
         self.missing_intervals = missing;
         self.unbounded_gaps = unbounded;
         self
@@ -206,12 +206,15 @@ mod tests {
     #[test]
     fn any_intersecting_gap_makes_the_window_incomplete() {
         let snapshot = Snapshot::pin(instant(10), instant(1_000_000)).expect("pins");
-        let coverage = Coverage::new(snapshot, instant(10), instant(0))
-            .with_gaps(vec![("gap_x".to_owned(), instant(1), instant(2))], 0);
+        let coverage = Coverage::new(snapshot, instant(10), instant(0)).with_gaps(
+            vec![("gap_x".to_owned(), instant(1), instant(2))],
+            Vec::new(),
+        );
         assert!(!coverage.complete);
         assert_eq!(coverage.missing_intervals.len(), 1);
 
-        let unbounded = Coverage::new(snapshot, instant(10), instant(0)).with_gaps(Vec::new(), 1);
+        let unbounded = Coverage::new(snapshot, instant(10), instant(0))
+            .with_gaps(Vec::new(), vec!["gap_x".to_owned()]);
         assert!(
             !unbounded.complete,
             "an unbounded gap is incomplete even with no reportable interval"

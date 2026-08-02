@@ -9,8 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use aex_observation_domain::gap::{GapRecord, TimeWindow};
 use aex_observation_domain::keys::{self, ScopeKey};
 use aex_observation_domain::order::{OrderBy, OrderTuple};
+use aex_observation_domain::signal::{Signal, SignalSet};
 use aex_observation_query::plan::plan;
 use aex_regional_http::cursor::CursorKeyRing;
 use aex_regional_http::stream::split_records;
@@ -22,10 +24,10 @@ use aex_wire::ids::{
 use aex_wire::models::{
     DownloadGrant, EmptyRequest, ExportCompleteness, ExportFormat, ExportStatus,
     MetricAggregationGroup, MetricAggregationPage, MetricAggregationRequest, Observation,
-    ObservationFrame, ObservationFrameCursor, ObservationListenRequest, ObservationPage,
-    ObservationQuery, ObservationSignal, ObservationStreamRequest, Operation, OperationKind,
-    OperationStatus, RotateReason, TelemetryExport, TelemetryExportRequest, TelemetryGap,
-    TelemetryGapPage, TelemetryGapQuery, TelemetryGapReason, TimeRange, TraceDetail, TraceSummary,
+    ObservationFrame, ObservationFrameCursor, ObservationFrameGap, ObservationListenRequest,
+    ObservationPage, ObservationQuery, ObservationSignal, ObservationStreamRequest, Operation,
+    OperationKind, OperationStatus, RotateReason, TelemetryExport, TelemetryExportRequest,
+    TelemetryGap, TelemetryGapPage, TelemetryGapQuery, TimeRange, TraceDetail, TraceSummary,
 };
 use aex_wire::server::{
     Accepted, Created, NdjsonStream, ObservationsApi, RequestContext, TelemetryLifecycleApi,
@@ -297,12 +299,23 @@ impl ObservationRequest {
             )?),
             _ => None,
         };
+        let gaps = self
+            .service
+            .reader
+            .gap_history(&scope, self.workspace(), snapshot)
+            .await
+            .map_err(|error| read_error(&error))?;
+        let window = TimeWindow::new(normalized.time_gte, normalized.time_lt)
+            .ok_or_else(|| query::invalid_query("observation timeRange must be non-empty"))?;
         Ok(ObservationPage {
             coverage: query::coverage(
                 snapshot,
                 frontier.accepted_at,
                 frontier.earliest_accepted_at,
-            ),
+                normalized.signals,
+                window,
+                &gaps,
+            )?,
             items: page.items,
             next_cursor,
         })
@@ -403,6 +416,7 @@ impl ObservationRequest {
             request_id: cx.request_id.clone(),
             wake,
             authorization,
+            seen_gaps: std::collections::BTreeMap::new(),
         }));
         Ok(NdjsonStream(stream))
     }
@@ -475,12 +489,23 @@ impl ObservationRequest {
             value: f64::from(u32::try_from(page.items.len()).unwrap_or(u32::MAX)),
         };
         let _ = cx;
+        let gaps = self
+            .service
+            .reader
+            .gap_history(&scope, self.workspace(), snapshot)
+            .await
+            .map_err(|error| read_error(&error))?;
+        let window = TimeWindow::new(normalized.time_gte, normalized.time_lt)
+            .ok_or_else(|| query::invalid_query("metric timeRange must be non-empty"))?;
         Ok(MetricAggregationPage {
             coverage: query::coverage(
                 snapshot,
                 frontier.accepted_at,
                 frontier.earliest_accepted_at,
-            ),
+                normalized.signals,
+                window,
+                &gaps,
+            )?,
             items: if page.items.is_empty() {
                 Vec::new()
             } else {
@@ -559,8 +584,32 @@ impl ObservationRequest {
         }
         let snapshot = aex_observation_query::coverage::Snapshot::pin(ended, ended)
             .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
+        let gaps = self
+            .service
+            .reader
+            .gap_history(&scope, self.workspace(), snapshot)
+            .await
+            .map_err(|error| read_error(&error))?;
+        let window_end = Timestamp::from_unix_millis(
+            ended
+                .unix_millis()
+                .checked_add(1)
+                .ok_or_else(|| WireError::new(ErrorCode::InternalError))?,
+        )
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        let window = TimeWindow::new(started, window_end)
+            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
         Ok(TraceDetail {
-            coverage: query::coverage(snapshot, ended, started),
+            coverage: query::coverage(
+                snapshot,
+                ended,
+                started,
+                SignalSet::from_signal(Signal::Spans)
+                    .with(Signal::Logs)
+                    .with(Signal::Traces),
+                window,
+                &gaps,
+            )?,
             summary: TraceSummary {
                 ended_at: ended,
                 root_name: root,
@@ -580,75 +629,93 @@ impl ObservationRequest {
         gap: TelemetryGapId,
     ) -> WireResult<TelemetryGap> {
         let scope = self.scope(session);
-        let items = self
+        let record = self
             .service
             .reader
-            .read_range(
-                None,
-                &crate::reader::KeyBinding {
-                    attribute: "pk".to_owned(),
-                    value: keys::gap_pk(&scope),
-                },
-                &crate::reader::RangeBinding {
-                    attribute: "sk".to_owned(),
-                    lo: format!("{gap}#"),
-                    hi: format!("{gap}#\u{fffe}"),
-                },
-                64,
-            )
+            .latest_gap(&scope, gap)
             .await
-            .map_err(|error| read_error(&error))?;
-        // Gaps are immutable revisioned rows; the latest revision wins and the
-        // history is never erased.
-        let latest = items
-            .into_iter()
-            .max_by_key(|item| crate::reader::number(item, "revision").unwrap_or(0))
+            .map_err(|error| read_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
-        decode_gap(&latest, self.workspace(), session)
+        if record.workspace != self.workspace() {
+            return Err(WireError::new(ErrorCode::NotFound));
+        }
+        Ok(gap_to_wire(&record))
     }
 
     /// Queries recorded gaps at one scope.
     async fn gaps(
         &self,
+        cx: &RequestContext,
         session: Option<SessionId>,
         body: TelemetryGapQuery,
     ) -> WireResult<TelemetryGapPage> {
         let scope = self.scope(session);
-        let (index, partition, attribute) = match scope {
-            ScopeKey::Session(_) => (None, keys::gap_pk(&scope), "pk"),
-            ScopeKey::Workspace(workspace) => (
-                Some(aex_observation_store_aws::expressions::Index::Gap),
-                format!("GAPW#{workspace}"),
-                "gwPk",
-            ),
+        let now = now()?;
+        let request_binding = query::gap_request_binding(
+            cx,
+            cx.route,
+            self.service.region,
+            &scope,
+            self.workspace(),
+            &body,
+        );
+        let (snapshot, after) = if let Some(cursor) = &body.cursor {
+            let (snapshot, opened_at, gap_id) =
+                query::resume_gap(&self.service.cursor_ring, cursor, &request_binding, now)?;
+            (snapshot, Some((opened_at, gap_id)))
+        } else {
+            (
+                self.service
+                    .reader
+                    .settled_snapshot(now)
+                    .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?,
+                None,
+            )
         };
-        let sort = if attribute == "pk" { "sk" } else { "gwSk" };
-        let items = self
+        let mut records = self
             .service
             .reader
-            .read_range(
-                index,
-                &crate::reader::KeyBinding {
-                    attribute: attribute.to_owned(),
-                    value: partition,
-                },
-                &crate::reader::RangeBinding {
-                    attribute: sort.to_owned(),
-                    lo: body.time_range.gte.to_wire(),
-                    hi: format!("{}\u{fffe}", body.time_range.lt.to_wire()),
-                },
-                u16::try_from(body.limit.unwrap_or(100)).unwrap_or(100),
-            )
+            .gap_history(&scope, self.workspace(), snapshot)
             .await
             .map_err(|error| read_error(&error))?;
-        let mut gaps = Vec::new();
-        for item in &items {
-            gaps.push(decode_gap(item, self.workspace(), session)?);
-        }
-        Ok(TelemetryGapPage {
-            items: gaps,
-            next_cursor: None,
-        })
+        let window = TimeWindow::new(body.time_range.gte, body.time_range.lt)
+            .ok_or_else(|| query::invalid_query("gap timeRange must be non-empty"))?;
+        let selected = gap_signal_set(body.signals.as_deref());
+        records.retain(|record| {
+            record.revision.signals.intersects(selected)
+                && record
+                    .revision
+                    .time_range
+                    .is_none_or(|range| range.intersects(window))
+                && body
+                    .recoverable
+                    .is_none_or(|recoverable| record.recoverable == recoverable)
+                && after
+                    .is_none_or(|after| (record.revision.opened_at, record.revision.gap_id) > after)
+        });
+        records.sort_by_key(|record| (record.revision.opened_at, record.revision.gap_id));
+        let limit = usize::try_from(body.limit.unwrap_or(100)).unwrap_or(100);
+        let more = records.len() > limit;
+        records.truncate(limit);
+        let binding = query::gap_binding(&request_binding, snapshot)?;
+        let next_cursor = if more {
+            records
+                .last()
+                .map(|last| {
+                    query::issue_gap(
+                        self.service.cursor_ring.current(),
+                        &binding,
+                        last.revision.opened_at,
+                        last.revision.gap_id,
+                        now,
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let items = records.iter().map(gap_to_wire).collect();
+        Ok(TelemetryGapPage { items, next_cursor })
     }
 
     /// Admits one durable export operation.
@@ -846,6 +913,7 @@ struct Produce {
     request_id: aex_wire::types::RequestId,
     wake: Option<crate::wake::WakeSubscription>,
     authorization: aex_regional_http::context::RegionalAuthorization,
+    seen_gaps: std::collections::BTreeMap<TelemetryGapId, u64>,
 }
 
 /// Streams pages as whole frames, then rotates.
@@ -866,6 +934,18 @@ async fn produce(mut task: Produce) {
     // This closes the handshake-to-producer race for revocation, pause,
     // placement and session deletion without retaining credential plaintext.
     let mut next_authorization_check = std::time::Instant::now();
+    let Some(query_window) = TimeWindow::new(task.normalized.time_gte, task.normalized.time_lt)
+    else {
+        let _ = task
+            .sender
+            .send(&ndjson::rotate(
+                None,
+                RotateReason::UpstreamUnavailable,
+                false,
+            ))
+            .await;
+        return;
+    };
     loop {
         if task.service.stream.draining.load(Ordering::Acquire) {
             let cursor = task.sender.sent().cloned();
@@ -938,6 +1018,63 @@ async fn produce(mut task: Produce) {
                 return;
             };
             task.binding.snapshot = token;
+        }
+        let gaps = match task
+            .service
+            .reader
+            .gap_history(&task.scope, task.workspace, task.snapshot)
+            .await
+        {
+            Ok(gaps) => gaps,
+            Err(_) => {
+                let cursor = task.sender.sent().cloned();
+                let _ = task
+                    .sender
+                    .send(&ndjson::rotate(
+                        cursor,
+                        RotateReason::UpstreamUnavailable,
+                        true,
+                    ))
+                    .await;
+                return;
+            }
+        };
+        let current_coverage = match query::coverage(
+            task.snapshot,
+            task.frontier.accepted_at,
+            task.frontier.earliest_accepted_at,
+            task.normalized.signals,
+            query_window,
+            &gaps,
+        ) {
+            Ok(coverage) => coverage,
+            Err(error) => {
+                let cursor = task.sender.sent().cloned();
+                let (_, envelope, _) = error.into_response_parts(&task.request_id, None);
+                let _ = task
+                    .sender
+                    .send(&ndjson::failed(cursor, envelope.error))
+                    .await;
+                return;
+            }
+        };
+        for gap in unseen_gaps(
+            &gaps,
+            task.normalized.signals,
+            query_window,
+            &task.seen_gaps,
+        ) {
+            if !task
+                .sender
+                .send(&ObservationFrame::Gap(ObservationFrameGap {
+                    gap: gap_to_wire(gap),
+                }))
+                .await
+            {
+                return;
+            }
+            task.seen_gaps
+                .insert(gap.revision.gap_id, gap.revision.revision);
         }
         let outcome = task
             .service
@@ -1018,11 +1155,7 @@ async fn produce(mut task: Produce) {
             if !task
                 .sender
                 .send(&ObservationFrame::Cursor(ObservationFrameCursor {
-                    coverage: query::coverage(
-                        task.snapshot,
-                        task.frontier.accepted_at,
-                        task.frontier.earliest_accepted_at,
-                    ),
+                    coverage: current_coverage.clone(),
                     cursor,
                 }))
                 .await
@@ -1051,11 +1184,7 @@ async fn produce(mut task: Produce) {
                 && !task
                     .sender
                     .send(&ObservationFrame::Cursor(ObservationFrameCursor {
-                        coverage: query::coverage(
-                            task.snapshot,
-                            task.frontier.accepted_at,
-                            task.frontier.earliest_accepted_at,
-                        ),
+                        coverage: current_coverage.clone(),
                         cursor,
                     }))
                     .await
@@ -1166,44 +1295,84 @@ fn read_error(error: &ReadError) -> WireError {
     }
 }
 
-/// Decodes one stored gap revision.
-fn decode_gap(
-    item: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
-    workspace: WorkspaceId,
-    session: Option<SessionId>,
-) -> WireResult<TelemetryGap> {
-    let id = crate::reader::string(item, "gapId")
-        .and_then(|text| text.parse::<TelemetryGapId>().ok())
-        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-    let opened = crate::reader::timestamp(item, "openedAt")
-        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-    let reason = crate::reader::string(item, "reason").unwrap_or_default();
-    let reason = TelemetryGapReason::ALL
-        .iter()
-        .copied()
-        .find(|candidate| candidate.as_str() == reason)
-        .unwrap_or(TelemetryGapReason::SpoolLost);
-    Ok(TelemetryGap {
-        byte_count: crate::reader::number(item, "attemptedBytes")
+/// Converts a validated durable gap without inventing missing evidence.
+fn gap_to_wire(record: &GapRecord) -> TelemetryGap {
+    TelemetryGap {
+        byte_count: record
+            .attempted_bytes
             .map(|value| DecimalU128::new(u128::from(value))),
-        detected_at: opened,
-        from_sequence: None,
-        id,
-        observation_count: crate::reader::number(item, "attemptedRecords")
+        detected_at: record.revision.opened_at,
+        from_sequence: record
+            .revision
+            .ordinal_range
+            .map(|range| DecimalU128::new(u128::from(range.lo()))),
+        id: record.revision.gap_id,
+        observation_count: record
+            .attempted_records
             .map(|value| DecimalU128::new(u128::from(value))),
-        reason,
-        recoverable: crate::reader::boolean(item, "recoverable").unwrap_or(false),
-        repair_source: crate::reader::string(item, "repairSource"),
-        repaired_at: crate::reader::timestamp(item, "repairedAt"),
-        revision: crate::reader::number(item, "revision").unwrap_or(0),
-        session_id: session,
-        signals: vec![ObservationSignal::Telemetry],
-        time_range: TimeRange {
-            gte: opened,
-            lt: crate::reader::timestamp(item, "revisedAt").unwrap_or(opened),
-        },
-        to_sequence: None,
-        workspace_id: workspace,
+        reason: record.revision.reason,
+        recoverable: record.recoverable,
+        repair_source: record.revision.repair_source.as_deref().map(str::to_owned),
+        repaired_at: record
+            .revision
+            .repair_source
+            .as_ref()
+            .map(|_| record.revision.revised_at),
+        revision: record.revision.revision,
+        session_id: record.scope.session(),
+        signals: record
+            .revision
+            .signals
+            .iter()
+            .map(Signal::to_wire)
+            .collect(),
+        time_range: record.revision.time_range.map(|range| TimeRange {
+            gte: range.from(),
+            lt: range.to(),
+        }),
+        to_sequence: record
+            .revision
+            .ordinal_range
+            .map(|range| DecimalU128::new(u128::from(range.hi()))),
+        workspace_id: record.workspace,
+    }
+}
+
+/// Selects relevant lifecycle revisions not yet emitted on this connection.
+///
+/// The latest repaired revision is intentionally included: a reader that saw
+/// the opening frame must also learn that completeness changed.
+fn unseen_gaps<'a>(
+    gaps: &'a [GapRecord],
+    signals: SignalSet,
+    window: TimeWindow,
+    seen: &std::collections::BTreeMap<TelemetryGapId, u64>,
+) -> Vec<&'a GapRecord> {
+    gaps.iter()
+        .filter(|gap| {
+            gap.revision.signals.intersects(signals)
+                && gap
+                    .revision
+                    .time_range
+                    .is_none_or(|range| range.intersects(window))
+                && seen
+                    .get(&gap.revision.gap_id)
+                    .is_none_or(|revision| *revision < gap.revision.revision)
+        })
+        .collect()
+}
+
+/// Expands the public `telemetry` selector and unions every requested signal.
+fn gap_signal_set(signals: Option<&[ObservationSignal]>) -> SignalSet {
+    signals.map_or_else(SignalSet::all, |signals| {
+        signals
+            .iter()
+            .copied()
+            .fold(SignalSet::EMPTY, |set, signal| {
+                SignalSet::from_wire(signal)
+                    .iter()
+                    .fold(set, SignalSet::with)
+            })
     })
 }
 
@@ -1588,28 +1757,59 @@ impl TelemetryLifecycleApi for ObservationRequest {
 
     async fn telemetry_gaps_query(
         &self,
-        _cx: &RequestContext,
+        cx: &RequestContext,
         body: TelemetryGapQuery,
     ) -> WireResult<TelemetryGapPage> {
-        self.gaps(None, body).await
+        self.gaps(cx, None, body).await
     }
 
     async fn session_telemetry_gaps_query(
         &self,
-        _cx: &RequestContext,
+        cx: &RequestContext,
         session_id: SessionId,
         body: TelemetryGapQuery,
     ) -> WireResult<TelemetryGapPage> {
-        self.gaps(Some(session_id), body).await
+        self.gaps(cx, Some(session_id), body).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::models::{ExportStatus, ObservationOrigin, ObservationOriginEarliest};
+    use std::collections::BTreeMap;
+
+    use aex_observation_domain::gap::{GapRecord, GapRevision, TimeWindow};
+    use aex_observation_domain::keys::ScopeKey;
+    use aex_observation_domain::signal::{Signal, SignalSet};
+    use aex_wire::ids::{PrefixedId as _, TelemetryGapId, WorkspaceId};
+    use aex_wire::models::{
+        ExportStatus, ObservationOrigin, ObservationOriginEarliest, TelemetryGapReason,
+    };
     use aex_wire::types::Timestamp;
 
-    use super::{GRANT_LIFETIME, LISTEN_BUDGET, export_status, listen_window, window_for};
+    use super::{
+        GRANT_LIFETIME, LISTEN_BUDGET, export_status, gap_to_wire, listen_window, unseen_gaps,
+        window_for,
+    };
+
+    fn gap() -> GapRecord {
+        let workspace =
+            WorkspaceId::parse("wsp_0000000001e40r2081040g2081").expect("workspace fixture");
+        GapRecord::try_new(
+            workspace,
+            ScopeKey::Workspace(workspace),
+            GapRevision::open(
+                TelemetryGapId::parse("gap_0000000001e40r2081040g2081").expect("gap fixture"),
+                SignalSet::from_signal(Signal::Logs),
+                TelemetryGapReason::SpoolLost,
+                None,
+                Timestamp::from_unix_millis(30).expect("instant"),
+            ),
+            Some(2),
+            Some(64),
+            false,
+        )
+        .expect("gap record")
+    }
 
     #[test]
     fn a_grant_and_its_signature_expire_together() {
@@ -1649,5 +1849,60 @@ mod tests {
         for preparing in ["admitted", "launching", "generating", "failed", ""] {
             assert_eq!(export_status(preparing), ExportStatus::Preparing);
         }
+    }
+
+    #[test]
+    fn an_unbounded_gap_stays_unbounded_on_the_wire() {
+        let wire = gap_to_wire(&gap());
+        assert!(wire.time_range.is_none());
+        assert_eq!(wire.observation_count.map(|value| value.get()), Some(2));
+    }
+
+    #[test]
+    fn a_stream_emits_each_relevant_revision_once_including_repair() {
+        let open = gap();
+        let window = TimeWindow::new(
+            Timestamp::from_unix_millis(0).expect("instant"),
+            Timestamp::from_unix_millis(100).expect("instant"),
+        )
+        .expect("window");
+        let mut seen = BTreeMap::new();
+        assert_eq!(
+            unseen_gaps(
+                &[open.clone()],
+                SignalSet::from_signal(Signal::Logs),
+                window,
+                &seen
+            )
+            .len(),
+            1
+        );
+        seen.insert(open.revision.gap_id, open.revision.revision);
+        assert!(
+            unseen_gaps(
+                &[open.clone()],
+                SignalSet::from_signal(Signal::Logs),
+                window,
+                &seen
+            )
+            .is_empty()
+        );
+
+        let mut repaired = open;
+        repaired.revision = repaired.revision.repaired(
+            "retained-stage",
+            Timestamp::from_unix_millis(40).expect("instant"),
+        );
+        assert_eq!(
+            unseen_gaps(
+                &[repaired],
+                SignalSet::from_signal(Signal::Logs),
+                window,
+                &seen
+            )
+            .len(),
+            1,
+            "the repaired revision changes completeness and must be surfaced"
+        );
     }
 }

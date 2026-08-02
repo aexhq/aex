@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:17cc35493241db0815502eb31a2e2f691aa2e1f1f06e1f489c3fa362ff783369`.
+//! `sha256:1186e3b9ca9d4778ac1fea9788954f5bbfd78a2e88749cd41e198288d1206c18`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1913,8 +1913,9 @@ pub struct TelemetryGap {
     pub session_id: Option<SessionId>,
     /// Affected signals.
     pub signals: Vec<ObservationSignal>,
-    /// The affected observation-time window.
-    pub time_range: TimeRange,
+    /// The affected observation-time window, when its extent is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_range: Option<TimeRange>,
     /// Last affected position, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_sequence: Option<DecimalU128>,
