@@ -6191,8 +6191,17 @@ dependencies = [
  "aex-secret-keystore-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-kms",
+ "aws-smithy-types",
  "clap",
+ "sha2 0.11.0",
  "thiserror",
+ "time",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
