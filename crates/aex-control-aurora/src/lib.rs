@@ -23,7 +23,7 @@ pub mod store;
 
 pub use authz::AuroraAuthorizationReader;
 pub use error::{map_commit_failure, map_store_error};
-pub use rows::{AccountActorRow, CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
+pub use rows::{AccountActorRow, AccountStateRow, CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
 pub use store::AuroraControlStore;
 
 #[cfg(test)]

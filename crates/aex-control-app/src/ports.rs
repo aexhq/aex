@@ -551,6 +551,26 @@ pub trait ControlStore: Send + Sync {
     /// Returns [`StoreError`] for a transport or privilege failure.
     async fn claim_outbox(&self, command: &ClaimOutbox) -> Result<Vec<OutboxMessage>, StoreError>;
 
+    /// Records one outbox message on its own, outside any aggregate's
+    /// transaction.
+    ///
+    /// Every other outbox row this crate writes is committed *inside* the
+    /// transaction that creates the aggregate it describes, which is what makes
+    /// the outbox transactional at all. This method is the one exception, and
+    /// it exists for exactly one caller: a notification whose aggregate is
+    /// already durable and whose message id that transaction preassigned. It is
+    /// therefore a retry of a message the database already agreed to, not a new
+    /// intent, which is why a conflict on `(topic, dedupe_key)` is the promise
+    /// already kept rather than a failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport, privilege or constraint failure.
+    /// A duplicate is reported as [`StoreError::Conflict`] and left for the
+    /// caller to interpret; this port does not decide that a conflict is
+    /// success.
+    async fn enqueue_outbox(&self, message: &OutboxMessage) -> Result<(), StoreError>;
+
     /// Marks an outbox row dispatched.
     ///
     /// # Errors
@@ -577,6 +597,29 @@ pub trait ControlStore: Send + Sync {
     ///
     /// Returns [`StoreError`] for a transport or privilege failure.
     async fn gc_expired(&self, command: &GcExpired) -> Result<GcReport, StoreError>;
+
+    /// The **current** account state of one organization, coarsely.
+    ///
+    /// This is the read the `HTTP` edge runs at precedence stage 6 for every
+    /// route that is not pause-exempt. It is deliberately its own method rather
+    /// than a field of some larger row: the edge has resolved an organization
+    /// and nothing else, and a read that also returned a credential or a
+    /// workspace would be answering a question it was not asked.
+    ///
+    /// An organization with no finance row resolves to
+    /// [`aex_control_domain::AccountState::Unavailable`] and **never** to
+    /// `Active`. `Active` is a claim that the account may spend; absence is a
+    /// statement that nobody could establish whether it may, and the two are
+    /// answered differently — `402` against `503` — for exactly that reason.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure. A failure
+    /// is never softened into a state: an unreadable account rejects admission.
+    async fn account_state(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<aex_control_domain::AccountState, StoreError>;
 }
 
 /// A workspace API key, as the authorization read sees it.

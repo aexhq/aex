@@ -32,7 +32,7 @@ pub mod regional;
 
 pub use ambient::{OsSecretRng, SystemClock, Uuid7Factory};
 pub use directory::{DataApiPepperDirectory, PepperStatements};
-pub use mail::{OutboxMailer, OutboxWriter, PendingNotification};
+pub use mail::{ControlStoreOutbox, OutboxMailer, OutboxWriter, PendingNotification};
 pub use pepper::{
     PepperDirectory, PepperRecord, PepperState, SecretsManagerPepperKeystore, pepper_cache_bound,
 };

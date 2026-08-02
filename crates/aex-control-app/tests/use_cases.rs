@@ -336,6 +336,10 @@ impl ControlStore for Store {
         unreachable!("{UNDRIVEN}")
     }
 
+    async fn enqueue_outbox(&self, _message: &OutboxMessage) -> Result<(), StoreError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
     async fn mark_outbox_dispatched(
         &self,
         _id: Uuid,
@@ -354,6 +358,13 @@ impl ControlStore for Store {
     }
 
     async fn gc_expired(&self, _command: &GcExpired) -> Result<GcReport, StoreError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
+    async fn account_state(
+        &self,
+        _organization_id: Uuid,
+    ) -> Result<aex_control_domain::AccountState, StoreError> {
         unreachable!("{UNDRIVEN}")
     }
 }

@@ -293,6 +293,26 @@ impl Row for OutboxRow {
     }
 }
 
+/// The projection of [`crate::sql::GET_ACCOUNT_STATE`].
+///
+/// One column, and it is the only column the edge is entitled to. A row type
+/// rather than a bare `String` so the spelling is parsed once, here, and an
+/// unrecognised one is a decode failure instead of a silent `Active`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountStateRow(pub AccountState);
+
+impl Row for AccountStateRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        Ok(Self(AccountState::parse(record.text(0)?).ok_or(
+            DecodeError::TypeMismatch {
+                index: 0,
+                expected: "an account state",
+            },
+        )?))
+    }
+}
+
 /// A single aggregate count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountRow(pub u64);
@@ -512,7 +532,7 @@ impl Row for SigningKeyRow {
 
 #[cfg(test)]
 mod tests {
-    use super::{CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
+    use super::{AccountStateRow, CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
     use aex_rds_data::{DecodeError, Record, Row};
     use aws_sdk_rdsdata::types::{ArrayValue, Field};
     use aws_smithy_types::Blob;
@@ -624,6 +644,34 @@ mod tests {
             Err(DecodeError::ArityMismatch {
                 expected: 14,
                 actual: 13
+            })
+        );
+    }
+
+    #[test]
+    fn the_coarse_account_state_decodes_every_spelling_and_refuses_an_unknown_one() {
+        for (spelling, expected) in [
+            ("active", aex_control_domain::AccountState::Active),
+            (
+                "paused_top_up_required",
+                aex_control_domain::AccountState::PausedTopUpRequired,
+            ),
+            ("unavailable", aex_control_domain::AccountState::Unavailable),
+        ] {
+            let fields = vec![Field::StringValue(spelling.to_owned())];
+            let row = AccountStateRow::from_record(&Record::new(&fields))
+                .unwrap_or_else(|error| panic!("`{spelling}` decodes: {error}"));
+            assert_eq!(row.0, expected, "{spelling}");
+        }
+
+        // A spelling this process does not know is a decode failure. Mapping it
+        // onto `Active` would admit an account nobody established the state of.
+        let fields = vec![Field::StringValue("suspended".to_owned())];
+        assert_eq!(
+            AccountStateRow::from_record(&Record::new(&fields)),
+            Err(DecodeError::TypeMismatch {
+                index: 0,
+                expected: "an account state"
             })
         );
     }
