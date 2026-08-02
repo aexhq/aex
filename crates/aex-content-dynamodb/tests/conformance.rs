@@ -13,8 +13,8 @@ use aex_content_dynamodb::wire_pending::GcSweepPlan;
 use aex_session_dynamodb::paging::PageBudget;
 
 use support::{
-    DEFINITION, TABLE, captured_body, capturing_client, digest, gc_epoch, grant, now, organization,
-    workspace,
+    DEFINITION, TABLE, captured_body, capturing_client, digest, gc_epoch, grant, later, now,
+    organization, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -47,6 +47,24 @@ fn the_scan_index_projection_equals_the_generation_definition() {
         keys::GC_PROJECTION,
         "the projection is exhaustive on purpose: an attribute added to it must \
          be a deliberate edit in both places"
+    );
+}
+
+#[test]
+fn the_grant_expiry_index_is_sharded_and_projects_only_cleanup_evidence() {
+    let index = &definition()["globalSecondaryIndexes"][1];
+    assert_eq!(index["name"].as_str(), Some(keys::EXPIRY_INDEX));
+    assert_eq!(index["partition"].as_str(), Some(keys::EXPIRY_PK));
+    assert_eq!(index["sort"].as_str(), Some(keys::EXPIRY_SK));
+    assert_eq!(index["projection"]["type"].as_str(), Some("INCLUDE"));
+    assert_eq!(
+        strings(&index["projection"]["attributes"]),
+        keys::EXPIRY_PROJECTION
+    );
+    assert_ne!(
+        keys::expiry_partition(0),
+        keys::expiry_partition(1),
+        "expiry must never use one hot partition"
     );
 }
 
@@ -146,6 +164,64 @@ async fn the_serialized_grant_mint_writes_the_grant_and_its_pin_in_one_transacti
         pin["expiresAt"]["S"].as_str().is_some(),
         "the sweeper reads `expiresAt`, never the TTL attribute"
     );
+    let grant = &actions[0]["Put"]["Item"];
+    assert!(grant[keys::EXPIRY_PK]["S"].as_str().is_some());
+    assert!(grant[keys::EXPIRY_SK]["S"].as_str().is_some());
+    assert!(
+        pin[keys::EXPIRY_PK].is_null(),
+        "only the grant lookup is due-indexed; its transaction removes the known pin"
+    );
+}
+
+#[tokio::test]
+async fn an_expiry_page_is_a_bounded_due_index_query_without_a_scan_or_filter() {
+    let (client, receiver) = capturing_client();
+    let store = ContentStore::new(client, TABLE);
+    let _ignored = store
+        .scan_expired_grants(7, now(), PageBudget::new(17).expect("a page"))
+        .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(body["IndexName"].as_str(), Some(keys::EXPIRY_INDEX));
+    assert_eq!(body["Limit"].as_i64(), Some(17));
+    assert_eq!(
+        body["ExpressionAttributeValues"][":pk"]["S"].as_str(),
+        Some("EXPIRY#0007")
+    );
+    let upper = body["ExpressionAttributeValues"][":now"]["S"]
+        .as_str()
+        .expect("a due upper bound");
+    assert!(upper.starts_with(&now().to_wire()));
+    assert!(
+        upper.ends_with("#\u{fffd}"),
+        "the upper bound must include every token due in the exact millisecond"
+    );
+    assert!(body["FilterExpression"].is_null());
+}
+
+#[tokio::test]
+async fn expiry_removes_the_grant_and_pin_atomically_only_after_expiry() {
+    let (client, receiver) = capturing_client();
+    let store = ContentStore::new(client, TABLE);
+    let expiry = aex_content_dynamodb::store::GrantExpiry::from(&grant());
+    let _ignored = store.expire_grant(&expiry, later(300_000)).await;
+
+    let body = captured_body(receiver);
+    let actions = body["TransactItems"].as_array().expect("two deletes");
+    assert_eq!(actions.len(), 2);
+    for action in actions {
+        let delete = &action["Delete"];
+        let condition = delete["ConditionExpression"].as_str().expect("conditional");
+        assert!(
+            condition.contains("attribute_not_exists(pk)"),
+            "{condition}"
+        );
+        assert!(condition.contains("expiresAt <= :now"), "{condition}");
+        assert_eq!(
+            delete["ReturnValuesOnConditionCheckFailure"].as_str(),
+            Some("ALL_OLD")
+        );
+    }
 }
 
 #[tokio::test]

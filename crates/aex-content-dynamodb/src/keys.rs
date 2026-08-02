@@ -11,7 +11,7 @@
 use aex_wire::ids::{ContentHash, WorkspaceId};
 use aex_wire::types::Timestamp;
 
-use aex_session_dynamodb::component::{Component, KeyError, bucket3, gc_bucket};
+use aex_session_dynamodb::component::{Component, KeyError, bucket3, due_shard, gc_bucket, shard4};
 
 use crate::wire_pending::{Blake3Digest, PinOwner, body_hex};
 
@@ -93,6 +93,47 @@ pub const GC_PROJECTION: &[&str] = &[
     "notBefore",
     "state",
 ];
+
+/// How many partitions the download-grant due index spreads over.
+pub const EXPIRY_SHARDS: u64 = 64;
+
+/// The download-grant expiry index name.
+pub const EXPIRY_INDEX: &str = "gsi_expiry";
+
+/// The expiry index partition key attribute.
+pub const EXPIRY_PK: &str = "expiryShardPk";
+
+/// The expiry index sort key attribute.
+pub const EXPIRY_SK: &str = "expiryShardSk";
+
+/// The non-key evidence an expiry page needs to remove the known pin.
+pub const EXPIRY_PROJECTION: &[&str] = &["workspaceId", "contentDigest", "expiresAt"];
+
+/// Which expiry shard owns one token digest.
+///
+/// # Panics
+///
+/// Never: [`EXPIRY_SHARDS`] is far below `u16::MAX`.
+#[must_use]
+pub fn expiry_shard(token_sha256_hex: &str) -> u16 {
+    u16::try_from(due_shard(token_sha256_hex, EXPIRY_SHARDS)).expect("64 shards fit in u16")
+}
+
+/// One expiry index partition.
+#[must_use]
+pub fn expiry_partition(shard: u16) -> String {
+    format!("EXPIRY#{}", shard4(shard))
+}
+
+/// The due-ordered expiry sort key.
+///
+/// # Errors
+///
+/// [`KeyError`] when the token digest could not enter a key.
+pub fn expiry_sort(expires_at: Timestamp, token_sha256_hex: &str) -> Result<String, KeyError> {
+    let token = Component::parse(token_sha256_hex)?;
+    Ok(format!("{}#{token}", expires_at.to_wire()))
+}
 
 /// How long a grant row outlives its own expiry before TTL may reclaim it.
 ///

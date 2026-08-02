@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:dbf615111f8ee350315942143f89a7b182e29dd5563c7d47d8ece84f8f606ca7",
+  "digest": "blake3:636fffad1e1538d84f5e311538a20ce580751c727e79a66538ce130d5a2f3d26",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -545,6 +545,14 @@
         {
           "name": "gcScanSk",
           "type": "S"
+        },
+        {
+          "name": "expiryShardPk",
+          "type": "S"
+        },
+        {
+          "name": "expiryShardSk",
+          "type": "S"
         }
       ],
       "keySchema": {
@@ -572,6 +580,22 @@
               "gcEpoch",
               "notBefore",
               "state"
+            ]
+          }
+        },
+        {
+          "name": "gsi_expiry",
+          "partition": "expiryShardPk",
+          "sort": "expiryShardSk",
+          "sparse": true,
+          "projectsRecordBody": false,
+          "rationale": "Download grants are spread over sixty-four due partitions. The expiry worker queries bounded due pages and atomically removes each expired grant with its known pin; it never scans the authority or trusts TTL timing.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "workspaceId",
+              "contentDigest",
+              "expiresAt"
             ]
           }
         }

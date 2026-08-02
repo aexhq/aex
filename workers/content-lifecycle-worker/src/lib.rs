@@ -7,6 +7,9 @@ pub use config::{Config, Mode as DeployedMode};
 /// Twenty-four-hour staged-object grace.
 pub const GRACE_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 
+/// Maximum concurrent grant+pin expiry transactions in one Lambda invocation.
+pub const MAX_EXPIRY_WRITES_IN_FLIGHT: usize = 16;
+
 /// Durable lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentState {

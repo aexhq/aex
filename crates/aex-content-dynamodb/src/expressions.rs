@@ -209,6 +209,54 @@ pub fn mint_grant(
     Ok(plan)
 }
 
+/// Removes an expired grant and the exact pin it owns in one transaction.
+///
+/// Both deletes admit an already-absent row, which makes a retry after an
+/// ambiguous response or a concurrent TTL reclamation an idempotent success.
+/// A surviving row is removed only when its explicit `expiresAt` is due; TTL is
+/// never used as the expiry fence.
+///
+/// # Errors
+///
+/// [`StoreError`] when a key cannot be composed.
+pub fn expire_grant(
+    table: &str,
+    grant: &crate::store::GrantExpiry,
+    now: Timestamp,
+) -> Result<TransactionPlan, StoreError> {
+    let mut plan = TransactionPlan::new(token("gex", &[&grant.token_sha256]));
+    let grant_key = keys::grant(&grant.token_sha256)?;
+    plan.delete(
+        Participant::CONTENT_GRANT,
+        Delete::builder()
+            .table_name(table)
+            .set_key(Some(key(&grant_key.pk, &grant_key.sk)))
+            .condition_expression(
+                "attribute_not_exists(pk) OR (itemType = :grant AND expiresAt <= :now)",
+            )
+            .expression_attribute_values(":grant", s(codec::DOWNLOAD_GRANT))
+            .expression_attribute_values(":now", stamp(now)),
+    )?;
+
+    let pin_key = keys::grant_pin(grant.workspace, &grant.digest, &grant.token_sha256)?;
+    plan.delete(
+        Participant::CONTENT_GRANT_PIN,
+        Delete::builder()
+            .table_name(table)
+            .set_key(Some(key(&pin_key.pk, &pin_key.sk)))
+            .condition_expression(
+                "attribute_not_exists(pk) OR (itemType = :pin AND pinKind = :grantKind \
+                 AND pinId = :token AND workspaceId = :workspace AND expiresAt <= :now)",
+            )
+            .expression_attribute_values(":pin", s(codec::CONTENT_PIN))
+            .expression_attribute_values(":grantKind", s(codec::GRANT_PIN_KIND))
+            .expression_attribute_values(":token", s(grant.token_sha256.clone()))
+            .expression_attribute_values(":workspace", s(grant.workspace.to_string()))
+            .expression_attribute_values(":now", stamp(now)),
+    )?;
+    Ok(plan)
+}
+
 /// Opens a new mark.
 ///
 /// # Errors

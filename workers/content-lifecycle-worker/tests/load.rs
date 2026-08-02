@@ -1,6 +1,8 @@
 //! Bounded local load contracts for lifecycle reconciliation.
 
-use content_lifecycle_worker::{ContentItem, GRACE_MILLIS, ReconcileOutcome, reconcile_staged};
+use content_lifecycle_worker::{
+    ContentItem, GRACE_MILLIS, MAX_EXPIRY_WRITES_IN_FLIGHT, ReconcileOutcome, reconcile_staged,
+};
 
 #[test]
 fn staged_reconciliation_remains_total_at_inventory_page_load() {
@@ -14,4 +16,9 @@ fn staged_reconciliation_remains_total_at_inventory_page_load() {
         };
         assert_eq!(reconcile_staged(&item, now_ms), expected);
     }
+}
+
+#[test]
+fn grant_expiry_has_a_fixed_write_concurrency_ceiling() {
+    assert_eq!(MAX_EXPIRY_WRITES_IN_FLIGHT, 16);
 }

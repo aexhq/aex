@@ -328,7 +328,13 @@ each with a case pinning it:
 
 ## 10. Published interfaces
 
-- **`aex_content_dynamodb`** — `keys` (every `regional-content` template, `GC_PROJECTION`, `GC_BUCKETS`), `codec` (descriptor, inline body, pin, grant, root, tree page, GC epoch, GC candidate), `expressions` (`SWEEP_ORDER`, `sweep`, `mint_grant`, the epoch state machine, pin/unpin), `store::{ContentMetadataStore, ContentStore, Reachability, GcScanPage}`.
+- **`aex_content_dynamodb`** — `keys` (every `regional-content` template,
+  `GC_PROJECTION`, `GC_BUCKETS`, and the 64-shard `EXPIRY_*` due-index
+  vocabulary), `codec` (descriptor, inline body, pin, grant, root, tree page,
+  GC epoch, GC candidate), `expressions` (`SWEEP_ORDER`, `sweep`, `mint_grant`,
+  atomic idempotent `expire_grant`, the epoch state machine, pin/unpin),
+  `store::{ContentMetadataStore, ContentStore, Reachability, GcScanPage,
+  GrantExpiryPage}`.
 - **`aex_content_aws`** — `ObjectKey`, `PRESIGN_EXPIRY`, `MAX_SIGNATURE_AGE_MILLIS`, `RedactedUrl`, `BucketBinding`, `ContentObjectStore`, `S3ContentObjects`, `CompletionManifest`, `ContentObjectError`, and `policy::REQUIRED_DENIES` — the bucket-policy `Deny` statements this adapter depends on, as data the infrastructure stream can consume instead of re-deriving.
 - **`aex_registry_dynamodb`** — `keys`, `codec` (built on `aex_workspace_domain::registry`/`upload`), `expressions` (pointer create/replace/delete, the upload transitions, completion begin/finish, consume), `store::{RegistryStore, RegistryDynamoStore, PointerPage}`.
 - **`aex_secret_custody_dynamodb`** — `keys` (including `redaction_manifest` and `provider_credential`), `codec::{SecretMetadata, StoredGeneration, CustodyHead, CallAuthorization, RedactionManifest, ProviderCredential}`, `expressions::{set, revoke, admit_custody, authorize_managed_call, SET_ORDER, AUTHORIZE_ORDER}`, `store::{SecretCustodyStore, CustodyStore}`.
