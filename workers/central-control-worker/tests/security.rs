@@ -19,3 +19,15 @@ fn the_capability_declaration_is_a_closed_set() {
     assert!(source.contains("BTreeSet::from(["));
     assert!(source.contains("CapabilityBinding::"));
 }
+
+#[test]
+fn central_control_cannot_link_or_construct_the_capacity_limit_producer() {
+    let manifest = include_str!("../Cargo.toml");
+    assert!(manifest.contains("features = [\"authz-projection-write\"]"));
+    assert!(!manifest.contains("capacity-limit-projection-write"));
+
+    let central_projection =
+        include_str!("../../../crates/aex-session-dynamodb/src/projection_write.rs");
+    assert!(!central_projection.contains("LimitWrite"));
+    assert!(!central_projection.contains("put_limit"));
+}

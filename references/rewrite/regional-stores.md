@@ -493,12 +493,13 @@ every `timestamp#{workId}` and therefore excluded work due at exactly the scan
 instant.
 
 The authorization projection now exposes a separate `WorkspaceProjection`
-port. `workspace_profile` (`PROFILE`) and durable effective-limit
-(`LIMIT#{limitId}`) items share the workspace partition but not the placement
-row. Limit decoding uses generated `LimitId` and `LimitValue`, checks the value
-shape against the registry, and preserves the central feed's explicit
-`default`/`workspace_override` source. This defines the regional read contract;
-it does not claim the central producer has landed, so the routes stay unmounted.
+port. `workspace_profile` stays in central control's `WS#` partition family;
+durable effective-limit items use the capacity-owned `LIMIT#WS#` family and
+`LIMIT#{limitId}` sort keys. Limit decoding uses generated `LimitId` and
+`LimitValue`, checks the value shape against the registry, and preserves the
+capacity authority's explicit `default`/`workspace_override` source. This
+defines the regional read contract; it does not claim the capacity producer has
+landed, so the routes stay unmounted.
 
 ## 8. Secret-custody review continuation
 

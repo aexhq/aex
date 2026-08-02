@@ -24,7 +24,7 @@ use crate::wire_pending::{
     FeedFrontier, KeyRevocation, ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
 };
 
-pub use crate::projection_limit::{WORKSPACE_LIMIT, decode_limit, limit_key};
+pub use crate::projection_limit::{WORKSPACE_LIMIT, decode_limit, decode_limit_at, limit_key};
 
 /// The `itemType` of a workspace placement.
 pub const WORKSPACE_PLACEMENT: &str = "workspace_placement";
@@ -245,7 +245,7 @@ impl WorkspaceProjection for ProjectionReader {
         self.get(&pk, &sk)
             .await?
             .as_ref()
-            .map(|item| decode_limit(item, workspace).map_err(StoreError::from))
+            .map(|item| decode_limit_at(item, workspace, limit).map_err(StoreError::from))
             .transpose()
     }
 
@@ -255,7 +255,7 @@ impl WorkspaceProjection for ProjectionReader {
         budget: PageBudget,
         after: Option<&PagePosition>,
     ) -> Result<ProjectionPage<ProjectedWorkspaceLimit>, StoreError> {
-        let partition = format!("WS#{workspace}");
+        let partition = format!("LIMIT#WS#{workspace}");
         let output = self
             .client
             .query()
@@ -388,9 +388,9 @@ mod tests {
 
     use super::{
         FEED_FRONTIER, KEY_REVOCATION, WORKSPACE_LIMIT, WORKSPACE_PLACEMENT, WORKSPACE_PROFILE,
-        admits_execution, decode_frontier, decode_limit, decode_placement, decode_profile,
-        decode_revocation, frontier_key, guard, limit_key, placement_key, profile_key,
-        revocation_key,
+        admits_execution, decode_frontier, decode_limit, decode_limit_at, decode_placement,
+        decode_profile, decode_revocation, frontier_key, guard, limit_key, placement_key,
+        profile_key, revocation_key,
     };
     use crate::attr::{CodecError, ItemBuilder, n, s};
 
@@ -483,6 +483,8 @@ mod tests {
             value: DecimalU128::new(100),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
+            .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
+            .set("sk", s("LIMIT#query.page"))
             .set("workspaceId", s(workspace(1).to_string()))
             .set("limitId", s(LimitId::QueryPage.as_str()))
             .set(
@@ -510,6 +512,8 @@ mod tests {
             values: std::collections::BTreeMap::new(),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
+            .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
+            .set("sk", s("LIMIT#query.page"))
             .set("workspaceId", s(workspace(1).to_string()))
             .set("limitId", s(LimitId::QueryPage.as_str()))
             .set(
@@ -527,18 +531,43 @@ mod tests {
     }
 
     #[test]
-    fn the_three_key_shapes_are_disjoint() {
+    fn the_authority_key_shapes_are_disjoint() {
         let (placement_pk, _) = placement_key(workspace(1));
         let profile = profile_key(workspace(1));
         let limit = limit_key(workspace(1), LimitId::QueryPage);
         let (revocation_pk, _) = revocation_key(ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10])));
         let (frontier_pk, _) = frontier_key();
         assert_eq!(placement_pk, profile.0);
-        assert_eq!(placement_pk, limit.0);
+        assert_ne!(placement_pk, limit.0);
+        assert!(limit.0.starts_with("LIMIT#"));
         assert_eq!(profile.1, "PROFILE");
         assert_eq!(limit.1, "LIMIT#query.page");
         assert_ne!(placement_pk, revocation_pk);
         assert_ne!(placement_pk, frontier_pk);
         assert_ne!(revocation_pk, frontier_pk);
+    }
+
+    #[test]
+    fn a_limit_point_read_rejects_identity_that_disagrees_with_the_requested_key() {
+        let value = LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(100),
+        });
+        let corrupt = ItemBuilder::new(WORKSPACE_LIMIT)
+            .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
+            .set("sk", s("LIMIT#query.page"))
+            .set("workspaceId", s(workspace(1).to_string()))
+            .set("limitId", s(LimitId::RequestBodyBytes.as_str()))
+            .set(
+                "effectiveValue",
+                s(serde_json::to_string(&value).expect("json")),
+            )
+            .set("source", s("default"))
+            .set("revision", n(1))
+            .set("changedAt", s("2026-08-01T00:00:00.000Z"))
+            .build();
+        assert!(matches!(
+            decode_limit_at(&corrupt, workspace(1), LimitId::QueryPage),
+            Err(CodecError::Malformed { .. })
+        ));
     }
 }

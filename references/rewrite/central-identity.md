@@ -1070,7 +1070,7 @@ Two frontiers remain deliberately open:
 
 | Frontier | Exact blocker |
 | --- | --- |
-| Effective limits | The regional reader accepts a `workspace_limit` projection, but central has no authoritative default, override, or effective-limit table/port to publish. The reader explicitly forbids inferring registry defaults, so inventing a zero or guessed default would be an admission bug. Define the central limit authority before adding this producer. |
+| Effective limits | The regional reader accepts a `workspace_limit` projection, but the regional capacity authority has no default document, override store or producer yet. Central owns none of those facts. The reader explicitly forbids inferring registry defaults, so inventing a zero or guessed default would be an admission bug. Define the regional capacity authority before adding a call site. |
 | Signing-key rotation | The worker verifies that a referenced signing secret exists, but no accepted record defines key creation, overlap, trust-anchor publication, retirement, or rollback. The pepper ring can represent rotation; the operational ceremony and signing frontier remain delivery work. |
 
 ## 12. Final central-service dependency audit and the limit producer seam
@@ -1095,21 +1095,32 @@ value from registry metadata. No central limit table or guessed seed was added.
 
 ### The producer seam that landed
 
-`aex_session_dynamodb::projection_write::LimitWrite` and
-`ProjectionWriter::put_limit` now publish the exact `workspace_limit` row the
-existing regional reader decodes. This is transport only:
+`aex_session_dynamodb::capacity_limit_projection_write::{LimitWrite,
+CapacityLimitProjectionWriter}` now publish the exact `workspace_limit` row the
+existing regional reader decodes. This producer is exposed only by
+`capacity-limit-projection-write`; central control's separate
+`authz-projection-write` feature cannot construct it. This is transport only:
 
 - the generated `LimitId` registry determines the required scalar/map shape;
   a mismatched value is refused before an AWS call;
 - revisions move only forward; a newer durable row makes delayed delivery a
   completed stale attempt;
-- an equal revision is replay success only when value, provenance and change
-  instant all match;
-- every conditional or transport-ambiguous failure is resolved by one strongly
-  consistent point read; a conflicting equal revision is never overwritten and
+- the write condition binds `itemType`, `workspaceId` and `limitId` before it
+  compares revisions; an equal revision is replay success only when identity,
+  value, provenance and change instant all match;
+- only a failed condition or a typed commit-ambiguous outcome is resolved by one
+  strongly consistent point read. Denial, validation, throttling and a missing
+  table return directly; a conflicting equal revision is never overwritten and
   no write is blindly retried;
 - the read and write features share one row decoder, while a producer-only
   composition does not link the broader query surface.
+
+Limit rows use a distinct `LIMIT#…` partition family. The authored table
+contract gives `regional-capacity-controller` `GetItem`/`PutItem` only on that
+family, while central's `PutItem` is restricted to its `WS#…`, `KEY#…` and
+`FEED` families. Per-grant item-type metadata is disjoint and covers the table's
+closed vocabulary, so central cannot persist `workspace_limit` through either
+the Rust feature or the IAM keyspace.
 
 There is deliberately no call site yet. Calling the producer without an
 authoritative input would convert a missing policy into apparently durable
@@ -1134,10 +1145,11 @@ earlier row is open.
    `(plane, region, workspace, limit)` records, capacity admission, audited
    support approval, conditional override updates and ambiguity resolution. No
    public mutation route and no environment-only workspace override are added.
-4. **Wire the authority to `put_limit`.** Give only that producer the
-   `workspace_limit` item write, update the authored table/IAM contract, and
-   prove an older delivery cannot roll back a row. Placement/profile/revocation
-   remain central-control-worker facts; item-type ownership is disjoint.
+4. **Wire the authority to the capacity limit writer.** Its authored
+   `workspace_limit` capability is already partition-key restricted, but no
+   production role or call site exists yet. Prove an older delivery cannot roll
+   back a row. Placement/profile/revocation remain central-control-worker facts;
+   item-type ownership stays disjoint.
 5. **Make completeness a provisioning/readiness gate.** A workspace is not
    regionally ready until every retained effective row is durable and readable;
    reconciliation must repair a missed projection from the authority rather

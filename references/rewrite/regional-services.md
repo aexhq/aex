@@ -1036,7 +1036,7 @@ generated models rather than in the adapters.
 | the 1 `usage` | The public regional model now reports the quantities the fold actually produces. Monetary rating remains on central finance surfaces backed by private rate books; `publishedSequence` / `projectedSequence` match the domain frontier and `serviceThrough` is optional. The remaining blocker is a query planner that implements the full multi-category, time-range, grouping and continuation contract rather than exposing the store's one-row primitive. | usage application + regional services |
 | the 3 `approvals` | `cancelled` and `expired` are distinct reachable states and every approval carries a caller-supplied future deadline. `GET` and list are served through strongly consistent reads and a session-bound cursor. Only response remains blocked on the atomic write/revalidation adapter. | regional services write path |
 | the 3 `operations` | The domain and row codec now preserve phase, exact typed result payload, durable failure, lifecycle timestamps and `WorkspaceDelete`; public projection parses payload under the authoritative envelope kind. `ContentGc` is excluded from both point projection and the sparse public index. The remaining blocker is a `SessionQueries` point/list adapter with complete filter and pagination semantics; no operation route is mounted yet. | regional stores + regional services |
-| the 3 `workspace` | All three remain absent. The cold reader can decode effective-limit rows, but `ProjectionWriter` exposes only placement, profile and key-revocation writes; `central-control-worker::project_view` calls only profile and placement. Central control has no authoritative default, override or effective-limit authority to produce a `workspace_limit` row. Mounting the limit routes would therefore publish permanent `not_found`/empty answers as if they were authoritative. `WorkspaceCurrentGet` is separately blocked because the verified assertion and cold profile do not supply the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). | central identity/control authority + producer |
+| the 3 `workspace` | All three remain absent. The cold reader can decode effective-limit rows, and a separately featured capacity writer now transports them, but no regional capacity default/override authority or production call site exists. Central control cannot construct the limit writer and calls only profile and placement publication. Mounting the limit routes would therefore publish permanent `not_found`/empty answers as if they were authoritative. `WorkspaceCurrentGet` is separately blocked because the verified assertion and cold profile do not supply the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). | regional capacity authority + producer |
 | the 10 registry `*_get`/`*_put`, 6 `files`, 4 `uploads` | Unchanged: the content decrypt path, the session's persisted root, and presigning. | as recorded above |
 
 ### Where the missing `Workspace` fields belong
@@ -1574,14 +1574,23 @@ cryptography are outside this focused audit.
 ## Effective-limit producer continuation (2026-08-02)
 
 The regional projection now has a typed write seam for `workspace_limit` rows.
-`LimitWrite` carries the workspace, registered identity, typed value,
-provenance, monotone revision and change instant; `put_limit` encodes the exact
-row `WorkspaceProjection::{read_limit,page_limits}` already consumes. The
+`capacity_limit_projection_write::{LimitWrite,
+CapacityLimitProjectionWriter}` carries the workspace, registered identity,
+typed value, provenance, monotone revision and change instant; it encodes the
+exact row `WorkspaceProjection::{read_limit,page_limits}` already consumes. The
 writer refuses a scalar/map mismatch before I/O, admits a newer durable revision
-as a completed stale delivery, admits an equal revision only when every fact is
-identical, and resolves conditional or transport-ambiguous results with one
-strongly consistent point read. The producer and consumer share one codec even
-when the producer-only feature does not link the wider regional query surface.
+as a completed stale delivery, and admits an equal revision only when immutable
+identity and every projected fact agree. Only failed conditions and typed
+commit-ambiguous outcomes use one strong read; denial, validation, throttling
+and missing-table failures return directly. The producer and consumer share one
+codec even when the independently testable producer feature does not link the
+wider regional query surface.
+
+The producer uses the separate `LIMIT#…` partition family. Authored IAM grants
+that family only to `regional-capacity-controller`; central control's writer
+feature contains no limit type or method and its `PutItem` grant is restricted
+to the disjoint central families. Stored `pk`, `sk`, `itemType`, `workspaceId`
+and `limitId` must all agree with the requested point-read identity.
 
 This closes only the mechanical writer gap in the historical blocker table. It
 does **not** make central control the limit authority and it does not make the
@@ -1590,8 +1599,8 @@ defaults and overrides to a regional capacity controller, while the current
 generated registry conflicts with that same record: it includes several
 rejected product ceilings and omits accepted shared-safety families. No complete
 default document, capacity-admission authority, override operation, producer
-role/IAM binding, workspace completeness gate or dynamic edge consumption exists
-yet. `ProjectionWriter::put_limit` therefore has no production call site and
-both workspace-limit routes remain absent rather than publishing inferred,
-partial or environment-derived values. The exact dependency order is recorded
-in `central-identity.md` §12.
+deployment, workspace completeness gate or dynamic edge consumption exists yet.
+`CapacityLimitProjectionWriter::put_limit` therefore has no production call
+site and both workspace-limit routes remain absent rather than publishing
+inferred, partial or environment-derived values. The exact dependency order is
+recorded in `central-identity.md` §12.

@@ -211,6 +211,11 @@ pub struct IamGrant {
     pub actions: Vec<String>,
     /// Which resource ARNs the actions apply to.
     pub resources: Vec<String>,
+    /// The item families a write grant owns. Empty for read-only grants and for
+    /// older authorities that have not yet published item-level capability
+    /// metadata.
+    #[serde(rename = "itemTypes", default, skip_serializing_if = "Vec::is_empty")]
+    pub item_types: Vec<String>,
     /// Optional request-shape restriction applied to this statement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<IamCondition>,
@@ -852,6 +857,82 @@ mod tests {
     }
 
     #[test]
+    fn authz_projection_write_capabilities_are_disjoint_and_key_enforced() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "regional-authz-projection")
+            .expect("the authorization projection is declared");
+        let writers = table
+            .iam
+            .iter()
+            .filter(|grant| !grant.item_types.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(writers.len(), 2, "exactly two authorities own row families");
+
+        let mut owned = std::collections::BTreeSet::new();
+        for writer in &writers {
+            assert!(
+                writer.actions.iter().all(|action| matches!(
+                    action.as_str(),
+                    "dynamodb:GetItem" | "dynamodb:PutItem"
+                )),
+                "{} holds a broad action: {:?}",
+                writer.role,
+                writer.actions
+            );
+            for item_type in &writer.item_types {
+                assert!(
+                    owned.insert(item_type.as_str()),
+                    "`{item_type}` has more than one write owner"
+                );
+            }
+        }
+        assert_eq!(
+            owned,
+            table
+                .item_types
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+
+        let central = writers
+            .iter()
+            .find(|grant| grant.role == "central-control-worker")
+            .expect("central control owns its row families");
+        assert!(
+            !central
+                .item_types
+                .iter()
+                .any(|kind| kind == "workspace_limit")
+        );
+        assert_eq!(central.actions, ["dynamodb:PutItem"]);
+        assert_eq!(
+            central
+                .condition
+                .as_ref()
+                .expect("central writes are key restricted")
+                .values,
+            ["WS#*", "KEY#*", "FEED"]
+        );
+
+        let capacity = writers
+            .iter()
+            .find(|grant| grant.role == "regional-capacity-controller")
+            .expect("regional capacity owns workspace limits");
+        assert_eq!(capacity.item_types, ["workspace_limit"]);
+        assert_eq!(
+            capacity
+                .condition
+                .as_ref()
+                .expect("capacity writes are key restricted")
+                .values,
+            ["LIMIT#*"]
+        );
+    }
+
+    #[test]
     fn the_event_indexes_project_every_field_their_decoder_requires() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
         let session = tables
@@ -877,7 +958,11 @@ mod tests {
                 "outboxState",
             ] {
                 assert!(
-                    index.projection.attributes.iter().any(|name| name == required),
+                    index
+                        .projection
+                        .attributes
+                        .iter()
+                        .any(|name| name == required),
                     "{index_name} omits decoder field `{required}`"
                 );
             }

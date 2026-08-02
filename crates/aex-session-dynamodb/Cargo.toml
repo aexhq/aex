@@ -43,10 +43,12 @@ session-authority = ["dep:aex-operation-domain", "dep:aex-runtime-control"]
 # the projection depends on this crate with `default-features = false,
 # features = ["authz-projection"]` and links no session write symbol (D-21).
 authz-projection = []
-# Control-plane producer adapters. Regional request-serving roles never enable
-# this feature; the effective-limit method owns transport only, not capacity
-# policy or defaults.
+# Central control's placement, profile and revocation producer. The regional
+# capacity authority cannot be constructed through this feature.
 authz-projection-write = []
+# The regional capacity authority's workspace-limit projection producer. This
+# is transport only: it owns no defaults, override policy or production caller.
+capacity-limit-projection-write = []
 # Engine-backed targets. The unit lane does not build them, so a machine with no
 # container runtime still runs the per-stream gate.
 integration-engines = ["dep:tokio"]
@@ -85,15 +87,24 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 [[test]]
 name = "conformance"
 path = "tests/conformance.rs"
+required-features = ["session-authority"]
 
 [[test]]
 name = "properties"
 path = "tests/properties.rs"
+required-features = ["session-authority"]
 
 [[test]]
 name = "faults"
 path = "tests/faults.rs"
+required-features = ["session-authority"]
 
 [[test]]
 name = "security"
 path = "tests/security.rs"
+required-features = ["session-authority"]
+
+[[test]]
+name = "limit_projection"
+path = "tests/limit_projection.rs"
+required-features = ["capacity-limit-projection-write"]

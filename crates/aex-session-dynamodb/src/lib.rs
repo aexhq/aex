@@ -35,8 +35,10 @@
 //!   reader. A deployable that needs only the projection depends on this crate
 //!   with `default-features = false, features = ["authz-projection"]` and links
 //!   no session write symbol.
-//! - `authz-projection-write`: control-plane projection producers. It is kept
-//!   out of regional request-serving roles and owns no capacity policy.
+//! - `authz-projection-write`: central control's placement, profile and
+//!   revocation producer.
+//! - `capacity-limit-projection-write`: the regional capacity authority's
+//!   effective-limit transport. It owns no defaults or override policy.
 
 pub mod attr;
 pub mod component;
@@ -70,18 +72,25 @@ pub mod transactions;
 #[cfg(any(
     feature = "session-authority",
     feature = "authz-projection",
-    feature = "authz-projection-write"
+    feature = "authz-projection-write",
+    feature = "capacity-limit-projection-write"
 ))]
 pub mod wire_pending;
 
 #[cfg(feature = "authz-projection")]
 pub mod projection;
 
-#[cfg(any(feature = "authz-projection", feature = "authz-projection-write"))]
+#[cfg(any(
+    feature = "authz-projection",
+    feature = "capacity-limit-projection-write"
+))]
 mod projection_limit;
 
 #[cfg(feature = "authz-projection-write")]
 pub mod projection_write;
+
+#[cfg(feature = "capacity-limit-projection-write")]
+pub mod capacity_limit_projection_write;
 
 pub use attr::{CodecError, Item};
 pub use component::{Component, KeyError};

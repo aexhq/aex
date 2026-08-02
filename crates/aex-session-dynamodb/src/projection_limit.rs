@@ -15,11 +15,15 @@ use crate::wire_pending::ProjectedWorkspaceLimit;
 /// The `itemType` of a durable effective workspace limit.
 pub const WORKSPACE_LIMIT: &str = "workspace_limit";
 
-/// `WS#{workspace_id}` / `LIMIT#{limit_id}`.
+/// `LIMIT#WS#{workspace_id}` / `LIMIT#{limit_id}`.
+///
+/// The authority prefix is deliberately on the partition key: `DynamoDB` IAM
+/// can restrict writes with `dynamodb:LeadingKeys`, while a shared `WS#`
+/// partition would let central control persist capacity-owned rows.
 #[must_use]
 pub fn limit_key(workspace: WorkspaceId, limit: LimitId) -> (String, String) {
     (
-        format!("WS#{workspace}"),
+        format!("LIMIT#WS#{workspace}"),
         format!("LIMIT#{}", limit.as_str()),
     )
 }
@@ -41,6 +45,9 @@ pub fn decode_limit(
         attribute: "limitId",
         reason: "outside the generated limit registry".to_owned(),
     })?;
+    let (partition_key, sort_key) = limit_key(asserted, id);
+    exact_key(&row, "pk", &partition_key)?;
+    exact_key(&row, "sk", &sort_key)?;
     let effective_value = serde_json::from_str::<LimitValue>(row.string("effectiveValue")?)
         .map_err(|error| CodecError::Malformed {
             item_type: WORKSPACE_LIMIT,
@@ -79,5 +86,43 @@ pub fn decode_limit(
         source,
         revision: row.u64("revision")?,
         changed_at: row.timestamp("changedAt")?,
+    })
+}
+
+/// Decodes the row returned for one requested point-read key.
+///
+/// # Errors
+///
+/// As [`decode_limit`], plus [`CodecError::Malformed`] when the stored
+/// `limitId` does not name the limit whose key was requested.
+pub fn decode_limit_at(
+    item: &Item,
+    asserted: WorkspaceId,
+    requested: LimitId,
+) -> Result<ProjectedWorkspaceLimit, CodecError> {
+    let decoded = decode_limit(item, asserted)?;
+    if decoded.id == requested {
+        return Ok(decoded);
+    }
+    Err(CodecError::Malformed {
+        item_type: WORKSPACE_LIMIT,
+        attribute: "limitId",
+        reason: format!(
+            "stored `{}` does not match requested `{}`",
+            decoded.id.as_str(),
+            requested.as_str()
+        ),
+    })
+}
+
+fn exact_key(row: &Row<'_>, attribute: &'static str, expected: &str) -> Result<(), CodecError> {
+    let stored = row.string(attribute)?;
+    if stored == expected {
+        return Ok(());
+    }
+    Err(CodecError::Malformed {
+        item_type: WORKSPACE_LIMIT,
+        attribute,
+        reason: format!("stored `{stored}` does not match identity `{expected}`"),
     })
 }
