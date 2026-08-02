@@ -6,7 +6,8 @@
 //! - `MessageGroupId` is exactly the organization id, so SQS serialises one
 //!   account and parallelises across accounts (OD-19, F-10);
 //! - one account group is one serializable transaction; a partial-batch
-//!   response names only the messages whose group did not commit;
+//!   response names every message whose group has no complete settlement
+//!   receipt, including a group whose inbox claim committed as `pending`;
 //! - a duplicate delivery converges on the inbox key and posts nothing twice;
 //! - the same fact identity under a different intent is quarantined, never
 //!   overwritten;
@@ -16,7 +17,8 @@
 //!
 //! # Not this crate's job
 //!
-//! - the exact rating arithmetic (`aex-usage-rating`);
+//! - owning the exact rating arithmetic (`aex-usage-rating`); this worker must
+//!   still compose a trusted context and call it before a message is complete;
 //! - producing usage facts (the regional usage workers);
 //! - dispatching settlement receipts (`usage-receipt-dispatcher`).
 

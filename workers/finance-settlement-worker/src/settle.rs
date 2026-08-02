@@ -1,9 +1,12 @@
 //! Settling one account group in one serializable transaction.
 //!
-//! Every fact of one organization is claimed, rated and posted inside a single
-//! transaction, and the receipt row is written in the same transaction as the
-//! money. No provider call, sleep, queue operation or object write happens
-//! inside it.
+//! Every fact of one organization is claimed inside a single transaction. A
+//! delivery is not complete until that same authority has also rated, posted
+//! and written its receipt. The missing rating authorities are recorded in the
+//! central-finance handoff; until they land, `pending` is returned explicitly
+//! so the handler keeps the message in the SQS partial-batch response. No
+//! provider call, sleep, queue operation or object write happens inside the
+//! transaction.
 
 use std::sync::Arc;
 
@@ -40,13 +43,15 @@ SELECT :region, :category, :fact_id, :intent_hash, :org_id, :workspace_id, r.res
        (TIMESTAMPTZ 'epoch' + (:interval_end_ms) * INTERVAL '1 millisecond'), \
        r.pricing_version, :corrects_fact_id, :accepted_sequence, 'pending' \
   FROM finance.reservation r \
- WHERE r.org_id = :org_id AND r.scope_kind = :scope_kind AND r.scope_id = :scope_id \
+ WHERE r.org_id = :org_id AND r.workspace_id = :workspace_id AND r.region = :region \
+   AND r.scope_kind = :scope_kind AND r.scope_id = :scope_id \
+   AND r.pricing_version = :pricing_version AND r.state IN ('open', 'closing') \
 ON CONFLICT (region, category, fact_id) DO NOTHING \
-RETURNING fact_id, intent_hash, state";
+RETURNING fact_id, intent_hash, state, rated_microusd, transaction_id";
 
     /// Reads back a fact a duplicate delivery already stored.
     pub const READ_FACT: &str = "\
-SELECT fact_id, intent_hash, state FROM finance.usage_inbox \
+SELECT fact_id, intent_hash, state, rated_microusd, transaction_id FROM finance.usage_inbox \
  WHERE region = :region AND category = :category AND fact_id = :fact_id";
 
     /// Quarantines a fact whose identity is committed under a different intent.
@@ -65,6 +70,11 @@ pub struct GroupOutcome {
     pub claimed: usize,
     /// How many facts a duplicate delivery had already stored.
     pub duplicates: usize,
+    /// Facts that are durable but have not been rated and posted.
+    ///
+    /// A group containing one of these must remain in the SQS partial-batch
+    /// response. A durable claim is not a settlement receipt.
+    pub pending: usize,
     /// The facts whose identity is committed under a different intent.
     pub quarantined: Vec<String>,
 }
@@ -76,7 +86,9 @@ pub enum SettleError {
     #[error("the settlement transaction lost a serialization race")]
     Serialization,
     /// The fact names a reservation this account does not hold.
-    #[error("fact `{0}` names no open reservation")]
+    #[error(
+        "fact `{0}` names no open reservation with matching organization, workspace, region and pricing version"
+    )]
     UnknownReservation(String),
     /// The authority is unreachable. Nothing was applied.
     #[error("the finance authority is unavailable: {0}")]
@@ -154,17 +166,49 @@ impl Row for GrantRow {
 #[derive(Debug)]
 struct FactRow {
     intent_hash: [u8; 32],
-    #[allow(dead_code, reason = "projected so a future rating pass can read it")]
-    state: String,
+    state: FactState,
+}
+
+/// The closed inbox state this worker is allowed to observe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FactState {
+    Pending,
+    Rated,
+    Quarantined,
 }
 
 impl Row for FactRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(3)?;
+        record.expect_arity(5)?;
         record.text(0)?;
+        let state = match record.text(2)? {
+            "pending" => FactState::Pending,
+            "rated" => FactState::Rated,
+            "quarantined" => FactState::Quarantined,
+            _ => {
+                return Err(DecodeError::TypeMismatch {
+                    index: 2,
+                    expected: "a closed usage inbox state",
+                });
+            }
+        };
+        let rated_microusd = record.opt(3, Record::i64)?;
+        let transaction_id = record.opt(4, Record::uuid)?;
+        let columns_match_state = match state {
+            FactState::Rated => rated_microusd.is_some() && transaction_id.is_some(),
+            FactState::Pending | FactState::Quarantined => {
+                rated_microusd.is_none() && transaction_id.is_none()
+            }
+        };
+        if !columns_match_state {
+            return Err(DecodeError::TypeMismatch {
+                index: 2,
+                expected: "an inbox state with matching rating and transaction columns",
+            });
+        }
         Ok(Self {
             intent_hash: record.fixed::<32>(1)?,
-            state: record.text(2)?.to_owned(),
+            state,
         })
     }
 }
@@ -276,7 +320,8 @@ impl SettlementAuthority for AuroraSettlementAuthority {
     }
 }
 
-/// Claims every fact of one account inside the open transaction.
+/// Claims every fact of one account inside the open transaction and reports
+/// which claims still lack a settlement receipt.
 async fn claim_all(
     transaction: &mut Transaction<'_>,
     organization: OrganizationId,
@@ -286,6 +331,7 @@ async fn claim_all(
         organization,
         claimed: 0,
         duplicates: 0,
+        pending: 0,
         quarantined: Vec::new(),
     };
     for message in messages {
@@ -327,6 +373,10 @@ async fn claim_all(
                         "scope_id",
                         SqlValue::Text(fact.authority.authority_id.to_string()),
                     ),
+                    (
+                        "pricing_version",
+                        SqlValue::Text(fact.pricing_version.0.clone()),
+                    ),
                 ],
             ))
             .await
@@ -350,6 +400,11 @@ async fn claim_all(
                 None => return Err(SettleError::UnknownReservation(fact_id)),
                 Some(stored) if stored.intent_hash == *message.request.intent_hash.as_bytes() => {
                     outcome.duplicates += 1;
+                    match stored.state {
+                        FactState::Pending => outcome.pending += 1,
+                        FactState::Rated => {}
+                        FactState::Quarantined => outcome.quarantined.push(fact_id),
+                    }
                 }
                 Some(_) => {
                     transaction
@@ -368,6 +423,11 @@ async fn claim_all(
             }
         } else {
             outcome.claimed += 1;
+            // This composition pass has made the inbox claim durable, but it
+            // has not loaded a trusted rate context or posted a receipt. Keep
+            // the queue delivery live until those authorities exist; acking a
+            // `pending` row would lose the only scheduled wake-up.
+            outcome.pending += 1;
         }
     }
     Ok(outcome)
@@ -414,6 +474,12 @@ mod tests {
             sql::CLAIM_FACT.contains("'pending'"),
             "a claimed fact starts pending"
         );
+        for column in ["rated_microusd", "transaction_id"] {
+            assert!(
+                sql::READ_FACT.contains(column),
+                "a rated duplicate cannot be acknowledged without `{column}`"
+            );
+        }
     }
 
     #[test]
@@ -422,6 +488,21 @@ mod tests {
             sql::CLAIM_FACT.contains("r.pricing_version"),
             "the pricing version is pinned by the reservation, never by the producer"
         );
+        assert!(
+            sql::CLAIM_FACT.contains("r.pricing_version = :pricing_version"),
+            "a producer hint may agree with the pinned reservation but cannot replace it"
+        );
+    }
+
+    #[test]
+    fn a_claim_cannot_cross_workspace_region_or_the_reservation_closure_fence() {
+        for fence in [
+            "r.workspace_id = :workspace_id",
+            "r.region = :region",
+            "r.state IN ('open', 'closing')",
+        ] {
+            assert!(sql::CLAIM_FACT.contains(fence), "missing fence `{fence}`");
+        }
     }
 
     #[test]

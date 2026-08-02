@@ -348,9 +348,20 @@ that produces the work they exist to repair (F-29).
 | --- | --- | --- |
 | `aex-central-http` has no router, so `finance-api` composes `UnresolvedPrincipalEdge` and answers `401` on every billing route | central identity/control | The seam is one method, `CentralEdge::admit`. Swapping it in is a wrapper, not a translation. |
 | No billing route declares an unavailability error code, so an unreachable Aurora renders as `internal_error` through `dispatch::declared` | contracts | `finance-api` emits `account_state_unavailable` honestly; the gap closes the moment the route table admits it. |
-| `finance-settlement-worker` claims and validates inbox facts but does not yet rate or post them | central finance, next pass | Rating needs `RateContext` loading from `finance.pricing_context`; the claim, the intent fence and the quarantine path are complete. |
-| `finance-reconcile` classifies unresolved effects but does not yet invoke the command edge to resolve one | central finance, next pass | The classification is the domain's `recovery_action`; the invoke path is the same gateway `finance-api` already composes. |
+| `finance-settlement-worker` durably claims inbox facts but cannot yet rate or post them | central finance plus admission/usage contracts | The missing authority is larger than a `RateContext` query: no production `BookVerifier` or trusted signing-key binding exists; no writer or seed creates `pricing_context` or `reservation`; no durable exact segment accumulator or closure writer says when once-only rounding is complete; `UsageFact` carries no correction head; and a zero-book receipt requires a transaction id while zero journal postings are forbidden. The worker now keeps every `pending` or `quarantined` group in the SQS partial-batch response, so an intermediate inbox commit is never acknowledged as settlement. |
+| `finance-reconcile` cannot yet invoke the command edge to resolve an unknown effect | central finance plus payment contracts | Exact-key replay is impossible from the current durable row: `request_json` stores only kind and amount, not the admitted command. The TypeScript edge still returns its temporary result shape rather than Rust `PaymentResult`; lookup searches PaymentIntents only and currently labels any found status successful. The reconciler therefore reports replayable, lookup-required and prepared/dispatched stranded effects instead of silently calling the sweep clean; it uses the configured replay window and escalates only paths for which no supported lookup exists. |
 | `release/schema-head.json` is absent, so `aex-release-tool migration verify` has no declared cross-plane head to consume | central finance and regional stores | The central bundle is reproducible at `20260801000700`; the regional table document has a digest but no authoritative generation, so the head cannot be invented locally. |
 | `crates/aex-control-aurora/tests/migrations.rs` still `include_str!`s `migrations/central/0001_bootstrap.sql`, which this repository renamed to `20260801000000_bootstrap.sql` | central identity | The suite is behind `required-features = ["integration-engines"]`, so `cargo check --all-targets` does not build it and the breakage is invisible in the default lane. |
 | `graph verify` reports 147 workspace-wide gaps: one live-companion metadata gap and 146 uncovered routes | test architecture and route owners | The finance composition does not add a new graph violation; these are the current global scenario-ownership debts. |
 | Every `tests/live/aex-live-*` companion is still an unearned-evidence row | central finance | No live evidence can be earned before deployment (OD-07). |
+
+## 2026-08-02 settlement/reconciliation continuation evidence
+
+- `cargo test -p finance-settlement-worker -p finance-reconcile` — **66 passed**, zero failed:
+  36 settlement tests and 30 reconciliation tests across unit, conformance, property,
+  resource-envelope, smoke and doc-test targets.
+- `cargo fmt -p finance-settlement-worker -p finance-reconcile -- --check` — clean.
+- `cargo clippy -p finance-settlement-worker -p finance-reconcile --all-targets -- -D warnings`
+  — clean.
+- No live provider, Aurora, SQS, deployment or AWS operation was run. The blocked
+  authority paths above therefore remain blocked rather than simulated or guessed.
