@@ -22,8 +22,9 @@ use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
+use aex_regional_http::router::{RouteOwner, route_owner};
 
-use crate::api::{ObservationRequest, ObservationService};
+use regional_observation_api::api::{ObservationRequest, ObservationService};
 
 /// The two groups this deployable owns.
 pub const GROUPS: [RouteGroup; 2] = [RouteGroup::Observations, RouteGroup::TelemetryLifecycle];
@@ -68,6 +69,7 @@ pub fn owned_routes() -> Vec<RouteId> {
     GROUPS
         .iter()
         .flat_map(|group| group.routes().iter().copied())
+        .filter(|id| route_owner(*id) == Some(RouteOwner::ObservationApi))
         .collect()
 }
 
@@ -164,7 +166,7 @@ async fn handle(
         return StatusCode::NOT_FOUND.into_response();
     };
     let group = id.group();
-    if !GROUPS.contains(&group) {
+    if !GROUPS.contains(&group) || route_owner(id) != Some(RouteOwner::ObservationApi) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let request_id = diagnostic_id(&headers);
@@ -230,7 +232,7 @@ fn render(response: RawResponse) -> Response {
 /// The status is fixed before the first frame, so after this point the only
 /// terminal signal is a `rotate` frame — which is exactly why the frame
 /// vocabulary has one.
-fn render_frames(stream: crate::ndjson::FrameStream) -> Response {
+fn render_frames(stream: regional_observation_api::ndjson::FrameStream) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -316,21 +318,27 @@ mod tests {
     }
 
     #[test]
-    fn this_deployable_owns_fifty_one_routes() {
-        // The 39 observation operations plus the 12 gap and export operations.
+    fn this_deployable_owns_the_twenty_seven_finite_observation_routes() {
+        // The observations authoring group has 39 operations, but its 24
+        // NDJSON operations belong exclusively to `regional-stream`. This
+        // Lambda owns the 15 finite observation operations plus 12 lifecycle
+        // operations.
         assert_eq!(RouteGroup::Observations.routes().len(), 39);
         assert_eq!(RouteGroup::TelemetryLifecycle.routes().len(), 12);
-        assert_eq!(owned_routes().len(), 51);
+        assert_eq!(owned_routes().len(), 27);
     }
 
     #[test]
     fn no_route_outside_the_two_groups_is_claimed() {
         for id in RouteId::ALL {
             let owned = owned_routes().contains(id);
+            let expected = GROUPS.contains(&id.group())
+                && aex_regional_http::router::route_owner(*id)
+                    == Some(aex_regional_http::router::RouteOwner::ObservationApi);
             assert_eq!(
                 owned,
-                GROUPS.contains(&id.group()),
-                "`{}` disagrees with its own group",
+                expected,
+                "`{}` disagrees with ownership",
                 route(*id).operation_id
             );
         }

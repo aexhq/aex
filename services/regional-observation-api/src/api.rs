@@ -6,13 +6,14 @@
 //! mounts a route it cannot serve, so mounting and serving are the same commit.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aex_observation_domain::keys::{self, ScopeKey};
-use aex_observation_domain::order::OrderTuple;
+use aex_observation_domain::order::{OrderBy, OrderTuple};
 use aex_observation_query::plan::plan;
-use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
-use aex_regional_http::stream::{Frame, RotateReason};
+use aex_regional_http::cursor::CursorKeyRing;
+use aex_regional_http::stream::split_records;
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{
     ExportId, MeasurementId, PrefixedId as _, SessionId, TelemetryGapId, TraceId, Uuid7,
@@ -21,10 +22,10 @@ use aex_wire::ids::{
 use aex_wire::models::{
     DownloadGrant, EmptyRequest, ExportCompleteness, ExportFormat, ExportStatus,
     MetricAggregationGroup, MetricAggregationPage, MetricAggregationRequest, Observation,
-    ObservationListenRequest, ObservationPage, ObservationQuery, ObservationSignal,
-    ObservationStreamRequest, Operation, OperationKind, OperationStatus, TelemetryExport,
-    TelemetryExportRequest, TelemetryGap, TelemetryGapPage, TelemetryGapQuery, TelemetryGapReason,
-    TimeRange, TraceDetail, TraceSummary,
+    ObservationFrame, ObservationFrameCursor, ObservationListenRequest, ObservationPage,
+    ObservationQuery, ObservationSignal, ObservationStreamRequest, Operation, OperationKind,
+    OperationStatus, RotateReason, TelemetryExport, TelemetryExportRequest, TelemetryGap,
+    TelemetryGapPage, TelemetryGapQuery, TelemetryGapReason, TimeRange, TraceDetail, TraceSummary,
 };
 use aex_wire::server::{
     Accepted, Created, NdjsonStream, ObservationsApi, RequestContext, TelemetryLifecycleApi,
@@ -43,19 +44,101 @@ use aex_regional_http::context::RequestContext as EdgeContext;
 pub const GRANT_LIFETIME: Duration = Duration::from_mins(5);
 
 /// How long one `listen` connection follows before it rotates.
-pub const LISTEN_BUDGET: Duration = Duration::from_mins(1);
+pub const LISTEN_BUDGET: Duration = Duration::from_mins(15);
 
-/// How long a `listen` waits between frontier polls.
-pub const LISTEN_POLL: Duration = Duration::from_millis(500);
+/// Fastest correctness fallback after an authoritative read made progress.
+pub const LISTEN_POLL_MIN: Duration = Duration::from_millis(250);
+
+/// Slowest correctness fallback when wake hints are absent or lost.
+pub const LISTEN_POLL_MAX: Duration = Duration::from_secs(15);
+
+/// Heartbeat/checkpoint interval required by the public stream contract.
+pub const LISTEN_HEARTBEAT: Duration = Duration::from_secs(15);
+
+/// Runtime policy for long-lived observation streams.
+///
+/// The finite Lambda surface uses [`StreamPolicy::default`], although its
+/// streaming routes are not mounted. `regional-stream` supplies the deployed
+/// socket budgets and shares its drain flag so every producer can finish with
+/// an exact reconnect cursor.
+#[derive(Clone)]
+pub struct StreamPolicy {
+    /// Maximum lifetime of one follow connection.
+    pub connection_budget: Duration,
+    /// Fastest delay between authoritative fallback reads.
+    pub poll_min: Duration,
+    /// Slowest delay between authoritative fallback reads.
+    pub poll_max: Duration,
+    /// Interval between resumability checkpoints while the authority is idle.
+    pub heartbeat: Duration,
+    /// Interval between mutable authorization projection checks.
+    pub authorization_check: Duration,
+    /// Whole frames admitted to one connection's bounded channel.
+    pub buffered_frames: usize,
+    /// Longest wait to hand one whole frame to the transport.
+    pub write_stall: Duration,
+    /// Shared process drain signal.
+    pub draining: Arc<AtomicBool>,
+    /// Shared keyed wake hints, when the serving process has a wake reader.
+    pub wakes: Option<crate::wake::WakeHub>,
+    /// Fail-closed projection lease for a long-lived socket.
+    pub revalidator: Option<Arc<dyn StreamRevalidator>>,
+}
+
+impl std::fmt::Debug for StreamPolicy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StreamPolicy")
+            .field("connection_budget", &self.connection_budget)
+            .field("poll_min", &self.poll_min)
+            .field("poll_max", &self.poll_max)
+            .field("heartbeat", &self.heartbeat)
+            .field("authorization_check", &self.authorization_check)
+            .field("buffered_frames", &self.buffered_frames)
+            .field("write_stall", &self.write_stall)
+            .field("wakes", &self.wakes.is_some())
+            .field("revalidator", &self.revalidator.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Mutable authorization facts a long-lived socket must periodically renew.
+#[async_trait::async_trait]
+pub trait StreamRevalidator: Send + Sync {
+    /// Re-checks key/workspace/account epochs, pause and placement without
+    /// retaining credential plaintext.
+    async fn revalidate(
+        &self,
+        authorization: &aex_regional_http::context::RegionalAuthorization,
+        scope: &ScopeKey,
+    ) -> WireResult<()>;
+}
+
+impl Default for StreamPolicy {
+    fn default() -> Self {
+        Self {
+            connection_budget: LISTEN_BUDGET,
+            poll_min: LISTEN_POLL_MIN,
+            poll_max: LISTEN_POLL_MAX,
+            heartbeat: LISTEN_HEARTBEAT,
+            authorization_check: LISTEN_HEARTBEAT,
+            buffered_frames: crate::ndjson::DEFAULT_CHANNEL_FRAMES,
+            write_stall: Duration::from_secs(10),
+            draining: Arc::new(AtomicBool::new(false)),
+            wakes: None,
+            revalidator: None,
+        }
+    }
+}
 
 /// The shared, resolved service every request borrows.
 pub struct ObservationService {
     reader: ObservationReader,
     budget: aex_observation_query::plan::Budget,
     metric_scan: u64,
-    cursor_key: CursorKey,
     cursor_ring: CursorKeyRing,
     region: Region,
+    stream: StreamPolicy,
 }
 
 impl std::fmt::Debug for ObservationService {
@@ -67,8 +150,8 @@ impl std::fmt::Debug for ObservationService {
             .field("budget", &self.budget)
             .field("metric_scan", &self.metric_scan)
             .field("region", &self.region)
-            .field("cursor_key", &self.cursor_key)
             .field("cursor_ring", &"<key ring>")
+            .field("stream", &self.stream)
             .finish()
     }
 }
@@ -76,11 +159,10 @@ impl std::fmt::Debug for ObservationService {
 impl ObservationService {
     /// Composes the service over its resolved adapters.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         reader: ObservationReader,
         budget: aex_observation_query::plan::Budget,
         metric_scan: u64,
-        cursor_key: CursorKey,
         cursor_ring: CursorKeyRing,
         region: Region,
     ) -> Self {
@@ -88,10 +170,17 @@ impl ObservationService {
             reader,
             budget,
             metric_scan,
-            cursor_key,
             cursor_ring,
             region,
+            stream: StreamPolicy::default(),
         }
+    }
+
+    /// Replaces the long-lived connection policy used by streaming routes.
+    #[must_use]
+    pub fn with_stream_policy(mut self, stream: StreamPolicy) -> Self {
+        self.stream = stream;
+        self
     }
 }
 
@@ -189,13 +278,23 @@ impl ObservationRequest {
         let page = self
             .service
             .reader
-            .read_page(&scope, self.workspace(), &normalized, &plan, after.as_ref())
+            .read_page(
+                &scope,
+                self.workspace(),
+                &normalized,
+                &plan,
+                snapshot,
+                after.as_ref(),
+            )
             .await
             .map_err(|error| read_error(&error))?;
         let next_cursor = match (page.more, page.last) {
-            (true, Some(last)) => {
-                Some(query::issue(&self.service.cursor_key, &binding, last, now)?)
-            }
+            (true, Some(last)) => Some(query::issue(
+                self.service.cursor_ring.current(),
+                &binding,
+                last,
+                now,
+            )?),
             _ => None,
         };
         Ok(ObservationPage {
@@ -217,52 +316,78 @@ impl ObservationRequest {
         route_signal: ObservationSignal,
         body: StreamBody,
     ) -> WireResult<NdjsonStream<FrameStream>> {
-        let signals = query::signal_for(route_signal, body.signal)?;
+        let StreamBody {
+            filter,
+            signal,
+            window,
+            follow,
+            resume,
+        } = body;
+        let signals = query::signal_for(route_signal, signal)?;
         let scope = self.scope(session);
         let synthetic = ObservationQuery {
             consistency: None,
             cursor: None,
-            filter: body.filter,
+            filter,
             limit: None,
             order: None,
-            signal: body.signal,
-            time_range: body.window,
+            signal,
+            time_range: window,
         };
-        let normalized = query::with_scope(
+        let mut normalized = query::with_scope(
             query::normalize(&synthetic, signals, self.service.budget.max_returned)?,
             &scope,
         );
+        // Replay and tail share the authority's accepted-order rail. This makes
+        // a wake followed by a strongly consistent read lossless even when a
+        // producer reports an old observation timestamp after the socket opens.
+        normalized.order_by = OrderBy::Accepted;
         let now = now()?;
-        let frontier = self
-            .service
-            .reader
-            .frontier(&scope, &normalized)
-            .await
-            .map_err(|error| read_error(&error))?;
-        let snapshot = self
-            .service
-            .reader
-            .pin(frontier, now)
-            .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
-        let binding = query::binding(
+        let request_binding = query::stream_request_binding(
             cx,
             cx.route,
             self.service.region,
             &scope,
             self.workspace(),
             &normalized,
-            snapshot,
-        )?;
+        );
+        let frontier = self
+            .service
+            .reader
+            .frontier(&scope, &normalized)
+            .await
+            .map_err(|error| read_error(&error))?;
+        let (snapshot, after) = if let Some(cursor) = resume.as_ref() {
+            let (snapshot, after) =
+                query::resume_stream(&self.service.cursor_ring, cursor, &request_binding, now)?;
+            (snapshot, Some(after))
+        } else {
+            let snapshot = self
+                .service
+                .reader
+                .pin(frontier, now)
+                .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
+            (snapshot, None)
+        };
+        let binding = query::stream_binding(&request_binding, snapshot)?;
         let plan = plan(
             &normalized,
             query::budget_for(self.service.budget, normalized.limit),
         )
         .map_err(|error| query::query_error(&error))?;
 
-        let (sender, stream) = ndjson::channel();
+        let (sender, stream) = ndjson::channel(
+            self.service.stream.buffered_frames,
+            self.service.stream.write_stall,
+        );
         let service = Arc::clone(&self.service);
+        let wake = service
+            .stream
+            .wakes
+            .as_ref()
+            .map(|hub| hub.subscribe(scope));
         let workspace = self.workspace();
-        let follow = body.follow;
+        let authorization = self.authorized.auth.clone();
         tokio::spawn(produce(Produce {
             sender,
             service,
@@ -273,6 +398,11 @@ impl ObservationRequest {
             binding,
             snapshot,
             follow,
+            after,
+            frontier,
+            request_id: cx.request_id.clone(),
+            wake,
+            authorization,
         }));
         Ok(NdjsonStream(stream))
     }
@@ -325,7 +455,7 @@ impl ObservationRequest {
         let page = self
             .service
             .reader
-            .read_page(&scope, self.workspace(), &normalized, &plan, None)
+            .read_page(&scope, self.workspace(), &normalized, &plan, snapshot, None)
             .await
             .map_err(|error| read_error(&error))?;
         // The aggregation is a single bounded streaming pass; the scan budget is
@@ -711,6 +841,11 @@ struct Produce {
     binding: aex_regional_http::cursor::CursorBinding,
     snapshot: aex_observation_query::coverage::Snapshot,
     follow: bool,
+    after: Option<OrderTuple>,
+    frontier: crate::reader::Frontier,
+    request_id: aex_wire::types::RequestId,
+    wake: Option<crate::wake::WakeSubscription>,
+    authorization: aex_regional_http::context::RegionalAuthorization,
 }
 
 /// Streams pages as whole frames, then rotates.
@@ -718,10 +853,92 @@ struct Produce {
 /// `rotate` is the only terminal frame after the headers flushed: once the
 /// status is on the wire there is nothing left to change, so a failure is a
 /// frame carrying its reason rather than a status a reader cannot see.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one socket state machine keeps replay, renewal, heartbeat, wake and terminal-frame ordering auditable"
+)]
 async fn produce(mut task: Produce) {
-    let deadline = std::time::Instant::now() + LISTEN_BUDGET;
-    let mut after: Option<OrderTuple> = None;
+    let deadline = std::time::Instant::now() + task.service.stream.connection_budget;
+    let mut after = task.after;
+    let mut poll_delay = task.service.stream.poll_min;
+    let mut next_heartbeat = std::time::Instant::now() + task.service.stream.heartbeat;
+    // Revalidate once before the first authoritative read, then periodically.
+    // This closes the handshake-to-producer race for revocation, pause,
+    // placement and session deletion without retaining credential plaintext.
+    let mut next_authorization_check = std::time::Instant::now();
     loop {
+        if task.service.stream.draining.load(Ordering::Acquire) {
+            let cursor = task.sender.sent().cloned();
+            let _ = task
+                .sender
+                .send(&ndjson::rotate(cursor, RotateReason::ServerRotating, true))
+                .await;
+            return;
+        }
+        if std::time::Instant::now() >= next_authorization_check {
+            if let Some(revalidator) = task.service.stream.revalidator.as_ref()
+                && let Err(error) = revalidator
+                    .revalidate(&task.authorization, &task.scope)
+                    .await
+            {
+                let cursor = task.sender.sent().cloned();
+                let (_, envelope, _) = error.into_response_parts(&task.request_id, None);
+                let _ = task
+                    .sender
+                    .send(&ndjson::failed(cursor, envelope.error))
+                    .await;
+                return;
+            }
+            next_authorization_check =
+                std::time::Instant::now() + task.service.stream.authorization_check;
+        }
+        if task.follow {
+            let refreshed = async {
+                let current = now()?;
+                let frontier = task
+                    .service
+                    .reader
+                    .frontier(&task.scope, &task.normalized)
+                    .await
+                    .map_err(|error| read_error(&error))?;
+                let snapshot = task
+                    .service
+                    .reader
+                    .pin(frontier, current)
+                    .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
+                Ok::<_, WireError>((frontier, snapshot))
+            }
+            .await;
+            let Ok((frontier, snapshot)) = refreshed else {
+                let cursor = task.sender.sent().cloned();
+                let _ = task
+                    .sender
+                    .send(&ndjson::rotate(
+                        cursor,
+                        RotateReason::UpstreamUnavailable,
+                        true,
+                    ))
+                    .await;
+                return;
+            };
+            task.frontier = frontier;
+            task.snapshot = snapshot;
+            let Ok(token) =
+                aex_regional_http::cursor::SnapshotToken::new(snapshot.to_wire().to_string())
+            else {
+                let cursor = task.sender.sent().cloned();
+                let _ = task
+                    .sender
+                    .send(&ndjson::rotate(
+                        cursor,
+                        RotateReason::UpstreamUnavailable,
+                        false,
+                    ))
+                    .await;
+                return;
+            };
+            task.binding.snapshot = token;
+        }
         let outcome = task
             .service
             .reader
@@ -730,68 +947,150 @@ async fn produce(mut task: Produce) {
                 task.workspace,
                 &task.normalized,
                 &task.plan,
+                task.snapshot,
                 after.as_ref(),
             )
             .await;
         let Ok(page) = outcome else {
-            let cursor = task.sender.sent().unwrap_or_default().to_owned();
+            let cursor = task.sender.sent().cloned();
             let _ = task
                 .sender
-                .send(&ndjson::rotate(cursor, RotateReason::Draining, true))
+                .send(&ndjson::rotate(
+                    cursor,
+                    RotateReason::UpstreamUnavailable,
+                    true,
+                ))
                 .await;
             return;
         };
+        let more = page.more;
+        let progressed = !page.items.is_empty();
         if !page.items.is_empty() {
-            let token = page
-                .last
-                .and_then(|last| {
-                    query::issue(
-                        &task.service.cursor_key,
-                        &task.binding,
-                        last,
-                        task.snapshot.accepted_at(),
-                    )
-                    .ok()
-                })
-                .map(|cursor| cursor.as_str().to_owned())
-                .unwrap_or_default();
-            let records = page
-                .items
-                .iter()
-                .filter_map(|item| serde_json::to_value(item).ok())
-                .collect();
+            let Some(last) = page.last else {
+                let cursor = task.sender.sent().cloned();
+                let _ = task
+                    .sender
+                    .send(&ndjson::rotate(
+                        cursor,
+                        RotateReason::UpstreamUnavailable,
+                        false,
+                    ))
+                    .await;
+                return;
+            };
+            let record_frames = match split_records(page.items) {
+                Ok(frames) => frames,
+                Err(error) => {
+                    let cursor = task.sender.sent().cloned();
+                    let (_, envelope, _) = WireError::new(ErrorCode::InternalError)
+                        .with_message(error.to_string())
+                        .into_response_parts(&task.request_id, None);
+                    let _ = task
+                        .sender
+                        .send(&ndjson::failed(cursor, envelope.error))
+                        .await;
+                    return;
+                }
+            };
+            for frame in record_frames {
+                if !task.sender.send(&frame).await {
+                    return;
+                }
+            }
+            let issued_at = now().unwrap_or_else(|_| task.snapshot.accepted_at());
+            let Ok(cursor) = query::issue(
+                task.service.cursor_ring.current(),
+                &task.binding,
+                last,
+                issued_at,
+            ) else {
+                let cursor = task.sender.sent().cloned();
+                let _ = task
+                    .sender
+                    .send(&ndjson::rotate(
+                        cursor,
+                        RotateReason::UpstreamUnavailable,
+                        false,
+                    ))
+                    .await;
+                return;
+            };
             if !task
                 .sender
-                .send(&Frame::Records {
-                    records,
-                    cursor: token,
-                })
+                .send(&ObservationFrame::Cursor(ObservationFrameCursor {
+                    coverage: query::coverage(
+                        task.snapshot,
+                        task.frontier.accepted_at,
+                        task.frontier.earliest_accepted_at,
+                    ),
+                    cursor,
+                }))
                 .await
             {
                 return;
             }
-            after = page.last;
+            after = Some(last);
+            poll_delay = task.service.stream.poll_min;
+            next_heartbeat = std::time::Instant::now() + task.service.stream.heartbeat;
         }
-        if !task.follow || std::time::Instant::now() >= deadline {
+        if std::time::Instant::now() >= deadline {
             break;
         }
-        let cursor = task.sender.sent().unwrap_or_default().to_owned();
-        if !task
-            .sender
-            .send(&Frame::Cursor {
-                cursor,
-                at: task.snapshot.accepted_at(),
-            })
-            .await
-        {
-            return;
+        if !task.follow {
+            if more {
+                continue;
+            }
+            break;
         }
-        tokio::time::sleep(LISTEN_POLL).await;
+        if more {
+            continue;
+        }
+        let now = std::time::Instant::now();
+        if now >= next_heartbeat {
+            if let Some(cursor) = task.sender.sent().cloned()
+                && !task
+                    .sender
+                    .send(&ObservationFrame::Cursor(ObservationFrameCursor {
+                        coverage: query::coverage(
+                            task.snapshot,
+                            task.frontier.accepted_at,
+                            task.frontier.earliest_accepted_at,
+                        ),
+                        cursor,
+                    }))
+                    .await
+            {
+                return;
+            }
+            next_heartbeat = now + task.service.stream.heartbeat;
+        }
+        if !progressed {
+            poll_delay = poll_delay
+                .saturating_mul(2)
+                .min(task.service.stream.poll_max);
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let until_heartbeat = next_heartbeat.saturating_duration_since(std::time::Instant::now());
+        let until_authorization =
+            next_authorization_check.saturating_duration_since(std::time::Instant::now());
+        let wait = poll_delay
+            .min(remaining)
+            .min(until_heartbeat)
+            .min(until_authorization);
+        let woke = if let Some(wake) = task.wake.as_mut() {
+            wake.wait(wait).await
+        } else {
+            tokio::time::sleep(wait).await;
+            false
+        };
+        if woke {
+            poll_delay = task.service.stream.poll_min;
+        }
     }
-    let cursor = task.sender.sent().unwrap_or_default().to_owned();
+    let cursor = task.sender.sent().cloned();
     let _ = task
         .sender
-        .send(&ndjson::rotate(cursor, RotateReason::Rotation, true))
+        .send(&ndjson::rotate(cursor, RotateReason::BudgetExhausted, true))
         .await;
 }
 
@@ -801,6 +1100,7 @@ struct StreamBody {
     signal: ObservationSignal,
     window: TimeRange,
     follow: bool,
+    resume: Option<aex_wire::cursor::Cursor>,
 }
 
 /// The window a replay origin selects.
@@ -995,6 +1295,12 @@ macro_rules! workspace_streams {
                 cx: &RequestContext,
                 body: ObservationStreamRequest,
             ) -> WireResult<NdjsonStream<FrameStream>> {
+                let resume = match &body.origin {
+                    aex_wire::models::ObservationOrigin::Cursor(origin) => {
+                        Some(origin.cursor.clone())
+                    }
+                    _ => None,
+                };
                 let window = window_for(&body.origin, now()?)?;
                 self.frames(
                     cx,
@@ -1005,6 +1311,7 @@ macro_rules! workspace_streams {
                         signal: body.signal,
                         window,
                         follow: false,
+                        resume,
                     },
                 )
                 .await
@@ -1023,6 +1330,12 @@ macro_rules! session_streams {
                 session_id: SessionId,
                 body: ObservationStreamRequest,
             ) -> WireResult<NdjsonStream<FrameStream>> {
+                let resume = match &body.origin {
+                    aex_wire::models::ObservationOrigin::Cursor(origin) => {
+                        Some(origin.cursor.clone())
+                    }
+                    _ => None,
+                };
                 let window = window_for(&body.origin, now()?)?;
                 self.frames(
                     cx,
@@ -1033,6 +1346,7 @@ macro_rules! session_streams {
                         signal: body.signal,
                         window,
                         follow: false,
+                        resume,
                     },
                 )
                 .await
@@ -1060,6 +1374,7 @@ macro_rules! workspace_listens {
                         signal: body.signal,
                         window,
                         follow: true,
+                        resume: None,
                     },
                 )
                 .await
@@ -1088,6 +1403,7 @@ macro_rules! session_listens {
                         signal: body.signal,
                         window,
                         follow: true,
+                        resume: None,
                     },
                 )
                 .await

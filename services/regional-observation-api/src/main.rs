@@ -9,12 +9,7 @@
 //! `caughtUp: false` means "inside the two-second index settle window" rather
 //! than an unbounded materializer backlog.
 
-mod api;
-mod config;
 mod mount;
-mod ndjson;
-mod query;
-mod reader;
 
 use std::sync::Arc;
 
@@ -23,10 +18,10 @@ use aex_observation_store_aws::health::{Probe, Readiness, readiness};
 use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
 use aex_wire::dispatch::RequestLimits;
 
-use crate::api::ObservationService;
-use crate::config::{Config, ConfigError, REQUIRED_VARS};
 use crate::mount::{AUDIENCE, AppState};
-use crate::reader::ObservationReader;
+use regional_observation_api::api::ObservationService;
+use regional_observation_api::config::{Config, ConfigError, REQUIRED_VARS};
+use regional_observation_api::reader::ObservationReader;
 
 /// The capability grant this deployable is allowed to hold.
 pub const ROLE: Role = Role::ObservationApi;
@@ -117,6 +112,7 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         dynamodb.clone(),
         s3,
         config.observation_table.clone(),
+        config.session_table.clone(),
         config.observation_bucket.clone(),
         config.index_settle_ms,
     );
@@ -140,11 +136,6 @@ pub async fn run(config: Config) -> Result<(), RunError> {
             reason: format!("`session-authority` is not readable: {error}"),
         })?;
 
-    let cursor_key = CursorKey::new(CURSOR_KEY_ID, config.cursor_key.clone()).map_err(|error| {
-        RunError::Probe {
-            reason: error.to_string(),
-        }
-    })?;
     let ring_key = CursorKey::new(CURSOR_KEY_ID, config.cursor_key.clone()).map_err(|error| {
         RunError::Probe {
             reason: error.to_string(),
@@ -201,7 +192,6 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         reader,
         config.budget,
         config.metric_aggregate_scan,
-        cursor_key,
         ring,
         config.region,
     );
