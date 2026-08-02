@@ -10,10 +10,12 @@ keywords:
   - metering
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-02
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
+  - references/rewrite/usage.md
+  - references/rewrite/regional-stores.md
 ---
 
 # Hands stream handoff
@@ -23,6 +25,54 @@ Plans of record: `references/rust-native-rewrite-2026-07-31/plans/10-hands-runti
 Branch `rw/hands`. Everything below is on that branch and nothing is pushed. This
 stream resumed an interrupted predecessor whose work was preserved as a
 `wip(hands)` commit; §6 records what was kept and what was discarded.
+
+## 0. Continuation checkpoint — 2026-08-02
+
+This checkpoint supersedes older statements below that the Rust provider SDK,
+runtime adapters, regional port, or usage ingresses are absent. The continuation
+is unpushed and undeployed; it read no credential and called no AWS API.
+
+| Commit | Landed state |
+| --- | --- |
+| `9a9bcfd9` | The official `aws-sdk-lambdamicrovms` adapter, documented managed connector ARNs, exact request IDs and closed provider-state mapping. |
+| `0d3a00fe` | `RuntimeActivityDynamoStore` implements the canonical `aex_runtime_control::store::RuntimeActivityStore` port. |
+| `7d353923` | `OpenHandsEffectCounter` performs the bounded strongly consistent session-authority recount. |
+| `eccbba5d` | Production composition, canonical usage drafts and category ingress, atomic lifecycle accounting, and the durable transactional usage outbox. |
+
+`runtime-control-worker` now resolves all five production ports, uses the SDK's
+regional endpoint by default, and probes both tables, all three queues and
+`ListMicrovms` before Lambda polling begins. A lifecycle settlement commits the
+durable intent update, immutable receipt, final generation state, accounting
+cursors and up to three usage drafts in one `DynamoDB` transaction. Queue
+delivery happens afterward; a lost response or usage-ingress outage therefore
+redrives the outbox without repeating the provider effect. The compute and
+storage workers accept the strict `usage_fact_draft.v1` envelope and admit each
+SQS record independently through the category authority's `RecordFact` use case.
+
+Focused continuation gates:
+
+```text
+cargo test (eight affected production/domain packages)
+  351 passed; 0 failed; 0 ignored
+
+cargo test -p aex-regional-test-support
+  46 passed; 0 failed
+
+cargo clippy (eight affected packages) --all-targets -- -D warnings
+  clean
+
+cargo run -p aex-workspace-check
+  134 members and 141 packages satisfy every structural and registry rule
+```
+
+One older crash-matrix gap remains explicit: taking the transitional generation
+fence and recording the provider intent are still separate store calls, and the
+worker reports an existing `dispatched`/`unknown` intent as reconciling without
+yet executing the pure `ReconcileStep` plan. A crash in either window cannot
+admit work or blindly repeat an effect, but it can leave a generation awaiting
+operator reconciliation. Do not claim the runtime lifecycle production-ready
+until active reconciliation closes that gap and the declared live `MicroVM`
+cases pass.
 
 ## 1. What is implemented
 
@@ -39,7 +89,7 @@ boundary an exhaustive table rather than a timing observation.
 | `idle` | `IdleAssessment`, the exact 179999/180000 ms boundary, keepalive issuance and the jittered evaluation schedule |
 | `lifecycle` | provider state mapping with no unknown-state fallback, `ProviderCall` classification, the actively enforced eight-hour lifetime, intent records and reconciliation |
 | `pressure` | the total-order pressure ranking and the high/low-water release plan |
-| `usage` | compute, memory and storage fact derivation; `SnapshotIo` as zero-dollar observability; the `UsageFactSink` port |
+| `usage` | canonical `FactDraft` derivation from provider evidence; compute/memory reservation, snapshot residence rounding, `SnapshotIo` as zero-dollar observability, and the `UsageFactSink` port |
 | `store` | the `RuntimeActivityStore` port the regional-stores peer implements |
 
 ### `crates/aex-hands-agent` — the frame codec and the guest supervisor
@@ -70,19 +120,23 @@ reimplemented.
 ### `crates/aex-hands-control-aws` — the trusted provider adapter
 
 `provider` (the `MicrovmControlApi` seam, `RunRequest`, `RunHookPayload`,
-`EndpointToken`, the IAM action sets) and `lifecycle` (provider answer
+`EndpointToken`, the IAM action sets), `aws` (the official generated
+`aws-sdk-lambdamicrovms` binding), and `lifecycle` (provider answer
 classification and the deterministic transition awaits).
 
 ### `crates/aex-runtime-control-aws` — the worker's composition
 
-`composition` (the suspend transition and the authoritative recount) and `queue`
-(partial-batch folding and poison quarantine).
+`composition` (the suspend transition and the authoritative recount), `queue`
+(partial-batch folding and poison quarantine), `usage_ingress` (strict
+category-scoped SQS drafts), and `worker` (the complete lifecycle engine,
+transactional usage outbox and scheduled due scan).
 
 ### Deployables
 
-`workers/runtime-control-worker` gains a `health` module with the
-`/internal/healthz` and `/internal/readyz` paths, named readiness dependencies,
-the two work domains and the two usage categories it may write to.
+`workers/runtime-control-worker` binds the runtime-activity store, exact session
+recount, official provider client, and compute/storage ingresses. Its `health`
+module owns `/internal/healthz` and `/internal/readyz`, named readiness
+dependencies, the two work domains and the two usage categories it may write to.
 `runtimes/hands-image` gains an `image` module with the build inputs, the package
 manifest, the NEVRA lockfile comparison, the eight per-region variants and the
 rootfs contract. `runtimes/hands-agent` keeps its validated composition root.
@@ -149,7 +203,7 @@ live companions are declared and unearned rather than silently green.
 | brain, mux | `aex_brain_hands::port` | `HandsAdapter`, the exact-generation `impl aex_brain_application::ports::HandsPort`, and its `HandsBackend` runtime seam |
 | brain | `aex_brain_hands::operation` | `ResultAssembly`, `IncorporateError`, `ConstructedCommand`, `CodeLanguage`, `PackageManager`, `git`, `package_install`, `code_run` |
 | brain, guest | `aex_hands_agent::wire` | `RequestPreamble`, `ResponsePreamble`, `Frame`, `FrameExpectation`, `FrameError`, `Verb`, `encode_request`/`decode_request`, `encode_response`/`decode_response`, `split_result_payload`, `verify_body`, `DECODE_STEPS` |
-| usage | `aex_runtime_control::usage` | `UsageFactSink`, `UsageCategory`, `FactContext`, `HandsUsage`, `SnapshotResidence`, `SnapshotIo`, `derive_usage`, `derive_facts`, `category_of` |
+| usage | `aex_runtime_control::usage` and `aex_usage_domain::ingress` | `UsageFactSink`, `FactDraftEnvelope`, `UsageCategory`, `FactContext`, `HandsUsage`, `SnapshotResidence`, `SnapshotIo`, `derive_usage`, `derive_facts`, `category_of` |
 | delivery | `hands_image::image` | `ImageLock`, `PinnedPackage`, `LockVerdict`, `ImageVariant`, `PackageGroup`, `ROOTFS_CONTRACT`, `variants()` |
 | all deployables | `aex_hands_control_aws::provider` | `MicrovmControlApi`, `RunRequest`, `RunHookPayload`, `EndpointToken`, `RUNTIME_IAM_ACTIONS`, `FORBIDDEN_IAM_ACTIONS` |
 
@@ -208,12 +262,14 @@ result rejection.
 
 ### Usage + finance
 
-`derive_facts` builds `FactIdempotency.business_key` as
-`{region}/{meter}/{fact_id}`. It is deterministic and idempotent, which is the
-property that matters here, but the settlement inbox owns the grammar and may pin
-a different spelling. The worker must be bound only to the compute and storage
-category ingresses; `workers/runtime-control-worker/src/health.rs` asserts it
-holds no transfer binding at all.
+`derive_facts` now produces canonical `aex_usage_domain::fact::FactDraft` values.
+Equal provider evidence produces equal authority identities and intent hashes;
+the category worker alone assigns admitted sequence and time. Compute and memory
+use provider-shape evidence with `FactBasis::Reserved`; storage floors interior
+snapshot closes and ceils the terminal tail. The strict
+`usage_fact_draft.v1` envelope redundantly checks queue, envelope, worker and
+draft category. `runtime-control-worker` remains bound only to compute and
+storage; its health tests prove there is no transfer binding.
 
 ## 5. Boundary controls and the test that falsifies each
 
@@ -223,7 +279,7 @@ holds no transfer binding at all.
 | B1 | IMDS unreachable from the guest | `aex-live-hands-image` `b1_the_guest_reaches_no_instance_credential` | unearned, declared |
 | B2 | No AEX VPC egress or private route | `aex-hands-control-aws` `provider::tests::the_launch_request_shape_is_exact` — egress is exactly `{INTERNET_EGRESS}` or empty | earned |
 | B2 | Private endpoint unreachable | `aex-live-hands-image` `b2_the_guest_reaches_no_private_aex_route` | unearned, declared |
-| B3 | No shell ingress | `aex-hands-control-aws` `provider::tests::no_shell_ingress_action_is_in_the_runtime_role` — ingress is `HTTP_INGRESS` and no `*Shell*` action is in the runtime set | earned |
+| B3 | No shell ingress | `aex-hands-control-aws` `provider::tests::no_shell_ingress_action_is_in_the_runtime_role` — ingress uses the documented `ALL_INGRESS` managed connector and no `*Shell*` action is in the runtime set | earned |
 | B4 | No managed secret in the guest | `aex-hands-control-aws` `provider::tests::the_run_hook_payload_key_set_is_closed_and_sorted` — closed sorted key set; the launch ticket has no way back in | earned |
 | B4 | No secret in the environment | `aex-hands-tools` `command::tests::the_environment_is_deny_by_default` and `no_aws_variable_ever_reaches_a_spawn_environment` | earned |
 | B4 | No canary in a real rootfs | `aex-live-hands-image` `b4_no_planted_canary_secret_appears_anywhere_in_the_guest` | unearned, declared |
@@ -303,8 +359,7 @@ this run cannot make (OD-07) or a peer change this stream cannot land.
 
 | Gap | Handling |
 | --- | --- |
-| Rust SDK identity for the `MicroVM` control API | `MicrovmControlApi` is the seam. Bind to `aws-sdk-lambdamicrovms` if published, else a narrow SigV4 client over `lambda/latest/microvm-api`. The npm client is `@aws-sdk/client-lambda-microvms`; the Rust crate's existence is unverified. No implementation of the trait is committed, so nothing silently depends on the answer. |
-| Exact managed connector ARN suffix for `HTTP_INGRESS` | `HTTP_INGRESS` is pinned as a constant. Whether it exists under the same ARN suffix as `ALL_INGRESS` needs a live `RunMicrovm` probe. Launch is blocked on the check rather than silently reverting. |
+| Live provider compatibility | The official `aws-sdk-lambdamicrovms` binding and documented `ALL_INGRESS`/`INTERNET_EGRESS` connector ARNs are pinned and unit-tested. A real `RunMicrovm`/suspend/resume/terminate canary remains unearned until the live lane runs. |
 | Accepted range of `idlePolicy` fields | `maxIdleDurationSeconds` minimum is 60; the maximum is undocumented. Setting 28800 must be confirmed or the largest accepted value pinned. |
 | `clientToken` length and charset | `aexgen-{generation}` is 37 characters with the wire id spelling, asserted by test. The API's constraint is undocumented. |
 | Run-hook payload length metric | The 4096-UTF-8-byte hold is asserted before dispatch. Whether the service counts scalars, UTF-16 units or bytes needs the documented ASCII and four-byte-scalar canary. |
@@ -332,16 +387,16 @@ typed `NotImplemented` roots with real ones and makes the guest image buildable.
 
 ### 11.1 `workers/runtime-control-worker`
 
-Configuration is total and typed. Thirteen variables are required and each is
+Configuration is total and typed. Twelve variables are required and each is
 named when it is absent; the region resolves through `Region::from_name`, every
-queue and provider endpoint must be `https://` **and** contain the configured
-region, and the compute and storage ingresses may not be the same queue.
+queue must be regional HTTPS, and the compute and storage ingresses may not be
+the same queue. `AEX_MICROVM_CONTROL_ENDPOINT` is an optional explicit test or
+compatibility override; production uses the official SDK's regional endpoint.
 
-The thirteen: `AEX_PLANE`, `AEX_REGION`, `AEX_RUNTIME_ACTIVITY_TABLE`,
+The twelve: `AEX_PLANE`, `AEX_REGION`, `AEX_RUNTIME_ACTIVITY_TABLE`,
 `AEX_SESSION_AUTHORITY_TABLE`, `AEX_RUNTIME_LIFECYCLE_QUEUE_URL`,
 `AEX_USAGE_COMPUTE_QUEUE_URL`, `AEX_USAGE_STORAGE_QUEUE_URL`,
-`AEX_MICROVM_CONTROL_ENDPOINT`, `AEX_HANDS_IMAGE_IDENTIFIER`,
-`AEX_RUNTIME_DUE_SHARDS`, `AEX_RUNTIME_DUE_PAGE_ITEMS`,
+`AEX_HANDS_IMAGE_IDENTIFIER`, `AEX_RUNTIME_DUE_SHARDS`, `AEX_RUNTIME_DUE_PAGE_ITEMS`,
 `AEX_RUNTIME_DUE_PAGE_READS`, `AEX_PRICING_VERSION`.
 
 Two variables refuse the start outright rather than being accepted and ignored:
@@ -374,9 +429,9 @@ settle, then emit facts. A recount that disagrees repairs the counter, restores
 `-300 s`, and `-60 s` terminates, closes the receipt and reports
 `continuity_lost` with the exact remaining number.
 
-No adapter exists yet for any of the five ports, and that is stated rather than
-stubbed: `readyz` names each unbound port and `run` refuses to start. A
-lifecycle worker that cannot recount open effects would suspend running jobs.
+All five production adapters are resolved and probed before polling. The fields
+remain optional inside the composition type only so `readyz` and the start
+refusal can prove every missing binding is named; production supplies no stub.
 
 ### 11.2 `runtimes/hands-agent`
 
@@ -451,7 +506,7 @@ the clock.
 
 | Gap | Handling |
 | --- | --- |
-| No adapter binds any of the worker's five ports | `readyz` names each and the process refuses to start. Each is one line once the peer's adapter lands: `aex-runtime-activity-dynamodb` over `aex_runtime_control::store::RuntimeActivityStore` (the crate currently declares its own trait of the same name and carries the `TODO` saying so), the bounded open-Hands-effect query in `aex-session-dynamodb`, a `MicrovmControlApi` implementation, and the compute and storage usage ingresses. |
+| Active lifecycle intent reconciliation | The pure `ReconcileStep` model exists, but the worker does not yet execute it. Existing `dispatched` or `unknown` intents fail closed as `Reconciling`; no second effect is dispatched. This must be closed with the transitional-fence/intent crash window before production readiness is claimed. |
 | `Materialize`, `Persist`, `WriteFile` and `Exec` with stdin are refused by the guest | `ContentRef` is a digest and a length; the guest holds no credential and cannot resolve one. Presigned HTTPS would need a TLS client, and the workspace's pinned backend is `aws-lc-rs`, whose crate name the B6 closure scan rejects by prefix. the guest agent's own boundary test asserts no TLS stack is linked, so the choice is checked rather than remembered. |
 | `ReadFile` with a byte range is refused | The wire asks for a byte range; `aex-hands-tools` windows by line. Serving the whole file would answer a different question than the caller asked. |
 | Attached delivery is not served | `start`'s `Attached` mode is refused explicitly rather than left to hang, so a caller never waits on a body that will not arrive. |

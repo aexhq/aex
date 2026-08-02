@@ -36,10 +36,18 @@ targets = "the `regional-services` stream places this crate's evidence in inline
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
 aex-runtime-control = { path = "../../crates/aex-runtime-control" }
 aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", features = ["session-authority"] }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-usage-domain = { path = "../../crates/aex-usage-domain" }
 aex-wire = { path = "../../crates/aex-wire" }
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-lambdamicrovms.workspace = true
+aws-sdk-sqs.workspace = true
+aws-types.workspace = true
 aws_lambda_events.workspace = true
 axum.workspace = true
 lambda_runtime.workspace = true

@@ -18,7 +18,10 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use aex_usage_application::ports::Admission;
+use aex_usage_application::use_cases::RecordFact;
 use aex_usage_application::worker::{BillingMode, UsageWorker, WorkerLimits};
+use aex_usage_domain::ingress::FactDraftEnvelope;
 use aex_usage_domain::wire_pending::RegionId;
 use aex_usage_storage_aws::clock::SystemClock;
 use aex_usage_storage_aws::projection::QueryProjection;
@@ -115,6 +118,8 @@ pub enum EventMode {
     Sweep,
     /// This category's settlement receipt queue.
     Receipt,
+    /// Untrusted producer drafts awaiting authority-owned admission.
+    Ingress,
 }
 
 impl EventMode {
@@ -125,6 +130,7 @@ impl EventMode {
             Self::Stream => "stream",
             Self::Sweep => "sweep",
             Self::Receipt => "receipt",
+            Self::Ingress => "ingress",
         }
     }
 
@@ -152,7 +158,7 @@ impl EventMode {
             sources.dedup();
             return match sources.as_slice() {
                 ["aws:dynamodb"] => Ok(Self::Stream),
-                ["aws:sqs"] => Ok(Self::Receipt),
+                ["aws:sqs"] => Self::classify_sqs(records),
                 [] => Err(DispatchError::Unrecognised),
                 _ => Err(DispatchError::MixedSources {
                     sources: sources.join(", "),
@@ -163,6 +169,32 @@ impl EventMode {
             return Ok(Self::Sweep);
         }
         Err(DispatchError::Unrecognised)
+    }
+
+    fn classify_sqs(records: &[serde_json::Value]) -> Result<Self, DispatchError> {
+        let mut ingress = false;
+        let mut receipt = false;
+        for record in records {
+            let body = record.get("body").and_then(serde_json::Value::as_str);
+            let kind = body
+                .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+                .and_then(|body| {
+                    body.get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                });
+            if kind.as_deref() == Some("usage_fact_draft.v1") {
+                ingress = true;
+            } else {
+                receipt = true;
+            }
+        }
+        match (ingress, receipt) {
+            (true, false) => Ok(Self::Ingress),
+            (false, true) => Ok(Self::Receipt),
+            (true, true) => Err(DispatchError::MixedQueuePayloads),
+            (false, false) => Err(DispatchError::Unrecognised),
+        }
     }
 }
 
@@ -178,6 +210,9 @@ pub enum DispatchError {
         /// The sources that appeared together.
         sources: String,
     },
+    /// One queue batch mixed ingress drafts with settlement receipts.
+    #[error("queue batch mixes usage drafts and settlement receipts")]
+    MixedQueuePayloads,
 }
 
 /// Environment variable naming the deployment plane.
@@ -356,7 +391,7 @@ where
 
 /// Runs `usage-storage-worker` until it stops.
 ///
-/// The three event modes share one role because they need identical credentials
+/// The four event modes share one role because they need identical credentials
 /// and sit inside the identical category boundary, so the adapters are built
 /// once and every trigger is served from the same composition.
 ///
@@ -394,6 +429,7 @@ pub async fn run(
     let projection = QueryProjection::new(dynamodb, config.projection_table.clone());
     let queue = SettlementQueue::new(aws_sdk_sqs::Client::new(&aws), config.rating_queue.clone());
     let handler = Handler {
+        admission: Arc::new(RecordFact::new(authority.clone(), clock)),
         worker: Arc::new(UsageWorker::new(
             authority,
             projection,
@@ -416,6 +452,7 @@ pub async fn run(
 /// The composition every trigger is served from.
 #[derive(Clone)]
 pub struct Handler {
+    admission: Arc<RecordFact<StorageStore, SystemClock>>,
     worker: Arc<UsageWorker<StorageStore, QueryProjection, SettlementQueue, SystemClock>>,
     budget: u32,
 }
@@ -447,6 +484,7 @@ impl Handler {
             EventMode::Stream => self.stream(&payload).await,
             EventMode::Sweep => self.sweep().await,
             EventMode::Receipt => self.receipts(&payload).await,
+            EventMode::Ingress => self.ingress(&payload).await,
         }
     }
 
@@ -509,6 +547,65 @@ impl Handler {
             // Receipts have no ordering guarantee, so one failing message fails
             // only itself; central truth never waits on this acknowledgement.
             "batchItemFailures": failures(&report.failures),
+        }))
+    }
+
+    /// Admits each producer draft independently and returns an SQS partial-batch response.
+    async fn ingress(&self, payload: &serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+        let records = payload
+            .get("Records")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| LambdaError::from("usage ingress is not a Records batch"))?;
+        if records.len() > self.budget as usize {
+            return Err(LambdaError::from(format!(
+                "ingress batch of {} records exceeds the configured budget of {}",
+                records.len(),
+                self.budget
+            )));
+        }
+        let mut admitted = 0_u64;
+        let mut replayed = 0_u64;
+        let mut rejected = 0_u64;
+        let mut failed = Vec::new();
+        for (index, record) in records.iter().enumerate() {
+            let identifier = record
+                .get("messageId")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    LambdaError::from(format!("queue message {index} has no messageId"))
+                })?
+                .to_owned();
+            let result = async {
+                let body = record
+                    .get("body")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "message has no body".to_owned())?;
+                let envelope: FactDraftEnvelope =
+                    serde_json::from_str(body).map_err(|error| error.to_string())?;
+                let draft = envelope
+                    .into_draft(aex_usage_storage_aws::CATEGORY)
+                    .map_err(|error| error.to_string())?;
+                self.admission
+                    .execute(&draft)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            .await;
+            match result {
+                Ok(Admission::Admitted(_)) => admitted += 1,
+                Ok(Admission::Replayed(_)) => replayed += 1,
+                Ok(Admission::IdentityConflict { .. }) | Err(_) => {
+                    rejected += 1;
+                    failed.push(identifier);
+                }
+            }
+        }
+        Ok(serde_json::json!({
+            "mode": EventMode::Ingress.id(),
+            "admitted": admitted,
+            "replayed": replayed,
+            "rejected": rejected,
+            "batchItemFailures": failures(&failed),
         }))
     }
 }
@@ -753,6 +850,9 @@ mod tests {
         let receipt = serde_json::json!({
             "Records": [{ "eventSource": "aws:sqs", "body": "{}" }]
         });
+        let ingress = serde_json::json!({
+            "Records": [{ "eventSource": "aws:sqs", "body": "{\"type\":\"usage_fact_draft.v1\"}" }]
+        });
         let sweep = serde_json::json!({ "detail-type": "Scheduled Event", "detail": {} });
 
         assert_eq!(
@@ -767,9 +867,14 @@ mod tests {
             EventMode::classify(&sweep).expect("classifies"),
             EventMode::Sweep
         );
+        assert_eq!(
+            EventMode::classify(&ingress).expect("classifies"),
+            EventMode::Ingress
+        );
         assert_eq!(EventMode::Stream.id(), "stream");
         assert_eq!(EventMode::Sweep.id(), "sweep");
         assert_eq!(EventMode::Receipt.id(), "receipt");
+        assert_eq!(EventMode::Ingress.id(), "ingress");
     }
 
     #[test]

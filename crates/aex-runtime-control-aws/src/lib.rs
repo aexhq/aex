@@ -15,6 +15,7 @@
 
 pub mod composition;
 pub mod queue;
+pub mod usage_ingress;
 pub mod worker;
 
 pub use composition::{HoldReason, SUSPEND_LOCK_MS, SuspendDecision, evaluate_suspend, recount};

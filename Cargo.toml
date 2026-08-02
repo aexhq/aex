@@ -230,6 +230,7 @@ aws-sdk-lambda = { version = "1.138.0", features = ["behavior-version-latest"] }
 aws-sdk-ssm = { version = "1.118.0", features = ["behavior-version-latest"] }
 aws-sdk-rdsdata = { version = "1.108.0", features = ["behavior-version-latest"] }
 aws-sdk-ecs = { version = "1.136.0", features = ["behavior-version-latest"] }
+aws-sdk-lambdamicrovms = { version = "1.3.0", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = { version = "1.111.0", features = ["behavior-version-latest"] }
 aws-sdk-sesv2 = { version = "1.128.0", features = ["behavior-version-latest"] }
 # The finance sweeps report and fence; they never auto-repair money (F-30). The
@@ -238,6 +239,7 @@ aws-sdk-sns = { version = "1.107.0", features = ["behavior-version-latest"] }
 aws-sdk-cloudwatch = { version = "1.123.0", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.6.1"
 aws-smithy-runtime-api = "1.14.0"
+aws-types = "1.3.14"
 # `capture_request` is how every adapter asserts the exact serialized request
 # body instead of comparing it against a hand-written mirror (plan 05 D-28). It
 # is a dev-dependency everywhere; no production target links it.

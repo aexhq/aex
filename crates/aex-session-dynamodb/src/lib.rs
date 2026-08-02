@@ -54,6 +54,8 @@ pub mod keys;
 #[cfg(feature = "session-authority")]
 pub mod regional_control;
 #[cfg(feature = "session-authority")]
+pub mod runtime_effects;
+#[cfg(feature = "session-authority")]
 pub mod store;
 #[cfg(feature = "session-authority")]
 pub mod transactions;
