@@ -1,18 +1,26 @@
-//! Write-only adapter for the regional authorization projection.
+//! Write-only adapters for the regional authorization projection.
 //!
-//! Only `central-control-worker` enables this module. Every write is monotone:
-//! an older feed sequence or revocation epoch loses its `DynamoDB` condition, so
-//! delayed cross-region delivery cannot roll authorization state backwards.
+//! `central-control-worker` currently enables this module for placement,
+//! profile and revocation publication. The effective-limit method is the typed
+//! producer seam for the separately owned regional capacity authority; it owns
+//! no default or override policy itself. Every write is monotone, so delayed
+//! cross-region delivery cannot roll authority state backwards.
 
 use aex_wire::ids::{ApiKeyId, OrganizationId, WorkspaceId};
+use aex_wire::limits::LimitId;
+use aex_wire::models::{LimitSource, LimitValue};
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::Client;
 
 use crate::attr::{Item, ItemBuilder, n, s, stamp};
+use crate::projection_limit::WORKSPACE_LIMIT;
+use crate::wire_pending::ProjectedWorkspaceLimit;
 
 const WORKSPACE_PLACEMENT: &str = "workspace_placement";
 const WORKSPACE_PROFILE: &str = "workspace_profile";
 const KEY_REVOCATION: &str = "key_revocation";
+
+const LIMIT_WRITE_CONDITION: &str = "attribute_not_exists(#pk) OR #revision < :revision OR (#revision = :revision AND #value = :value AND #source = :source AND #changed_at = :changed_at)";
 
 /// A complete workspace placement projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +56,28 @@ pub struct ProfileWrite {
     pub slug: String,
     /// Creation instant.
     pub created_at: Timestamp,
+}
+
+/// One complete effective-limit projection selected by its owning capacity
+/// authority.
+///
+/// This type is deliberately a producer contract, not a source of defaults.
+/// Callers must supply a durable effective value and provenance; this adapter
+/// never infers either from the generated registry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitWrite {
+    /// Workspace whose admission is governed.
+    pub workspace: WorkspaceId,
+    /// Registered limit identity.
+    pub id: LimitId,
+    /// Complete effective value.
+    pub effective_value: LimitValue,
+    /// Whether the authority selected its default or an approved override.
+    pub source: LimitSource,
+    /// Monotonic authority revision.
+    pub revision: u64,
+    /// When the authority changed this effective record.
+    pub changed_at: Timestamp,
 }
 
 /// A monotone API-key revocation projection.
@@ -141,6 +171,71 @@ impl ProjectionWriter {
             .map_err(|error| error.to_string())
     }
 
+    /// Publishes one effective limit without allowing delayed delivery or an
+    /// equal-revision conflict to replace the durable answer.
+    ///
+    /// A higher stored revision makes this delivery stale and therefore
+    /// complete. The same revision is an idempotent replay only when every
+    /// projected fact is identical. A transport-ambiguous response is resolved
+    /// by a strongly consistent point read; it is never blindly retried.
+    ///
+    /// # Errors
+    ///
+    /// Returns a diagnostic for a value whose shape disagrees with the generated
+    /// registry, an equal-revision conflict, or a failed write/read resolution.
+    pub async fn put_limit(&self, write: &LimitWrite) -> Result<(), String> {
+        let item = limit_item(write)?;
+        let value = serde_json::to_string(&write.effective_value)
+            .map_err(|_| "effective limit could not be encoded".to_owned())?;
+        let source = write.source.as_str();
+        let result = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(item))
+            .condition_expression(LIMIT_WRITE_CONDITION)
+            .expression_attribute_names("#pk", "pk")
+            .expression_attribute_names("#revision", "revision")
+            .expression_attribute_names("#value", "effectiveValue")
+            .expression_attribute_names("#source", "source")
+            .expression_attribute_names("#changed_at", "changedAt")
+            .expression_attribute_values(":revision", n(write.revision))
+            .expression_attribute_values(":value", s(value))
+            .expression_attribute_values(":source", s(source))
+            .expression_attribute_values(":changed_at", stamp(write.changed_at))
+            .send()
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) => match self.resolve_limit_write(write).await {
+                Ok(()) => Ok(()),
+                Err(resolution) if conditional_put(&error) => Err(resolution),
+                Err(_) => Err(error.to_string()),
+            },
+        }
+    }
+
+    async fn resolve_limit_write(&self, write: &LimitWrite) -> Result<(), String> {
+        let (pk, sk) = crate::projection_limit::limit_key(write.workspace, write.id);
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .key("pk", s(pk))
+            .key("sk", s(sk))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|_| "effective limit outcome could not be resolved".to_owned())?;
+        let current = output
+            .item
+            .as_ref()
+            .map(|item| crate::projection_limit::decode_limit(item, write.workspace))
+            .transpose()
+            .map_err(|_| "effective limit outcome could not be resolved".to_owned())?;
+        classify_limit_replay(current.as_ref(), write)
+    }
+
     /// Publishes a revocation if its epoch does not move the floor backwards.
     ///
     /// # Errors
@@ -208,6 +303,51 @@ fn profile_item(write: &ProfileWrite) -> Item {
         .build()
 }
 
+fn limit_item(write: &LimitWrite) -> Result<Item, String> {
+    if write.effective_value.shape() != write.id.shape() {
+        return Err(format!(
+            "effective limit value shape {:?} differs from registered shape {:?}",
+            write.effective_value.shape(),
+            write.id.shape()
+        ));
+    }
+    let value = serde_json::to_string(&write.effective_value)
+        .map_err(|_| "effective limit could not be encoded".to_owned())?;
+    Ok(ItemBuilder::new(WORKSPACE_LIMIT)
+        .set("pk", s(format!("WS#{}", write.workspace)))
+        .set("sk", s(format!("LIMIT#{}", write.id.as_str())))
+        .set("workspaceId", s(write.workspace.to_string()))
+        .set("limitId", s(write.id.as_str()))
+        .set("effectiveValue", s(value))
+        .set("source", s(write.source.as_str()))
+        .set("revision", n(write.revision))
+        .set("changedAt", stamp(write.changed_at))
+        .build())
+}
+
+fn classify_limit_replay(
+    current: Option<&ProjectedWorkspaceLimit>,
+    desired: &LimitWrite,
+) -> Result<(), String> {
+    let Some(current) = current else {
+        return Err("effective limit write did not become durable".to_owned());
+    };
+    if current.workspace != desired.workspace || current.id != desired.id {
+        return Err("effective limit point read returned a foreign record".to_owned());
+    }
+    if current.revision > desired.revision {
+        return Ok(());
+    }
+    if current.effective_value == desired.effective_value
+        && current.source == desired.source
+        && current.revision == desired.revision
+        && current.changed_at == desired.changed_at
+    {
+        return Ok(());
+    }
+    Err("effective limit revision conflicts with the durable projection".to_owned())
+}
+
 fn revocation_item(write: &RevocationWrite) -> Item {
     ItemBuilder::new(KEY_REVOCATION)
         .set("pk", s(format!("KEY#{}", write.api_key)))
@@ -221,11 +361,16 @@ fn revocation_item(write: &RevocationWrite) -> Item {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlacementWrite, ProfileWrite, RevocationWrite, placement_item, profile_item,
-        revocation_item,
+        LimitWrite, PlacementWrite, ProfileWrite, RevocationWrite, classify_limit_replay,
+        limit_item, placement_item, profile_item, revocation_item,
     };
     use crate::projection::{decode_placement, decode_profile, decode_revocation};
+    use crate::projection_limit::decode_limit;
+    use crate::wire_pending::ProjectedWorkspaceLimit;
     use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::limits::LimitId;
+    use aex_wire::models::{LimitMapValue, LimitScalarValue, LimitSource, LimitValue};
+    use aex_wire::types::DecimalU128;
     use aex_wire::types::{Region, Timestamp};
 
     #[test]
@@ -266,5 +411,76 @@ mod tests {
         let decoded = decode_revocation(&revocation_item(&revocation)).expect("reader");
         assert_eq!(decoded.api_key, api_key);
         assert_eq!(decoded.revoked_epoch, 7);
+
+        let limit = LimitWrite {
+            workspace,
+            id: LimitId::QueryPage,
+            effective_value: LimitValue::Scalar(LimitScalarValue {
+                value: DecimalU128::new(1_000),
+            }),
+            source: LimitSource::Default,
+            revision: 8,
+            changed_at: now,
+        };
+        let decoded = decode_limit(&limit_item(&limit).expect("valid limit"), workspace)
+            .expect("limit reader");
+        assert_eq!(decoded.id, LimitId::QueryPage);
+        assert_eq!(decoded.effective_value, limit.effective_value);
+        assert_eq!(decoded.revision, 8);
+    }
+
+    #[test]
+    fn a_limit_writer_refuses_a_value_with_the_wrong_registered_shape() {
+        let write = LimitWrite {
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            id: LimitId::QueryPage,
+            effective_value: LimitValue::Map(LimitMapValue {
+                values: std::collections::BTreeMap::new(),
+            }),
+            source: LimitSource::WorkspaceOverride,
+            revision: 1,
+            changed_at: Timestamp::from_unix_millis(1_000).expect("timestamp"),
+        };
+        let error = limit_item(&write).expect_err("wrong shape must fail closed");
+        assert!(error.contains("registered shape"), "{error}");
+    }
+
+    #[test]
+    fn only_an_exact_equal_revision_is_an_idempotent_limit_replay() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let now = Timestamp::from_unix_millis(1_000).expect("timestamp");
+        let write = LimitWrite {
+            workspace,
+            id: LimitId::QueryPage,
+            effective_value: LimitValue::Scalar(LimitScalarValue {
+                value: DecimalU128::new(1_000),
+            }),
+            source: LimitSource::Default,
+            revision: 3,
+            changed_at: now,
+        };
+        let projected = ProjectedWorkspaceLimit {
+            workspace,
+            id: write.id,
+            effective_value: write.effective_value.clone(),
+            source: write.source,
+            revision: write.revision,
+            changed_at: write.changed_at,
+        };
+        assert!(classify_limit_replay(Some(&projected), &write).is_ok());
+
+        let mut conflicting = projected.clone();
+        conflicting.effective_value = LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(999),
+        });
+        assert!(classify_limit_replay(Some(&conflicting), &write).is_err());
+
+        let mut newer = projected;
+        newer.revision += 1;
+        assert!(classify_limit_replay(Some(&newer), &write).is_ok());
+
+        let mut foreign = newer;
+        foreign.id = LimitId::RequestBodyBytes;
+        assert!(classify_limit_replay(Some(&foreign), &write).is_err());
     }
 }

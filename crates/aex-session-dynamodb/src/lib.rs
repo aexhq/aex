@@ -35,6 +35,8 @@
 //!   reader. A deployable that needs only the projection depends on this crate
 //!   with `default-features = false, features = ["authz-projection"]` and links
 //!   no session write symbol.
+//! - `authz-projection-write`: control-plane projection producers. It is kept
+//!   out of regional request-serving roles and owns no capacity policy.
 
 pub mod attr;
 pub mod component;
@@ -74,6 +76,9 @@ pub mod wire_pending;
 
 #[cfg(feature = "authz-projection")]
 pub mod projection;
+
+#[cfg(any(feature = "authz-projection", feature = "authz-projection-write"))]
+mod projection_limit;
 
 #[cfg(feature = "authz-projection-write")]
 pub mod projection_write;

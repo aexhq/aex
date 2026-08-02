@@ -37,7 +37,7 @@ pub struct WorkspaceProfile {
     pub created_at: Timestamp,
 }
 
-/// One durable effective limit from the central control feed.
+/// One durable effective limit from the regional capacity authority.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectedWorkspaceLimit {
     /// The workspace.
@@ -46,7 +46,7 @@ pub struct ProjectedWorkspaceLimit {
     pub id: aex_wire::limits::LimitId,
     /// The effective typed value, never an inferred default.
     pub effective_value: aex_wire::models::LimitValue,
-    /// Whether central control selected the shared default or an override.
+    /// Whether the authority selected the shared default or an override.
     pub source: aex_wire::models::LimitSource,
     /// Monotonic concurrency token.
     pub revision: u64,

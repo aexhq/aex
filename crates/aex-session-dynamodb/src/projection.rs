@@ -1,17 +1,18 @@
 //! The read-only `regional-authz-projection` reader.
 //!
-//! This table is written **only** by `central-control-worker`. Every regional
-//! role holds `dynamodb:GetItem` and `dynamodb:Query` on it and nothing else,
-//! and this module contains no write operation at all — a source conformance
-//! test asserts that, because "read-only by convention" is not a property.
+//! Placement, profile and revocation rows are written by
+//! `central-control-worker`; effective-limit rows are reserved for the regional
+//! capacity authority. Every serving regional role holds `dynamodb:GetItem`
+//! and `dynamodb:Query` on the table and nothing else, and this module contains
+//! no write operation at all — a source conformance test asserts that, because
+//! "read-only by convention" is not a property.
 //!
 //! It lives behind the `authz-projection` feature so `regional-secret-api` and
 //! `regional-otlp` can read a placement without linking the session row codec
 //! (D-21).
 
 use aex_wire::ids::{ApiKeyId, WorkspaceId};
-use aex_wire::limits::{LimitId, LimitShape};
-use aex_wire::models::{LimitSource, LimitValue};
+use aex_wire::limits::LimitId;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 
@@ -23,6 +24,8 @@ use crate::wire_pending::{
     FeedFrontier, KeyRevocation, ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
 };
 
+pub use crate::projection_limit::{WORKSPACE_LIMIT, decode_limit, limit_key};
+
 /// The `itemType` of a workspace placement.
 pub const WORKSPACE_PLACEMENT: &str = "workspace_placement";
 /// The `itemType` of a key revocation.
@@ -31,8 +34,6 @@ pub const KEY_REVOCATION: &str = "key_revocation";
 pub const FEED_FRONTIER: &str = "feed_frontier";
 /// The `itemType` of descriptive workspace facts.
 pub const WORKSPACE_PROFILE: &str = "workspace_profile";
-/// The `itemType` of a durable effective workspace limit.
-pub const WORKSPACE_LIMIT: &str = "workspace_limit";
 
 /// `WS#{workspace_id}` / `PLACEMENT`.
 #[must_use]
@@ -56,15 +57,6 @@ pub fn frontier_key() -> (String, String) {
 #[must_use]
 pub fn profile_key(workspace: WorkspaceId) -> (String, String) {
     (format!("WS#{workspace}"), "PROFILE".to_owned())
-}
-
-/// `WS#{workspace_id}` / `LIMIT#{limit_id}`.
-#[must_use]
-pub fn limit_key(workspace: WorkspaceId, limit: LimitId) -> (String, String) {
-    (
-        format!("WS#{workspace}"),
-        format!("LIMIT#{}", limit.as_str()),
-    )
 }
 
 /// One bounded page from the descriptive workspace projection.
@@ -310,64 +302,6 @@ pub fn decode_profile(item: &Item, asserted: WorkspaceId) -> Result<WorkspacePro
         name: row.string("name")?.to_owned(),
         slug: row.string("slug")?.to_owned(),
         created_at: row.timestamp("createdAt")?,
-    })
-}
-
-/// Decodes one durable effective limit and checks its registered shape.
-///
-/// # Errors
-///
-/// [`CodecError`] for a missing, mistyped, foreign-tenant, unknown-limit or
-/// wrong-shape field.
-pub fn decode_limit(
-    item: &Item,
-    asserted: WorkspaceId,
-) -> Result<ProjectedWorkspaceLimit, CodecError> {
-    let row = Row::bind(item, WORKSPACE_LIMIT)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    let id = LimitId::parse(row.string("limitId")?).ok_or_else(|| CodecError::Malformed {
-        item_type: WORKSPACE_LIMIT,
-        attribute: "limitId",
-        reason: "outside the generated limit registry".to_owned(),
-    })?;
-    let effective_value = serde_json::from_str::<LimitValue>(row.string("effectiveValue")?)
-        .map_err(|error| CodecError::Malformed {
-            item_type: WORKSPACE_LIMIT,
-            attribute: "effectiveValue",
-            reason: error.to_string(),
-        })?;
-    let actual_shape = match &effective_value {
-        LimitValue::Scalar(_) => LimitShape::Scalar,
-        LimitValue::Map(_) => LimitShape::Map,
-    };
-    if actual_shape != id.shape() {
-        return Err(CodecError::Malformed {
-            item_type: WORKSPACE_LIMIT,
-            attribute: "effectiveValue",
-            reason: format!(
-                "shape {actual_shape:?} does not match registered {:?}",
-                id.shape()
-            ),
-        });
-    }
-    let source = match row.string("source")? {
-        "default" => LimitSource::Default,
-        "workspace_override" => LimitSource::WorkspaceOverride,
-        _ => {
-            return Err(CodecError::Malformed {
-                item_type: WORKSPACE_LIMIT,
-                attribute: "source",
-                reason: "expected `default` or `workspace_override`".to_owned(),
-            });
-        }
-    };
-    Ok(ProjectedWorkspaceLimit {
-        workspace: asserted,
-        id,
-        effective_value,
-        source,
-        revision: row.u64("revision")?,
-        changed_at: row.timestamp("changedAt")?,
     })
 }
 

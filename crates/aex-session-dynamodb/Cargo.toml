@@ -43,8 +43,9 @@ session-authority = ["dep:aex-operation-domain", "dep:aex-runtime-control"]
 # the projection depends on this crate with `default-features = false,
 # features = ["authz-projection"]` and links no session write symbol (D-21).
 authz-projection = []
-# The central worker's write-only projection adapter. Regional request roles
-# never enable this feature.
+# Control-plane producer adapters. Regional request-serving roles never enable
+# this feature; the effective-limit method owns transport only, not capacity
+# policy or defaults.
 authz-projection-write = []
 # Engine-backed targets. The unit lane does not build them, so a machine with no
 # container runtime still runs the per-stream gate.

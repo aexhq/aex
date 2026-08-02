@@ -1570,3 +1570,28 @@ The real-router served target now names the exact message-list path and requires
 it to remain unmounted, answer no successful empty/partial page, publish no
 body and mint no ETag. Message admission, domain/wire redesign and content
 cryptography are outside this focused audit.
+
+## Effective-limit producer continuation (2026-08-02)
+
+The regional projection now has a typed write seam for `workspace_limit` rows.
+`LimitWrite` carries the workspace, registered identity, typed value,
+provenance, monotone revision and change instant; `put_limit` encodes the exact
+row `WorkspaceProjection::{read_limit,page_limits}` already consumes. The
+writer refuses a scalar/map mismatch before I/O, admits a newer durable revision
+as a completed stale delivery, admits an equal revision only when every fact is
+identical, and resolves conditional or transport-ambiguous results with one
+strongly consistent point read. The producer and consumer share one codec even
+when the producer-only feature does not link the wider regional query surface.
+
+This closes only the mechanical writer gap in the historical blocker table. It
+does **not** make central control the limit authority and it does not make the
+two public reads servable. The accepted limits decision assigns shared-safety
+defaults and overrides to a regional capacity controller, while the current
+generated registry conflicts with that same record: it includes several
+rejected product ceilings and omits accepted shared-safety families. No complete
+default document, capacity-admission authority, override operation, producer
+role/IAM binding, workspace completeness gate or dynamic edge consumption exists
+yet. `ProjectionWriter::put_limit` therefore has no production call site and
+both workspace-limit routes remain absent rather than publishing inferred,
+partial or environment-derived values. The exact dependency order is recorded
+in `central-identity.md` §12.
