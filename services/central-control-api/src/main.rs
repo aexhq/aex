@@ -9,12 +9,14 @@
 //! nothing else, which `the_mounted_set_is_exactly_the_declared_one` asserts by
 //! driving every one of them.
 
+mod api;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use aex_central_http::capability::{
-    Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ControlQueuePublish,
-    ControlWrite, Declares, RegionalControlInvoke,
+    Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ControlWrite,
+    Declares, RegionalControlInvoke,
 };
 use aex_central_http::config::{CentralServiceId, HttpConfig};
 use aex_central_http::health::{Dependency, Readiness};
@@ -23,7 +25,7 @@ use aex_central_http::router::{
     mount_organizations_api, mount_workspaces_api,
 };
 use aex_wire::server::{
-    ApiKeysApi, BootstrapApi, CentralOperationsApi, OrganizationsApi, RouteGroup, WorkspacesApi,
+    ApiKeysApi, BootstrapApi, CentralOperationsApi, OrganizationsApi, WorkspacesApi,
 };
 use aex_wire::types::Region;
 
@@ -41,8 +43,6 @@ mod keys {
     pub const AURORA_CLUSTER_ARN: &str = "AEX_CENTRAL_CONTROL_AURORA_CLUSTER_ARN";
     /// The Aurora credentials secret.
     pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_CONTROL_AURORA_SECRET_ARN";
-    /// The control FIFO queue this API publishes to.
-    pub const CONTROL_QUEUE_ARN: &str = "AEX_CENTRAL_CONTROL_CONTROL_QUEUE_ARN";
     /// The cursor signing secret.
     pub const CURSOR_SECRET_ID: &str = "AEX_CENTRAL_CONTROL_CURSOR_SECRET_ID";
     /// The database name.
@@ -55,8 +55,10 @@ mod keys {
     pub const PLANE: &str = "AEX_CENTRAL_CONTROL_PLANE";
     /// The bound region.
     pub const REGION: &str = "AEX_CENTRAL_CONTROL_REGION";
-    /// The regional control authority endpoints, `region=url` comma-separated.
-    pub const REGIONAL_ENDPOINTS: &str = "AEX_CENTRAL_CONTROL_REGIONAL_ENDPOINTS";
+    /// Direct regional-control Lambda ARNs, `region=arn` comma-separated.
+    pub const REGIONAL_FUNCTIONS: &str = "AEX_CENTRAL_CONTROL_REGIONAL_FUNCTION_ARNS";
+    /// Public workspace API base URLs, `region=https-url` comma-separated.
+    pub const API_URLS: &str = "AEX_CENTRAL_CONTROL_API_URLS";
     /// How long one request may take.
     pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_CONTROL_REQUEST_DEADLINE_MS";
     /// The login role. Must be `aex_control_api`.
@@ -71,14 +73,14 @@ mod keys {
         ACCOUNT_ID,
         AURORA_CLUSTER_ARN,
         AURORA_SECRET_ARN,
-        CONTROL_QUEUE_ARN,
+        API_URLS,
         CURSOR_SECRET_ID,
         DATABASE,
         MAX_BODY_BYTES,
         PEPPER_SECRET_ID,
         PLANE,
         REGION,
-        REGIONAL_ENDPOINTS,
+        REGIONAL_FUNCTIONS,
         REQUEST_DEADLINE_MS,
         ROLE,
     ];
@@ -111,8 +113,6 @@ pub struct Config {
     pub aurora_cluster_arn: String,
     /// The Aurora credentials secret.
     pub aurora_secret_arn: String,
-    /// The control FIFO queue.
-    pub control_queue_arn: String,
     /// The cursor signing secret.
     pub cursor_secret_id: String,
     /// The API-key pepper secret.
@@ -122,7 +122,9 @@ pub struct Config {
     /// The login role.
     pub role: String,
     /// Every region a workspace may be placed in.
-    pub regional_endpoints: BTreeMap<Region, String>,
+    pub regional_functions: BTreeMap<Region, String>,
+    /// Public workspace API base URL per region.
+    pub api_urls: BTreeMap<Region, aex_wire::types::HttpsUrl>,
 }
 
 impl Config {
@@ -170,12 +172,12 @@ impl Config {
             account_id: required(&lookup, keys::ACCOUNT_ID)?,
             aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
             aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
-            control_queue_arn: required(&lookup, keys::CONTROL_QUEUE_ARN)?,
             cursor_secret_id: required(&lookup, keys::CURSOR_SECRET_ID)?,
             pepper_secret_id: required(&lookup, keys::PEPPER_SECRET_ID)?,
             database: required(&lookup, keys::DATABASE)?,
             role,
-            regional_endpoints: endpoints(&required(&lookup, keys::REGIONAL_ENDPOINTS)?)?,
+            regional_functions: functions(&required(&lookup, keys::REGIONAL_FUNCTIONS)?)?,
+            api_urls: api_urls(&required(&lookup, keys::API_URLS)?)?,
         })
     }
 
@@ -193,14 +195,10 @@ impl Config {
                     self.aurora_cluster_arn.clone(),
                 ),
                 (
-                    keys::CONTROL_QUEUE_ARN.to_owned(),
-                    self.control_queue_arn.clone(),
-                ),
-                (
-                    keys::REGIONAL_ENDPOINTS.to_owned(),
-                    self.regional_endpoints
+                    keys::REGIONAL_FUNCTIONS.to_owned(),
+                    self.regional_functions
                         .iter()
-                        .map(|(region, url)| format!("{}={url}", region.as_str()))
+                        .map(|(region, function)| format!("{}={function}", region.as_str()))
                         .collect::<Vec<_>>()
                         .join(","),
                 ),
@@ -230,34 +228,74 @@ where
     })
 }
 
-/// Parses the `region=url` endpoint map.
+/// Parses the `region=lambda-arn` authority map.
 ///
 /// Every launch region must be present, and it is checked here rather than at
 /// the first `POST /api/workspaces`: a control API that can place a workspace in
 /// four of five regions is one that `500`s on the fifth after it has already
 /// committed the central half.
-fn endpoints(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
+fn functions(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, url) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
-            name: keys::REGIONAL_ENDPOINTS,
-            reason: "expected `region=url` entries".to_owned(),
+        let (region, function) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGIONAL_FUNCTIONS,
+            reason: "expected `region=lambda-arn` entries".to_owned(),
         })?;
         let parsed = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
-            name: keys::REGIONAL_ENDPOINTS,
+            name: keys::REGIONAL_FUNCTIONS,
             reason: format!("`{region}` is not a launch region"),
         })?;
-        if url.trim().is_empty() || map.insert(parsed, url.trim().to_owned()).is_some() {
+        let function = function.trim();
+        let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
+        if !function.starts_with(&expected)
+            || !function.contains(":function:")
+            || map.insert(parsed, function.to_owned()).is_some()
+        {
             return Err(ConfigError::Invalid {
-                name: keys::REGIONAL_ENDPOINTS,
-                reason: format!("`{}` is empty or repeated", parsed.as_str()),
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!(
+                    "`{}` is not a unique Lambda ARN in its bound region",
+                    parsed.as_str()
+                ),
             });
         }
     }
     if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
         return Err(ConfigError::Invalid {
-            name: keys::REGIONAL_ENDPOINTS,
-            reason: format!("no endpoint for `{}`", missing.as_str()),
+            name: keys::REGIONAL_FUNCTIONS,
+            reason: format!("no function ARN for `{}`", missing.as_str()),
+        });
+    }
+    Ok(map)
+}
+
+fn api_urls(raw: &str) -> Result<BTreeMap<Region, aex_wire::types::HttpsUrl>, ConfigError> {
+    let mut map = BTreeMap::new();
+    for entry in raw.split(',').filter(|entry| !entry.trim().is_empty()) {
+        let (region, url) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
+            name: keys::API_URLS,
+            reason: "expected `region=https-url` entries".to_owned(),
+        })?;
+        let region = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
+            name: keys::API_URLS,
+            reason: format!("`{region}` is not a launch region"),
+        })?;
+        let url =
+            aex_wire::types::HttpsUrl::parse(url.trim()).map_err(|error| ConfigError::Invalid {
+                name: keys::API_URLS,
+                reason: error.to_string(),
+            })?;
+        if map.insert(region, url).is_some() {
+            return Err(ConfigError::Invalid {
+                name: keys::API_URLS,
+                reason: format!("`{}` is repeated", region.as_str()),
+            });
+        }
+    }
+    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+        return Err(ConfigError::Invalid {
+            name: keys::API_URLS,
+            reason: format!("no public API URL for `{}`", missing.as_str()),
         });
     }
     Ok(map)
@@ -265,7 +303,7 @@ fn endpoints(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
 
 /// This binary's capability declaration.
 ///
-/// Control DML, one queue publish and the regional control authorities. No
+/// Control DML and the regional control authorities. No
 /// finance role, no payment provider, no object store and no assertion signing:
 /// a binding for any of them is refused at start-up.
 #[allow(
@@ -275,7 +313,6 @@ fn endpoints(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
 struct Composition;
 
 impl Declares<ControlWrite> for Composition {}
-impl Declares<ControlQueuePublish> for Composition {}
 impl Declares<RegionalControlInvoke> for Composition {}
 
 /// The manifest the start-up check runs against.
@@ -283,15 +320,10 @@ impl Declares<RegionalControlInvoke> for Composition {}
 pub fn manifest() -> CompositionManifest {
     CompositionManifest {
         deployable: DEPLOYABLE,
-        capabilities: BTreeSet::from([
-            ControlWrite::ID,
-            ControlQueuePublish::ID,
-            RegionalControlInvoke::ID,
-        ]),
+        capabilities: BTreeSet::from([ControlWrite::ID, RegionalControlInvoke::ID]),
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, ControlWrite::ID),
-            CapabilityBinding::arn(keys::CONTROL_QUEUE_ARN, ControlQueuePublish::ID),
-            CapabilityBinding::resource(keys::REGIONAL_ENDPOINTS, RegionalControlInvoke::ID),
+            CapabilityBinding::resource(keys::REGIONAL_FUNCTIONS, RegionalControlInvoke::ID),
         ],
     }
 }
@@ -303,7 +335,6 @@ pub const PERMISSIONS: &[&str] = &[
     "rds-data:ExecuteStatement",
     "rds-data:RollbackTransaction",
     "secretsmanager:GetSecretValue",
-    "sqs:SendMessage",
     "lambda:InvokeFunction",
 ];
 
@@ -320,7 +351,7 @@ pub struct Probes {
     pub pepper: bool,
     /// The cursor signing secret loaded.
     pub cursor_secret: bool,
-    /// The endpoint map covers every region `wsp_region_ck` admits.
+    /// The direct-invoke map covers every region `wsp_region_ck` admits.
     pub endpoints: bool,
 }
 
@@ -331,6 +362,13 @@ impl Probes {
         pepper: false,
         cursor_secret: false,
         endpoints: false,
+    };
+    /// Every required authority answered its real probe.
+    pub const READY: Self = Self {
+        aurora: true,
+        pepper: true,
+        cursor_secret: true,
+        endpoints: true,
     };
 }
 
@@ -384,6 +422,9 @@ pub enum RunError {
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] CompositionError),
+    /// A required authority did not answer its startup probe.
+    #[error("dependency `{0}` refused startup: {1}")]
+    Dependency(&'static str, String),
     /// The listener stopped.
     #[error("the listener stopped: {0}")]
     Listener(String),
@@ -412,6 +453,7 @@ pub async fn run<A: ControlApi>(
     config: &Config,
     api: Arc<A>,
     edge: EdgeStack,
+    probes: Probes,
     telemetry: &aex_platform_telemetry::Handle,
 ) -> Result<(), RunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
@@ -428,78 +470,138 @@ pub async fn run<A: ControlApi>(
             config.http.region.as_str().to_owned(),
         ),
     );
-    lambda_http::run(app(api, edge, readiness(Probes::NONE)))
+    lambda_http::run(app(api, edge, readiness(probes)))
         .await
         .map_err(|error| RunError::Listener(error.to_string()))
 }
 
-/// What each mounted group still owes, named rather than summarised.
-///
-/// A deployable that cannot serve refuses, and a refusal that says only "not
-/// composed" is one an operator cannot act on. Every entry is a gap somebody
-/// has to close before this binary can start, and
-/// `the_refusal_names_every_group_this_deployable_owns` holds the list to the
-/// owner map so a group cannot be quietly dropped from it.
-///
-/// The two entries that are not this stream's to close are marked: the
-/// dashboard shell read needs a contract decision, and the workspace view needs
-/// a field the wire model has no representation for.
-pub const UNSERVED: &[(RouteGroup, &str)] = &[
-    (
-        RouteGroup::ApiKeys,
-        "api_key_create must mint a credential under the control pepper, and \
-         `PepperPurpose` names only `identity` and `cursor`",
-    ),
-    (
-        RouteGroup::Bootstrap,
-        "dashboard_bootstrap_get answers one `AccountOperationalState` for a \
-         person who may belong to many organizations, and the contract does not \
-         say which; TODO(cross-stream): contracts",
-    ),
-    (
-        RouteGroup::CentralOperations,
-        "central_operations_list declares `kind` and `status` filters that \
-         LIST_OPERATIONS does not bind, and resolves no organization to scope \
-         the read to",
-    ),
-    (
-        RouteGroup::Organizations,
-        "organizations_list needs the caller's role per row and memberships_list \
-         needs each member's address; neither is projected by its statement",
-    ),
-    (
-        RouteGroup::Workspaces,
-        "`Workspace.operational_state` is a required field with no `unavailable` \
-         representation, on routes that declare no `account_state_unavailable`; \
-         TODO(cross-stream): contracts",
-    ),
-];
+async fn compose(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RunError> {
+    use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose};
 
-fn main() -> std::process::ExitCode {
-    // The Aurora-backed `ControlApi` implementation is the one remaining piece:
-    // `run` is generic over it, and configuration, capability admission, the
-    // mounted route set and both probes are exercised by this binary's own
-    // suite. A placeholder implementation would answer `201` for a workspace
-    // nobody provisioned, which is worse than refusing to start.
-    match Config::from_env() {
-        Ok(config) => {
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let data_api = aex_rds_data::DataApiConfig::new(
+        aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::DatabaseName::parse(&config.database)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+    );
+    let client = aex_rds_data::DataApiClient::new(
+        Arc::new(aex_rds_data::AwsTransport::new(
+            aws_sdk_rdsdata::Client::new(&aws),
+            &data_api,
+        )),
+        data_api,
+    );
+    client
+        .query::<Ok1>(aex_rds_data::Statement::new(
+            aex_control_aurora::sql::READINESS_PROBE,
+        ))
+        .await
+        .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
+
+    let directory = Arc::new(aex_central_runtime::DataApiPepperDirectory::new(
+        client.clone(),
+        aex_central_runtime::PepperStatements {
+            active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
+            by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
+        },
+    ));
+    let api_peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+        aws_sdk_secretsmanager::Client::new(&aws),
+        config.pepper_secret_id.clone(),
+        Arc::clone(&directory) as Arc<dyn aex_central_runtime::PepperDirectory>,
+    ));
+    api_peppers
+        .probe(PepperPurpose::ApiKey)
+        .await
+        .map_err(|error| RunError::Dependency("api-key-pepper", error.to_string()))?;
+    let cursor_peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+        aws_sdk_secretsmanager::Client::new(&aws),
+        config.cursor_secret_id.clone(),
+        directory,
+    ));
+    cursor_peppers
+        .probe(PepperPurpose::Cursor)
+        .await
+        .map_err(|error| RunError::Dependency("cursor-secret", error.to_string()))?;
+    let (_, cursor_material) = cursor_peppers
+        .active(PepperPurpose::Cursor)
+        .await
+        .map_err(|error| RunError::Dependency("cursor-secret", error.to_string()))?;
+    let cursor_secret = Arc::new(aex_control_domain::CursorSecret::new(
+        cursor_material.expose_copy(),
+    ));
+
+    let concrete_store = Arc::new(aex_control_aurora::AuroraControlStore::new(client));
+    let api_store: Arc<dyn api::Store> = concrete_store.clone();
+    let target_store: Arc<dyn aex_control_app::ports::ControlStore> = concrete_store;
+    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_runtime::SystemClock);
+    let regional: Arc<dyn aex_control_app::ports::RegionalControlPort> =
+        Arc::new(aex_central_runtime::LambdaRegionalControl::new(
+            aws_sdk_lambda::Client::new(&aws),
+            config.regional_functions.clone(),
+        ));
+    let service = Arc::new(api::ControlService::new(
+        api_store,
+        Arc::clone(&api_peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
+        regional,
+        Arc::clone(&clock),
+        Arc::new(aex_central_runtime::Uuid7Factory),
+        Arc::new(aex_central_runtime::OsSecretRng),
+        Arc::clone(&cursor_secret),
+        config.http.region,
+        config.api_urls.clone(),
+    ));
+    let edge = EdgeStack::new(
+        config.http.clone(),
+        Arc::new(aex_central_http::target::ControlStoreTargets::new(
+            target_store,
+        )),
+        clock,
+        cursor_secret,
+    );
+    run(config, service, edge, Probes::READY, telemetry).await
+}
+
+struct Ok1;
+
+impl aex_rds_data::Row for Ok1 {
+    fn from_record(record: &aex_rds_data::Record<'_>) -> Result<Self, aex_rds_data::DecodeError> {
+        record.expect_arity(1)?;
+        record.i64(0)?;
+        Ok(Self)
+    }
+}
+
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("central-control-api: refusing to start: {error}");
             eprintln!(
-                "central-control-api: configuration accepted for plane `{}` in `{}`; \
-                 the control service is not composed yet",
-                config.http.plane.as_str(),
-                config.http.region.as_str()
+                "central-control-api: required configuration: {}",
+                keys::ALL.join(", ")
             );
+            return std::process::ExitCode::FAILURE;
         }
-        Err(error) => eprintln!("central-control-api: refusing to start: {error}"),
+    };
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = compose(&config, &telemetry).await;
+    let _ = telemetry.flush(settings.flush_deadline);
+    match outcome {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("central-control-api: stopped: {error}");
+            std::process::ExitCode::FAILURE
+        }
     }
-    for (group, blocker) in UNSERVED {
-        eprintln!(
-            "central-control-api: `{}` ({} route(s)) is unserved: {blocker}",
-            group.as_str(),
-            group.routes().len()
-        );
-    }
-    std::process::ExitCode::FAILURE
 }
 
 #[cfg(test)]
@@ -552,12 +654,26 @@ mod tests {
         Uuid::from_bytes(*uuid7(tag).as_bytes())
     }
 
-    fn every_region() -> String {
+    fn every_function() -> String {
         Region::ALL
             .iter()
             .map(|region| {
                 format!(
-                    "{}=https://control.{}.aex.dev",
+                    "{}=arn:aws:lambda:{}:000000000000:function:aex-regional-control",
+                    region.as_str(),
+                    region.as_str()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn every_api_url() -> String {
+        Region::ALL
+            .iter()
+            .map(|region| {
+                format!(
+                    "{}=https://api.{}.aex.dev",
                     region.as_str(),
                     region.as_str()
                 )
@@ -580,10 +696,6 @@ mod tests {
                 "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-control".to_owned(),
             ),
             (
-                keys::CONTROL_QUEUE_ARN,
-                "arn:aws:sqs:eu-west-1:000000000000:aex-control.fifo".to_owned(),
-            ),
-            (
                 keys::CURSOR_SECRET_ID,
                 "aex/dev/cursor-secret/current".to_owned(),
             ),
@@ -595,7 +707,8 @@ mod tests {
             (keys::ROLE, "aex_control_api".to_owned()),
             (keys::MAX_BODY_BYTES, "65536".to_owned()),
             (keys::REQUEST_DEADLINE_MS, "10000".to_owned()),
-            (keys::REGIONAL_ENDPOINTS, every_region()),
+            (keys::REGIONAL_FUNCTIONS, every_function()),
+            (keys::API_URLS, every_api_url()),
         ])
     }
 
@@ -862,7 +975,8 @@ mod tests {
     #[test]
     fn a_complete_environment_is_accepted() {
         let config = read(&complete()).expect("a complete environment");
-        assert_eq!(config.regional_endpoints.len(), Region::ALL.len());
+        assert_eq!(config.regional_functions.len(), Region::ALL.len());
+        assert_eq!(config.api_urls.len(), Region::ALL.len());
     }
 
     #[test]
@@ -875,11 +989,12 @@ mod tests {
     }
 
     #[test]
-    fn an_endpoint_map_missing_a_region_is_refused_before_a_workspace_is_placed() {
+    fn a_function_map_missing_a_region_is_refused_before_a_workspace_is_placed() {
         let mut vars = complete();
         vars.insert(
-            keys::REGIONAL_ENDPOINTS,
-            "eu-west-1=https://control.eu-west-1.aex.dev".to_owned(),
+            keys::REGIONAL_FUNCTIONS,
+            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
+                .to_owned(),
         );
         assert!(read(&vars).is_err());
     }
@@ -924,7 +1039,7 @@ mod tests {
             assert!(!permission.starts_with("kms:"), "{permission}");
             assert!(!permission.contains("stripe"), "{permission}");
         }
-        assert!(PERMISSIONS.contains(&"sqs:SendMessage"));
+        assert!(PERMISSIONS.contains(&"lambda:InvokeFunction"));
     }
 
     #[tokio::test]
@@ -1032,25 +1147,5 @@ mod tests {
         fn accepts<A: ControlApi>(_api: &A) {}
         accepts(&Api);
         assert_eq!(DEPLOYABLE.groups().len(), 5);
-    }
-
-    #[test]
-    fn the_refusal_names_every_group_this_deployable_owns() {
-        // A refusal that says only "not composed" is one an operator cannot
-        // action, and a list that drifts from the owner map hides a group that
-        // quietly became servable — or one that quietly stopped being.
-        let named: Vec<_> = super::UNSERVED.iter().map(|(group, _)| *group).collect();
-        assert_eq!(
-            named,
-            DEPLOYABLE.groups(),
-            "the refusal list is the owner map, in the same order"
-        );
-        for (group, blocker) in super::UNSERVED {
-            assert!(
-                blocker.len() > 40,
-                "`{}` is refused without saying what would close it",
-                group.as_str()
-            );
-        }
     }
 }

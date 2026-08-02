@@ -41,7 +41,7 @@ export async function requireWorkspace(slug: string): Promise<WorkspaceContext> 
     workspace,
     organization: result.bootstrap.organizations.find((o) => o.id === workspace.organizationId) ?? null,
     regionCode,
-    paused: result.bootstrap.account.status === "paused",
+    paused: workspace.operationalState.state.status === "paused",
   };
 }
 

@@ -5,7 +5,7 @@
 //! zone or `DateStyle`.
 
 use aex_control_app::ports::{
-    AccountActorState, CentralActorState, SigningKeyRecord, WorkspaceKeyState,
+    AccountActorState, AccountProfile, CentralActorState, SigningKeyRecord, WorkspaceKeyState,
 };
 use aex_control_domain::{
     AccountState, ApiKey, Epoch, Fence, IntentHash, Invitation, InvitationStatus, Lease,
@@ -313,11 +313,89 @@ impl Row for AccountStateRow {
     }
 }
 
+/// The full public account profile used in control response projections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountProfileRow(pub AccountProfile);
+
+impl Row for AccountProfileRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(4)?;
+        let state = AccountState::parse(record.text(0)?).ok_or(DecodeError::TypeMismatch {
+            index: 0,
+            expected: "an account state",
+        })?;
+        if state == AccountState::Unavailable {
+            return Err(DecodeError::TypeMismatch {
+                index: 0,
+                expected: "a durable active or paused account profile",
+            });
+        }
+        Ok(Self(AccountProfile {
+            state,
+            reason: record.opt(1, |row, index| Ok(row.text(index)?.to_owned()))?,
+            revision: u64::try_from(record.i64(2)?)
+                .map_err(|_| DecodeError::Overflow { index: 2 })?,
+            changed_at: instant(record, 3)?,
+        }))
+    }
+}
+
+/// One organization-role projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrgRoleRow(pub OrgRole);
+
+impl Row for OrgRoleRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        OrgRole::parse(record.text(0)?)
+            .map(Self)
+            .ok_or(DecodeError::TypeMismatch {
+                index: 0,
+                expected: "an organization role",
+            })
+    }
+}
+
+/// One text projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextRow(pub String);
+
+impl Row for TextRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        Ok(Self(record.text(0)?.to_owned()))
+    }
+}
+
+/// One nullable timestamp projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OptionalInstantRow(pub Option<OffsetDateTime>);
+
+impl Row for OptionalInstantRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        Ok(Self(optional_instant(record, 0)?))
+    }
+}
+
 /// A single aggregate count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountRow(pub u64);
 
 impl Row for CountRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        Ok(Self(
+            u64::try_from(record.i64(0)?).map_err(|_| DecodeError::Overflow { index: 0 })?,
+        ))
+    }
+}
+
+/// One non-negative monotone epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochRow(pub u64);
+
+impl Row for EpochRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
         record.expect_arity(1)?;
         Ok(Self(

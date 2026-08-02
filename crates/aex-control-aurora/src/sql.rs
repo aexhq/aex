@@ -179,6 +179,25 @@ SELECT COALESCE(a.status,'unavailable') AS account_status \
   LEFT JOIN finance.account_state_v1 a ON a.organization_id = o.id \
  WHERE o.id = :organization_id";
 
+/// Reads the lossless public account-state projection for a control response.
+pub const GET_ACCOUNT_PROFILE: &str = "\
+SELECT a.status, a.reason, a.revision, \
+       (EXTRACT(EPOCH FROM a.changed_at)*1000)::bigint AS changed_at_ms \
+  FROM finance.account_state_v1 a WHERE a.organization_id = :organization_id";
+
+/// Reads one active caller role without trusting a requested organization id.
+pub const GET_CALLER_ROLE: &str = "\
+SELECT m.role FROM control.membership m \
+ WHERE m.organization_id = :organization_id AND m.user_id = :user_id AND m.status = 'active'";
+
+/// Reads the identity-owned current email projection.
+pub const GET_USER_EMAIL: &str = "SELECT u.email FROM identity.user u WHERE u.id = :user_id";
+
+/// Reads the tombstone instant needed by a successful public delete operation.
+pub const GET_WORKSPACE_DELETED_AT: &str = "\
+SELECT (EXTRACT(EPOCH FROM w.deleted_at)*1000)::bigint AS deleted_at_ms \
+  FROM control.workspace w WHERE w.id = :workspace_id";
+
 /// The readiness probe every control role runs at start-up.
 pub const READINESS_PROBE: &str = "SELECT 1 AS ok";
 
@@ -280,12 +299,12 @@ SELECT o.id, o.name, o.slug, o.status, o.revision, \
        (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
  ORDER BY o.created_at, o.id LIMIT :limit";
 
-/// Lists active and removed memberships for one organization.
+/// Lists current active memberships for one organization.
 pub const LIST_MEMBERSHIPS: &str = "\
 SELECT m.id, m.organization_id, m.user_id, m.role, m.status, m.revision, \
        (EXTRACT(EPOCH FROM m.created_at)*1000)::bigint AS created_at_ms, \
        (EXTRACT(EPOCH FROM m.updated_at)*1000)::bigint AS updated_at_ms \
-  FROM control.membership m WHERE m.organization_id = :organization_id \
+  FROM control.membership m WHERE m.organization_id = :organization_id AND m.status = 'active' \
    AND (:after_created_ms::bigint IS NULL \
     OR (m.created_at, m.id) > \
        (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
@@ -488,6 +507,8 @@ SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principa
        (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
   FROM control.durable_operation o \
  WHERE o.organization_id = :organization_id AND o.visibility = 'public' \
+   AND (:kind::text IS NULL OR o.kind = :kind) \
+   AND (:status::text IS NULL OR o.status = :status) \
    AND (:after_created_ms::bigint IS NULL \
     OR (o.created_at, o.id) > \
        (TIMESTAMPTZ 'epoch' + :after_created_ms * INTERVAL '1 millisecond', :after_id)) \
@@ -574,6 +595,10 @@ pub const ALL: &[(&str, &str)] = &[
     ("CONTROL_PEPPER_BY_VERSION", CONTROL_PEPPER_BY_VERSION),
     ("ACTIVE_CONTROL_PEPPER", ACTIVE_CONTROL_PEPPER),
     ("GET_ACCOUNT_STATE", GET_ACCOUNT_STATE),
+    ("GET_ACCOUNT_PROFILE", GET_ACCOUNT_PROFILE),
+    ("GET_CALLER_ROLE", GET_CALLER_ROLE),
+    ("GET_USER_EMAIL", GET_USER_EMAIL),
+    ("GET_WORKSPACE_DELETED_AT", GET_WORKSPACE_DELETED_AT),
     ("READINESS_PROBE", READINESS_PROBE),
     ("AUTHZ_WRITE_PROBE", AUTHZ_WRITE_PROBE),
     ("FIND_IDEMPOTENCY", FIND_IDEMPOTENCY),

@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
+//! `sha256:17cc35493241db0815502eb31a2e2f691aa2e1f1f06e1f489c3fa362ff783369`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -61,7 +61,7 @@ pub enum RouteId {
     CentralOperationCancel,
     /// `GET /api/operations/{operationId}` — Read one central durable operation.
     CentralOperationGet,
-    /// `GET /api/operations` — List central durable operations.
+    /// `GET /api/operations` — List central durable operations for one organization.
     CentralOperationsList,
     /// `GET /api/bootstrap` — One bounded read that fills the dashboard shell.
     DashboardBootstrapGet,
@@ -728,8 +728,13 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InsufficientScope,
             ErrorCode::NotFound,
             ErrorCode::IdempotencyConflict,
+            ErrorCode::IdempotencyInFlight,
+            ErrorCode::ApiKeySecretUnavailable,
             ErrorCode::InvalidRequest,
+            ErrorCode::InvalidScope,
             ErrorCode::LimitExceeded,
+            ErrorCode::ResourceConflict,
+            ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: Some("ApiKeyCreateRequest"),
         response_schema: Some("NewApiKey"),
@@ -757,7 +762,9 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::Forbidden,
             ErrorCode::InsufficientScope,
             ErrorCode::NotFound,
+            ErrorCode::ResourceConflict,
             ErrorCode::PreconditionFailed,
+            ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: None,
         response_schema: None,
@@ -1085,7 +1092,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         method: HttpMethod::Get,
         template: "/api/operations",
         path_params: &[],
-        query_params: &["cursor", "kind", "limit", "status"],
+        query_params: &["cursor", "kind", "limit", "organizationId", "status"],
         required_scope: Some(ScopeId::OperationsRead),
         alt_principal: None,
         idempotency: IdempotencyKind::None,
@@ -1095,14 +1102,17 @@ pub static ROUTES: &[RouteDescriptor] = &[
         etag: EtagPolicy::None,
         errors: &[
             ErrorCode::Unauthenticated,
+            ErrorCode::Forbidden,
             ErrorCode::InsufficientScope,
             ErrorCode::InvalidRequest,
             ErrorCode::InvalidCursor,
+            ErrorCode::AccountPaused,
+            ErrorCode::AccountStateUnavailable,
         ],
         request_schema: None,
         response_schema: Some("OperationPage"),
         safe_retry: true,
-        pause_exempt: true,
+        pause_exempt: false,
     },
     RouteDescriptor {
         id: RouteId::DashboardBootstrapGet,
@@ -1208,8 +1218,11 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InsufficientScope,
             ErrorCode::NotFound,
             ErrorCode::IdempotencyConflict,
+            ErrorCode::IdempotencyInFlight,
             ErrorCode::InvalidRequest,
             ErrorCode::LimitExceeded,
+            ErrorCode::ResourceConflict,
+            ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: Some("InvitationCreateRequest"),
         response_schema: Some("Invitation"),
@@ -1842,8 +1855,11 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::Unauthenticated,
             ErrorCode::InsufficientScope,
             ErrorCode::IdempotencyConflict,
+            ErrorCode::IdempotencyInFlight,
             ErrorCode::InvalidRequest,
             ErrorCode::LimitExceeded,
+            ErrorCode::ResourceConflict,
+            ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: Some("OrganizationCreateRequest"),
         response_schema: Some("Organization"),
@@ -4903,9 +4919,13 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::Forbidden,
             ErrorCode::InsufficientScope,
             ErrorCode::IdempotencyConflict,
+            ErrorCode::IdempotencyInFlight,
             ErrorCode::InvalidRequest,
             ErrorCode::LimitExceeded,
+            ErrorCode::ResourceConflict,
             ErrorCode::UpstreamError,
+            ErrorCode::WorkspaceProvisionPending,
+            ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: Some("WorkspaceCreateRequest"),
         response_schema: Some("Workspace"),
@@ -4961,9 +4981,12 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InsufficientScope,
             ErrorCode::NotFound,
             ErrorCode::Gone,
+            ErrorCode::IdempotencyInFlight,
             ErrorCode::OperationIdempotencyConflict,
             ErrorCode::InvalidRequest,
             ErrorCode::DeletionInProgress,
+            ErrorCode::ResourceConflict,
+            ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: Some("WorkspaceDeleteRequest"),
         response_schema: Some("Operation"),

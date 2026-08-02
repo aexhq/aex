@@ -40,6 +40,7 @@ impl Row for PepperRow {
             u16::try_from(record.i64(0)?).map_err(|_| DecodeError::Overflow { index: 0 })?;
         let purpose = match record.text(1)? {
             "identity" => PepperPurpose::Identity,
+            "api_key" => PepperPurpose::ApiKey,
             "cursor" => PepperPurpose::Cursor,
             _ => {
                 return Err(DecodeError::TypeMismatch {

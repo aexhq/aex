@@ -111,6 +111,14 @@ fn every_error_code_renders_one_envelope() {
 }
 
 #[test]
+fn an_api_key_replay_cannot_claim_to_recover_the_one_time_secret() {
+    let code = ErrorCode::ApiKeySecretUnavailable;
+    assert_eq!(code.http_status(), 409);
+    assert!(!code.retryable());
+    assert!(route(RouteId::ApiKeyCreate).declares(code));
+}
+
+#[test]
 fn an_unrecognized_code_decodes_without_becoming_a_known_one() {
     let observed: ObservedErrorCode =
         serde_json::from_str("\"a_code_from_a_newer_server\"").expect("decode");

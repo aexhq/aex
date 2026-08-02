@@ -5,11 +5,12 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ClaimDueOperations,
-    ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, CreateApiKeyTx, CreateInvitationTx,
-    CreateOrganizationTx, FinishWorkspaceProvisionTx, GcExpired, GcReport, IdempotencyRecordKey,
-    ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces, Page, PageRequest,
-    ReconcileIdentity, RevokeApiKeyTx, StoreError, TxOutcome, UnknownCommit,
+    AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
+    CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, FinishWorkspaceProvisionTx,
+    GcExpired, GcReport, IdempotencyRecordKey, ListApiKeys, ListOperations, ListOrganizations,
+    ListWorkspaces, MembershipView, OperationView, OrganizationView, Page, PageRequest,
+    ReconcileIdentity, RevokeApiKeyTx, StoreError, TxOutcome, UnknownCommit, WorkspaceView,
 };
 use aex_control_domain::{
     AccountState, ApiKey, AuditEvent, Fence, Invitation, InvitationStatus, Membership,
@@ -21,8 +22,9 @@ use aex_rds_data::{DataApiClient, Isolation, SqlValue, Statement, Transaction};
 
 use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
-    AccountStateRow, ApiKeyRow, IdempotencyRow, InvitationRow, MembershipRow, OperationRow,
-    OrganizationRow, OutboxRow, UuidRow, WorkspaceRow,
+    AccountProfileRow, AccountStateRow, ApiKeyRow, IdempotencyRow, InvitationRow, MembershipRow,
+    OperationRow, OptionalInstantRow, OrgRoleRow, OrganizationRow, OutboxRow, TextRow, UuidRow,
+    WorkspaceRow,
 };
 use crate::sql;
 
@@ -1607,12 +1609,26 @@ impl ControlStore for AuroraControlStore {
                 constraint: "api_key_revision".to_owned(),
             });
         }
-        tx_try!(
+        let epoch = tx_try!(
             transaction,
-            transaction.execute(
+            transaction.query::<crate::rows::EpochRow>(
                 Statement::new(sql::BUMP_KEY_EPOCH).bind("key_id", SqlValue::Uuid(command.key_id)),
             )
-        );
+        )
+        .into_iter()
+        .next()
+        .ok_or_else(|| StoreError::Fatal("key epoch bump returned no row".to_owned()))?
+        .0;
+        let mut outbox = command.outbox.clone();
+        if let Some(payload) = outbox.payload.as_object_mut() {
+            payload.insert("epoch".to_owned(), serde_json::json!(epoch));
+        } else {
+            let _ = transaction.rollback().await;
+            return Err(StoreError::Fatal(
+                "authorization epoch outbox payload is not an object".to_owned(),
+            ));
+        }
+        tx_try!(transaction, Self::insert_outbox(&mut transaction, &outbox));
         tx_try!(
             transaction,
             Self::insert_audit(&mut transaction, &command.audit)
@@ -1635,7 +1651,18 @@ impl ControlStore for AuroraControlStore {
             .client
             .query::<OperationRow>(Self::bind_page(
                 Statement::new(sql::LIST_OPERATIONS)
-                    .bind("organization_id", SqlValue::Uuid(query.organization_id)),
+                    .bind("organization_id", SqlValue::Uuid(query.organization_id))
+                    .bind(
+                        "kind",
+                        query.kind.clone().map_or(SqlValue::Null, SqlValue::Text),
+                    )
+                    .bind(
+                        "status",
+                        query
+                            .status
+                            .map(|value| value.as_str().to_owned())
+                            .map_or(SqlValue::Null, SqlValue::Text),
+                    ),
                 &query.page,
             ))
             .await
@@ -1813,6 +1840,189 @@ impl ControlStore for AuroraControlStore {
         // `NotFound`: the caller asked "may this account spend?", and the only
         // honest answers are yes, no, and "could not establish".
         Ok(row.map_or(AccountState::Unavailable, |row| row.0))
+    }
+}
+
+#[async_trait]
+impl ControlViewStore for AuroraControlStore {
+    async fn list_organization_views(
+        &self,
+        query: &ListOrganizations,
+    ) -> Result<Page<OrganizationView>, StoreError> {
+        let page = <Self as ControlStore>::list_organizations(self, query).await?;
+        let mut items = Vec::with_capacity(page.items.len());
+        for organization in page.items {
+            let role = self
+                .client
+                .query_opt::<OrgRoleRow>(
+                    Statement::new(sql::GET_CALLER_ROLE)
+                        .bind("organization_id", SqlValue::Uuid(organization.id))
+                        .bind("user_id", SqlValue::Uuid(query.user_id)),
+                )
+                .await
+                .map_err(map_store_error)?
+                .ok_or_else(|| {
+                    StoreError::Decode("listed organization has no active caller role".to_owned())
+                })?
+                .0;
+            items.push(OrganizationView {
+                organization,
+                caller_role: role,
+            });
+        }
+        Ok(Page {
+            items,
+            next: page.next,
+        })
+    }
+
+    async fn get_organization_view(
+        &self,
+        organization_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<OrganizationView>, StoreError> {
+        let Some(organization) =
+            <Self as ControlStore>::get_organization(self, organization_id).await?
+        else {
+            return Ok(None);
+        };
+        let role = self
+            .client
+            .query_opt::<OrgRoleRow>(
+                Statement::new(sql::GET_CALLER_ROLE)
+                    .bind("organization_id", SqlValue::Uuid(organization_id))
+                    .bind("user_id", SqlValue::Uuid(user_id)),
+            )
+            .await
+            .map_err(map_store_error)?;
+        Ok(role.map(|role| OrganizationView {
+            organization,
+            caller_role: role.0,
+        }))
+    }
+
+    async fn list_membership_views(
+        &self,
+        organization_id: Uuid,
+        request: &PageRequest,
+    ) -> Result<Page<MembershipView>, StoreError> {
+        let page = <Self as ControlStore>::list_memberships(self, organization_id, request).await?;
+        let mut items = Vec::with_capacity(page.items.len());
+        for membership in page.items {
+            let email = self.user_email(membership.user_id).await?.ok_or_else(|| {
+                StoreError::Decode("membership names no identity user".to_owned())
+            })?;
+            items.push(MembershipView { membership, email });
+        }
+        Ok(Page {
+            items,
+            next: page.next,
+        })
+    }
+
+    async fn list_workspace_views(
+        &self,
+        query: &ListWorkspaces,
+    ) -> Result<Page<WorkspaceView>, StoreError> {
+        let page = <Self as ControlStore>::list_workspaces(self, query).await?;
+        let mut items = Vec::with_capacity(page.items.len());
+        for workspace in page.items {
+            let account = self
+                .account_profile(workspace.organization_id)
+                .await?
+                .ok_or(StoreError::Unavailable)?;
+            items.push(WorkspaceView { workspace, account });
+        }
+        Ok(Page {
+            items,
+            next: page.next,
+        })
+    }
+
+    async fn get_workspace_view(&self, id: Uuid) -> Result<Option<WorkspaceView>, StoreError> {
+        let Some(workspace) = <Self as ControlStore>::get_workspace(self, id).await? else {
+            return Ok(None);
+        };
+        let Some(account) = self.account_profile(workspace.organization_id).await? else {
+            return Err(StoreError::Unavailable);
+        };
+        Ok(Some(WorkspaceView { workspace, account }))
+    }
+
+    async fn get_operation_view(&self, id: Uuid) -> Result<Option<OperationView>, StoreError> {
+        let Some(operation) = <Self as ControlStore>::get_operation(self, id).await? else {
+            return Ok(None);
+        };
+        let workspace_deleted_at = if let Some(workspace_id) = operation.workspace_id {
+            self.client
+                .query_opt::<OptionalInstantRow>(
+                    Statement::new(sql::GET_WORKSPACE_DELETED_AT)
+                        .bind("workspace_id", SqlValue::Uuid(workspace_id)),
+                )
+                .await
+                .map_err(map_store_error)?
+                .and_then(|row| row.0)
+        } else {
+            None
+        };
+        Ok(Some(OperationView {
+            operation,
+            workspace_deleted_at,
+        }))
+    }
+
+    async fn list_operation_views(
+        &self,
+        query: &ListOperations,
+    ) -> Result<Page<OperationView>, StoreError> {
+        let page = <Self as ControlStore>::list_operations(self, query).await?;
+        let mut items = Vec::with_capacity(page.items.len());
+        for operation in page.items {
+            let workspace_deleted_at = if let Some(workspace_id) = operation.workspace_id {
+                self.client
+                    .query_opt::<OptionalInstantRow>(
+                        Statement::new(sql::GET_WORKSPACE_DELETED_AT)
+                            .bind("workspace_id", SqlValue::Uuid(workspace_id)),
+                    )
+                    .await
+                    .map_err(map_store_error)?
+                    .and_then(|row| row.0)
+            } else {
+                None
+            };
+            items.push(OperationView {
+                operation,
+                workspace_deleted_at,
+            });
+        }
+        Ok(Page {
+            items,
+            next: page.next,
+        })
+    }
+
+    async fn user_email(&self, user_id: Uuid) -> Result<Option<String>, StoreError> {
+        self.client
+            .query_opt::<TextRow>(
+                Statement::new(sql::GET_USER_EMAIL).bind("user_id", SqlValue::Uuid(user_id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
+    }
+
+    async fn account_profile(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Option<AccountProfile>, StoreError> {
+        self.client
+            .query_opt::<AccountProfileRow>(
+                Statement::new(sql::GET_ACCOUNT_PROFILE)
+                    .bind("organization_id", SqlValue::Uuid(organization_id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
     }
 }
 

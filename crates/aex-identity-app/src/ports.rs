@@ -136,6 +136,8 @@ impl<T> TxOutcome<T> {
 pub enum PepperPurpose {
     /// Identity credentials: sessions, challenges, device codes, account tokens.
     Identity,
+    /// Workspace API keys minted by the central control authority.
+    ApiKey,
     /// Keyset cursors.
     Cursor,
 }
@@ -146,6 +148,7 @@ impl PepperPurpose {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Identity => "identity",
+            Self::ApiKey => "api_key",
             Self::Cursor => "cursor",
         }
     }

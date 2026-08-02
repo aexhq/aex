@@ -45,7 +45,10 @@ export interface DashboardBootstrap {
   readonly userId: string;
   readonly email: string;
   readonly generatedAt: string;
-  readonly account: OperationalState;
+  readonly accounts: readonly {
+    readonly organizationId: string;
+    readonly state: OperationalState;
+  }[];
   readonly organizations: readonly Organization[];
   readonly workspaces: readonly Workspace[];
 }

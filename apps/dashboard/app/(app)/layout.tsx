@@ -52,7 +52,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
           <ContextSwitcher bootstrap={bootstrap} />
         </div>
       </header>
-      <AccountBanner account={bootstrap.account} organizations={bootstrap.organizations} />
+      <AccountBanner accounts={bootstrap.accounts} organizations={bootstrap.organizations} />
       {children}
       <footer className="frame small muted" style={{ paddingBlock: "var(--aex-space-6)" }}>
         <a href="https://aex.dev/docs">Documentation</a>

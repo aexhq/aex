@@ -38,8 +38,13 @@
         "insufficient_scope",
         "not_found",
         "idempotency_conflict",
+        "idempotency_in_flight",
+        "api_key_secret_unavailable",
         "invalid_request",
-        "limit_exceeded"
+        "invalid_scope",
+        "limit_exceeded",
+        "resource_conflict",
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "api-keys",
@@ -67,7 +72,9 @@
         "forbidden",
         "insufficient_scope",
         "not_found",
-        "precondition_failed"
+        "resource_conflict",
+        "precondition_failed",
+        "commit_outcome_unknown"
       ],
       "etag": "optional_if_match",
       "fragment": "api-keys",
@@ -436,9 +443,12 @@
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
+        "forbidden",
         "insufficient_scope",
         "invalid_request",
-        "invalid_cursor"
+        "invalid_cursor",
+        "account_paused",
+        "account_state_unavailable"
       ],
       "etag": "none",
       "fragment": "operations",
@@ -447,12 +457,13 @@
       "operationId": "central_operations_list",
       "path": "/api/operations",
       "pathParams": [],
-      "pauseExempt": true,
+      "pauseExempt": false,
       "plane": "central",
       "queryParams": [
         "cursor",
         "kind",
         "limit",
+        "organizationId",
         "status"
       ],
       "requestSchema": null,
@@ -460,7 +471,7 @@
       "responseSchema": "OperationPage",
       "safeRetry": true,
       "successStatus": 200,
-      "summary": "List central durable operations.",
+      "summary": "List central durable operations for one organization.",
       "transport": "unary"
     },
     {
@@ -554,8 +565,11 @@
         "insufficient_scope",
         "not_found",
         "idempotency_conflict",
+        "idempotency_in_flight",
         "invalid_request",
-        "limit_exceeded"
+        "limit_exceeded",
+        "resource_conflict",
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "organizations",
@@ -1195,8 +1209,11 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
+        "idempotency_in_flight",
         "invalid_request",
-        "limit_exceeded"
+        "limit_exceeded",
+        "resource_conflict",
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "organizations",
@@ -4470,9 +4487,13 @@
         "forbidden",
         "insufficient_scope",
         "idempotency_conflict",
+        "idempotency_in_flight",
         "invalid_request",
         "limit_exceeded",
-        "upstream_error"
+        "resource_conflict",
+        "upstream_error",
+        "workspace_provision_pending",
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "workspaces",
@@ -4528,9 +4549,12 @@
         "insufficient_scope",
         "not_found",
         "gone",
+        "idempotency_in_flight",
         "operation_idempotency_conflict",
         "invalid_request",
-        "deletion_in_progress"
+        "deletion_in_progress",
+        "resource_conflict",
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "workspaces",

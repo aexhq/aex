@@ -253,6 +253,15 @@ impl Pepper {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self(Zeroizing::new(bytes))
     }
+
+    /// Copies the material into another secret-bearing domain type.
+    ///
+    /// The explicit verb keeps composition-root use reviewable; callers must
+    /// never render or persist the returned bytes.
+    #[must_use]
+    pub fn expose_copy(&self) -> [u8; 32] {
+        *self.0
+    }
 }
 
 impl fmt::Debug for Pepper {
