@@ -476,6 +476,59 @@ fn a_stolen_fence_publishes_nothing_and_does_not_ack() {
     assert_eq!(harness.queue.depth(), 1, "the wake went back");
 }
 
+fn assert_session_head_race_blocks_dispatch(script_race: impl FnOnce(&MemoryStore)) {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    script_race(&harness.store);
+    harness.wake();
+
+    let error = harness
+        .run_next()
+        .expect_err("the session head moved before ticket minting");
+    assert!(
+        matches!(
+            error,
+            ActivationError::Commit(CommitError::Condition(
+                ConditionFailure::CancelEpochAdvanced
+            ))
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        harness.records(),
+        vec!["agent_started", "user_message", "effect_prepared"],
+        "the preparation committed before the race"
+    );
+    assert!(
+        matches!(
+            harness.store.effects(key())[0].state,
+            EffectState::Prepared { .. }
+        ),
+        "a refused transaction must not move the effect"
+    );
+    assert!(
+        harness.provider.dispatched().is_empty(),
+        "no external byte may leave after the session loses authority"
+    );
+    assert!(
+        harness.queue.acked().is_empty(),
+        "the source remains durable"
+    );
+}
+
+/// Cancellation can commit after `EffectPrepared`; the ticket transaction must observe
+/// the advanced epoch and refuse before the provider sees a request.
+#[test]
+fn cancellation_between_effect_preparation_and_ticket_mint_dispatches_nothing() {
+    assert_session_head_race_blocks_dispatch(MemoryStore::cancel_before_next_dispatch);
+}
+
+/// Trash/purge advances deletion authority after `EffectPrepared`; the same ticket
+/// transaction must refuse before the provider sees a request.
+#[test]
+fn deletion_between_effect_preparation_and_ticket_mint_dispatches_nothing() {
+    assert_session_head_race_blocks_dispatch(MemoryStore::delete_before_next_dispatch);
+}
+
 /// A journal with a gap does not fold, so the agent does not plan and does not act. Acting
 /// on a prefix of one's own history is worse than not acting at all.
 #[test]
@@ -941,6 +994,7 @@ fn prepared_effect_takeover_requires_the_current_fence_and_owner() {
     for losing in [&stale, &forged_owner] {
         let error = block_on(harness.store.mark_dispatch_started(
             losing,
+            &successor.authority,
             &effect,
             2,
             harness.clock.now(),
@@ -954,6 +1008,7 @@ fn prepared_effect_takeover_requires_the_current_fence_and_owner() {
 
     let ticket = block_on(harness.store.mark_dispatch_started(
         &live,
+        &successor.authority,
         &effect,
         2,
         harness.clock.now(),

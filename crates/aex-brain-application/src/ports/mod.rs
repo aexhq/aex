@@ -19,9 +19,10 @@
 //!
 //! - [`FenceGuard`] is required by every store write. Holding one is the proof that the
 //!   caller claimed the agent and has not been fenced out.
-//! - [`DispatchTicket`] is minted only from a `FenceGuard` plus the effect it belongs to,
-//!   and [`ProviderPort::dispatch`] will not accept anything else. A caller that tries to
-//!   send a byte before the durable `dispatch_started` write does not compile.
+//! - [`DispatchTicket`] is minted only from claimed [`SessionAuthority`], a `FenceGuard` and
+//!   the effect it belongs to, and [`ProviderPort::dispatch`] will not accept anything else.
+//!   A caller that tries to send a byte before the guarded `dispatch_started` transaction
+//!   does not compile.
 
 pub mod catalog;
 pub mod hands;
@@ -48,9 +49,9 @@ pub use provider::{
 };
 pub use store::{
     AgentHead, Claim, ClaimError, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
-    DueScanCursor, DueScanPage, DurableWake, EffectStore, JournalPage, JournalStore, LeaseStore,
-    ReadBudget, ReleaseDisposition, SessionAuthority, StoreError, WakeDelivery, WakeOrigin,
-    WakeQueue, WakeState,
+    DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake, EffectStore,
+    JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, ReadBudget, ReleaseDisposition,
+    SessionAuthority, StoreError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 pub use tool::{
     ControlStateView, DetachedStatus, PreparedToolCall, ToolDispatchError, ToolOutcome, ToolPort,

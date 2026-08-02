@@ -144,8 +144,9 @@ pub trait JournalStore: Send + Sync + 'static {
 }
 
 pub trait EffectStore: Send + Sync + 'static {   // settlement is NOT here; see below
-    fn mark_dispatch_started<'a>(&'a self, guard: &'a FenceGuard, effect: &'a EffectId,
-        attempt: u16, at: Timestamp) -> BoxFuture<'a, Result<DispatchTicket, CommitError>>;
+    fn mark_dispatch_started<'a>(&'a self, guard: &'a FenceGuard,
+        authority: &'a SessionAuthority, effect: &'a EffectId, attempt: u16, at: Timestamp)
+        -> BoxFuture<'a, Result<DispatchTicket, CommitError>>;
     fn mark_response_started<'a>(&'a self, ticket: &'a DispatchTicket,
         evidence: &'a DispatchEvidence) -> BoxFuture<'a, Result<(), CommitError>>;
     fn load_open<'a>(&'a self, key: &'a AgentKey)
@@ -184,10 +185,12 @@ Two rules are carried by types rather than by review.
   agent without one, so it cannot forget to condition its write on the fence
   it holds.
 - **`DispatchTicket`** is minted only by `EffectStore::mark_dispatch_started`,
-  from a `FenceGuard` plus the effect it belongs to. `dispatch`, `invoke` and
-  `start` accept nothing else, so sending a byte before the durable pre-send
-  write is a compile error. The ticket is deliberately not `Clone`: one
-  pre-send write authorizes one attempt.
+  from the claimed session authority, a `FenceGuard` and the effect it belongs
+  to. `dispatch`, `invoke` and `start` accept nothing else, so sending a byte
+  before the durable pre-send transaction is a compile error. That transaction
+  condition-checks session lifecycle/cancellation/deletion and current agent
+  ownership while moving the effect. The ticket is deliberately not `Clone`:
+  one pre-send transaction authorizes one attempt.
 
 `EffectStore` carries **no settlement method** and `WakeQueue` carries **no
 `enqueue`**. Settlement lands inside `DecisionCommit` so the outcome and its
@@ -430,6 +433,7 @@ point and running a second activation against what the first left:
 | before the source-retirement decision | the due row survives, a second owner retires it, and no effect is dispatched twice |
 | after source retirement, before the queue ack | the strong source read observes `done`, the duplicate hint is acked, and no agent claim is needed |
 | the commit loses its fence | nothing is appended, no byte leaves, the delivery is released and never acked |
+| cancellation or deletion after `EffectPrepared`, before ticket mint | the session-head participant loses the pre-dispatch transaction, the effect stays prepared and zero external dispatch occurs |
 | the page read observes a gap | the agent does not fold, does not plan, does not act and does not ack |
 
 The source-retirement rows were introduced red-first; the earlier rows retain
@@ -473,6 +477,13 @@ and none of it is attributed.
 | BR-31 | Every successful or already-terminal agent activation ends with a retirement-only `DecisionCommit`: the session head and agent control are condition-checked under the live claim, while the exact pending source wake is moved to `done` and loses both due-index keys in the same transaction | a separate `UpdateItem` cleanup would have no agent fence, and acking first would lose the recovery path. The pure retirement does not manufacture a journal tail or advance the revision; terminal agents remain claimable solely so this transaction still has a live fence. |
 | BR-32 | A retirement-only transaction hashes agent, revision, tail and source work identity into its own 36-character client request token | it follows the final journal decision without advancing that decision's tail. Reusing the tail-only token with different transaction parameters would make DynamoDB reject the retirement as an idempotent-parameter mismatch. |
 | BR-33 | Hands effects bind the canonical runtime `aex_wire::ids::GenerationId` read from session authority; Brain has no local numeric generation or unbound-generation state | runtime idle recount and recovery select the exact generation that admitted an operation. `AgentControl`, child fanout, `AgentHead`, `HandsPort`, pinned agent config and Hands effect rows now carry the same typed UUID. |
+
+### 13.3 Decisions taken in the pre-send-integrity pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-34 | Ticket minting reuses the decision compiler's canonical session-head condition as the first participant in the pre-dispatch transaction; the following participants prove current agent owner/fence and move the exact prepared effect | `EffectPrepared` is not dispatch authority. Cancellation, trash or purge can commit after preparation, and a separate pre-send read would leave another race while adding latency. One `ConditionCheck` makes the session fact and effect transition share the serialization point. |
+| BR-35 | A due row becomes a wake only when its base key, derived shard and effective due position all match `workId`, `dueAt` and priority. Invalid rows are skipped while the native cursor advances; each page returns the full invalid count plus at most eight closed-reason, key-digest diagnostics | trusting projected fields lets a forged past index key wake future work or address a different base row. The delivery port cannot delete or rewrite work authority, so logical isolation plus a bounded redacted diagnostic is the only boundary-correct quarantine; it never carries tenant identifiers or row keys. |
 
 ### 14. Still deferred, with what unblocks each
 

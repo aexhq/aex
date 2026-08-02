@@ -17,13 +17,13 @@ use super::{AdmissionControl, AdmissionDecision};
 use crate::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
-    DispatchTicket, DueScanCursor, DueScanPage, DurableWake, EffectStore, FenceGuard,
-    HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort,
-    IdPort, JournalPage, JournalStore, LeaseStore, PreparedToolCall, PreviewSink,
-    ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError, StreamBudget,
-    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeDelivery,
-    WakeOrigin, WakeQueue, WakeState,
+    DispatchTicket, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage,
+    DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
+    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalPage, JournalStore,
+    LeaseStore, MAX_DUE_ROW_ISOLATIONS, PreparedToolCall, PreviewSink, ProviderDispatchError,
+    ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds,
+    SessionAuthority, SteadyInstant, StoreError, StreamBudget, ToolDispatchError, ToolOutcome,
+    ToolPort, ToolRoute, ToolRoutingError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -514,6 +514,12 @@ struct AgentRow {
     effects: BTreeMap<EffectId, DurableEffect>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum DispatchHeadRace {
+    Cancel,
+    Delete,
+}
+
 /// The in-memory `DynamoDB` stand-in: journal, effects and leases over one map.
 ///
 /// It enforces every precondition the real transaction does. A fixture that accepted a stale
@@ -524,6 +530,7 @@ pub struct MemoryStore {
     authorities: Mutex<BTreeMap<SessionId, SessionAuthority>>,
     commit_faults: Mutex<VecDeque<Option<CommitError>>>,
     read_faults: Mutex<VecDeque<StoreError>>,
+    dispatch_head_races: Mutex<VecDeque<DispatchHeadRace>>,
     clock: Arc<FixedClock>,
     queue: Arc<MemoryQueue>,
     log: Arc<Recorder>,
@@ -538,6 +545,7 @@ impl MemoryStore {
             authorities: Mutex::new(BTreeMap::new()),
             commit_faults: Mutex::new(VecDeque::new()),
             read_faults: Mutex::new(VecDeque::new()),
+            dispatch_head_races: Mutex::new(VecDeque::new()),
             clock,
             queue,
             log,
@@ -585,6 +593,24 @@ impl MemoryStore {
             .lock()
             .expect("not poisoned")
             .insert(session, authority);
+    }
+
+    /// Advances cancellation after the next effect preparation commits but before its
+    /// pre-dispatch transaction checks the session head.
+    pub fn cancel_before_next_dispatch(&self) {
+        self.dispatch_head_races
+            .lock()
+            .expect("not poisoned")
+            .push_back(DispatchHeadRace::Cancel);
+    }
+
+    /// Advances deletion after the next effect preparation commits but before its
+    /// pre-dispatch transaction checks the session head.
+    pub fn delete_before_next_dispatch(&self) {
+        self.dispatch_head_races
+            .lock()
+            .expect("not poisoned")
+            .push_back(DispatchHeadRace::Delete);
     }
 
     /// Places `effect` in the agent's effect partition, as a dead owner would have left it.
@@ -918,16 +944,60 @@ impl EffectStore for MemoryStore {
     fn mark_dispatch_started<'a>(
         &'a self,
         guard: &'a FenceGuard,
+        authority: &'a SessionAuthority,
         effect: &'a EffectId,
         attempt: u16,
         at: Timestamp,
     ) -> BoxFuture<'a, Result<DispatchTicket, CommitError>> {
         Box::pin(async move {
             self.log.note("mark_dispatch_started");
+            match self
+                .dispatch_head_races
+                .lock()
+                .expect("not poisoned")
+                .pop_front()
+            {
+                Some(DispatchHeadRace::Cancel) => {
+                    let mut agents = self.agents.lock().expect("not poisoned");
+                    let row = agents
+                        .get_mut(&guard.key())
+                        .ok_or(CommitError::Condition(ConditionFailure::StaleFence))?;
+                    row.cancel_epoch = CancelEpoch(row.cancel_epoch.0.saturating_add(1));
+                }
+                Some(DispatchHeadRace::Delete) => {
+                    let mut authorities = self.authorities.lock().expect("not poisoned");
+                    let current = authorities.get_mut(&guard.key().session).ok_or_else(|| {
+                        CommitError::Store(StoreError::Undecodable {
+                            location: "session head".to_owned(),
+                            reason: "the session does not exist".to_owned(),
+                        })
+                    })?;
+                    current.deletion_epoch = current.deletion_epoch.saturating_add(1);
+                }
+                None => {}
+            }
+            let current_authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&guard.key().session)
+                .cloned()
+                .ok_or_else(|| {
+                    CommitError::Store(StoreError::Undecodable {
+                        location: "session head".to_owned(),
+                        reason: "the session does not exist".to_owned(),
+                    })
+                })?;
+            if &current_authority != authority {
+                return Err(ConditionFailure::CancelEpochAdvanced.into());
+            }
             let mut agents = self.agents.lock().expect("not poisoned");
             let row = agents
                 .get_mut(&guard.key())
                 .ok_or(CommitError::Condition(ConditionFailure::StaleFence))?;
+            if row.cancel_epoch != guard.cancel_epoch() {
+                return Err(ConditionFailure::CancelEpochAdvanced.into());
+            }
             if row.fence != guard.fence() || row.lease_owner != Some(guard.as_ref().owner) {
                 return Err(ConditionFailure::StaleFence.into());
             }
@@ -1337,6 +1407,23 @@ impl WakeQueue for MemoryQueue {
             rows.truncate(max);
             let last = rows.last().map(|(id, _)| *id);
             let malformed = rows.iter().filter(|(_, wake)| wake.is_none()).count();
+            let isolations = rows
+                .iter()
+                .filter(|(_, wake)| wake.is_none())
+                .take(MAX_DUE_ROW_ISOLATIONS)
+                .map(|(id, _)| {
+                    let digest =
+                        id.0.as_bytes()
+                            .iter()
+                            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                                (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+                            });
+                    DueRowIsolation {
+                        reason: DueRowIsolationReason::MalformedProjection,
+                        fingerprint: format!("{digest:016x}"),
+                    }
+                })
+                .collect();
             let wakes = rows.into_iter().filter_map(|(_, wake)| wake).collect();
             let next = has_more.then(|| {
                 DueScanCursor::new([(
@@ -1351,6 +1438,7 @@ impl WakeQueue for MemoryQueue {
                 wakes,
                 next,
                 malformed,
+                isolations,
             })
         })
     }

@@ -32,8 +32,8 @@ use aex_brain_application::ports::{
     FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsPort, HandsResult, IdPort, JournalPage, JournalStore, LeaseStore,
     PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SteadyInstant, StoreError, StreamBudget, ToolPort,
-    UnknownResolution,
+    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError, StreamBudget,
+    ToolPort, UnknownResolution,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
@@ -236,6 +236,7 @@ impl EffectStore for UnboundStore {
     fn mark_dispatch_started<'a>(
         &'a self,
         _guard: &'a FenceGuard,
+        _authority: &'a SessionAuthority,
         _effect: &'a EffectId,
         _attempt: u16,
         _at: Timestamp,

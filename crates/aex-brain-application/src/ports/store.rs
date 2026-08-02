@@ -147,13 +147,15 @@ pub trait JournalStore: Send + Sync + 'static {
 pub trait EffectStore: Send + Sync + 'static {
     /// Commits the durable pre-send write and mints the permission to dispatch.
     ///
-    /// This is a separate durable write, not an optimization to remove. Without it a crash
-    /// between `Prepared` and the socket write is indistinguishable from a crash after it,
-    /// and every prepared effect becomes ambiguous. It costs one conditional update per
-    /// external effect.
+    /// This is a separate durable transaction, not an optimization to remove. Without it a
+    /// crash between `Prepared` and the socket write is indistinguishable from a crash after
+    /// it, and every prepared effect becomes ambiguous. The transaction checks the current
+    /// session lifecycle/cancellation/deletion facts plus agent ownership while moving the
+    /// effect, so cancellation or purge cannot race ticket minting. It costs no extra read.
     fn mark_dispatch_started<'a>(
         &'a self,
         guard: &'a FenceGuard,
+        authority: &'a SessionAuthority,
         effect: &'a EffectId,
         attempt: u16,
         at: Timestamp,
@@ -376,6 +378,44 @@ pub struct DueScanPage {
     /// Rows isolated because they were malformed. They do not discard valid siblings and
     /// the continuation advances past them.
     pub malformed: usize,
+    /// A bounded, redacted sample of the isolated rows.
+    ///
+    /// Isolation is deliberately read-only: [`WakeQueue`] is a delivery port and must not
+    /// gain authority to rewrite or delete another adapter's work row. The cursor advances
+    /// past the row, the durable source remains available for operator repair, and this
+    /// sample provides an opaque correlation fingerprint without exposing a tenant or row
+    /// key. At most [`MAX_DUE_ROW_ISOLATIONS`] entries are returned per page; `malformed`
+    /// remains the complete count when the sample is full.
+    pub isolations: Vec<DueRowIsolation>,
+}
+
+/// The largest operational sample one due page may return.
+///
+/// This is a diagnostic-memory bound, not a scheduling limit. The query's caller-selected
+/// page size remains the bound on work inspected.
+pub const MAX_DUE_ROW_ISOLATIONS: usize = 8;
+
+/// One due-index row that was isolated instead of becoming runnable work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueRowIsolation {
+    /// The closed, non-sensitive reason class.
+    pub reason: DueRowIsolationReason,
+    /// A short digest of the base/index key tuple, never a raw key or tenant identifier.
+    pub fingerprint: String,
+}
+
+/// Why a due-index row was isolated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DueRowIsolationReason {
+    /// A required projected value was missing, mistyped, or outside its closed vocabulary.
+    MalformedProjection,
+    /// `pk` or `sk` did not name the projected `workId`.
+    BaseKeyMismatch,
+    /// `dueShardPk` was not the shard derived from `workId`.
+    ShardMismatch,
+    /// `dueShardSk` did not equal the effective due instant derived from due, priority and
+    /// `workId`. This also isolates a row forged into an earlier scan position.
+    DuePositionMismatch,
 }
 
 /// Wake **delivery**. Creation lives in [`DecisionCommit`] and nowhere else.

@@ -16,7 +16,7 @@ use aex_brain_domain::ids::{
     OwnerToken, SessionId, Timestamp, WakeId,
 };
 use aex_brain_domain::journal::{FinishReason, JournalRecord, ParkReason};
-use aex_brain_store_aws::journal::condition_for;
+use aex_brain_store_aws::journal::{condition_for, dispatch_order};
 use aex_brain_store_aws::{BrainStore, BrainTables, DueScan, SqsWakeQueue};
 use aex_session_dynamodb::attr::{ItemBuilder, b, n, s, stamp};
 use aex_session_dynamodb::plan::Participant;
@@ -236,10 +236,11 @@ async fn every_release_disposition_expires_the_exact_owned_lease_immediately() {
     }
 }
 
-/// The durable pre-send transition is a two-item transaction: current agent ownership is
-/// checked independently of the fence stamped when the effect was prepared, and the effect
-/// is then taken over under the current fence. This rejects the stale owner while allowing a
-/// successor to dispatch the same prepared identity.
+/// The durable pre-send transition is a three-item transaction: current session lifecycle
+/// and epochs plus current agent ownership are checked independently of the fence stamped
+/// when the effect was prepared, and the effect is then taken over under the current fence.
+/// This rejects cancellation/deletion and a stale owner while allowing a successor to
+/// dispatch the same prepared identity.
 #[tokio::test]
 async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the_effect() {
     let (store, receiver) = capturing();
@@ -255,6 +256,7 @@ async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the
     let _ = store
         .mark_dispatch_started(
             &guard,
+            &authority(),
             &EffectId([9; 16]),
             1,
             Timestamp::from_millis(1_767_225_600_000),
@@ -264,9 +266,55 @@ async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the
     let actions = body["TransactItems"]
         .as_array()
         .expect("a transaction action list");
-    assert_eq!(actions.len(), 2, "{body}");
+    assert_eq!(actions.len(), 3, "{body}");
+    assert_eq!(
+        dispatch_order(),
+        &[
+            Participant::SESSION_HEAD_GUARD,
+            Participant::AGENT_CONTROL,
+            Participant::AGENT_EFFECT,
+        ]
+    );
 
-    let control = &actions[0]["ConditionCheck"];
+    let session = &actions[0]["ConditionCheck"];
+    let session_condition = session["ConditionExpression"]
+        .as_str()
+        .expect("a session-head condition");
+    let wire_session =
+        aex_wire::ids::SessionId::from_uuid7(Uuid7::compose(1_767_225_600_000, [1; 10]));
+    assert_eq!(session["Key"]["pk"]["S"], format!("SESSION#{wire_session}"));
+    assert_eq!(session["Key"]["sk"]["S"], "HEAD");
+    for required in [
+        "cancelEpoch = :cancelEpoch",
+        "deletionEpoch = :deletionEpoch",
+        "workspaceId = :workspaceId",
+        "organizationId = :organizationId",
+        "lifecycle = :active",
+    ] {
+        assert!(session_condition.contains(required), "{session_condition}");
+    }
+    assert_eq!(
+        session["ExpressionAttributeValues"][":cancelEpoch"]["N"],
+        "0"
+    );
+    assert_eq!(
+        session["ExpressionAttributeValues"][":deletionEpoch"]["N"],
+        "0"
+    );
+    assert_eq!(
+        session["ExpressionAttributeValues"][":workspaceId"]["S"],
+        authority().workspace.to_string()
+    );
+    assert_eq!(
+        session["ExpressionAttributeValues"][":organizationId"]["S"],
+        authority().organization.to_string()
+    );
+    assert_eq!(
+        session["ExpressionAttributeValues"][":active"]["S"],
+        "active"
+    );
+
+    let control = &actions[1]["ConditionCheck"];
     let control_condition = control["ConditionExpression"]
         .as_str()
         .expect("a control condition");
@@ -284,7 +332,7 @@ async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the
         v7(1_767_225_600_004, 5).as_hyphenated().to_string()
     );
 
-    let effect = &actions[1]["Update"];
+    let effect = &actions[2]["Update"];
     let effect_condition = effect["ConditionExpression"]
         .as_str()
         .expect("an effect condition");

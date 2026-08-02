@@ -886,7 +886,13 @@ impl Session<'_> {
         let ticket = self
             .ports
             .effects
-            .mark_dispatch_started(&self.guard, &effect, attempt, self.ports.clock.now())
+            .mark_dispatch_started(
+                &self.guard,
+                &self.authority,
+                &effect,
+                attempt,
+                self.ports.clock.now(),
+            )
             .await?;
         let outcome = self
             .ports
@@ -1009,7 +1015,13 @@ impl Session<'_> {
         let ticket = self
             .ports
             .effects
-            .mark_dispatch_started(&self.guard, &effect, attempt, self.ports.clock.now())
+            .mark_dispatch_started(
+                &self.guard,
+                &self.authority,
+                &effect,
+                attempt,
+                self.ports.clock.now(),
+            )
             .await?;
         let prepared = PreparedToolCall {
             call: call.call.clone(),

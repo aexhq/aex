@@ -12,7 +12,8 @@
 
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
-    DispatchTicket, EffectStore, FenceGuard, JournalPage, JournalStore, ReadBudget, StoreError,
+    DispatchTicket, EffectStore, FenceGuard, JournalPage, JournalStore, ReadBudget,
+    SessionAuthority, StoreError,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
@@ -23,6 +24,22 @@ use aws_sdk_dynamodb::Client;
 
 use crate::plan::{self, BrainTables};
 use crate::{control, effect, keys, translate};
+
+const DISPATCH_ORDER: &[aex_session_dynamodb::plan::Participant] = &[
+    aex_session_dynamodb::plan::Participant::SESSION_HEAD_GUARD,
+    aex_session_dynamodb::plan::Participant::AGENT_CONTROL,
+    aex_session_dynamodb::plan::Participant::AGENT_EFFECT,
+];
+
+/// The named participant order of the pre-dispatch transaction.
+///
+/// Published for request/cancellation-shape assertions. The error decoder consumes this
+/// exact positional order, so adding a guard without updating the names would misclassify
+/// the losing authority.
+#[must_use]
+pub const fn dispatch_order() -> &'static [aex_session_dynamodb::plan::Participant] {
+    DISPATCH_ORDER
+}
 
 /// The `DynamoDB` half of the Brain store.
 ///
@@ -199,12 +216,15 @@ impl EffectStore for BrainStore {
     fn mark_dispatch_started<'a>(
         &'a self,
         guard: &'a FenceGuard,
+        authority: &'a SessionAuthority,
         id: &'a EffectId,
         attempt: u16,
         at: Timestamp,
     ) -> BoxFuture<'a, Result<DispatchTicket, CommitError>> {
         Box::pin(async move {
             let key = guard.key();
+            let session = translate::session(key.session)
+                .map_err(|error| CommitError::Store(translate_error(&error)))?;
             let control_key =
                 keys::control(&key).map_err(|error| CommitError::Store(store_key_error(&error)))?;
             let effect_key = keys::effect(&key, *id)
@@ -212,21 +232,34 @@ impl EffectStore for BrainStore {
             let now = translate::at(at, "at")
                 .map_err(|error| CommitError::Store(translate_error(&error)))?;
             let material = format!(
-                "{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                key.session.0.as_hyphenated(),
                 key.agent.0.as_hyphenated(),
                 id.to_hex(),
                 guard.fence().0,
-                attempt
+                attempt,
+                guard.cancel_epoch().0,
+                authority.deletion_epoch,
+                authority.workspace,
+                authority.organization,
             );
             let digest = blake3::hash(material.as_bytes()).to_hex().to_string();
             let mut plan = aex_session_dynamodb::plan::TransactionPlan::new(format!(
                 "brain-dispatch-{}",
                 &digest[..21]
             ));
-            // The control check and effect takeover are one transaction. The effect's
-            // prepare-time `agentFence` is deliberately not a condition: after a crash it
-            // belongs to the predecessor, while current control ownership belongs to the
-            // successor that is now responsible for this same prepared identity.
+            // Session lifecycle, current control ownership and effect takeover are one
+            // transaction. No separate session read is needed at dispatch time: the head
+            // condition checks the typed facts returned by claim at the same serialization
+            // point that mints the ticket.
+            plan.condition_check(
+                aex_session_dynamodb::plan::Participant::SESSION_HEAD_GUARD,
+                plan::session_head_guard(self.table(), session, guard.cancel_epoch(), authority),
+            )
+            .map_err(|error| commit_store_error(&error))?;
+            // The effect's prepare-time `agentFence` is deliberately not a condition: after
+            // a crash it belongs to the predecessor, while current control ownership belongs
+            // to the successor responsible for the same prepared identity.
             plan.condition_check(
                 aex_session_dynamodb::plan::Participant::AGENT_CONTROL,
                 aws_sdk_dynamodb::types::ConditionCheck::builder()
@@ -259,6 +292,7 @@ impl EffectStore for BrainStore {
                     .expression_attribute_values(":now", stamp(now)),
             )
             .map_err(|error| commit_store_error(&error))?;
+            debug_assert_eq!(plan.participants(), DISPATCH_ORDER);
             let participants = plan.participants().to_vec();
             let request = plan
                 .compile(&self.client)
@@ -487,6 +521,10 @@ fn dispatch_transaction_error<R>(
         ),
     };
     match mapped {
+        aex_session_dynamodb::error::StoreError::PreconditionFailed {
+            participant: aex_session_dynamodb::plan::Participant::SESSION_HEAD_GUARD,
+            ..
+        } => CommitError::Condition(ConditionFailure::CancelEpochAdvanced),
         aex_session_dynamodb::error::StoreError::PreconditionFailed {
             participant: aex_session_dynamodb::plan::Participant::AGENT_CONTROL,
             ..

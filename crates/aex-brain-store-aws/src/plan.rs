@@ -13,11 +13,11 @@
 //! that the one-append case produces exactly [`DECISION_ORDER`]. Sharing the item shapes
 //! matters; sharing one function that cannot express the decision does not.
 
-use aex_brain_application::ports::DecisionContext;
+use aex_brain_application::ports::{DecisionContext, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::child::{ChildOutcome, ChildState};
 use aex_brain_domain::commit::{ChildWrite, DecisionCommit, EffectWrite, JoinWrite, WakeCreate};
-use aex_brain_domain::ids::AgentKey;
+use aex_brain_domain::ids::{AgentKey, CancelEpoch};
 use aex_session_dynamodb::attr::{ItemBuilder, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
@@ -94,6 +94,34 @@ pub enum PlanError {
 /// continuation and leaves band 0 for admission.
 pub const CONTINUATION_PRIORITY: u8 = 1;
 
+/// Builds the canonical session-head condition used by both decisions and pre-dispatch.
+///
+/// The typed claim facts remain the authority: callers supply the cancellation epoch from
+/// their fence guard and the tenant/deletion facts returned by the session-head read.
+/// Keeping the expression here prevents ticket minting and decision commits from growing
+/// subtly different lifecycle guards.
+pub(crate) fn session_head_guard(
+    table: &str,
+    session: aex_wire::ids::SessionId,
+    cancel_epoch: CancelEpoch,
+    authority: &SessionAuthority,
+) -> aws_sdk_dynamodb::types::builders::ConditionCheckBuilder {
+    let head_key = shared::head(session);
+    aws_sdk_dynamodb::types::ConditionCheck::builder()
+        .table_name(table)
+        .set_key(Some(key(&head_key.pk, &head_key.sk)))
+        .condition_expression(
+            "cancelEpoch = :cancelEpoch AND deletionEpoch = :deletionEpoch \
+             AND workspaceId = :workspaceId AND organizationId = :organizationId \
+             AND lifecycle = :active",
+        )
+        .expression_attribute_values(":cancelEpoch", n(cancel_epoch.0))
+        .expression_attribute_values(":deletionEpoch", n(authority.deletion_epoch))
+        .expression_attribute_values(":workspaceId", s(authority.workspace.to_string()))
+        .expression_attribute_values(":organizationId", s(authority.organization.to_string()))
+        .expression_attribute_values(":active", s("active"))
+}
+
 /// Compiles one decision into one transaction plan.
 ///
 /// # Errors
@@ -124,25 +152,14 @@ pub fn compile(
 
     // 1. The session head guard. It reads, never writes: a decision must not serialize
     //    behind every other decision in the session.
-    let head_key = shared::head(session);
     plan.condition_check(
         Participant::SESSION_HEAD_GUARD,
-        aws_sdk_dynamodb::types::ConditionCheck::builder()
-            .table_name(table)
-            .set_key(Some(key(&head_key.pk, &head_key.sk)))
-            .condition_expression(
-                "cancelEpoch = :cancelEpoch AND deletionEpoch = :deletionEpoch \
-                 AND workspaceId = :workspaceId AND organizationId = :organizationId \
-                 AND lifecycle = :active",
-            )
-            .expression_attribute_values(":cancelEpoch", n(commit.guard.cancel_epoch.0))
-            .expression_attribute_values(":deletionEpoch", n(context.authority.deletion_epoch))
-            .expression_attribute_values(":workspaceId", s(context.authority.workspace.to_string()))
-            .expression_attribute_values(
-                ":organizationId",
-                s(context.authority.organization.to_string()),
-            )
-            .expression_attribute_values(":active", s("active")),
+        session_head_guard(
+            table,
+            session,
+            commit.guard.cancel_epoch,
+            &context.authority,
+        ),
     )
     .map_err(PlanError::Store)?;
 
