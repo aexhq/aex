@@ -6,11 +6,9 @@
 //! effect whose outcome the provider has now told it.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use aex_finance_domain::effect::{
-    EffectKind, EffectOutcome, IndeterminateReason, ProviderEffect, RecoveryAction,
-    recovery_action, transition,
-};
+use aex_finance_domain::effect::{EffectKind, RecoveryAction};
 use aex_rds_data::{DataApiClient, DataApiError, DecodeError, Record, Row, SqlValue, Statement};
 use time::OffsetDateTime;
 
@@ -39,7 +37,7 @@ SELECT coalesce(sum(amount_microusd), 0)::bigint FROM finance.journal_posting";
     /// Effects whose outcome the provider never confirmed.
     pub const UNRESOLVED_EFFECTS: &str = "\
 SELECT pe.effect_id, pe.kind, pe.state, \
-       coalesce((EXTRACT(EPOCH FROM pe.first_dispatch_at)*1000)::bigint, 0), \
+       (EXTRACT(EPOCH FROM pe.first_dispatch_at)*1000)::bigint, \
        pe.provider_object_id \
   FROM finance.provider_effect pe \
  WHERE pe.state IN ('prepared', 'dispatched', 'outcome_unknown') \
@@ -48,7 +46,8 @@ SELECT pe.effect_id, pe.kind, pe.state, \
 
     /// Escalates an effect automatic recovery can no longer resolve.
     pub const ESCALATE_EFFECT: &str = "\
-UPDATE finance.provider_effect SET state = 'manual_review', revision = revision + 1 \
+UPDATE finance.provider_effect \
+   SET state = 'manual_review', resolved_at = now(), revision = revision + 1 \
  WHERE effect_id = :effect_id AND state = 'outcome_unknown'";
 }
 
@@ -63,6 +62,9 @@ pub struct SweepReport {
     pub replayable: Vec<String>,
     /// Effects that must be resolved by looking the provider object up.
     pub lookup_required: Vec<String>,
+    /// Effects that never reached `outcome_unknown` and cannot be replayed from
+    /// the incomplete durable request projection.
+    pub stranded: Vec<String>,
     /// Effects escalated to an operator.
     pub escalated: Vec<String>,
 }
@@ -73,6 +75,9 @@ impl SweepReport {
     pub fn has_findings(&self) -> bool {
         !self.divergent_accounts.is_empty()
             || self.global_imbalance_microusd != 0
+            || !self.replayable.is_empty()
+            || !self.lookup_required.is_empty()
+            || !self.stranded.is_empty()
             || !self.escalated.is_empty()
     }
 }
@@ -134,7 +139,12 @@ pub trait ReconcileAuthority: Send + Sync + 'static {
     async fn probe_role(&self) -> Result<(), SweepError>;
 
     /// Runs the conservation and unresolved-effect sweeps.
-    async fn sweep(&self, page_limit: u32, now: OffsetDateTime) -> Result<SweepReport, SweepError>;
+    async fn sweep(
+        &self,
+        page_limit: u32,
+        retry_window: Duration,
+        now: OffsetDateTime,
+    ) -> Result<SweepReport, SweepError>;
 }
 
 /// The Aurora-backed reconcile authority.
@@ -204,7 +214,7 @@ struct EffectRow {
     effect_id: uuid::Uuid,
     kind: String,
     state: String,
-    first_dispatch_millis: i64,
+    first_dispatch_millis: Option<i64>,
     provider_object_id: Option<String>,
 }
 
@@ -215,7 +225,7 @@ impl Row for EffectRow {
             effect_id: record.uuid(0)?,
             kind: record.text(1)?.to_owned(),
             state: record.text(2)?.to_owned(),
-            first_dispatch_millis: record.i64(3)?,
+            first_dispatch_millis: record.opt(3, Record::i64)?,
             provider_object_id: record.opt(4, |r, i| r.text(i).map(str::to_owned))?,
         })
     }
@@ -243,27 +253,37 @@ fn effect_kind(raw: &str) -> Option<EffectKind> {
 }
 
 /// Rebuilds enough of the domain aggregate to ask it what recovery is allowed.
-fn recovery(row: &EffectRow, now: OffsetDateTime) -> Option<RecoveryAction> {
+fn recovery(
+    row: &EffectRow,
+    now: OffsetDateTime,
+    retry_window: Duration,
+) -> Option<RecoveryAction> {
     let kind = effect_kind(&row.kind)?;
     if row.state != "outcome_unknown" {
         return None;
     }
-    let dispatched = OffsetDateTime::from_unix_timestamp_nanos(
-        i128::from(row.first_dispatch_millis) * 1_000_000,
-    )
-    .ok()?;
-    let effect = ProviderEffect::prepare(kind, dispatched)
-        .dispatch(dispatched)
-        .ok()?;
-    // The durable row says the outcome was never confirmed, so the aggregate is
-    // rebuilt into exactly that state before it is asked what recovery is safe.
-    let unknown = transition(
-        &effect,
-        EffectOutcome::Indeterminate(IndeterminateReason::Timeout),
-        dispatched,
-    )
-    .ok()?;
-    Some(recovery_action(&unknown, now))
+    let first_dispatch_millis = row.first_dispatch_millis?;
+    let dispatched =
+        OffsetDateTime::from_unix_timestamp_nanos(i128::from(first_dispatch_millis) * 1_000_000)
+            .ok()?;
+    if now < dispatched {
+        return Some(RecoveryAction::EscalateManualReview);
+    }
+    let elapsed_millis = (now - dispatched).whole_milliseconds();
+    if elapsed_millis < i128::try_from(retry_window.as_millis()).unwrap_or(i128::MAX) {
+        return Some(RecoveryAction::RetryExactKey);
+    }
+    if let Some(provider_object_id) = &row.provider_object_id {
+        return Some(RecoveryAction::LookupByObject(provider_object_id.clone()));
+    }
+    // The current command edge can search only PaymentIntents. Returning a
+    // search action for another kind would claim an automatic recovery path
+    // that does not exist.
+    Some(if kind == EffectKind::OffSessionCharge {
+        RecoveryAction::SearchByEffectId
+    } else {
+        RecoveryAction::EscalateManualReview
+    })
 }
 
 #[async_trait::async_trait]
@@ -293,7 +313,12 @@ impl ReconcileAuthority for AuroraReconcileAuthority {
         Ok(())
     }
 
-    async fn sweep(&self, page_limit: u32, now: OffsetDateTime) -> Result<SweepReport, SweepError> {
+    async fn sweep(
+        &self,
+        page_limit: u32,
+        retry_window: Duration,
+        now: OffsetDateTime,
+    ) -> Result<SweepReport, SweepError> {
         let mut report = SweepReport::default();
         let divergent: Vec<DivergenceRow> = self
             .client
@@ -324,7 +349,7 @@ impl ReconcileAuthority for AuroraReconcileAuthority {
             .await
             .map_err(store)?;
         for row in &unresolved {
-            match recovery(row, now) {
+            match recovery(row, now, retry_window) {
                 Some(RecoveryAction::RetryExactKey) => {
                     report.replayable.push(row.effect_id.to_string());
                 }
@@ -341,22 +366,22 @@ impl ReconcileAuthority for AuroraReconcileAuthority {
                         .map_err(store)?;
                     report.escalated.push(row.effect_id.to_string());
                 }
-                None => {}
+                None => report.stranded.push(row.effect_id.to_string()),
             }
         }
-        // Present so a later pass can prefer the stored object over a search;
-        // the column is projected today to keep the read one statement.
-        let _ = unresolved
-            .iter()
-            .filter(|row| row.provider_object_id.is_some())
-            .count();
         Ok(report)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SweepReport, effect_kind, sql};
+    use std::time::Duration;
+
+    use aex_finance_domain::effect::RecoveryAction;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    use super::{EffectRow, SweepReport, effect_kind, recovery, sql};
 
     #[test]
     fn every_sweep_statement_binds_and_never_touches_floating_point() {
@@ -432,8 +457,69 @@ mod tests {
             ..SweepReport::default()
         };
         assert!(
-            !replay_only.has_findings(),
-            "an effect still inside its replay window is not yet an operator's problem"
+            replay_only.has_findings(),
+            "until exact request replay is composed, a replayable effect must not be silent"
+        );
+    }
+
+    #[test]
+    fn recovery_obeys_the_configured_window_instead_of_a_hidden_twelve_hours() {
+        let row = EffectRow {
+            effect_id: Uuid::now_v7(),
+            kind: "payment_intent_off_session".to_owned(),
+            state: "outcome_unknown".to_owned(),
+            first_dispatch_millis: Some(0),
+            provider_object_id: None,
+        };
+        let now = OffsetDateTime::UNIX_EPOCH + time::Duration::hours(2);
+        assert_eq!(
+            recovery(&row, now, Duration::from_hours(1)),
+            Some(RecoveryAction::SearchByEffectId),
+            "a one-hour deployment window must not replay a two-hour-old charge"
+        );
+        assert_eq!(
+            recovery(&row, now, Duration::from_hours(3)),
+            Some(RecoveryAction::RetryExactKey)
+        );
+    }
+
+    #[test]
+    fn only_the_effect_kind_the_edge_can_search_gets_an_automatic_search_action() {
+        let base = EffectRow {
+            effect_id: Uuid::now_v7(),
+            kind: "payment_intent_off_session".to_owned(),
+            state: "outcome_unknown".to_owned(),
+            first_dispatch_millis: Some(0),
+            provider_object_id: None,
+        };
+        let now = OffsetDateTime::UNIX_EPOCH + time::Duration::hours(13);
+        assert_eq!(
+            recovery(&base, now, Duration::from_hours(12)),
+            Some(RecoveryAction::SearchByEffectId)
+        );
+        let checkout = EffectRow {
+            kind: "checkout_session_create".to_owned(),
+            ..base
+        };
+        assert_eq!(
+            recovery(&checkout, now, Duration::from_hours(12)),
+            Some(RecoveryAction::EscalateManualReview)
+        );
+    }
+
+    #[test]
+    fn an_unknown_effect_without_a_dispatch_instant_is_not_blindly_replayed() {
+        let row = EffectRow {
+            effect_id: Uuid::now_v7(),
+            kind: "payment_intent_off_session".to_owned(),
+            state: "outcome_unknown".to_owned(),
+            first_dispatch_millis: None,
+            provider_object_id: None,
+        };
+        assert_eq!(
+            recovery(&row, OffsetDateTime::UNIX_EPOCH, Duration::from_hours(12)),
+            None,
+            "missing timing authority becomes a stranded finding, never an exact-key replay"
         );
     }
 }

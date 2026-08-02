@@ -81,6 +81,7 @@ async fn run(config: Config) -> Result<(), lambda_runtime::Error> {
         .map_err(|error| lambda_runtime::Error::from(error.to_string()))?;
 
     let page_limit = config.sweep_page;
+    let retry_window = config.unknown_effect_retry_window;
     lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
         let authority = Arc::clone(&authority);
         let alarm = Arc::clone(&alarm);
@@ -94,6 +95,7 @@ async fn run(config: Config) -> Result<(), lambda_runtime::Error> {
                 &alarm,
                 request,
                 page_limit,
+                retry_window,
                 time::OffsetDateTime::now_utc(),
             )
             .await

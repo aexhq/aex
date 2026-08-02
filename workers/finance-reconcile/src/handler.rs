@@ -1,6 +1,7 @@
 //! One scheduled invocation: sweep, then report every finding.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -31,6 +32,8 @@ pub enum ReconcileResponse {
         replayable: usize,
         /// Effects that need a provider lookup.
         lookup_required: usize,
+        /// Prepared or dispatched effects with no safe replayable request.
+        stranded: usize,
         /// Effects escalated to an operator.
         escalated: usize,
     },
@@ -58,6 +61,7 @@ pub async fn handle<A: ReconcileAuthority, R: OperationsAlarm>(
     alarm: &Arc<R>,
     request: ReconcileRequest,
     page_limit: u32,
+    retry_window: Duration,
     now: OffsetDateTime,
 ) -> Result<ReconcileResponse, SweepError> {
     match request {
@@ -72,7 +76,7 @@ pub async fn handle<A: ReconcileAuthority, R: OperationsAlarm>(
             }),
         },
         ReconcileRequest::Sweep => {
-            let report = authority.sweep(page_limit, now).await?;
+            let report = authority.sweep(page_limit, retry_window, now).await?;
             if report.has_findings() {
                 alarm.report(FINDING_SUBJECT, &render(&report)).await?;
             }
@@ -81,6 +85,7 @@ pub async fn handle<A: ReconcileAuthority, R: OperationsAlarm>(
                 global_imbalance_microusd: report.global_imbalance_microusd,
                 replayable: report.replayable.len(),
                 lookup_required: report.lookup_required.len(),
+                stranded: report.stranded.len(),
                 escalated: report.escalated.len(),
             })
         }
@@ -94,9 +99,13 @@ pub async fn handle<A: ReconcileAuthority, R: OperationsAlarm>(
 #[must_use]
 pub fn render(report: &SweepReport) -> String {
     format!(
-        "divergentAccounts={} globalImbalanceMicrousd={} escalatedEffects={}",
+        "divergentAccounts={} globalImbalanceMicrousd={} replayableEffects={} \
+         lookupRequiredEffects={} strandedEffects={} escalatedEffects={}",
         report.divergent_accounts.len(),
         report.global_imbalance_microusd,
+        report.replayable.len(),
+        report.lookup_required.len(),
+        report.stranded.len(),
         report.escalated.len()
     )
 }
@@ -107,6 +116,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use parking_lot::Mutex;
+    use std::time::Duration;
+
     use time::OffsetDateTime;
 
     use super::{ReconcileRequest, ReconcileResponse, handle, render};
@@ -126,6 +137,7 @@ mod tests {
         async fn sweep(
             &self,
             _page_limit: u32,
+            _retry_window: Duration,
             _now: OffsetDateTime,
         ) -> Result<SweepReport, SweepError> {
             self.answer.clone()
@@ -158,6 +170,7 @@ mod tests {
             &alarm,
             ReconcileRequest::Sweep,
             500,
+            Duration::from_hours(12),
             OffsetDateTime::UNIX_EPOCH,
         )
         .await
@@ -188,6 +201,7 @@ mod tests {
             &alarm,
             ReconcileRequest::Sweep,
             500,
+            Duration::from_hours(12),
             OffsetDateTime::UNIX_EPOCH,
         )
         .await
@@ -195,6 +209,35 @@ mod tests {
         assert_eq!(alarm.calls.load(Ordering::Relaxed), 1);
         let published = alarm.published.lock().clone();
         assert!(published[0].contains("globalImbalanceMicrousd=-25"));
+    }
+
+    #[tokio::test]
+    async fn unresolved_effect_work_is_never_reported_as_all_clear() {
+        let authority = Arc::new(Scripted {
+            answer: Ok(SweepReport {
+                replayable: vec!["eff-1".to_owned()],
+                lookup_required: vec!["eff-2".to_owned()],
+                stranded: vec!["eff-3".to_owned()],
+                ..SweepReport::default()
+            }),
+        });
+        let alarm = Arc::new(RecordingAlarm::default());
+        handle(
+            &authority,
+            &alarm,
+            ReconcileRequest::Sweep,
+            500,
+            Duration::from_hours(12),
+            OffsetDateTime::UNIX_EPOCH,
+        )
+        .await
+        .expect("the sweep completes");
+        assert_eq!(alarm.calls.load(Ordering::Relaxed), 1);
+        let published = alarm.published.lock().clone();
+        assert!(published[0].contains("replayableEffects=1"));
+        assert!(published[0].contains("lookupRequiredEffects=1"));
+        assert!(published[0].contains("strandedEffects=1"));
+        assert!(!published[0].contains("eff-1"));
     }
 
     #[tokio::test]
@@ -208,6 +251,7 @@ mod tests {
             &alarm,
             ReconcileRequest::Sweep,
             500,
+            Duration::from_hours(12),
             OffsetDateTime::UNIX_EPOCH,
         )
         .await

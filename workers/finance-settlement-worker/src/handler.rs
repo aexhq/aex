@@ -18,9 +18,11 @@ pub struct BatchReport {
     pub claimed: usize,
     /// How many facts a duplicate delivery had already stored.
     pub duplicates: usize,
+    /// How many durable facts still await rating and posting.
+    pub pending: usize,
     /// How many facts were quarantined on an intent conflict.
     pub quarantined: usize,
-    /// How many accounts did not commit.
+    /// How many accounts did not reach a complete settlement receipt.
     pub failed_accounts: usize,
 }
 
@@ -84,24 +86,32 @@ pub async fn handle<A: SettlementAuthority>(
 
     let mut failed: Vec<OrganizationId> = Vec::new();
     for group in &groups {
-        let mut committed = true;
+        let mut settled = true;
         for chunk in chunks(group, max_group_batch) {
-            let settled = settle_with_retry(
+            let result = settle_with_retry(
                 authority,
                 group.organization,
                 &chunk,
                 serialization_retry_max,
             )
             .await;
-            let Ok(outcome) = settled else {
-                committed = false;
+            let Ok(outcome) = result else {
+                settled = false;
                 break;
             };
             report.claimed += outcome.claimed;
             report.duplicates += outcome.duplicates;
+            report.pending += outcome.pending;
             report.quarantined += outcome.quarantined.len();
+            if outcome.pending > 0 || !outcome.quarantined.is_empty() {
+                // The transaction committed an inbox state, but no settlement
+                // receipt exists. SQS acknowledgement is about completed work,
+                // not merely about whether one intermediate write committed.
+                settled = false;
+                break;
+            }
         }
-        if !committed {
+        if !settled {
             failed.push(group.organization);
         }
     }
@@ -157,6 +167,7 @@ mod tests {
     #[derive(Debug)]
     struct Scripted {
         failing: Option<OrganizationId>,
+        leaves_pending: bool,
         serialization_failures: AtomicUsize,
         calls: AtomicUsize,
     }
@@ -184,6 +195,7 @@ mod tests {
                 organization,
                 claimed: messages.len(),
                 duplicates: 0,
+                pending: usize::from(self.leaves_pending) * messages.len(),
                 quarantined: Vec::new(),
             })
         }
@@ -281,6 +293,7 @@ mod tests {
         let first = organization(1);
         let authority = Arc::new(Scripted {
             failing: None,
+            leaves_pending: false,
             serialization_failures: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
         });
@@ -305,6 +318,7 @@ mod tests {
         let second = organization(2);
         let authority = Arc::new(Scripted {
             failing: Some(second),
+            leaves_pending: false,
             serialization_failures: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
         });
@@ -338,6 +352,7 @@ mod tests {
         let first = organization(1);
         let authority = Arc::new(Scripted {
             failing: None,
+            leaves_pending: false,
             serialization_failures: AtomicUsize::new(2),
             calls: AtomicUsize::new(0),
         });
@@ -356,6 +371,7 @@ mod tests {
 
         let unknown = Arc::new(Scripted {
             failing: Some(first),
+            leaves_pending: false,
             serialization_failures: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
         });
@@ -379,6 +395,7 @@ mod tests {
         let first = organization(1);
         let authority = Arc::new(Scripted {
             failing: None,
+            leaves_pending: false,
             serialization_failures: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
         });
@@ -393,6 +410,7 @@ mod tests {
         let first = organization(1);
         let authority = Arc::new(Scripted {
             failing: None,
+            leaves_pending: false,
             serialization_failures: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
         });
@@ -414,5 +432,27 @@ mod tests {
             2,
             "three messages at two per transaction is two transactions"
         );
+    }
+
+    #[tokio::test]
+    async fn a_durable_pending_claim_is_redelivered_until_a_receipt_exists() {
+        let first = organization(1);
+        let authority = Arc::new(Scripted {
+            failing: None,
+            leaves_pending: true,
+            serialization_failures: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let (response, report) = handle(
+            &authority,
+            event(&[message("m1", first, 0, Some(first.encode().as_str()))]),
+            100,
+            3,
+        )
+        .await;
+        assert_eq!(response.batch_item_failures.len(), 1);
+        assert_eq!(response.batch_item_failures[0].item_identifier, "m1");
+        assert_eq!(report.pending, 1);
+        assert_eq!(report.failed_accounts, 1);
     }
 }
