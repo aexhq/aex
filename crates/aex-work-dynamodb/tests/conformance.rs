@@ -7,6 +7,7 @@ mod support;
 
 use aex_session_dynamodb::paging::PageBudget;
 use aex_work_dynamodb::WorkClaim;
+use aex_work_dynamodb::codec::ReconciliationCursor;
 use aex_work_dynamodb::keys;
 use aex_work_dynamodb::store::{WorkAuthority, WorkStore};
 
@@ -81,6 +82,56 @@ async fn a_due_scan_queries_a_shard_of_the_index_and_never_a_literal_single_part
         body["KeyConditionExpression"].as_str(),
         Some("#pk = :pk AND #sk <= :now")
     );
+    let upper = body["ExpressionAttributeValues"][":now"]["S"]
+        .as_str()
+        .expect("the due upper bound");
+    assert_eq!(upper, format!("{}#\u{10ffff}", now().to_wire()));
+}
+
+#[tokio::test]
+async fn a_resumed_due_scan_starts_strictly_after_all_four_index_and_base_keys() {
+    let (client, receiver) = capturing_client();
+    let store = WorkStore::new(client, TABLE);
+    let position = ReconciliationCursor {
+        shard: 7,
+        scanned_through_effective_due_at: now(),
+        last_work_id: Some(record().work_id.clone()),
+        revision: 3,
+        updated_at: now(),
+    };
+    let _ignored = store
+        .scan_due_after(
+            7,
+            later(60_000),
+            PageBudget::new(25).expect("a page"),
+            Some(&position),
+        )
+        .await;
+
+    let body = captured_body(receiver);
+    let start = &body["ExclusiveStartKey"];
+    assert_eq!(
+        start["pk"]["S"].as_str(),
+        Some(format!("WORK#{}", record().work_id).as_str())
+    );
+    assert_eq!(start["sk"]["S"].as_str(), Some("STATE"));
+    assert_eq!(start["dueShardPk"]["S"].as_str(), Some("DUE#0007"));
+    assert_eq!(
+        start["dueShardSk"]["S"].as_str(),
+        Some(format!("{}#{}", now().to_wire(), record().work_id).as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_reconciliation_cursor_read_is_strong_and_targets_its_exact_shard() {
+    let (client, receiver) = capturing_client();
+    let store = WorkStore::new(client, TABLE);
+    let _ignored = store.load_cursor(7).await;
+
+    let body = captured_body(receiver);
+    assert_eq!(body["ConsistentRead"].as_bool(), Some(true));
+    assert_eq!(body["Key"]["pk"]["S"].as_str(), Some("WCURSOR#0007"));
+    assert_eq!(body["Key"]["sk"]["S"].as_str(), Some("STATE"));
 }
 
 #[tokio::test]
@@ -102,7 +153,7 @@ async fn a_cursor_advance_conditions_on_the_previous_revision() {
     let (client, receiver) = capturing_client();
     let store = WorkStore::new(client, TABLE);
     let _ignored = store
-        .advance_cursor(&aex_work_dynamodb::codec::ReconciliationCursor {
+        .advance_cursor(&ReconciliationCursor {
             shard: 3,
             scanned_through_effective_due_at: now(),
             last_work_id: None,

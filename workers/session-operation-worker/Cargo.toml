@@ -35,16 +35,17 @@ name = "session-operation-worker"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-s3.workspace = true
 aws_lambda_events.workspace = true
 lambda_runtime.workspace = true
+futures.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
-aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb" }
+aex-operation-domain = { path = "../../crates/aex-operation-domain" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
@@ -62,6 +63,10 @@ path = "tests/continuations.rs"
 [[test]]
 name = "composition"
 path = "tests/composition.rs"
+
+[[test]]
+name = "reconciliation"
+path = "tests/reconciliation.rs"
 
 [[test]]
 name = "performance_contract"

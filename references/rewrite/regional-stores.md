@@ -454,6 +454,30 @@ Approval reads additionally verify that the decoded `sessionId` agrees with the
 partition queried. A corrupt row cannot be projected under a different session
 path even inside the same workspace.
 
+The session-operation continuation now has a narrow `OperationStore`: exact
+operation point reads are strongly consistent and tenant-checked, and its
+write capability accepts only a precomposed conditional `TransactionPlan` so
+transport ambiguity can be resolved from target rows. The operation half of a
+cancelled worker step is an adapter-owned expression over the exact workspace,
+operation id, version, running status, accepted cancel request, and absent
+commit latch. The worker combines it with `aex_work_dynamodb::claim::complete`
+as one transaction; neither adapter issues an unconditional authority write.
+
+`aex-work-dynamodb::DueEntry` also decodes the projected `workspaceId`. The
+source regional-work manifest already includes that attribute in the due GSI,
+so the scheduled worker can tenant-bind its strong base-row reload without a
+generated table-bundle edit.
+
+The previously encoded `work_cursor` is now a complete adapter path rather than
+an unused row shape. Cursor reads are strong, resumed due queries reconstruct
+all four keys required by a DynamoDB GSI `ExclusiveStartKey`, the decoded index
+sort key is checked against `dueAt` plus priority, and conditional cursor loss
+is named as `work.cursor`. `DuePage.scanned_through` is the actual last effective
+due instant rather than the query clock. The inclusive upper bound ends in the
+maximum Unicode scalar; the inherited bare `timestamp#` spelling sorted before
+every `timestamp#{workId}` and therefore excluded work due at exactly the scan
+instant.
+
 The authorization projection now exposes a separate `WorkspaceProjection`
 port. `workspace_profile` (`PROFILE`) and durable effective-limit
 (`LIMIT#{limitId}`) items share the workspace partition but not the placement

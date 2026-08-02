@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use aex_regional_http::config::ConfigError;
 use session_operation_worker::config::{self, Config};
-use session_operation_worker::{BatchItem, Trigger, batch_response, due_shards};
+use session_operation_worker::{
+    BatchItem, DUE_SHARD_CONCURRENCY, Trigger, batch_response, due_shards,
+};
 
 fn complete() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
@@ -31,7 +33,7 @@ fn complete() -> BTreeMap<&'static str, String> {
             config::DENIAL_PROJECTION_TABLE,
             "aex-dev-deletion-denial".to_owned(),
         ),
-        (config::DUE_SCAN_SHARDS, "16".to_owned()),
+        (config::DUE_SCAN_SHARDS, "64".to_owned()),
         (config::LEASE_MS, "60000".to_owned()),
         (config::STEP_DEADLINE_MS, "30000".to_owned()),
         (config::MAX_ATTEMPTS, "8".to_owned()),
@@ -45,7 +47,7 @@ fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
 #[test]
 fn a_complete_environment_is_accepted() {
     let config = read(&complete()).expect("the complete environment is accepted");
-    assert_eq!(config.due_scan_shards, 16);
+    assert_eq!(config.due_scan_shards, 64);
     assert_eq!(config.lease_ms, 60_000);
     assert_eq!(config.max_attempts, 8);
 }
@@ -119,14 +121,35 @@ fn an_sqs_batch_and_a_due_scan_are_told_apart_structurally() {
 
 #[test]
 fn the_due_scan_sweeps_every_shard_and_never_one_hot_partition() {
-    let shards = due_shards(16).expect("a positive shard count");
-    assert_eq!(shards.len(), 16);
+    let shards = due_shards(64).expect("the declared shard count");
+    assert_eq!(shards.len(), 64);
     assert_eq!(shards.first().copied(), Some(0));
-    assert_eq!(shards.last().copied(), Some(15));
+    assert_eq!(shards.last().copied(), Some(63));
     assert!(
         due_shards(0).is_err(),
         "a literal single due key is refused"
     );
+    assert_eq!(DUE_SHARD_CONCURRENCY, 16, "AWS fanout stays bounded");
+}
+
+#[test]
+fn a_shard_count_that_disagrees_with_the_table_contract_refuses_startup() {
+    let mut vars = complete();
+    vars.insert(config::DUE_SCAN_SHARDS, "16".to_owned());
+    assert!(matches!(
+        read(&vars),
+        Err(ConfigError::Invalid { name, .. }) if name == config::DUE_SCAN_SHARDS
+    ));
+}
+
+#[test]
+fn an_attempt_boundary_that_disagrees_with_strict_v1_refuses_startup() {
+    let mut vars = complete();
+    vars.insert(config::MAX_ATTEMPTS, "7".to_owned());
+    assert!(matches!(
+        read(&vars),
+        Err(ConfigError::Invalid { name, .. }) if name == config::MAX_ATTEMPTS
+    ));
 }
 
 #[test]
