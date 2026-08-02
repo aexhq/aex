@@ -1200,7 +1200,7 @@ be unsafe.
 Verification on `rw/continue-content-expiry-performance`: package formatting
 and clippy with warnings denied are clean; the worker package runs 16 tests with
 16 passed and none skipped; and the diff whitespace check is clean. The broader
-workspace structural check reaches one inherited violation outside this change:
-`session-operation-worker` already declares a `reconciliation` test without a
-layer mapping at this branch's base. This continuation does not edit that
-package or represent the workspace-wide structural check as green.
+workspace structural check initially found one inherited target-classification
+gap outside this change. Public `main` closes it in `14109eb1` by mapping the
+existing `session-operation-worker` reconciliation target to its declared unit
+layer; `aex-workspace-check` is green at 136 members and 143 packages.
