@@ -126,7 +126,7 @@ impl SteadyInstant {
     }
 }
 
-/// Time, as the only two readings the Brain is allowed to take.
+/// Time, as the only two readings and the one timer the Brain is allowed to use.
 ///
 /// Deadlines use [`ClockPort::steady`]; anything durable uses [`ClockPort::now`]. Keeping
 /// them apart is what stops a clock adjustment from expiring a live deadline, and what
@@ -138,6 +138,13 @@ pub trait ClockPort: Send + Sync + 'static {
 
     /// A monotonic reading. Deadlines and elapsed-time measurements use this.
     fn steady(&self) -> SteadyInstant;
+
+    /// Completes after `duration` without occupying an executor thread.
+    ///
+    /// The lease supervisor uses this timer rather than polling an effect in a loop. Keeping
+    /// the timer behind the same port as the readings preserves the runtime-free application
+    /// boundary and gives deterministic tests control of every renewal interleaving.
+    fn sleep(&self, duration: core::time::Duration) -> super::BoxFuture<'_, ()>;
 }
 
 /// Identifier generation.

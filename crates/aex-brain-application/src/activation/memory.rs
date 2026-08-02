@@ -118,6 +118,38 @@ impl ClockPort for FixedClock {
     fn steady(&self) -> SteadyInstant {
         SteadyInstant(u64::try_from(self.millis.load(Ordering::SeqCst)).unwrap_or(0))
     }
+
+    fn sleep(&self, duration: core::time::Duration) -> BoxFuture<'_, ()> {
+        Box::pin(FixedSleep {
+            clock: self,
+            duration,
+            armed: false,
+        })
+    }
+}
+
+struct FixedSleep<'clock> {
+    clock: &'clock FixedClock,
+    duration: core::time::Duration,
+    armed: bool,
+}
+
+impl core::future::Future for FixedSleep<'_> {
+    type Output = ();
+
+    fn poll(
+        mut self: core::pin::Pin<&mut Self>,
+        context: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        if self.armed {
+            self.clock
+                .advance(i64::try_from(self.duration.as_millis()).unwrap_or(i64::MAX));
+            return core::task::Poll::Ready(());
+        }
+        self.armed = true;
+        context.waker().wake_by_ref();
+        core::task::Poll::Pending
+    }
 }
 
 /// Identifiers that are deterministic where the contract says so and counted where it does
@@ -585,6 +617,42 @@ impl MemoryStore {
             .expect("not poisoned")
             .entry(key.session)
             .or_insert_with(fixture_authority);
+    }
+
+    /// Forces a successor ownership generation, modelling another mux task after expiry.
+    ///
+    /// This is intentionally stronger than editing only the expiry: the returned claim is a
+    /// real `(owner, fence)` pair the predecessor's next conditional renewal must observe.
+    #[must_use]
+    pub fn force_takeover(
+        &self,
+        key: AgentKey,
+        owner: OwnerToken,
+        ttl: core::time::Duration,
+    ) -> Claim {
+        let authority = self
+            .authorities
+            .lock()
+            .expect("not poisoned")
+            .get(&key.session)
+            .cloned()
+            .expect("the seeded session has authority");
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the seeded agent exists");
+        row.fence = row.fence.advance();
+        row.lease_owner = Some(owner);
+        row.lease_expires_at = self
+            .clock
+            .now()
+            .plus_millis(i64::try_from(ttl.as_millis()).unwrap_or(i64::MAX));
+        Claim {
+            key,
+            owner,
+            fence: row.fence,
+            expires_at: row.lease_expires_at,
+            authority,
+            head: Self::head_of(row, key),
+        }
     }
 
     /// Replaces the session-head authority a subsequent claim observes.
@@ -1116,6 +1184,7 @@ impl LeaseStore for MemoryStore {
         now: Timestamp,
     ) -> BoxFuture<'a, Result<Claim, ClaimError>> {
         Box::pin(async move {
+            self.log.note("renew_lease");
             let mut agents = self.agents.lock().expect("not poisoned");
             let row = agents.get_mut(&claim.key).ok_or(ClaimError::Terminal)?;
             if row.fence != claim.fence || row.lease_owner != Some(claim.owner) {
@@ -1161,8 +1230,10 @@ pub struct MemoryQueue {
     malformed_due: Mutex<BTreeMap<WakeId, WorkShard>>,
     visible: Mutex<VecDeque<WakeDelivery>>,
     acked: Mutex<Vec<WakeDelivery>>,
+    receive_faults: Mutex<VecDeque<StoreError>>,
     ack_faults: Mutex<VecDeque<StoreError>>,
     receipts: AtomicU64,
+    visibility_extensions: AtomicU64,
     log: Mutex<Option<Arc<Recorder>>>,
 }
 
@@ -1175,8 +1246,10 @@ impl MemoryQueue {
             malformed_due: Mutex::new(BTreeMap::new()),
             visible: Mutex::new(VecDeque::new()),
             acked: Mutex::new(Vec::new()),
+            receive_faults: Mutex::new(VecDeque::new()),
             ack_faults: Mutex::new(VecDeque::new()),
             receipts: AtomicU64::new(0),
+            visibility_extensions: AtomicU64::new(0),
             log: Mutex::new(Some(log)),
         }
     }
@@ -1250,6 +1323,14 @@ impl MemoryQueue {
             .retain(|_, (stored, _)| stored.work_id != wake.work_id);
     }
 
+    /// Scripts the next queue receive to fail before the due backstop may advance.
+    pub fn fail_next_receive(&self, error: StoreError) {
+        self.receive_faults
+            .lock()
+            .expect("not poisoned")
+            .push_back(error);
+    }
+
     /// Scripts the next ack to fail, which is the crash between the commit and the ack.
     pub fn fail_next_ack(&self, error: StoreError) {
         self.ack_faults
@@ -1270,6 +1351,12 @@ impl MemoryQueue {
         self.acked.lock().expect("not poisoned").clone()
     }
 
+    /// How many times a live queue delivery had its visibility extended.
+    #[must_use]
+    pub fn visibility_extensions(&self) -> u64 {
+        self.visibility_extensions.load(Ordering::SeqCst)
+    }
+
     fn note(&self, what: &str) {
         if let Some(log) = self.log.lock().expect("not poisoned").as_ref() {
             log.note(what);
@@ -1285,6 +1372,14 @@ impl WakeQueue for MemoryQueue {
     ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>> {
         Box::pin(async move {
             self.note("receive");
+            if let Some(fault) = self
+                .receive_faults
+                .lock()
+                .expect("not poisoned")
+                .pop_front()
+            {
+                return Err(fault);
+            }
             let mut visible = self.visible.lock().expect("not poisoned");
             let taken = visible.len().min(max);
             Ok(visible.drain(..taken).collect())
@@ -1314,10 +1409,16 @@ impl WakeQueue for MemoryQueue {
 
     fn extend_visibility<'a>(
         &'a self,
-        _delivery: &'a WakeDelivery,
+        delivery: &'a WakeDelivery,
         _by: core::time::Duration,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            if matches!(delivery.origin, WakeOrigin::Queue { .. }) {
+                self.note("extend_visibility");
+                self.visibility_extensions.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        })
     }
 
     fn release(

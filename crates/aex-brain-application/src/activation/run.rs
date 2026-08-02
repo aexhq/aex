@@ -21,11 +21,12 @@ use super::{
     ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, Outcome, Ports,
     Release, Stop,
 };
-use crate::kernel::{ActivationRegistry, DrainGate};
+use crate::kernel::{ActivationRegistry, DrainGate, RenewalOutcome, RenewalState};
 use crate::ports::{
-    ClaimError, CommitError, ConditionFailure, ControlStateView, DecisionContext, DetachedStatus,
-    DueScanCursor, FenceGuard, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
-    SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
+    BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
+    DecisionContext, DetachedStatus, DueScanCursor, FenceGuard, NullPreviewSink, PreparedToolCall,
+    ReleaseDisposition, SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery,
+    WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -47,7 +48,7 @@ use aex_brain_domain::wire_pending::{
     CanonicalBlock, CanonicalModelRequest, DurableOperationSupport, ResolvedAgentConfig,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -156,12 +157,13 @@ impl Activation {
             claim.head.cancel_epoch,
             crate::ports::CancelToken::new(),
         );
+        let claim_state = Arc::new(Mutex::new(claim.clone()));
         let mut session = Session {
             ports: &self.ports,
             policy: &self.policy,
             key,
             authority: claim.authority.clone(),
-            lease_expires_at: claim.expires_at,
+            claim: Arc::clone(&claim_state),
             stop_requested: claim.head.stop_requested,
             guard,
             state: FoldState::empty(),
@@ -170,18 +172,22 @@ impl Activation {
             resume: None,
         };
 
-        let outcome = if claim.head.finish.is_some() {
-            Ok(Outcome::Idle)
-        } else {
-            session.drive().await
+        let cancel = session.guard.cancel().clone();
+        let work = async {
+            let outcome = if claim.head.finish.is_some() {
+                Ok(Outcome::Idle)
+            } else {
+                session.drive().await
+            };
+            match outcome {
+                Ok(outcome) => self
+                    .retire_source(&mut session, &delivery.wake)
+                    .await
+                    .map(|()| outcome),
+                Err(error) => Err(error),
+            }
         };
-        let outcome = match outcome {
-            Ok(outcome) => self
-                .retire_source(&mut session, &delivery.wake)
-                .await
-                .map(|()| outcome),
-            Err(error) => Err(error),
-        };
+        let outcome = self.supervise(&claim_state, &delivery, cancel, work).await;
         let disposition = match &outcome {
             Ok(Outcome::Progressed {
                 stop: Stop::Parked, ..
@@ -191,7 +197,11 @@ impl Activation {
         };
         // The lease goes back before the ack. A crash between them leaves a wake that
         // redelivers against an unowned agent, which is the cheap direction to fail in.
-        let _ = self.ports.leases.release(claim, disposition).await;
+        let latest_claim = claim_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let _ = self.ports.leases.release(latest_claim, disposition).await;
 
         self.finish_delivery(delivery, outcome).await
     }
@@ -241,6 +251,114 @@ impl Activation {
         let _ = self.ports.wakes.release(delivery.clone(), after).await;
     }
 
+    /// Runs claimed work beside one timer-driven ownership supervisor.
+    ///
+    /// The work future and timer are polled by one structured parent, so neither is detached
+    /// and dropping this scope drops both. A pending provider/tool/Hands future sleeps until
+    /// either it is woken or the renewal timer fires; there is no per-effect polling loop.
+    async fn supervise<F, T>(
+        &self,
+        claim: &Arc<Mutex<Claim>>,
+        delivery: &WakeDelivery,
+        cancel: CancelToken,
+        work: F,
+    ) -> Result<T, ActivationError>
+    where
+        F: core::future::Future<Output = Result<T, ActivationError>>,
+    {
+        enum Event<T> {
+            Work(Result<T, ActivationError>),
+            Renew,
+            Visibility,
+        }
+
+        let renewal = RenewalState::new(
+            claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .fence,
+            cancel.clone(),
+        );
+        let mut work = Box::pin(work);
+        let mut timer = self.ports.clock.sleep(self.policy.renew_interval);
+        let mut visibility: Option<BoxFuture<'_, Result<(), StoreError>>> = None;
+        loop {
+            let event = core::future::poll_fn(|context| {
+                if let core::task::Poll::Ready(output) = work.as_mut().poll(context) {
+                    return core::task::Poll::Ready(Event::Work(output));
+                }
+                if visibility
+                    .as_mut()
+                    .is_some_and(|pending| pending.as_mut().poll(context).is_ready())
+                {
+                    return core::task::Poll::Ready(Event::Visibility);
+                }
+                timer.as_mut().poll(context).map(|()| Event::Renew)
+            })
+            .await;
+            match event {
+                Event::Work(output) => return output,
+                Event::Visibility => {
+                    visibility = None;
+                    continue;
+                }
+                Event::Renew => {
+                    // Arm the next deadline before any network call. A slow visibility
+                    // extension remains one polled child below; it cannot postpone the next
+                    // lease renewal or stop the claimed work being polled.
+                    timer = self.ports.clock.sleep(self.policy.renew_interval);
+                }
+            }
+
+            let current = claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            match self
+                .ports
+                .leases
+                .renew(&current, self.policy.lease_ttl, self.ports.clock.now())
+                .await
+            {
+                Ok(renewed) => {
+                    if renewal.renewed(renewed.fence) == RenewalOutcome::Lost {
+                        return Err(ClaimError::Fenced {
+                            current: renewed.fence,
+                        }
+                        .into());
+                    }
+                    *claim
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = renewed;
+                    // Visibility is extended only after the durable lease proves this owner
+                    // is still live. A queue failure permits a duplicate hint; the fence then
+                    // rejects its claim. Hiding a delivery after a failed renewal would be the
+                    // unsafe direction.
+                    if visibility.is_none() {
+                        visibility = Some(
+                            self.ports
+                                .wakes
+                                .extend_visibility(delivery, self.policy.visibility_timeout),
+                        );
+                    }
+                }
+                Err(ClaimError::Fenced { current }) => {
+                    let _ = renewal.observe(current);
+                    return Err(ClaimError::Fenced { current }.into());
+                }
+                Err(error @ (ClaimError::HeldByOther { .. } | ClaimError::Terminal)) => {
+                    cancel.cancel();
+                    return Err(error.into());
+                }
+                Err(ClaimError::Store(error)) => {
+                    if renewal.renewal_failed() == RenewalOutcome::Lost {
+                        return Err(ClaimError::Store(error).into());
+                    }
+                }
+            }
+        }
+    }
+
     async fn source_is_pending(&self, delivery: &WakeDelivery) -> Result<bool, ActivationError> {
         match self.ports.wakes.state(&delivery.wake).await {
             Ok(WakeState::Pending) => Ok(true),
@@ -287,6 +405,7 @@ pub struct WakeLoop {
     inflight: Arc<Mutex<BTreeSet<String>>>,
     due_shard: Arc<AtomicU16>,
     due_cursors: Arc<Mutex<BTreeMap<u16, DueScanCursor>>>,
+    due_scan_due_at: Arc<AtomicU64>,
 }
 
 /// What one pass over the queue did.
@@ -316,6 +435,7 @@ impl WakeLoop {
             inflight: Arc::new(Mutex::new(BTreeSet::new())),
             due_shard: Arc::new(AtomicU16::new(0)),
             due_cursors: Arc::new(Mutex::new(BTreeMap::new())),
+            due_scan_due_at: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -341,28 +461,88 @@ impl WakeLoop {
             return Ok(report);
         }
         let policy = self.activation.policy();
-        let shard_count = policy.due_shards.max(1);
-        let shard = self.due_shard.fetch_add(1, Ordering::Relaxed) % shard_count;
-        let after = self
-            .due_cursors
-            .lock()
-            .expect("not poisoned")
-            .get(&shard)
-            .cloned();
-        let page = self
+        let deliveries = self
             .activation
             .ports()
             .wakes
-            .due_scan(
-                aex_brain_domain::ids::WorkShard(shard),
-                self.activation.ports().clock.now(),
-                policy.receive_batch,
-                after,
-            )
+            .receive(policy.receive_batch, policy.long_poll)
             .await?;
-        {
+        report.received = deliveries.len();
+        for delivery in deliveries {
+            self.record_drive(&mut report, delivery).await;
+        }
+        // SQS is deliberately first. A due page can neither consume the receive batch nor
+        // advance a cursor before a failed receive, and a ready queue is never suppressed by
+        // recovery work. The burst is cadence-limited below, so a busy queue cannot make the
+        // DynamoDB backstop hot-poll.
+        if self.claim_due_pass() {
+            self.recover_due(&mut report).await?;
+        }
+        Ok(report)
+    }
+
+    fn claim_due_pass(&self) -> bool {
+        let now = self.activation.ports().clock.steady().0;
+        let interval = u64::try_from(self.activation.policy().due_scan_interval.as_millis())
+            .unwrap_or(u64::MAX);
+        loop {
+            let due_at = self.due_scan_due_at.load(Ordering::Acquire);
+            if now < due_at {
+                return false;
+            }
+            let next = now.saturating_add(interval);
+            if self
+                .due_scan_due_at
+                .compare_exchange(due_at, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    async fn recover_due(&self, report: &mut PollReport) -> Result<(), ActivationError> {
+        let policy = self.activation.policy();
+        let shard_count = policy.due_shards.max(1);
+        let shards = policy.due_scan_shards_per_pass.max(1).min(shard_count);
+        for _ in 0..shards {
+            let shard = self.due_shard.fetch_add(1, Ordering::Relaxed) % shard_count;
+            let after = self
+                .due_cursors
+                .lock()
+                .expect("not poisoned")
+                .get(&shard)
+                .cloned();
+            let page = self
+                .activation
+                .ports()
+                .wakes
+                .due_scan(
+                    aex_brain_domain::ids::WorkShard(shard),
+                    self.activation.ports().clock.now(),
+                    policy.due_scan_page.max(1),
+                    after,
+                )
+                .await?;
+            report.malformed = report.malformed.saturating_add(page.malformed);
+            report.recovered = report.recovered.saturating_add(page.wakes.len());
+            report.received = report.received.saturating_add(page.wakes.len());
+            for wake in page.wakes {
+                self.record_drive(
+                    report,
+                    WakeDelivery {
+                        wake,
+                        origin: WakeOrigin::DueScan,
+                    },
+                )
+                .await;
+            }
+            // A continuation describes rows this process has now admitted and driven. It is
+            // intentionally installed after the page, not after the query: a failed SQS
+            // receive or an interrupted drive therefore cannot make the next pass skip work
+            // that existed only in this local future.
             let mut cursors = self.due_cursors.lock().expect("not poisoned");
-            match page.next.clone() {
+            match page.next {
                 Some(next) => {
                     cursors.insert(shard, next);
                 }
@@ -371,40 +551,15 @@ impl WakeLoop {
                 }
             }
         }
-        let recovered = page.wakes;
-        report.recovered = recovered.len();
-        report.malformed = page.malformed;
-        let remaining = policy.receive_batch.saturating_sub(recovered.len());
-        let wait = if recovered.is_empty() {
-            policy.long_poll
-        } else {
-            core::time::Duration::ZERO
-        };
-        let mut deliveries: Vec<WakeDelivery> = recovered
-            .into_iter()
-            .map(|wake| WakeDelivery {
-                wake,
-                origin: WakeOrigin::DueScan,
-            })
-            .collect();
-        if remaining > 0 {
-            deliveries.extend(
-                self.activation
-                    .ports()
-                    .wakes
-                    .receive(remaining, wait)
-                    .await?,
-            );
+        Ok(())
+    }
+
+    async fn record_drive(&self, report: &mut PollReport, delivery: WakeDelivery) {
+        match self.drive(delivery).await {
+            Ok(Outcome::Released(_)) => report.released += 1,
+            Ok(_) => report.driven += 1,
+            Err(_) => report.refused += 1,
         }
-        report.received = deliveries.len();
-        for delivery in deliveries {
-            match self.drive(delivery).await {
-                Ok(Outcome::Released(_)) => report.released += 1,
-                Ok(_) => report.driven += 1,
-                Err(_) => report.refused += 1,
-            }
-        }
-        Ok(report)
     }
 
     /// Drives one delivery through admission and dedup.
@@ -491,7 +646,7 @@ struct Session<'a> {
     policy: &'a ActivationPolicy,
     key: AgentKey,
     authority: SessionAuthority,
-    lease_expires_at: Timestamp,
+    claim: Arc<Mutex<Claim>>,
     stop_requested: bool,
     guard: FenceGuard,
     state: FoldState,
@@ -740,7 +895,11 @@ impl Session<'_> {
         let retirement_only = commit.is_retirement_only();
         let context = DecisionContext {
             authority: self.authority.clone(),
-            lease_expires_at: self.lease_expires_at,
+            lease_expires_at: self
+                .claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .expires_at,
             now: recorded_at,
         };
         match self.ports.journal.commit(&context, &commit).await {

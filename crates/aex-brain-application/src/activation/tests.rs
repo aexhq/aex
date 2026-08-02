@@ -19,9 +19,10 @@ use super::{
 };
 use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
-    CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure, EffectStore as _,
-    FenceGuard, LeaseStore as _, ProviderDispatchError, ProviderFailureClass, ProviderOutcome,
-    RedactedDetail, ReleaseDisposition, StoreError, WakeQueue as _,
+    BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
+    DispatchTicket, EffectStore as _, FenceGuard, LeaseStore as _, PreviewSink,
+    ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail,
+    ReleaseDisposition, StoreError, StreamBudget, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{
@@ -35,11 +36,14 @@ use aex_brain_domain::journal::{
     FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CompleteAssistantMessage, CompleteProof, ContentBlockRef,
-    ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt, ResolvedAgentConfig, StopReason,
+    AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
+    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
+    ResolvedAgentConfig, StopReason,
 };
 use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+use core::future::Future as _;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use uuid::Uuid;
 
 /// Drives a fixture future to completion.
@@ -800,6 +804,185 @@ fn a_batch_carrying_one_wake_twice_produces_one_generation() {
     assert_eq!(harness.queue.durable_depth(), 0, "one source row retired");
 }
 
+#[derive(Debug, Default)]
+struct GatedProvider {
+    released: AtomicBool,
+    dispatches: AtomicUsize,
+}
+
+impl ProviderPort for GatedProvider {
+    fn dispatch<'a>(
+        &'a self,
+        _ticket: &'a DispatchTicket,
+        _request: &'a CanonicalModelRequest,
+        _budget: &'a StreamBudget,
+        _preview: &'a dyn PreviewSink,
+        cancel: &'a CancelToken,
+    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
+        self.dispatches.fetch_add(1, Ordering::SeqCst);
+        Box::pin(core::future::poll_fn(move |context| {
+            if cancel.is_cancelled() {
+                return core::task::Poll::Ready(Err(failure(
+                    DispatchProof::PossiblySent,
+                    ProviderFailureClass::Transient,
+                )));
+            }
+            if self.released.load(Ordering::SeqCst) {
+                return core::task::Poll::Ready(Ok(produced()));
+            }
+            context.waker().wake_by_ref();
+            core::task::Poll::Pending
+        }))
+    }
+
+    fn resolve_unknown<'a>(
+        &'a self,
+        _identity: &'a DurableEffect,
+        _evidence: &'a aex_brain_domain::effect::DispatchEvidence,
+    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
+        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
+    }
+}
+
+/// Two independent loops overlap for longer than both the original 15-second lease and the
+/// test visibility window. The supervisor renews both authorities while the provider is
+/// healthy, so the second loop is rejected by the durable owner and no second dispatch exists.
+#[test]
+fn a_long_effect_renews_lease_and_visibility_while_a_second_loop_cannot_take_ownership() {
+    let mut harness = Harness::new(Vec::new());
+    harness.policy.lease_ttl = core::time::Duration::from_secs(15);
+    harness.policy.renew_interval = core::time::Duration::from_secs(5);
+    harness.policy.visibility_timeout = core::time::Duration::from_secs(10);
+    let provider = Arc::new(GatedProvider::default());
+    let mut ports = harness.ports();
+    ports.provider = Arc::clone(&provider) as Arc<_>;
+    let first = WakeLoop::new(
+        Activation::new(
+            ports.clone(),
+            harness.policy.clone(),
+            Arc::new(ActivationRegistry::new()),
+            Arc::new(DrainGate::new()),
+        ),
+        Arc::new(AlwaysAdmit),
+    );
+    let second = WakeLoop::new(
+        Activation::new(
+            ports,
+            harness.policy.clone(),
+            Arc::new(ActivationRegistry::new()),
+            Arc::new(DrainGate::new()),
+        ),
+        Arc::new(AlwaysAdmit),
+    );
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .pop()
+        .expect("one delivery exists");
+    let mut first_drive = Box::pin(first.drive(delivery.clone()));
+    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+
+    assert!(first_drive.as_mut().poll(&mut context).is_pending());
+    for _ in 0..4 {
+        assert!(first_drive.as_mut().poll(&mut context).is_pending());
+    }
+    assert_eq!(
+        harness.clock.now().millis(),
+        START + 20_000,
+        "the effect has crossed both the original lease TTL and visibility window"
+    );
+    assert_eq!(harness.log.count("renew_lease"), 4);
+    assert_eq!(harness.queue.visibility_extensions(), 4);
+
+    assert_eq!(
+        block_on(second.drive(delivery.clone())).expect("the duplicate is safely released"),
+        Outcome::Released(Release::HeldByOther),
+        "the second process-local loop still loses at the durable lease"
+    );
+    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
+
+    provider.released.store(true, Ordering::SeqCst);
+    let core::task::Poll::Ready(first_outcome) = first_drive.as_mut().poll(&mut context) else {
+        panic!("the released provider completes on its next poll");
+    };
+    assert!(matches!(first_outcome, Ok(Outcome::Progressed { .. })));
+    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
+}
+
+/// If another owner advances the fence, the timer branch cancels and drops the pending
+/// effect future immediately. The successor recovers the ambiguous dispatch as interrupted;
+/// it never calls the provider a second time.
+#[test]
+fn ownership_loss_stops_the_pending_effect_and_the_successor_never_redispatches_it() {
+    let mut harness = Harness::new(Vec::new());
+    harness.policy.renew_interval = core::time::Duration::from_secs(5);
+    let provider = Arc::new(GatedProvider::default());
+    let mut ports = harness.ports();
+    ports.provider = Arc::clone(&provider) as Arc<_>;
+    let first = WakeLoop::new(
+        Activation::new(
+            ports.clone(),
+            harness.policy.clone(),
+            Arc::new(ActivationRegistry::new()),
+            Arc::new(DrainGate::new()),
+        ),
+        Arc::new(AlwaysAdmit),
+    );
+    let second = WakeLoop::new(
+        Activation::new(
+            ports,
+            harness.policy.clone(),
+            Arc::new(ActivationRegistry::new()),
+            Arc::new(DrainGate::new()),
+        ),
+        Arc::new(AlwaysAdmit),
+    );
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .pop()
+        .expect("one delivery exists");
+    let mut first_drive = Box::pin(first.drive(delivery.clone()));
+    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+    assert!(first_drive.as_mut().poll(&mut context).is_pending());
+
+    let successor = harness.store.force_takeover(
+        key(),
+        OwnerToken(Uuid::from_u128(0xbeef)),
+        harness.policy.lease_ttl,
+    );
+    let core::task::Poll::Ready(lost) = first_drive.as_mut().poll(&mut context) else {
+        panic!("the next renewal observes the successor fence");
+    };
+    assert!(matches!(
+        lost,
+        Err(ActivationError::Claim(ClaimError::Fenced { current }))
+            if current == successor.fence
+    ));
+    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
+    block_on(
+        harness
+            .store
+            .release(successor, ReleaseDisposition::Committed),
+    )
+    .expect("the injected successor hands ownership to the real recovery loop");
+
+    provider.released.store(true, Ordering::SeqCst);
+    let recovered = block_on(second.drive(delivery)).expect("the successor recovers durably");
+    assert_eq!(
+        recovered,
+        Outcome::Progressed {
+            steps: 1,
+            stop: Stop::Finished(FinishReason::Interrupted),
+        }
+    );
+    assert_eq!(
+        provider.dispatches.load(Ordering::SeqCst),
+        1,
+        "an ambiguous provider dispatch is never repeated"
+    );
+}
+
 /// A stream projection is only a hint. The bounded due-shard pass must recover the same
 /// authoritative row when that hint never arrived, without fabricating an SQS receipt.
 #[test]
@@ -823,6 +1006,106 @@ fn a_lost_stream_hint_is_recovered_by_the_due_scan() {
     assert_eq!(harness.queue.durable_depth(), 0);
 }
 
+/// The queue receive is the primary path. If it fails, no due page has been fetched and no
+/// continuation can skip that page on the next pass.
+#[test]
+fn a_failed_sqs_receive_cannot_advance_past_a_recovered_due_page() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.policy.due_shards = 1;
+    harness.policy.due_scan_shards_per_pass = 1;
+    let mut wake = wake_for(key(), "wrk-receive-fault");
+    wake.due = Some(harness.clock.now());
+    harness.queue.persist(wake, WorkShard(0));
+    harness.queue.fail_next_receive(StoreError::Transport {
+        reason: "injected receive failure".to_owned(),
+        retryable: true,
+    });
+    let pump = WakeLoop::new(harness.activation(), Arc::new(AlwaysAdmit));
+
+    assert!(
+        block_on(pump.poll_once()).is_err(),
+        "the receive fails closed"
+    );
+    assert_eq!(
+        harness.log.count("due_scan"),
+        0,
+        "a page is not read until the primary receive has succeeded"
+    );
+    assert_eq!(harness.queue.durable_depth(), 1);
+
+    let recovered = block_on(pump.poll_once()).expect("the same due page remains recoverable");
+    assert_eq!(recovered.recovered, 1);
+    assert_eq!(recovered.driven, 1);
+    assert_eq!(harness.queue.durable_depth(), 0);
+}
+
+/// A due backstop burst never consumes the SQS receive batch. Ready queue work is driven
+/// first, then one bounded recovery page is admitted.
+#[test]
+fn a_ready_sqs_delivery_is_never_suppressed_by_the_due_backstop() {
+    let mut harness = Harness::new(vec![
+        ProviderScript::Produce(Box::new(produced())),
+        ProviderScript::Produce(Box::new(produced())),
+    ]);
+    harness.policy.due_shards = 1;
+    harness.policy.due_scan_shards_per_pass = 1;
+    harness.wake();
+
+    let recovered_key = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_20ff)));
+    harness.store.seed(recovered_key, history());
+    let mut recovered = wake_for(recovered_key, "wrk-due-beside-sqs");
+    recovered.id = WakeId(Uuid::from_u128(0xff));
+    recovered.due = Some(harness.clock.now());
+    harness.queue.persist(recovered, WorkShard(0));
+    let pump = WakeLoop::new(harness.activation(), Arc::new(AlwaysAdmit));
+
+    let report = block_on(pump.poll_once()).expect("both delivery paths make progress");
+    assert_eq!(report.received, 2);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.driven, 2);
+    assert!(
+        harness.log.first("receive") < harness.log.first("due_scan"),
+        "SQS is observed before the backstop"
+    );
+    assert_eq!(harness.provider.dispatched().len(), 2);
+}
+
+/// Sixteen rotating shards every twenty seconds is a measured bound, not a scan on every
+/// fast queue poll: all 64 shards are covered in four passes (80 seconds worst-case), while
+/// an immediate fifth poll performs no `DynamoDB` query.
+#[test]
+fn due_recovery_covers_sixty_four_shards_in_four_cadenced_bursts_without_hot_polling() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.policy.due_shards = 64;
+    harness.policy.due_scan_shards_per_pass = 16;
+    harness.policy.due_scan_page = 1;
+    harness.policy.due_scan_interval = core::time::Duration::from_secs(20);
+    let mut wake = wake_for(key(), "wrk-last-shard");
+    wake.due = Some(harness.clock.now());
+    harness.queue.persist(wake, WorkShard(63));
+    let pump = WakeLoop::new(harness.activation(), Arc::new(AlwaysAdmit));
+
+    for pass in 0..4 {
+        let report = block_on(pump.poll_once()).expect("the bounded burst succeeds");
+        assert_eq!(harness.log.count("due_scan"), (pass + 1) * 16);
+        if pass < 3 {
+            assert_eq!(report.recovered, 0, "shard 63 has not been reached yet");
+            harness.clock.advance(20_000);
+        } else {
+            assert_eq!(report.recovered, 1, "the fourth burst reaches shard 63");
+        }
+    }
+    assert_eq!(harness.provider.dispatched().len(), 1);
+
+    let immediate = block_on(pump.poll_once()).expect("an SQS poll still runs");
+    assert_eq!(immediate.recovered, 0);
+    assert_eq!(
+        harness.log.count("due_scan"),
+        64,
+        "no time elapsed, so the backstop does not poll again"
+    );
+}
+
 /// One malformed oldest row and nine permanently held rows fill the first page. The cursor
 /// must still advance so the younger eleventh row runs, then wrap only after the shard end.
 #[test]
@@ -830,6 +1113,8 @@ fn bad_and_held_oldest_rows_cannot_starve_younger_due_work() {
     let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
     harness.policy.due_shards = 1;
     harness.policy.receive_batch = 10;
+    harness.policy.due_scan_page = 10;
+    harness.policy.due_scan_interval = core::time::Duration::ZERO;
 
     let held = block_on(harness.store.claim(
         &key(),

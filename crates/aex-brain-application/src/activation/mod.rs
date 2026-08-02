@@ -96,6 +96,10 @@ impl core::fmt::Debug for Ports {
 pub struct ActivationPolicy {
     /// How long a claim is taken for.
     pub lease_ttl: core::time::Duration,
+    /// How often a live activation renews its claim.
+    pub renew_interval: core::time::Duration,
+    /// How far a progressing queue delivery is kept invisible on each renewal.
+    pub visibility_timeout: core::time::Duration,
     /// The bounds one journal page read runs under.
     pub read: ReadBudget,
     /// The context view policy.
@@ -124,6 +128,12 @@ pub struct ActivationPolicy {
     pub max_receives: u32,
     /// How many due shards the `regional-work` table is partitioned into.
     pub due_shards: u16,
+    /// Minimum time between bounded due-backstop bursts.
+    pub due_scan_interval: core::time::Duration,
+    /// How many rotating shards one due-backstop burst covers.
+    pub due_scan_shards_per_pass: u16,
+    /// The most due rows one shard contributes to one burst.
+    pub due_scan_page: usize,
     /// How many provider attempts one activation may make.
     ///
     /// Only a [`DispatchProof::NotSent`](aex_brain_domain::effect::DispatchProof::NotSent)
@@ -136,6 +146,8 @@ impl Default for ActivationPolicy {
     fn default() -> Self {
         Self {
             lease_ttl: core::time::Duration::from_secs(15),
+            renew_interval: core::time::Duration::from_secs(5),
+            visibility_timeout: core::time::Duration::from_secs(30),
             read: ReadBudget {
                 max_entries: 256,
                 max_bytes: 8 * 1_024 * 1_024,
@@ -153,6 +165,14 @@ impl Default for ActivationPolicy {
             // Must match the strict-v1 regional-work descriptor. The application keeps the
             // value explicit so a migration cannot silently change the sweep topology.
             due_shards: 64,
+            // SQS remains the primary path. The backstop runs a bounded 16-shard burst no
+            // more than once per long-poll window, recovering at most one exceptional
+            // lost-hint row from each shard. At the 20-second long poll this covers all 64
+            // shards in 80 seconds, costs at most 0.8 queries and 0.8 recovered rows per
+            // second per task, and cannot become hot polling while SQS stays ready.
+            due_scan_interval: core::time::Duration::from_secs(20),
+            due_scan_shards_per_pass: 16,
+            due_scan_page: 1,
             max_provider_attempts: 3,
         }
     }

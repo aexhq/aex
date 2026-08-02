@@ -154,6 +154,10 @@ impl ClockPort for SystemClock {
     fn steady(&self) -> SteadyInstant {
         SteadyInstant(u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX))
     }
+
+    fn sleep(&self, duration: core::time::Duration) -> BoxFuture<'_, ()> {
+        Box::pin(tokio::time::sleep(duration))
+    }
 }
 
 /// Identifier generation for a deployed task.
