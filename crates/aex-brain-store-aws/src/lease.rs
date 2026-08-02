@@ -119,7 +119,7 @@ impl LeaseStore for BrainStore {
                 .table_name(self.table())
                 .set_key(Some(item_key(&control_key.pk, &control_key.sk)))
                 .condition_expression(
-                    "attribute_exists(pk) AND attribute_not_exists(finishReason) \
+                    "attribute_exists(pk) \
                      AND (attribute_not_exists(leaseExpiresAt) OR leaseExpiresAt < :stealable \
                           OR claimOwner = :owner)",
                 )
@@ -159,9 +159,6 @@ impl LeaseStore for BrainStore {
                     reason: error.to_string(),
                 })
             })?;
-            if head.finish.is_some() {
-                return Err(ClaimError::Terminal);
-            }
             let authority = load_session_authority(self, key).await?;
             Ok(Claim {
                 key: *key,

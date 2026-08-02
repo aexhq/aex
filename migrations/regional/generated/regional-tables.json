@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:f68a1a246710b579b4340a7a1c81d8a24d58417343bae18c56a7ebc3360cda70",
+  "digest": "blake3:89c82f9e3bfeb2991d635494b7c0f21c45a6fe7f97d93e8e4b51d05d04968516",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1007,6 +1007,7 @@
               "kind",
               "state",
               "dueAt",
+              "priority",
               "attempt",
               "maxAttempts",
               "fence",
@@ -1103,6 +1104,16 @@
           ],
           "resources": [
             "table"
+          ]
+        },
+        {
+          "role": "brain-mux",
+          "actions": [
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table",
+            "index/*"
           ]
         },
         {

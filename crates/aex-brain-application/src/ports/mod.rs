@@ -49,7 +49,8 @@ pub use provider::{
 pub use store::{
     AgentHead, Claim, ClaimError, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
     DurableWake, EffectStore, JournalPage, JournalStore, LeaseStore, ReadBudget,
-    ReleaseDisposition, SessionAuthority, StoreError, WakeDelivery, WakeQueue,
+    ReleaseDisposition, SessionAuthority, StoreError, WakeDelivery, WakeOrigin, WakeQueue,
+    WakeState,
 };
 pub use tool::{
     ControlStateView, DetachedStatus, PreparedToolCall, ToolDispatchError, ToolOutcome, ToolPort,

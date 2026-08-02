@@ -139,16 +139,10 @@ pub fn claim_conditions(
 ) -> Vec<Condition> {
     let grace_millis = i64::try_from(steal_grace.as_millis()).unwrap_or(i64::MAX);
     let stealable_before = now.millis().saturating_sub(grace_millis);
-    let mut conditions = vec![
-        Condition::NotEquals {
-            attribute: "status",
-            value: "terminal".to_owned(),
-        },
-        Condition::LessThan {
-            attribute: "lease_expires_at",
-            value: stealable_before.to_string(),
-        },
-    ];
+    let mut conditions = vec![Condition::LessThan {
+        attribute: "lease_expires_at",
+        value: stealable_before.to_string(),
+    }];
     if let Some(owner) = self_owner {
         // Re-claiming your own agent does not need to wait out your own lease.
         conditions.push(Condition::Equals {
@@ -346,10 +340,22 @@ mod tests {
             attribute: "lease_expires_at",
             value: "95000".to_owned()
         }));
-        assert!(conditions.contains(&Condition::NotEquals {
-            attribute: "status",
-            value: "terminal".to_owned()
-        }));
+        assert!(
+            !conditions.iter().any(|condition| matches!(
+                condition,
+                Condition::Equals {
+                    attribute: "status",
+                    ..
+                } | Condition::NotEquals {
+                    attribute: "status",
+                    ..
+                } | Condition::LessThan {
+                    attribute: "status",
+                    ..
+                }
+            )),
+            "a terminal agent can still be fenced while its source wake retires"
+        );
     }
 
     #[test]

@@ -44,6 +44,7 @@ fn decision(appends: Vec<JournalRecord>, children: Vec<ChildWrite>) -> DecisionC
         children,
         joins: Vec::new(),
         wakes: Vec::new(),
+        retired_wake: None,
         events: Vec::new(),
         run: None,
         session: None,

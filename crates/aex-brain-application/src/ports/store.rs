@@ -239,8 +239,8 @@ pub enum ClaimError {
         /// The fence the agent actually carries.
         current: Fence,
     },
-    /// The agent is terminal; there is nothing to claim.
-    #[error("agent is terminal")]
+    /// The owning session is terminal and cannot mint decision authority.
+    #[error("session is terminal")]
     Terminal,
     /// The store failed.
     #[error(transparent)]
@@ -265,10 +265,44 @@ pub enum ReleaseDisposition {
 pub struct WakeDelivery {
     /// The durable wake.
     pub wake: DurableWake,
-    /// The transport's receipt handle, for acking and visibility changes.
-    pub receipt: String,
-    /// How many times this message has been received. Used by the poison policy.
-    pub receive_count: u32,
+    /// Whether this came from the queue projection or the durable due backstop.
+    pub origin: WakeOrigin,
+}
+
+impl WakeDelivery {
+    /// How many times the queue has delivered this hint.
+    ///
+    /// A due-scan recovery is not a queue delivery and therefore has no poison count.
+    #[must_use]
+    pub const fn receive_count(&self) -> Option<u32> {
+        match self.origin {
+            WakeOrigin::Queue { receive_count, .. } => Some(receive_count),
+            WakeOrigin::DueScan => None,
+        }
+    }
+}
+
+/// The transport provenance of one delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WakeOrigin {
+    /// An at-least-once queue projection carrying a real receipt handle.
+    Queue {
+        /// The receipt used for visibility and acknowledgement.
+        receipt: String,
+        /// The approximate queue receive count.
+        receive_count: u32,
+    },
+    /// A durable row recovered directly from one due-index shard.
+    DueScan,
+}
+
+/// The authoritative state of a delivered source wake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeState {
+    /// The row is still pending and may admit an activation.
+    Pending,
+    /// The row is done, poisoned, or already reclaimed by TTL.
+    Retired,
 }
 
 /// A durable wake item.
@@ -276,6 +310,8 @@ pub struct WakeDelivery {
 pub struct DurableWake {
     /// The wake identity.
     pub id: WakeId,
+    /// The canonical source identity in `regional-work`.
+    pub work_id: String,
     /// Which agent to wake.
     pub key: AgentKey,
     /// The key that collapses duplicates before admission.
@@ -298,6 +334,12 @@ pub trait WakeQueue: Send + Sync + 'static {
         max: usize,
         wait: core::time::Duration,
     ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>>;
+
+    /// Strongly verifies the source row and reports whether it remains outstanding.
+    ///
+    /// This is the fail-closed bridge from a delivery hint back to authority: the adapter
+    /// checks the exact work, workspace, session and agent before an activation may run.
+    fn state<'a>(&'a self, wake: &'a DurableWake) -> BoxFuture<'a, Result<WakeState, StoreError>>;
 
     /// Extends a delivery's visibility. Called only while a claim is live and progressing:
     /// extending visibility for work that is not progressing hides a stuck activation.
@@ -364,6 +406,9 @@ pub enum ConditionFailure {
     /// A child was not in the state the write required.
     #[error("child state moved")]
     ChildStateMismatch,
+    /// The delivered source wake was no longer the pending row this decision observed.
+    #[error("source wake state moved")]
+    WakeStateMoved,
     /// The identical decision already committed. The caller treats this as success.
     #[error("already committed")]
     IdempotentReplay(Box<CommitReceipt>),
