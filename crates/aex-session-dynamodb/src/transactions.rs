@@ -15,7 +15,7 @@ use aws_sdk_dynamodb::types::builders::{
     ConditionCheckBuilder, DeleteBuilder, PutBuilder, UpdateBuilder,
 };
 
-use crate::attr::{n, s, stamp};
+use crate::attr::{boolean, n, s, stamp};
 use crate::codec;
 use crate::error::StoreError;
 use crate::keys;
@@ -75,6 +75,62 @@ impl Foreign {
         }
         Ok(())
     }
+}
+
+/// Authority fields required to terminalize a running operation whose cancel
+/// request was observed by its next fenced worker step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationStepCancel {
+    /// Tenant bound into the authority-row condition.
+    pub workspace: aex_wire::ids::WorkspaceId,
+    /// Operation bound into the authority-row key and condition.
+    pub operation: aex_wire::ids::OperationId,
+    /// Exact optimistic version observed before the work claim.
+    pub version: u64,
+    /// Commit instant shared with the fenced work retirement.
+    pub now: aex_wire::types::Timestamp,
+}
+
+/// Builds the operation half of an atomic cancelled-step commit.
+///
+/// The work adapter supplies the other half. Keeping both updates in one
+/// [`TransactionPlan`] prevents a crash from leaving a cancelled operation
+/// runnable or a retired work row whose operation is still running.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] when the version cannot advance.
+pub fn operation_cancelled(
+    table: &str,
+    request: &OperationStepCancel,
+) -> Result<UpdateBuilder, StoreError> {
+    let next_version = request
+        .version
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "an operation version cannot advance past u64::MAX".to_owned(),
+        })?;
+    let operation_key = keys::operation(request.operation);
+    Ok(aws_sdk_dynamodb::types::Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&operation_key.pk, &operation_key.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND workspaceId = :workspaceId AND operationId = :operationId \
+             AND version = :version AND #status = :running AND cancelRequested = :true \
+             AND attribute_not_exists(committedAt)",
+        )
+        .update_expression(
+            "SET #status = :cancelled, version = :nextVersion, updatedAt = :now, terminalAt = :now",
+        )
+        .expression_attribute_names("#status", "status")
+        .expression_attribute_values(":workspaceId", s(request.workspace.to_string()))
+        .expression_attribute_values(":operationId", s(request.operation.to_string()))
+        .expression_attribute_values(":version", n(request.version))
+        .expression_attribute_values(":running", s("running"))
+        .expression_attribute_values(":true", boolean(true))
+        .expression_attribute_values(":cancelled", s("cancelled"))
+        .expression_attribute_values(":nextVersion", n(next_version))
+        .expression_attribute_values(":now", stamp(request.now)))
 }
 
 /// The foreign participants of the admission transaction.

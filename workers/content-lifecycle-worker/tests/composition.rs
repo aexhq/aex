@@ -41,7 +41,10 @@ fn base(mode: &str) -> BTreeMap<&'static str, String> {
 }
 
 fn expiry() -> BTreeMap<&'static str, String> {
-    base("expiry")
+    let mut vars = base("expiry");
+    vars.insert(config::EXPIRY_SCAN_SHARDS, "64".to_owned());
+    vars.insert(config::EXPIRY_PAGE_ITEMS, "25".to_owned());
+    vars
 }
 
 fn marksweep() -> BTreeMap<&'static str, String> {
@@ -151,6 +154,23 @@ fn marksweep_requires_its_page_bounds() {
     assert!(matches!(
         read(&vars),
         Err(ConfigError::Missing { name }) if name == config::MARK_PAGE_ITEMS
+    ));
+}
+
+#[test]
+fn expiry_requires_bounded_shards_and_pages() {
+    let mut vars = expiry();
+    vars.remove(config::EXPIRY_SCAN_SHARDS);
+    assert!(matches!(
+        read(&vars),
+        Err(ConfigError::Missing { name }) if name == config::EXPIRY_SCAN_SHARDS
+    ));
+
+    let mut vars = expiry();
+    vars.insert(config::EXPIRY_PAGE_ITEMS, "101".to_owned());
+    assert!(matches!(
+        read(&vars),
+        Err(ConfigError::Invalid { name, .. }) if name == config::EXPIRY_PAGE_ITEMS
     ));
 }
 

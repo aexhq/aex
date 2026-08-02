@@ -15,7 +15,9 @@
     { "name": "pk", "type": "S" },
     { "name": "sk", "type": "S" },
     { "name": "gcScanPk", "type": "S" },
-    { "name": "gcScanSk", "type": "S" }
+    { "name": "gcScanSk", "type": "S" },
+    { "name": "expiryShardPk", "type": "S" },
+    { "name": "expiryShardSk", "type": "S" }
   ],
   "keySchema": { "partition": "pk", "sort": "sk" },
   "globalSecondaryIndexes": [
@@ -40,6 +42,18 @@
           "notBefore",
           "state"
         ]
+      }
+    },
+    {
+      "name": "gsi_expiry",
+      "partition": "expiryShardPk",
+      "sort": "expiryShardSk",
+      "sparse": true,
+      "projectsRecordBody": false,
+      "rationale": "Download grants are spread over sixty-four due partitions. The expiry worker queries bounded due pages and atomically removes each expired grant with its known pin; it never scans the authority or trusts TTL timing.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": ["workspaceId", "contentDigest", "expiresAt"]
       }
     }
   ],

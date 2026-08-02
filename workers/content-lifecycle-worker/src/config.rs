@@ -39,6 +39,10 @@ pub const DENIAL_PROJECTION_TABLE: &str = "AEX_DENIAL_PROJECTION_TABLE";
 pub const GC_STAGE_GRACE_HOURS: &str = "AEX_GC_STAGE_GRACE_HOURS";
 /// Pending-upload grace in hours.
 pub const UPLOAD_GRACE_HOURS: &str = "AEX_UPLOAD_GRACE_HOURS";
+/// Number of sharded download-grant due partitions read per expiry tick.
+pub const EXPIRY_SCAN_SHARDS: &str = "AEX_EXPIRY_SCAN_SHARDS";
+/// Maximum expired grants read from each shard per expiry tick.
+pub const EXPIRY_PAGE_ITEMS: &str = "AEX_EXPIRY_PAGE_ITEMS";
 /// Mark-phase page size.
 pub const MARK_PAGE_ITEMS: &str = "AEX_MARK_PAGE_ITEMS";
 /// Sweep-phase page size.
@@ -162,6 +166,10 @@ pub struct Config {
     pub gc_stage_grace_hours: u64,
     /// Pending-upload grace in hours.
     pub upload_grace_hours: u64,
+    /// Due partitions read per scheduled invocation, in `expiry` mode.
+    pub expiry_scan_shards: Option<u16>,
+    /// Maximum grants read from each due partition, in `expiry` mode.
+    pub expiry_page_items: Option<u32>,
     /// Mark-phase page size, in `marksweep` mode.
     pub mark_page_items: Option<u64>,
     /// Sweep-phase page size, in `marksweep` mode.
@@ -191,6 +199,11 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
+    ///
+    /// # Panics
+    ///
+    /// Never: the numeric conversions follow stricter admitted bounds than
+    /// their destination integer types.
     #[allow(clippy::too_many_lines, reason = "one arm per mode-specific variable")]
     pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
         for (name, reason) in FORBIDDEN {
@@ -258,6 +271,20 @@ impl Config {
         } else {
             None
         };
+        let (expiry_scan_shards, expiry_page_items) = if mode == Mode::Expiry {
+            (
+                Some(
+                    u16::try_from(bounded_u64(lookup, EXPIRY_SCAN_SHARDS, 1, 64)?)
+                        .expect("the admitted bound fits u16"),
+                ),
+                Some(
+                    u32::try_from(bounded_u64(lookup, EXPIRY_PAGE_ITEMS, 1, 100)?)
+                        .expect("the admitted bound fits u32"),
+                ),
+            )
+        } else {
+            (None, None)
+        };
 
         Ok(Self {
             mode,
@@ -272,6 +299,8 @@ impl Config {
             denial_projection_table: required(lookup, DENIAL_PROJECTION_TABLE)?,
             gc_stage_grace_hours: bounded_u64(lookup, GC_STAGE_GRACE_HOURS, 1, 720)?,
             upload_grace_hours: bounded_u64(lookup, UPLOAD_GRACE_HOURS, 1, 720)?,
+            expiry_scan_shards,
+            expiry_page_items,
             mark_page_items,
             sweep_page_items,
             content_queue_url,

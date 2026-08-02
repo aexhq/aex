@@ -20,12 +20,14 @@ use aex_control_app::ports::{
     ProvisionWorkspaceRequest, ProvisionWorkspaceResponse, RegionalControlPort, RevokeApiKeyTx,
     StoreError, TxOutcome, UnknownCommit,
 };
-use aex_control_app::use_cases::{CancelOperation, ControlError, CreateWorkspace, ceremony};
+use aex_control_app::use_cases::{
+    CancelOperation, ControlError, CreateApiKey, CreateWorkspace, ceremony,
+};
 use aex_control_domain::{
     ActorKind, ApiKey, AuditEvent, AuditOutcome, Fence, IdempotencyKeyKind, IntentHash, Invitation,
     Membership, Operation, OperationKind, OperationStatus, Organization, OrganizationStatus,
-    OutboxMessage, PrincipalKindTag, ResourceKind, Revision, ScopeKind, ScopeSet, Slug, Topic,
-    Workspace, WorkspaceStatus,
+    OutboxMessage, PrincipalKindTag, ResourceKind, Revision, Scope, ScopeKind, ScopeSet, Slug,
+    Topic, Workspace, WorkspaceStatus,
 };
 use aex_identity_app::ports::ReconcileIdentity;
 use aex_wire::types::{HttpMethod, Region};
@@ -106,6 +108,40 @@ fn begin() -> BeginWorkspaceProvisionTx {
     }
 }
 
+fn api_key() -> ApiKey {
+    ApiKey {
+        id: Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0081),
+        workspace_id: Uuid::from_u128(WORKSPACE),
+        organization_id: Uuid::from_u128(ORGANIZATION),
+        name: "ci".to_owned(),
+        scopes: ScopeSet::of(&[Scope::SessionsRead]),
+        region: Region::EuWest1,
+        pepper_version: 1,
+        created_at: at(),
+        revoked_at: None,
+        revision: Revision::INITIAL,
+        created_by_user_id: Uuid::from_u128(0x51),
+    }
+}
+
+fn create_api_key() -> CreateApiKeyTx {
+    let key = api_key();
+    CreateApiKeyTx {
+        preassigned_id: key.id,
+        workspace_id: key.workspace_id,
+        organization_id: key.organization_id,
+        name: key.name,
+        scopes: key.scopes,
+        region: key.region,
+        verifier: [9; 32],
+        pepper_version: 1,
+        created_by_user_id: key.created_by_user_id,
+        idempotency: idempotency(),
+        audit: audit(),
+        now: at(),
+    }
+}
+
 fn provisioning_workspace() -> Workspace {
     Workspace {
         id: Uuid::from_u128(WORKSPACE),
@@ -155,6 +191,7 @@ struct Script {
     begin: Option<TxOutcome<(Workspace, Operation)>>,
     finish: Option<Result<TxOutcome<Workspace>, StoreError>>,
     operation: Option<Operation>,
+    key: Option<TxOutcome<ApiKey>>,
     calls: Vec<&'static str>,
 }
 
@@ -171,6 +208,7 @@ impl Store {
                 ..provisioning_workspace()
             }))),
             operation: None,
+            key: None,
             calls: Vec::new(),
         }))
     }
@@ -181,6 +219,10 @@ impl Store {
 
     fn with_operation(&self, operation: Operation) {
         self.0.lock().expect("script").operation = Some(operation);
+    }
+
+    fn key_answer(&self, answer: TxOutcome<ApiKey>) {
+        self.0.lock().expect("script").key = Some(answer);
     }
 
     fn calls(&self) -> Vec<&'static str> {
@@ -303,7 +345,14 @@ impl ControlStore for Store {
         &self,
         _command: &CreateApiKeyTx,
     ) -> Result<TxOutcome<ApiKey>, StoreError> {
-        unreachable!("{UNDRIVEN}")
+        self.record("create_api_key");
+        Ok(self
+            .0
+            .lock()
+            .expect("script")
+            .key
+            .clone()
+            .expect("a key answer was programmed"))
     }
 
     async fn get_api_key(&self, _id: Uuid) -> Result<Option<ApiKey>, StoreError> {
@@ -575,6 +624,31 @@ fn the_workspace_id_is_preassigned_so_a_retry_reconciles_rather_than_recreates()
         first.idempotency.intent_hash,
         second.idempotency.intent_hash
     );
+}
+
+#[tokio::test]
+async fn an_api_key_replay_is_metadata_only_and_is_never_mistaken_for_a_second_secret() {
+    let store = Store::new(TxOutcome::Unknown(UnknownCommit {
+        identity: ReconcileIdentity {
+            ceremony: ceremony::BEGIN_WORKSPACE_PROVISION,
+            id: Uuid::from_u128(WORKSPACE),
+        },
+    }));
+    store.key_answer(TxOutcome::Committed(api_key()));
+    let first = CreateApiKey::run(&store, &create_api_key())
+        .await
+        .expect("first mint");
+    assert!(first.first);
+
+    store.key_answer(TxOutcome::Replayed(api_key()));
+    let replay = CreateApiKey::run(&store, &create_api_key())
+        .await
+        .expect("metadata replay");
+    assert!(
+        !replay.first,
+        "the edge must return api_key_secret_unavailable"
+    );
+    assert_eq!(replay.key, first.key);
 }
 
 // --- cancellation ------------------------------------------------------------

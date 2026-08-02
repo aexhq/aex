@@ -44,6 +44,11 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                             | ("usage-storage-authority", "usage-storage-worker")
                             | ("usage-compute-authority", "usage-compute-worker")
                             | ("usage-transfer-authority", "usage-transfer-worker")
+                            // Runtime control deletes exactly one immutable
+                            // USAGE# outbox row after the category ingress has
+                            // accepted that draft. Generation heads, intents,
+                            // receipts, pointers and probes are not deletable.
+                            | ("runtime-activity", "runtime-control-worker")
                             // The reconciler deletes exactly two shapes: an idle
                             // series claim, released against its cardinality
                             // counter in one transaction, and OBS# revisions

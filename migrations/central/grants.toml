@@ -80,13 +80,21 @@ revoke_public = true
 name = "control.bump_key_epoch(uuid)"
 revoke_public = true
 
-# Published to the finance stream for the same-transaction bump on every account
-# pause and resume. No finance deployable calls it yet, so it is granted to
-# nobody; the day one does, the role goes in that role's `functions` list and
-# this comment goes away.
+# Called only by finance's state-change trigger for the same-transaction bump on
+# every account pause and resume. No application role can invoke it directly.
 [[function]]
 name = "control.bump_account_epoch(uuid)"
 revoke_public = true
+
+[[function]]
+name = "finance.prepare_billing_account_state_change()"
+revoke_public = true
+never_granted = true
+
+[[function]]
+name = "finance.enqueue_billing_account_state_change()"
+revoke_public = true
+never_granted = true
 
 [[function]]
 name = "finance.ensure_account(uuid)"
@@ -171,7 +179,7 @@ functions = [
 [[role]]
 name = "aex_control_worker"
 connect = true
-schemas = ["control", "identity"]
+schemas = ["control", "identity", "finance"]
 tables = [
   "control.workspace:SELECT,UPDATE",
   "control.durable_operation:SELECT,UPDATE",
@@ -186,6 +194,7 @@ tables = [
   "control.organization:SELECT",
   "control.membership:SELECT",
   "identity.user:SELECT",
+  "finance.account_state_v1:SELECT",
 ]
 functions = [
   "control.bump_key_epoch(uuid)",

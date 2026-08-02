@@ -8,7 +8,7 @@ keywords:
   - handoff
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-02
 related:
   - references/rewrite/test-architecture.md
   - references/rewrite/contracts.md
@@ -19,6 +19,14 @@ related:
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/05-regional-stores.md` in the parent workspace.
 
 Branch `rw/regional-stores`. Nothing is deployed, published or credentialed.
+
+Continuation `eccbba5d` binds the runtime adapter to the canonical
+`aex_runtime_control::store::RuntimeActivityStore` port. Its final lifecycle
+settlement is now one transaction over the durable intent, immutable receipt,
+final head/accounting state and bounded usage outbox. The outbox reuses the
+sparse runtime due index so terminal generations remain retryable until every
+canonical usage draft is accepted. This supersedes the older runtime-port gap in
+§11; the other six adapter/domain ownership gaps remain unchanged.
 
 ## 1. Implemented
 
@@ -35,7 +43,7 @@ bundle Terraform consumes through `jsondecode`:
 | `migrations/regional/tables/regional-registry.json` | current `(workspace, kind, name)` pointer, upload staging, receipts |
 | `migrations/regional/tables/regional-secret-custody.json` | secret metadata, hidden source generations, session custody, revocation epoch |
 | `migrations/regional/tables/regional-secret-keystore.json` | the provider-mandated hierarchical branch-key schema |
-| `migrations/regional/tables/runtime-activity.json` | Hands generation head, lifecycle intents and receipts, idle probes, due index |
+| `migrations/regional/tables/runtime-activity.json` | Hands generation head, lifecycle intents and receipts, transactional usage outbox, idle probes, due index |
 | `migrations/regional/tables/regional-authz-projection.json` | read-only workspace placement, key revocation, signed feed frontier |
 
 `schema.json` enforces the properties that would otherwise be review
@@ -328,13 +336,19 @@ each with a case pinning it:
 
 ## 10. Published interfaces
 
-- **`aex_content_dynamodb`** — `keys` (every `regional-content` template, `GC_PROJECTION`, `GC_BUCKETS`), `codec` (descriptor, inline body, pin, grant, root, tree page, GC epoch, GC candidate), `expressions` (`SWEEP_ORDER`, `sweep`, `mint_grant`, the epoch state machine, pin/unpin), `store::{ContentMetadataStore, ContentStore, Reachability, GcScanPage}`.
+- **`aex_content_dynamodb`** — `keys` (every `regional-content` template,
+  `GC_PROJECTION`, `GC_BUCKETS`, and the 64-shard `EXPIRY_*` due-index
+  vocabulary), `codec` (descriptor, inline body, pin, grant, root, tree page,
+  GC epoch, GC candidate), `expressions` (`SWEEP_ORDER`, `sweep`, `mint_grant`,
+  atomic idempotent `expire_grant`, the epoch state machine, pin/unpin),
+  `store::{ContentMetadataStore, ContentStore, Reachability, GcScanPage,
+  GrantExpiryPage}`.
 - **`aex_content_aws`** — `ObjectKey`, `PRESIGN_EXPIRY`, `MAX_SIGNATURE_AGE_MILLIS`, `RedactedUrl`, `BucketBinding`, `ContentObjectStore`, `S3ContentObjects`, `CompletionManifest`, `ContentObjectError`, and `policy::REQUIRED_DENIES` — the bucket-policy `Deny` statements this adapter depends on, as data the infrastructure stream can consume instead of re-deriving.
 - **`aex_registry_dynamodb`** — `keys`, `codec` (built on `aex_workspace_domain::registry`/`upload`), `expressions` (pointer create/replace/delete, the upload transitions, completion begin/finish, consume), `store::{RegistryStore, RegistryDynamoStore, PointerPage}`.
 - **`aex_secret_custody_dynamodb`** — `keys` (including `redaction_manifest` and `provider_credential`), `codec::{SecretMetadata, StoredGeneration, CustodyHead, CallAuthorization, RedactionManifest, ProviderCredential}`, `expressions::{set, revoke, admit_custody, authorize_managed_call, SET_ORDER, AUTHORIZE_ORDER}`, `store::{SecretCustodyStore, CustodyStore}`.
 - **`aex_secret_aws`** — `context::{kms_pairs, aad_bytes, context_digest, name_digest}`, `envelope::{seal, open, header, BranchKeyMaterial, Entropy}`, `keystore::{BranchKeyProvider, KmsBranchKeys, BranchKeyCache}`, `crypto::{SecretCrypto, EnvelopeCrypto, SealedSecret, IMPLEMENTATION}`.
 - **`aex_secret_keystore_dynamodb`** — `branch_key` (the provider record and its vocabulary), `store::{KeyStoreBinding, BranchKeyStoreReader, KeyStoreReader, ActiveBranchKey}`. `KeyStoreBinding` is what `regional-secret-key-admin` and `aex-secret-aws` both take.
-- **`aex_runtime_activity_dynamodb`** — `keys` (templates, `DUE_PROJECTION`, `DUE_SHARDS`, the state spellings), `codec`, `expressions::{create_generation, transition, reschedule, record_intent, settle_intent, record_probe, point_current}`, `store::{RuntimeActivityStore, RuntimeActivityDynamoStore, DueGeneration}`.
+- **`aex_runtime_activity_dynamodb`** — `keys` (templates including `USAGE#`, `DUE_PROJECTION`, `DUE_SHARDS`, the state spellings), `codec`, `expressions::{create_generation, transition, reschedule, record_intent, settle_intent, record_probe, point_current}`, and the canonical `aex_runtime_control::store::RuntimeActivityStore` implementation on `RuntimeActivityDynamoStore`.
 
 ## 11. Changes needed from peers
 
@@ -343,7 +357,7 @@ each with a case pinning it:
 | **`aex_work_dynamodb::store::scan_due` binds the typed row reader to a `gsi_due` row.** An `INCLUDE` projection carries the key attributes and the declared list and nothing else — not `itemType` — so `Row::bind` fails on every row and the reconciler returns `Corrupt` instead of a due page. `aex-runtime-activity-dynamodb` hit exactly this against `DynamoDB` Local and now decodes the projection directly; the same fix applies there. I did not edit the crate. | regional stores (first wave) |
 | **`TransactionPlan` tokens can exceed the provider's 36-character `ClientRequestToken` ceiling.** `aex_session_dynamodb::transactions` builds tokens like `format!("terminal:{run}")`, which is 39 characters for a 30-character `RunId`. My crates hash instead (`token(tag, parts)` → `tag-` plus 32 hex). Unverified against a live service — `DynamoDB` Local accepts the long form — but the AWS API reference pins the field at 1–36. | regional stores (first wave) |
 | **`aex_secret_domain::EncryptionContext::canonical_pairs` carries `aex:name` in the clear.** That is right for an in-process identity and wrong for KMS: an encryption context is authenticated *and* recorded in `CloudTrail`, and a customer-chosen secret name has no business in an audit log the customer cannot redact (D-17). `aex_secret_aws::context::kms_pairs` therefore substitutes `aex:name-digest` on the way out, salted with the workspace. The domain should either adopt the substitution or state that its context is never sent to a provider verbatim. | regional domains |
-| **Corrected 2026-08-01.** The seven adapters define their own port traits marked `TODO(cross-stream)`, and there is **no peer trait to re-point them at**. `aex-content-domain`, `aex-workspace-domain` and `aex-secret-domain` publish no traits at all — they are pure decision crates — so `ContentMetadataStore`, `ContentObjectStore`, `RegistryStore`, `SecretCustodyStore` and `SecretCrypto` have no owner yet. `aex-runtime-control` does publish `store::RuntimeActivityStore`, but it is a different trait: boxed `store::StoreFuture` rather than `async_trait`, `RuntimeStoreError` rather than the adapter's `StoreError`, and plan-shaped methods. Someone must decide where the regional store ports live before any of the seven can move. | regional domains, runtime control |
+| **Updated 2026-08-02.** The runtime exception is resolved: `RuntimeActivityDynamoStore` implements the canonical boxed-future, plan-shaped `aex_runtime_control::store::RuntimeActivityStore` directly. The other six adapters still define local ports because `aex-content-domain`, `aex-workspace-domain` and `aex-secret-domain` publish no owning traits; those ownership decisions remain. | regional domains |
 | **Corrected 2026-08-01.** `aex-content-dynamodb` still carries `wire_pending::{Blake3Digest, SealedBytes, PinOwner, GrantPlan, GcSweepPlan}`, and the swap is **not** mechanical. `aex_content_domain` splits one digest into two (`digest::ContentDigest` is SHA-256, `digest::PageDigest` is the `BLAKE3` Merkle page), holds no ciphertext at all (only `descriptor::CiphertextIdentity`), models pin ownership as `pin::PinSubject` reached through a `pin::OwnerEdge`, and publishes a sweep *decision* (`gc::SweepDecision`) rather than a plan. `GrantPlan` is not content-domain's concept at all: the grant is `aex_workspace_domain::grant::DownloadGrant`. | regional stores + regional domains |
 | The content bucket policy must carry the three `Deny` statements in `aex_content_aws::policy::REQUIRED_DENIES` verbatim, including `s3:signatureAge > 300000`. The adapter signs for exactly 300 seconds and a case pins the two values together. | infrastructure |
 | The content and secret CMK policies still owe the `StringEquals` conditions on `kms:EncryptionContext:aex:workspace` and `aex:domain` (OD-18). `aex-secret-aws` sends the context on every `Decrypt` and `aex-content-aws` sends it on every SSE-KMS write; neither can enforce the condition. | infrastructure |
@@ -453,6 +467,30 @@ both index keys, and point projection also returns no public value.
 Approval reads additionally verify that the decoded `sessionId` agrees with the
 partition queried. A corrupt row cannot be projected under a different session
 path even inside the same workspace.
+
+The session-operation continuation now has a narrow `OperationStore`: exact
+operation point reads are strongly consistent and tenant-checked, and its
+write capability accepts only a precomposed conditional `TransactionPlan` so
+transport ambiguity can be resolved from target rows. The operation half of a
+cancelled worker step is an adapter-owned expression over the exact workspace,
+operation id, version, running status, accepted cancel request, and absent
+commit latch. The worker combines it with `aex_work_dynamodb::claim::complete`
+as one transaction; neither adapter issues an unconditional authority write.
+
+`aex-work-dynamodb::DueEntry` also decodes the projected `workspaceId`. The
+source regional-work manifest already includes that attribute in the due GSI,
+so the scheduled worker can tenant-bind its strong base-row reload without a
+generated table-bundle edit.
+
+The previously encoded `work_cursor` is now a complete adapter path rather than
+an unused row shape. Cursor reads are strong, resumed due queries reconstruct
+all four keys required by a DynamoDB GSI `ExclusiveStartKey`, the decoded index
+sort key is checked against `dueAt` plus priority, and conditional cursor loss
+is named as `work.cursor`. `DuePage.scanned_through` is the actual last effective
+due instant rather than the query clock. The inclusive upper bound ends in the
+maximum Unicode scalar; the inherited bare `timestamp#` spelling sorted before
+every `timestamp#{workId}` and therefore excluded work due at exactly the scan
+instant.
 
 The authorization projection now exposes a separate `WorkspaceProjection`
 port. `workspace_profile` (`PROFILE`) and durable effective-limit

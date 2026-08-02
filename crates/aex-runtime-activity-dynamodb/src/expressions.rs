@@ -219,7 +219,7 @@ pub fn probe_ttl(observed_at: Timestamp) -> aws_sdk_dynamodb::types::AttributeVa
 mod tests {
     use aex_hands_protocol::rpc::Fence;
     use aex_runtime_control::generation::{GenerationState, Revision};
-    use aex_wire::ids::{GenerationId, PrefixedId, SessionId, Uuid7};
+    use aex_wire::ids::{GenerationId, OrganizationId, PrefixedId, SessionId, Uuid7};
     use aex_wire::types::Timestamp;
 
     use super::{reschedule, transition};
@@ -243,6 +243,7 @@ mod tests {
         GenerationRow {
             session: session(),
             workspace: aex_wire::ids::WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
             generation: generation(),
             size: aex_wire::types::ComputeSize::ALL[0],
             state,
@@ -255,6 +256,16 @@ mod tests {
             idle_since: None,
             keepalive_lease_until: None,
             provider_lifetime_expires_at: None,
+            microvm: None,
+            lifetime: None,
+            accounted_from: now(),
+            open_intent: None,
+            suspended_at: None,
+            snapshot_ordinal: 0,
+            snapshot_bytes: 445_000_000,
+            suspend_lock_expires_at: None,
+            keepalive_lease: None,
+            transport_mode: None,
             next_evaluate_at: now(),
             updated_at: now(),
         }

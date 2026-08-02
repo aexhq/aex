@@ -11,8 +11,11 @@
 {"class":"not_found","code":"not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
 {"class":"not_found","code":"gone","precedenceStage":"tombstone_and_parent","retryable":false,"status":410}
 {"class":"conflict","code":"idempotency_conflict","precedenceStage":"idempotency_identity","retryable":false,"status":409}
+{"class":"conflict","code":"idempotency_in_flight","precedenceStage":"idempotency_identity","retryable":true,"status":409}
+{"class":"conflict","code":"api_key_secret_unavailable","precedenceStage":"idempotency_identity","retryable":false,"status":409}
 {"class":"conflict","code":"operation_idempotency_conflict","precedenceStage":"operation_identity","retryable":false,"status":409}
 {"class":"validation","code":"invalid_request","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
+{"class":"validation","code":"invalid_scope","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"invalid_cursor","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"invalid_file_selection","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"invalid_range","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
@@ -24,6 +27,8 @@
 {"class":"state","code":"session_deleting","precedenceStage":"tombstone_and_parent","retryable":false,"status":409}
 {"class":"not_found","code":"session_deleted","precedenceStage":"tombstone_and_parent","retryable":false,"status":410}
 {"class":"conflict","code":"deletion_in_progress","precedenceStage":"tombstone_and_parent","retryable":false,"status":409}
+{"class":"conflict","code":"resource_conflict","precedenceStage":"domain_state","retryable":false,"status":409}
+{"class":"state","code":"last_owner_required","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"state","code":"operation_not_cancelable","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"not_found","code":"approval_not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
 {"class":"conflict","code":"approval_already_resolved","precedenceStage":"domain_state","retryable":false,"status":409}
@@ -62,4 +67,6 @@
 {"class":"unavailable","code":"observability_unavailable","precedenceStage":"domain_state","retryable":true,"status":503}
 {"class":"quota","code":"rate_limited","precedenceStage":"domain_state","retryable":true,"status":429}
 {"class":"unavailable","code":"upstream_error","precedenceStage":"commit","retryable":true,"status":502}
+{"class":"unavailable","code":"workspace_provision_pending","precedenceStage":"commit","retryable":true,"status":503}
+{"class":"unavailable","code":"commit_outcome_unknown","precedenceStage":"commit","retryable":true,"status":503}
 {"class":"internal","code":"internal_error","precedenceStage":"commit","retryable":false,"status":500}

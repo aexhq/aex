@@ -28,7 +28,8 @@ use aex_observation_store_aws::spool::GateState;
 use aex_observation_store_aws::store::{AdmissionPlan, StagedRecord, StoreError, pack_pages};
 use aex_otlp_admission::NormalizedObservation;
 use aex_wire::ids::{
-    ObservationId, OrganizationId, PrefixedId as _, TelemetryBatchId, WorkspaceId,
+    ObservationId, OrganizationId, PrefixedId as _, TelemetryBatchId, TelemetryGapId, Uuid7,
+    WorkspaceId,
 };
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update, WriteRequest};
@@ -1030,8 +1031,6 @@ fn spool_item(
     allocations: &[Allocation],
     now: Timestamp,
 ) -> HashMap<String, AttributeValue> {
-    let lo = allocations.iter().map(|entry| entry.lo).min().unwrap_or(0);
-    let hi = allocations.iter().map(|entry| entry.hi).max().unwrap_or(0);
     let shard = spool_shard(&request.batch_id.to_string());
     let mut item = HashMap::new();
     item.insert(
@@ -1055,14 +1054,34 @@ fn spool_item(
         AttributeValue::S(request.scope.to_key()),
     );
     item.insert(
-        "acceptedSeqLo".to_owned(),
-        AttributeValue::N(lo.to_string()),
-    );
-    item.insert(
-        "acceptedSeqHi".to_owned(),
-        AttributeValue::N(hi.to_string()),
+        "workspaceId".to_owned(),
+        AttributeValue::S(request.workspace.to_string()),
     );
     item.insert("acceptedAt".to_owned(), AttributeValue::S(now.to_wire()));
+    item.insert(
+        "attemptedRecords".to_owned(),
+        AttributeValue::N(request.observations.len().to_string()),
+    );
+    item.insert(
+        "attemptedBytes".to_owned(),
+        AttributeValue::N(
+            request
+                .observations
+                .iter()
+                .map(|observation| observation.canonical.len() as u64)
+                .sum::<u64>()
+                .to_string(),
+        ),
+    );
+    item.insert(
+        "lossCandidates".to_owned(),
+        AttributeValue::L(
+            allocations
+                .iter()
+                .map(|allocation| loss_candidate(request, allocation))
+                .collect(),
+        ),
+    );
     item.insert(
         "pending".to_owned(),
         AttributeValue::Ss(vec![
@@ -1084,6 +1103,78 @@ fn spool_item(
         AttributeValue::S(keys::control_sk(now, &request.batch_id.to_string())),
     );
     item
+}
+
+/// One source-stable exact per-signal loss candidate retained by the spool.
+fn loss_candidate(request: &AdmissionRequest, allocation: &Allocation) -> AttributeValue {
+    let observations: Vec<&PreparedObservation> = request
+        .observations
+        .iter()
+        .filter(|observation| observation.signal == allocation.signal)
+        .collect();
+    let mut candidate = HashMap::from([
+        (
+            "gapId".to_owned(),
+            AttributeValue::S(gap_id_for(request.batch_id, allocation.signal).to_string()),
+        ),
+        (
+            "signal".to_owned(),
+            AttributeValue::S(allocation.signal.as_str().to_owned()),
+        ),
+        (
+            "acceptedSeqLo".to_owned(),
+            AttributeValue::N(allocation.lo.to_string()),
+        ),
+        (
+            "acceptedSeqHiExclusive".to_owned(),
+            AttributeValue::N(allocation.hi.to_string()),
+        ),
+        (
+            "attemptedRecords".to_owned(),
+            AttributeValue::N(observations.len().to_string()),
+        ),
+        (
+            "attemptedBytes".to_owned(),
+            AttributeValue::N(
+                observations
+                    .iter()
+                    .map(|observation| observation.canonical.len() as u64)
+                    .sum::<u64>()
+                    .to_string(),
+            ),
+        ),
+    ]);
+    if let Some(range) = observed_window(&observations) {
+        candidate.insert("timeRange".to_owned(), AttributeValue::M(range));
+    }
+    AttributeValue::M(candidate)
+}
+
+/// Exact non-empty half-open window covering every point of one signal.
+fn observed_window(
+    observations: &[&PreparedObservation],
+) -> Option<HashMap<String, AttributeValue>> {
+    let lo = observations
+        .iter()
+        .map(|observation| observation.time)
+        .min()?;
+    let max = observations
+        .iter()
+        .map(|observation| observation.time)
+        .max()?;
+    let hi = Timestamp::from_unix_millis(max.unix_millis().checked_add(1)?).ok()?;
+    Some(HashMap::from([
+        ("gte".to_owned(), AttributeValue::S(lo.to_wire())),
+        ("lt".to_owned(), AttributeValue::S(hi.to_wire())),
+    ]))
+}
+
+/// Derives one UUIDv7 gap id from the immutable batch id and concrete signal.
+fn gap_id_for(batch: TelemetryBatchId, signal: Signal) -> TelemetryGapId {
+    let mut bytes = *batch.uuid7().as_bytes();
+    bytes[15] ^= signal.rank().saturating_add(1);
+    let derived = Uuid7::from_bytes(bytes).unwrap_or_else(|_| batch.uuid7());
+    TelemetryGapId::from_uuid7(derived)
 }
 
 /// The storage usage fact the reconciler delivers.
@@ -1613,8 +1704,8 @@ impl StoredReceipt {
 mod tests {
     use super::{
         AdmissionRequest, Allocation, AuthorityError, BODY_PREFIX, BUCKET_SHARDS,
-        MATERIALIZE_CHUNK, PreparedObservation, decode_allocations, encode_allocations,
-        spool_shard, stable_observation_id,
+        MATERIALIZE_CHUNK, PreparedObservation, decode_allocations, encode_allocations, gap_id_for,
+        spool_item, spool_shard, stable_observation_id,
     };
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::keys::ScopeKey;
@@ -1623,6 +1714,20 @@ mod tests {
     use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
     use aws_sdk_dynamodb::types::AttributeValue;
+
+    fn observation(signal: Signal, time: i64, bytes: usize) -> PreparedObservation {
+        PreparedObservation {
+            signal,
+            time: Timestamp::from_unix_millis(time).expect("fixture instant"),
+            canonical: vec![0; bytes],
+            body: CanonicalValue::Null,
+            attr_digest: "0".repeat(64),
+            trace_id: None,
+            span_id: None,
+            metric_name: None,
+            series_hash: None,
+        }
+    }
 
     #[test]
     fn a_provider_failure_and_a_closed_gate_are_both_retryable() {
@@ -1660,6 +1765,91 @@ mod tests {
             assert!(shard < 16, "{batch} landed on shard {shard}");
             assert_eq!(shard, spool_shard(batch), "the shard must be stable");
         }
+    }
+
+    #[test]
+    fn loss_gap_ids_are_stable_and_distinct_per_signal() {
+        let batch = TelemetryBatchId::parse("bch_0000000001e40r2081040g2081").expect("batch");
+        let logs = gap_id_for(batch, Signal::Logs);
+        assert_eq!(logs, gap_id_for(batch, Signal::Logs));
+        assert_ne!(logs, gap_id_for(batch, Signal::Metrics));
+    }
+
+    #[test]
+    fn the_spool_retains_exact_per_signal_loss_evidence() {
+        let workspace =
+            WorkspaceId::parse("wsp_0000000001e40r2081040g2081").expect("workspace fixture");
+        let request = AdmissionRequest {
+            batch_id: TelemetryBatchId::parse("bch_0000000001e40r2081040g2081")
+                .expect("batch fixture"),
+            organization: OrganizationId::parse("org_0000000001e40r2081040g2081")
+                .expect("organization fixture"),
+            workspace,
+            scope: ScopeKey::Workspace(workspace),
+            intent_digest: "0".repeat(64),
+            observations: vec![
+                observation(Signal::Logs, 10, 3),
+                observation(Signal::Logs, 12, 5),
+                observation(Signal::Metrics, 7, 11),
+            ],
+        };
+        let allocations = [
+            Allocation {
+                signal: Signal::Logs,
+                lo: 4,
+                hi: 6,
+                revision: 1,
+            },
+            Allocation {
+                signal: Signal::Metrics,
+                lo: 20,
+                hi: 21,
+                revision: 2,
+            },
+        ];
+        let item = spool_item(
+            &request,
+            &allocations,
+            Timestamp::from_unix_millis(30).expect("fixture instant"),
+        );
+        assert!(!item.contains_key("acceptedSeqLo"));
+        assert!(!item.contains_key("acceptedSeqHi"));
+        let candidates = item["lossCandidates"].as_l().expect("candidate list");
+        assert_eq!(candidates.len(), 2);
+        let logs = candidates[0].as_m().expect("logs candidate");
+        assert_eq!(
+            logs["acceptedSeqLo"].as_n().ok().map(String::as_str),
+            Some("4")
+        );
+        assert_eq!(
+            logs["acceptedSeqHiExclusive"]
+                .as_n()
+                .ok()
+                .map(String::as_str),
+            Some("6")
+        );
+        assert_eq!(
+            logs["attemptedRecords"].as_n().ok().map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            logs["attemptedBytes"].as_n().ok().map(String::as_str),
+            Some("8")
+        );
+        assert_eq!(
+            logs["timeRange"].as_m().expect("known range")["gte"]
+                .as_s()
+                .ok()
+                .map(String::as_str),
+            Some("1970-01-01T00:00:00.010Z")
+        );
+        assert_eq!(
+            logs["timeRange"].as_m().expect("known range")["lt"]
+                .as_s()
+                .ok()
+                .map(String::as_str),
+            Some("1970-01-01T00:00:00.013Z")
+        );
     }
 
     #[test]

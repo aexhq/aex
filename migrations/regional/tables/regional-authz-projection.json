@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "regional-authz-projection",
   "owner": "regional-stores",
-  "purpose": "Read-only regional projection of workspace placement, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
+  "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -29,7 +29,7 @@
     "appliesTo": [],
     "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
   },
-  "itemTypes": ["workspace_placement", "key_revocation", "feed_frontier"],
+  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "key_revocation", "feed_frontier"],
   "iam": [
     {
       "role": "central-control-worker",

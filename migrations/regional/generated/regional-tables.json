@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:ac6ff61cc3de929d52a3c778951ed080e2401e57e8f276d6103ad6c01efbe978",
+  "digest": "blake3:bc50c6a9339dab0f30c48876d5ed4e68b9322e89c225aab2e0024ac00b9c2fb4",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -406,7 +406,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-authz-projection",
       "owner": "regional-stores",
-      "purpose": "Read-only regional projection of workspace placement, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
+      "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -447,6 +447,8 @@
       },
       "itemTypes": [
         "workspace_placement",
+        "workspace_profile",
+        "workspace_limit",
         "key_revocation",
         "feed_frontier"
       ],
@@ -573,6 +575,14 @@
         {
           "name": "gcScanSk",
           "type": "S"
+        },
+        {
+          "name": "expiryShardPk",
+          "type": "S"
+        },
+        {
+          "name": "expiryShardSk",
+          "type": "S"
         }
       ],
       "keySchema": {
@@ -600,6 +610,22 @@
               "gcEpoch",
               "notBefore",
               "state"
+            ]
+          }
+        },
+        {
+          "name": "gsi_expiry",
+          "partition": "expiryShardPk",
+          "sort": "expiryShardSk",
+          "sparse": true,
+          "projectsRecordBody": false,
+          "rationale": "Download grants are spread over sixty-four due partitions. The expiry worker queries bounded due pages and atomically removes each expired grant with its known pin; it never scans the authority or trusts TTL timing.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "workspaceId",
+              "contentDigest",
+              "expiresAt"
             ]
           }
         }
@@ -946,10 +972,7 @@
           "role": "regional-secret-key-admin",
           "actions": [
             "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
-            "dynamodb:DescribeTable"
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -1155,7 +1178,7 @@
       "schema": "aex.regional-table.v1",
       "table": "runtime-activity",
       "owner": "regional-stores",
-      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1196,7 +1219,7 @@
           "sort": "rtDueSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "Sixteen shards over non-terminal generation heads. A dedicated due index rather than a regional-work item per evaluation, because the 180 second true-idle timer would otherwise cost a work-item rewrite per generation per evaluation; the index gives the reaper a bounded ordered scan at zero write cost between evaluations.",
+          "rationale": "Sixteen shards over generation heads and undelivered usage outbox rows. A dedicated due index avoids one work-item rewrite per generation per evaluation and keeps receipt delivery retryable after a terminal head leaves the index.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
@@ -1205,6 +1228,7 @@
               "generationId",
               "state",
               "fence",
+              "revision",
               "idleSince",
               "providerLifetimeExpiresAt",
               "keepaliveLeaseUntil"
@@ -1233,16 +1257,19 @@
         "lifecycle_intent",
         "lifecycle_receipt",
         "idle_probe",
-        "current_generation"
+        "current_generation",
+        "usage_outbox"
       ],
       "iam": [
         {
           "role": "runtime-control-worker",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:DescribeTable",
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
@@ -1284,7 +1311,7 @@
       "schema": "aex.regional-table.v1",
       "table": "session-authority",
       "owner": "regional-stores",
-      "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations and idempotency receipts. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+      "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations, idempotency receipts, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1440,9 +1467,20 @@
         "budget_return",
         "spend_reservation",
         "operation",
-        "idempotency_receipt"
+        "idempotency_receipt",
+        "regional_workspace_control"
       ],
       "iam": [
+        {
+          "role": "regional-control",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
         {
           "role": "regional-session-api",
           "actions": [
@@ -1481,6 +1519,17 @@
             "dynamodb:TransactWriteItems",
             "dynamodb:UpdateItem",
             "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "runtime-control-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:DescribeTable"
           ],
           "resources": [
             "table"

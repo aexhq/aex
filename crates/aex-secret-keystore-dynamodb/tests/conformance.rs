@@ -56,9 +56,11 @@ fn the_administrator_holds_the_writes_and_the_application_roles_do_not() {
             .iter()
             .map(|action| action.as_str().expect("a string"))
             .collect();
-        let writes = actions
-            .iter()
-            .any(|action| action.contains("PutItem") || action.contains("UpdateItem"));
+        let writes = actions.iter().any(|action| {
+            action.contains("PutItem")
+                || action.contains("UpdateItem")
+                || action.contains("TransactWriteItems")
+        });
         assert_eq!(
             writes,
             role == "regional-secret-key-admin",

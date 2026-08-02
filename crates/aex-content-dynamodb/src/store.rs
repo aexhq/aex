@@ -56,6 +56,39 @@ pub struct GcScanPage {
     pub more: bool,
 }
 
+/// The narrow evidence projected by the grant-expiry due index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantExpiry {
+    /// The grant token digest; the bearer token itself is never stored.
+    pub token_sha256: String,
+    /// The workspace that owns the pin.
+    pub workspace: WorkspaceId,
+    /// The pinned content body.
+    pub digest: ContentHash,
+    /// The explicit authority fence, independent of TTL timing.
+    pub expires_at: Timestamp,
+}
+
+impl From<&DownloadGrant> for GrantExpiry {
+    fn from(grant: &DownloadGrant) -> Self {
+        Self {
+            token_sha256: grant.token_sha256.clone(),
+            workspace: grant.workspace,
+            digest: grant.digest,
+            expires_at: grant.expires_at,
+        }
+    }
+}
+
+/// One bounded page of expired grants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantExpiryPage {
+    /// Due grants named by the slim index projection.
+    pub grants: Vec<GrantExpiry>,
+    /// Whether the shard still contains another page.
+    pub more: bool,
+}
+
 /// What a strongly consistent reachability read found in one content partition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reachability {
@@ -177,6 +210,28 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
     ///
     /// [`StoreError`] as above.
     async fn mint_grant(&self, grant: &DownloadGrant, now: Timestamp) -> Result<(), StoreError>;
+
+    /// Queries one sharded due-index page. This is never a table scan.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for transport or projected-row decode failure.
+    async fn scan_expired_grants(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: PageBudget,
+    ) -> Result<GrantExpiryPage, StoreError>;
+
+    /// Atomically removes an expired grant and the exact grant pin it owns.
+    ///
+    /// The transaction is idempotent when either row has already gone. A row
+    /// that is not explicitly past `expiresAt` always survives.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for transport, contention, or a lost expiry condition.
+    async fn expire_grant(&self, grant: &GrantExpiry, now: Timestamp) -> Result<(), StoreError>;
 
     /// Redeems a grant against the request clock.
     ///
@@ -427,6 +482,76 @@ impl ContentMetadataStore for ContentStore {
 
     async fn mint_grant(&self, grant: &DownloadGrant, now: Timestamp) -> Result<(), StoreError> {
         let transaction = expressions::mint_grant(&self.table, grant, now)?;
+        let request = transaction.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => Err(match error.as_service_error() {
+                Some(service) => aex_session_dynamodb::error::decode_cancellation(
+                    service,
+                    transaction.participants(),
+                ),
+                None => classify(&error, Idempotence::Write(Resolution::TargetItem)),
+            }),
+        }
+    }
+
+    async fn scan_expired_grants(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: PageBudget,
+    ) -> Result<GrantExpiryPage, StoreError> {
+        if u64::from(shard) >= keys::EXPIRY_SHARDS {
+            return Err(StoreError::Invalid {
+                detail: format!("expiry shard {shard} is outside 0..{}", keys::EXPIRY_SHARDS),
+            });
+        }
+        let output = self
+            .client
+            .query()
+            .table_name(&self.table)
+            .index_name(keys::EXPIRY_INDEX)
+            .key_condition_expression("#pk = :pk AND #sk <= :now")
+            .expression_attribute_names("#pk", keys::EXPIRY_PK)
+            .expression_attribute_names("#sk", keys::EXPIRY_SK)
+            .expression_attribute_values(":pk", s(keys::expiry_partition(shard)))
+            // A high suffix includes every token due in this millisecond; the
+            // bare `timestamp#` prefix would sort before all of them.
+            .expression_attribute_values(":now", s(format!("{}#\u{fffd}", now.to_wire())))
+            .limit(budget.limit())
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+
+        let mut grants = Vec::new();
+        for item in output.items.unwrap_or_default() {
+            let row = Row::bind_projected(&item, codec::DOWNLOAD_GRANT);
+            let pk = row.string(aex_session_dynamodb::attr::PK)?;
+            let token_sha256 = pk
+                .strip_prefix("GRANT#")
+                .ok_or_else(|| StoreError::Invalid {
+                    detail: "an expiry index row is not a grant key".to_owned(),
+                })?
+                .to_owned();
+            let digest_text = row.string("contentDigest")?;
+            let digest = ContentHash::parse(digest_text).map_err(|error| StoreError::Invalid {
+                detail: format!("an expiry index row has an invalid content digest: {error}"),
+            })?;
+            grants.push(GrantExpiry {
+                token_sha256,
+                workspace: row.id::<WorkspaceId>("workspaceId")?,
+                digest,
+                expires_at: row.timestamp("expiresAt")?,
+            });
+        }
+        Ok(GrantExpiryPage {
+            grants,
+            more: output.last_evaluated_key.is_some(),
+        })
+    }
+
+    async fn expire_grant(&self, grant: &GrantExpiry, now: Timestamp) -> Result<(), StoreError> {
+        let transaction = expressions::expire_grant(&self.table, grant, now)?;
         let request = transaction.compile(&self.client)?;
         match request.send().await {
             Ok(_) => Ok(()),

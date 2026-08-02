@@ -403,8 +403,7 @@ fn is_function_signature(text: &str) -> bool {
     };
     is_identifier(schema)
         && is_identifier(name)
-        && !arguments.is_empty()
-        && arguments.split(", ").all(is_identifier)
+        && (arguments.is_empty() || arguments.split(", ").all(is_identifier))
 }
 
 /// Committed grant document.

@@ -28,6 +28,7 @@ scenarios = []
 [package.metadata.aex.targets]
 lifecycle = "unit"
 composition = "unit"
+expiry = "unit"
 performance_contract = "e2e"
 
 [[bin]]
@@ -35,6 +36,7 @@ name = "content-lifecycle-worker"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-s3.workspace = true
@@ -43,6 +45,7 @@ lambda_runtime.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false }
 aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
@@ -59,6 +62,10 @@ path = "tests/lifecycle.rs"
 [[test]]
 name = "composition"
 path = "tests/composition.rs"
+
+[[test]]
+name = "expiry"
+path = "tests/expiry.rs"
 
 [[test]]
 name = "performance_contract"

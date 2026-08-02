@@ -55,8 +55,13 @@
             "insufficient_scope",
             "not_found",
             "idempotency_conflict",
+            "idempotency_in_flight",
+            "api_key_secret_unavailable",
             "invalid_request",
-            "limit_exceeded"
+            "invalid_scope",
+            "limit_exceeded",
+            "resource_conflict",
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "api-keys",
@@ -84,7 +89,9 @@
             "forbidden",
             "insufficient_scope",
             "not_found",
-            "precondition_failed"
+            "resource_conflict",
+            "precondition_failed",
+            "commit_outcome_unknown"
           ],
           "etag": "optional_if_match",
           "fragment": "api-keys",
@@ -453,9 +460,12 @@
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
+            "forbidden",
             "insufficient_scope",
             "invalid_request",
-            "invalid_cursor"
+            "invalid_cursor",
+            "account_paused",
+            "account_state_unavailable"
           ],
           "etag": "none",
           "fragment": "operations",
@@ -464,12 +474,13 @@
           "operationId": "central_operations_list",
           "path": "/api/operations",
           "pathParams": [],
-          "pauseExempt": true,
+          "pauseExempt": false,
           "plane": "central",
           "queryParams": [
             "cursor",
             "kind",
             "limit",
+            "organizationId",
             "status"
           ],
           "requestSchema": null,
@@ -477,7 +488,7 @@
           "responseSchema": "OperationPage",
           "safeRetry": true,
           "successStatus": 200,
-          "summary": "List central durable operations.",
+          "summary": "List central durable operations for one organization.",
           "transport": "unary"
         },
         {
@@ -571,8 +582,11 @@
             "insufficient_scope",
             "not_found",
             "idempotency_conflict",
+            "idempotency_in_flight",
             "invalid_request",
-            "limit_exceeded"
+            "limit_exceeded",
+            "resource_conflict",
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "organizations",
@@ -634,8 +648,11 @@
             "unauthenticated",
             "insufficient_scope",
             "idempotency_conflict",
+            "idempotency_in_flight",
             "invalid_request",
-            "limit_exceeded"
+            "limit_exceeded",
+            "resource_conflict",
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "organizations",
@@ -721,9 +738,13 @@
             "forbidden",
             "insufficient_scope",
             "idempotency_conflict",
+            "idempotency_in_flight",
             "invalid_request",
             "limit_exceeded",
-            "upstream_error"
+            "resource_conflict",
+            "upstream_error",
+            "workspace_provision_pending",
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "workspaces",
@@ -752,9 +773,12 @@
             "insufficient_scope",
             "not_found",
             "gone",
+            "idempotency_in_flight",
             "operation_idempotency_conflict",
             "invalid_request",
-            "deletion_in_progress"
+            "deletion_in_progress",
+            "resource_conflict",
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "workspaces",
@@ -4829,6 +4853,24 @@
         },
         {
           "class": "conflict",
+          "code": "idempotency_in_flight",
+          "message": "an identical idempotent request is still in flight",
+          "precedenceStage": "idempotency_identity",
+          "remedy": null,
+          "retryable": true,
+          "status": 409
+        },
+        {
+          "class": "conflict",
+          "code": "api_key_secret_unavailable",
+          "message": "the API key was already created and its one-time secret cannot be replayed",
+          "precedenceStage": "idempotency_identity",
+          "remedy": "use the originally returned secret or mint a replacement key",
+          "retryable": false,
+          "status": 409
+        },
+        {
+          "class": "conflict",
           "code": "operation_idempotency_conflict",
           "message": "the operation id was reused with a different intent",
           "precedenceStage": "operation_identity",
@@ -4840,6 +4882,15 @@
           "class": "validation",
           "code": "invalid_request",
           "message": "the request body failed strict validation",
+          "precedenceStage": "body_limit_and_parse",
+          "remedy": null,
+          "retryable": false,
+          "status": 400
+        },
+        {
+          "class": "validation",
+          "code": "invalid_scope",
+          "message": "the requested scope set is empty, duplicated, unknown, or exceeds the credential ceiling",
           "precedenceStage": "body_limit_and_parse",
           "remedy": null,
           "retryable": false,
@@ -4940,6 +4991,24 @@
           "code": "deletion_in_progress",
           "message": "a deletion of this resource is already running",
           "precedenceStage": "tombstone_and_parent",
+          "remedy": null,
+          "retryable": false,
+          "status": 409
+        },
+        {
+          "class": "conflict",
+          "code": "resource_conflict",
+          "message": "the requested resource conflicts with an existing resource or state",
+          "precedenceStage": "domain_state",
+          "remedy": null,
+          "retryable": false,
+          "status": 409
+        },
+        {
+          "class": "state",
+          "code": "last_owner_required",
+          "message": "an organization must retain at least one active owner",
+          "precedenceStage": "domain_state",
           "remedy": null,
           "retryable": false,
           "status": 409
@@ -5285,6 +5354,24 @@
           "remedy": null,
           "retryable": true,
           "status": 502
+        },
+        {
+          "class": "unavailable",
+          "code": "workspace_provision_pending",
+          "message": "workspace provisioning may still be completing",
+          "precedenceStage": "commit",
+          "remedy": "retry the identical request with the same Idempotency-Key",
+          "retryable": true,
+          "status": 503
+        },
+        {
+          "class": "unavailable",
+          "code": "commit_outcome_unknown",
+          "message": "the commit outcome is unknown",
+          "precedenceStage": "commit",
+          "remedy": "retry the identical request with the same replay identity",
+          "retryable": true,
+          "status": 503
         },
         {
           "class": "internal",
@@ -6422,9 +6509,13 @@
     "DashboardBootstrap": {
       "additionalProperties": false,
       "properties": {
-        "account": {
-          "$ref": "aex:schema:AccountOperationalState",
-          "description": "Their account operational state."
+        "accounts": {
+          "description": "Current operational state for each organization in this snapshot.",
+          "items": {
+            "$ref": "aex:schema:OrganizationAccount"
+          },
+          "maxItems": 100,
+          "type": "array"
         },
         "email": {
           "description": "Their email address.",
@@ -6462,7 +6553,7 @@
         }
       },
       "required": [
-        "account",
+        "accounts",
         "email",
         "generatedAt",
         "organizations",
@@ -8861,6 +8952,26 @@
       ],
       "type": "object"
     },
+    "OrganizationAccount": {
+      "additionalProperties": false,
+      "properties": {
+        "organizationId": {
+          "description": "The organization this state governs.",
+          "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+          "type": "string",
+          "x-aex-id": "organization"
+        },
+        "state": {
+          "$ref": "aex:schema:AccountOperationalState",
+          "description": "The organization's current operational state."
+        }
+      },
+      "required": [
+        "organizationId",
+        "state"
+      ],
+      "type": "object"
+    },
     "OrganizationCreateRequest": {
       "additionalProperties": false,
       "properties": {
@@ -11110,7 +11221,7 @@
         },
         "timeRange": {
           "$ref": "aex:schema:TimeRange",
-          "description": "The affected observation-time window."
+          "description": "The affected observation-time window, when its extent is known."
         },
         "toSequence": {
           "description": "Last affected position, when known.",
@@ -11131,7 +11242,6 @@
         "recoverable",
         "revision",
         "signals",
-        "timeRange",
         "workspaceId"
       ],
       "type": "object"

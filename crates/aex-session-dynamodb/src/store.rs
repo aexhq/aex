@@ -7,14 +7,17 @@
 //! unconditional authority write.
 
 use aex_wire::idempotency::IdempotencyKey;
-use aex_wire::ids::{AgentId, ApprovalId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, ApprovalId, OperationId, RunId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 
 use crate::attr::{CodecError, Item};
 use crate::codec;
-use crate::error::{Idempotence, Resolution, StoreError, classify, decode_cancellation};
+use crate::error::{
+    Idempotence, Resolution, StoreError, classify, decode_cancellation,
+    decode_cancellation_with_resolution,
+};
 use crate::keys;
 use crate::paging::{CursorBinding, CursorError, CursorKey, PageBudget, PagePosition};
 use crate::plan::{RegionalTables, TransactionPlan, key};
@@ -25,7 +28,7 @@ use crate::transactions::{
 };
 use crate::wire_pending::{
     AdmissionPlan, AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry,
-    LifecyclePlan, Run, SessionHead, TerminalPlan,
+    LifecyclePlan, Run, SessionHead, StoredOperation, TerminalPlan,
 };
 
 /// One page of decoded rows plus its continuation.
@@ -174,6 +177,110 @@ pub struct PositionPage<T> {
     pub items: Vec<T>,
     /// Where the next page starts, when there is one.
     pub next: Option<PagePosition>,
+}
+
+/// The narrow durable-operation authority used by continuation workers and
+/// operation point reads.
+///
+/// It is deliberately separate from [`SessionAuthority`]: a worker that only
+/// needs to reload an operation before a fenced step must not acquire the
+/// session transaction surface as a side effect.
+#[async_trait]
+pub trait OperationAuthority: Send + Sync + 'static {
+    /// Strongly reads one operation under its asserted tenant.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport or strict decode failure.
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError>;
+}
+
+/// Durable-operation reader and fenced step committer.
+#[derive(Debug, Clone)]
+pub struct OperationStore {
+    client: Client,
+    table: String,
+}
+
+impl OperationStore {
+    /// Binds the reader to the physical `session-authority` table.
+    #[must_use]
+    pub fn new(client: Client, table: impl Into<String>) -> Self {
+        Self {
+            client,
+            table: table.into(),
+        }
+    }
+
+    /// The physical authority table.
+    #[must_use]
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+
+    /// Commits exactly the operation/work pair for an observed cancellation
+    /// step and preserves its named cancellation reasons.
+    ///
+    /// # Errors
+    ///
+    /// Every [`StoreError`]. A transport failure is commit-ambiguous and must
+    /// be resolved by strongly reading the operation and work target rows; the
+    /// caller must never issue the write blindly a second time.
+    pub async fn commit_cancelled_step(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
+        if plan.participants()
+            != [
+                crate::plan::Participant::SESSION_OPERATION,
+                crate::plan::Participant::WORK_WAKE_DONE,
+            ]
+        {
+            return Err(StoreError::Invalid {
+                detail: "a cancelled operation step must update operation then fenced work"
+                    .to_owned(),
+            });
+        }
+        let request = plan.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(service) = error.as_service_error() {
+                    return Err(decode_cancellation_with_resolution(
+                        service,
+                        plan.participants(),
+                        Resolution::TargetItem,
+                    ));
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl OperationAuthority for OperationStore {
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<StoredOperation>, StoreError> {
+        let operation_key = keys::operation(operation);
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .set_key(Some(key(&operation_key.pk, &operation_key.sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+        match output.item {
+            None => Ok(None),
+            Some(item) => Ok(Some(codec::decode_operation(&item, workspace)?)),
+        }
+    }
 }
 
 /// The read-only `session-authority` surface the finite regional API composes.

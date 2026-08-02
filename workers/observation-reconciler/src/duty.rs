@@ -21,13 +21,14 @@
 use std::collections::{BTreeSet, HashMap};
 
 use aex_observation_domain::frontier::DeletionState;
-use aex_observation_domain::gap::{GapRevision, OrdinalRange};
+use aex_observation_domain::gap::{GapRecord, GapRevision, OrdinalRange, TimeWindow};
 use aex_observation_domain::keys::{self, BucketHour, ControlDomain, ScopeKey};
 use aex_observation_domain::limits;
 use aex_observation_domain::signal::{Signal, SignalSet};
-use aex_observation_store_aws::expressions::{ExpressionBuilder, ITEM_TYPE, Index, PK, SK};
+use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
+use aex_observation_store_aws::gap::{append_action, decode as decode_gap};
 use aex_observation_store_aws::spool::{GateEvidence, GateState, Pending, SpoolChunk, evaluate};
-use aex_wire::ids::{PrefixedId, TelemetryGapId, Uuid7};
+use aex_wire::ids::{PrefixedId, TelemetryGapId, WorkspaceId};
 use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::{
@@ -151,6 +152,58 @@ pub struct DueItem {
     pub attempts: u32,
     /// The item as stored.
     pub attributes: HashMap<String, AttributeValue>,
+}
+
+/// One exact per-signal loss candidate retained by admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LossCandidate {
+    gap_id: TelemetryGapId,
+    signal: Signal,
+    lo: u64,
+    hi_exclusive: u64,
+    time_range: Option<TimeWindow>,
+    attempted_records: u64,
+    attempted_bytes: u64,
+}
+
+impl LossCandidate {
+    fn record(
+        &self,
+        workspace: WorkspaceId,
+        scope: ScopeKey,
+        reason: TelemetryGapReason,
+        now: Timestamp,
+    ) -> Result<GapRecord, DutyError> {
+        let hi = self
+            .hi_exclusive
+            .checked_sub(1)
+            .ok_or(DutyError::Malformed {
+                item: "loss_candidate",
+                attribute: "acceptedSeqHiExclusive",
+            })?;
+        let ordinals = OrdinalRange::new(self.lo, hi).ok_or(DutyError::Malformed {
+            item: "loss_candidate",
+            attribute: "acceptedSeqHiExclusive",
+        })?;
+        let revision = GapRevision::try_open(
+            self.gap_id,
+            SignalSet::from_signal(self.signal),
+            reason,
+            self.time_range,
+            now,
+        )
+        .map_err(|error| DutyError::unresolved(ControlDomain::SpoolRepair, error.to_string()))?
+        .with_ordinals(ordinals);
+        GapRecord::try_new(
+            workspace,
+            scope,
+            revision,
+            Some(self.attempted_records),
+            Some(self.attempted_bytes),
+            false,
+        )
+        .map_err(|error| DutyError::unresolved(ControlDomain::SpoolRepair, error.to_string()))
+    }
 }
 
 /// What one invocation completed and what it did not.
@@ -545,6 +598,20 @@ impl DutyEngine {
         reason: &str,
         now: Timestamp,
     ) -> Result<(), DutyError> {
+        if self.settings.duty == ControlDomain::SpoolRepair {
+            let gaps = self.loss_gap_records(item, TelemetryGapReason::SpoolLost, now)?;
+            return self
+                .terminalize_with_gaps(
+                    item,
+                    QUARANTINED,
+                    Some(reason),
+                    &gaps,
+                    item.attempts,
+                    None,
+                    now,
+                )
+                .await;
+        }
         let mut builder = ExpressionBuilder::new();
         let state = builder.name(STATE);
         let why = builder.name(QUARANTINE_REASON);
@@ -568,26 +635,134 @@ impl DutyEngine {
             .send()
             .await
             .map_err(|error| DutyError::provider("UpdateItem", error))?;
-        if self.settings.duty == ControlDomain::SpoolRepair {
-            self.escalate(item, now).await?;
-        }
         Ok(())
     }
 
-    /// Opens the `pipeline_loss` gap a quarantined spool chunk implies.
-    async fn escalate(&self, item: &DueItem, now: Timestamp) -> Result<(), DutyError> {
+    /// Builds every exact per-signal gap a failed source item proves.
+    fn loss_gap_records(
+        &self,
+        item: &DueItem,
+        reason: TelemetryGapReason,
+        now: Timestamp,
+    ) -> Result<Vec<GapRecord>, DutyError> {
+        let workspace = workspace_of(item)?;
         let scope = scope_of(item)?;
-        let lo = number(&item.attributes, "acceptedSeqLo").unwrap_or(0);
-        let hi = number(&item.attributes, "acceptedSeqHi").unwrap_or(lo);
-        let range = OrdinalRange::new(lo, hi.max(lo));
-        self.open_gap(
-            &scope,
-            signals_of(&item.attributes),
-            range,
-            TelemetryGapReason::SpoolLost,
-            now,
-        )
-        .await
+        loss_candidates_of(item)?
+            .iter()
+            .map(|candidate| candidate.record(workspace, scope, reason, now))
+            .collect()
+    }
+
+    /// Atomically appends immutable gap rows and removes their source from the
+    /// due index. A source can never become terminal without all gap evidence.
+    async fn terminalize_with_gaps(
+        &self,
+        item: &DueItem,
+        terminal: &str,
+        reason: Option<&str>,
+        gaps: &[GapRecord],
+        expected_attempts: u32,
+        claimed: Option<Timestamp>,
+        now: Timestamp,
+    ) -> Result<(), DutyError> {
+        let mut builder = ExpressionBuilder::new();
+        let state = builder.name(STATE);
+        let changed_at = builder.name("stateChangedAt");
+        let control_partition = builder.name(Index::Control.partition_key());
+        let control_sort = builder.name(Index::Control.sort_key());
+        let partition = builder.name(PK);
+        let sort = builder.name(SK);
+        let attempts = builder.name(ATTEMPTS);
+        let terminal_value = builder.string(terminal.to_owned());
+        let when = builder.string(now.to_wire());
+        let expected_attempts = builder.number(expected_attempts);
+        let mut update = format!("SET {state} = {terminal_value}, {changed_at} = {when}");
+        if let Some(reason) = reason {
+            let why = builder.name(QUARANTINE_REASON);
+            let text = builder.string(reason.to_owned());
+            update.push_str(&format!(", {why} = {text}"));
+        }
+        update.push_str(&format!(" REMOVE {control_partition}, {control_sort}"));
+        let mut condition = format!(
+            "attribute_exists({partition}) AND attribute_exists({sort}) AND \
+             {attempts} = {expected_attempts}"
+        );
+        if let Some(claimed) = claimed {
+            let claimed_at = builder.name(CLAIMED_AT);
+            let claimed_value = builder.string(claimed.to_wire());
+            condition.push_str(&format!(" AND {claimed_at} = {claimed_value}"));
+        }
+        let source = Update::builder()
+            .table_name(&self.settings.table)
+            .key(PK, AttributeValue::S(item.key.pk.clone()))
+            .key(SK, AttributeValue::S(item.key.sk.clone()))
+            .update_expression(update)
+            .condition_expression(condition)
+            .set_expression_attribute_names(Some(builder.names()))
+            .set_expression_attribute_values(Some(builder.values()))
+            .build()
+            .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+        let mut actions = Vec::with_capacity(gaps.len() + 1);
+        for gap in gaps {
+            actions.push(
+                append_action(&self.settings.table, gap).map_err(|error| {
+                    DutyError::unresolved(self.settings.duty, error.to_string())
+                })?,
+            );
+        }
+        actions.push(TransactWriteItem::builder().update(source).build());
+        let outcome = self
+            .dynamodb
+            .transact_write_items()
+            .set_transact_items(Some(actions))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if self
+                    .terminalized_with_gaps(item, terminal, reason, gaps)
+                    .await?
+                {
+                    Ok(())
+                } else {
+                    Err(DutyError::provider("TransactWriteItems", error))
+                }
+            }
+        }
+    }
+
+    /// Resolves an ambiguous/replayed terminal transaction by durable identity.
+    async fn terminalized_with_gaps(
+        &self,
+        item: &DueItem,
+        terminal: &str,
+        reason: Option<&str>,
+        gaps: &[GapRecord],
+    ) -> Result<bool, DutyError> {
+        let Some(source) = self.get(&item.key).await? else {
+            return Ok(false);
+        };
+        if string(&source, STATE) != Some(terminal)
+            || reason.is_some_and(|expected| string(&source, QUARANTINE_REASON) != Some(expected))
+        {
+            return Ok(false);
+        }
+        for expected in gaps {
+            let key = ItemKey {
+                pk: keys::gap_pk(&expected.scope),
+                sk: keys::gap_sk(expected.revision.gap_id, expected.revision.revision),
+            };
+            let Some(item) = self.get(&key).await? else {
+                return Ok(false);
+            };
+            let decoded = decode_gap(&item)
+                .map_err(|error| DutyError::unresolved(self.settings.duty, error.to_string()))?;
+            if decoded != *expected {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Runs the configured duty's body against one claimed item.
@@ -704,22 +879,22 @@ impl DutyEngine {
     /// Confirms every `acceptedSeq` in the chunk's range is materialized.
     async fn index_is_complete(&self, item: &DueItem) -> Result<bool, DutyError> {
         let scope = scope_of(item)?;
-        let lo = number(&item.attributes, "acceptedSeqLo").unwrap_or(0);
-        let hi = number(&item.attributes, "acceptedSeqHi").unwrap_or(lo);
-        let expected = hi.saturating_sub(lo);
-        if expected == 0 {
-            return Ok(true);
-        }
         let accepted_at = timestamp_of(&item.attributes, "acceptedAt", "spool_chunk")?;
-        let counted = self
-            .count_observations(
-                &scope,
-                signals_of(&item.attributes),
-                BucketHour::from_timestamp(accepted_at),
-                (lo, hi),
-            )
-            .await?;
-        Ok(counted >= expected)
+        for candidate in loss_candidates_of(item)? {
+            let expected = candidate.hi_exclusive - candidate.lo;
+            let counted = self
+                .count_observations(
+                    &scope,
+                    SignalSet::from_signal(candidate.signal),
+                    BucketHour::from_timestamp(accepted_at),
+                    (candidate.lo, candidate.hi_exclusive),
+                )
+                .await?;
+            if counted < expected {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Counts materialized observations over one accepted range.
@@ -1133,34 +1308,43 @@ impl DutyEngine {
 impl DutyEngine {
     /// Proves one accepted range is fully materialized, or records the hole.
     async fn verify_index(&self, item: &DueItem, now: Timestamp) -> Result<(), DutyError> {
+        let workspace = workspace_of(item)?;
         let scope = scope_of(item)?;
-        let lo = number(&item.attributes, "acceptedSeqLo").unwrap_or(0);
-        let hi = number(&item.attributes, "acceptedSeqHi").unwrap_or(lo);
-        let expected = hi.saturating_sub(lo);
         let accepted_at = timestamp_of(&item.attributes, "acceptedAt", "index_verify")?;
-        let signals = signals_of(&item.attributes);
-        let counted = self
-            .count_observations(
-                &scope,
-                signals,
-                BucketHour::from_timestamp(accepted_at),
-                (lo, hi),
-            )
-            .await?;
-        if counted >= expected {
+        let mut gaps = Vec::new();
+        for candidate in loss_candidates_of(item)? {
+            let counted = self
+                .count_observations(
+                    &scope,
+                    SignalSet::from_signal(candidate.signal),
+                    BucketHour::from_timestamp(accepted_at),
+                    (candidate.lo, candidate.hi_exclusive),
+                )
+                .await?;
+            if counted < candidate.hi_exclusive - candidate.lo {
+                gaps.push(candidate.record(
+                    workspace,
+                    scope,
+                    TelemetryGapReason::SpoolLost,
+                    now,
+                )?);
+            }
+        }
+        if gaps.is_empty() {
             return self.retire(item, "verified", now).await;
         }
         // The hole is proven, not suspected: it becomes an explicit gap over the
         // exact ordinals rather than a silently short answer.
-        self.open_gap(
-            &scope,
-            signals,
-            OrdinalRange::new(lo, hi.max(lo)),
-            TelemetryGapReason::SpoolLost,
+        self.terminalize_with_gaps(
+            item,
+            "gapped",
+            None,
+            &gaps,
+            item.attempts.saturating_add(1),
+            Some(now),
             now,
         )
-        .await?;
-        self.retire(item, "gapped", now).await
+        .await
     }
 
     /// Moves an item out of the due index under a durable terminal state.
@@ -1185,37 +1369,6 @@ impl DutyEngine {
             .send()
             .await
             .map_err(|error| DutyError::provider("UpdateItem", error))?;
-        Ok(())
-    }
-
-    /// Writes one immutable gap revision.
-    async fn open_gap(
-        &self,
-        scope: &ScopeKey,
-        signals: SignalSet,
-        range: Option<OrdinalRange>,
-        reason: TelemetryGapReason,
-        now: Timestamp,
-    ) -> Result<(), DutyError> {
-        let mut revision = GapRevision::try_open(mint_gap_id(now), signals, reason, None, now)
-            .map_err(|error| DutyError::Unresolved {
-                duty: self.settings.duty.as_str(),
-                reason: error.to_string(),
-            })?;
-        if let Some(ordinals) = range {
-            revision = revision.with_ordinals(ordinals);
-        }
-        let mut builder = ExpressionBuilder::new();
-        let partition = builder.name(PK);
-        self.dynamodb
-            .put_item()
-            .table_name(&self.settings.table)
-            .set_item(Some(gap_item(scope, &revision)))
-            .condition_expression(format!("attribute_not_exists({partition})"))
-            .set_expression_attribute_names(Some(builder.names()))
-            .send()
-            .await
-            .map_err(|error| DutyError::provider("PutItem", error))?;
         Ok(())
     }
 }
@@ -1682,6 +1835,101 @@ fn scope_of(item: &DueItem) -> Result<ScopeKey, DutyError> {
     })
 }
 
+/// The workspace one control item belongs to.
+fn workspace_of(item: &DueItem) -> Result<WorkspaceId, DutyError> {
+    let text = require_string(&item.attributes, "workspaceId", "control_item")?;
+    WorkspaceId::parse(text).map_err(|_| DutyError::Malformed {
+        item: "control_item",
+        attribute: "workspaceId",
+    })
+}
+
+/// Exact source-stable loss candidates retained by admission.
+fn loss_candidates_of(item: &DueItem) -> Result<Vec<LossCandidate>, DutyError> {
+    let values = item
+        .attributes
+        .get("lossCandidates")
+        .and_then(|value| value.as_l().ok())
+        .ok_or(DutyError::Malformed {
+            item: "spool_chunk",
+            attribute: "lossCandidates",
+        })?;
+    if values.is_empty() {
+        return Err(DutyError::Malformed {
+            item: "spool_chunk",
+            attribute: "lossCandidates",
+        });
+    }
+    values
+        .iter()
+        .map(|value| {
+            let map = value.as_m().map_err(|_| DutyError::Malformed {
+                item: "loss_candidate",
+                attribute: "lossCandidates",
+            })?;
+            let gap_id = TelemetryGapId::parse(require_string(map, "gapId", "loss_candidate")?)
+                .map_err(|_| DutyError::Malformed {
+                    item: "loss_candidate",
+                    attribute: "gapId",
+                })?;
+            let signal = Signal::parse(require_string(map, "signal", "loss_candidate")?).ok_or(
+                DutyError::Malformed {
+                    item: "loss_candidate",
+                    attribute: "signal",
+                },
+            )?;
+            let lo = required_number(map, "acceptedSeqLo", "loss_candidate")?;
+            let hi_exclusive = required_number(map, "acceptedSeqHiExclusive", "loss_candidate")?;
+            if hi_exclusive <= lo {
+                return Err(DutyError::Malformed {
+                    item: "loss_candidate",
+                    attribute: "acceptedSeqHiExclusive",
+                });
+            }
+            Ok(LossCandidate {
+                gap_id,
+                signal,
+                lo,
+                hi_exclusive,
+                time_range: optional_time_range(map)?,
+                attempted_records: required_number(map, "attemptedRecords", "loss_candidate")?,
+                attempted_bytes: required_number(map, "attemptedBytes", "loss_candidate")?,
+            })
+        })
+        .collect()
+}
+
+fn required_number(
+    item: &HashMap<String, AttributeValue>,
+    name: &'static str,
+    family: &'static str,
+) -> Result<u64, DutyError> {
+    number(item, name).ok_or(DutyError::Malformed {
+        item: family,
+        attribute: name,
+    })
+}
+
+fn optional_time_range(
+    item: &HashMap<String, AttributeValue>,
+) -> Result<Option<TimeWindow>, DutyError> {
+    let Some(value) = item.get("timeRange") else {
+        return Ok(None);
+    };
+    let map = value.as_m().map_err(|_| DutyError::Malformed {
+        item: "loss_candidate",
+        attribute: "timeRange",
+    })?;
+    let from = timestamp_of(map, "gte", "loss_candidate")?;
+    let to = timestamp_of(map, "lt", "loss_candidate")?;
+    TimeWindow::new(from, to)
+        .map(Some)
+        .ok_or(DutyError::Malformed {
+            item: "loss_candidate",
+            attribute: "timeRange",
+        })
+}
+
 /// The outstanding-duty set of one spool chunk.
 fn pending_of(item: &HashMap<String, AttributeValue>) -> BTreeSet<Pending> {
     item.get(PENDING)
@@ -1698,24 +1946,6 @@ fn pending_of(item: &HashMap<String, AttributeValue>) -> BTreeSet<Pending> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// The signals one control item covers, defaulting to every stored signal.
-fn signals_of(item: &HashMap<String, AttributeValue>) -> SignalSet {
-    let Some(words) = item.get("signals").and_then(|value| value.as_ss().ok()) else {
-        return SignalSet::authority();
-    };
-    let mut set = SignalSet::EMPTY;
-    for word in words {
-        if let Some(signal) = Signal::parse(word) {
-            set = set.with(signal);
-        }
-    }
-    if set.is_empty() {
-        SignalSet::authority()
-    } else {
-        set
-    }
 }
 
 /// Whether an unacknowledged wake is old enough to abandon.
@@ -1750,79 +1980,6 @@ fn gate_state(state: Option<&str>) -> GateState {
 fn counter_shard(hash: &str) -> u16 {
     let prefix = hash.get(0..4).unwrap_or("0000");
     u16::from_str_radix(prefix, 16).unwrap_or(0) % limits::SERIES_COUNTER_SHARDS
-}
-
-/// Mints one gap identifier.
-fn mint_gap_id(now: Timestamp) -> TelemetryGapId {
-    let bytes = *uuid::Uuid::now_v7().as_bytes();
-    let id = Uuid7::from_bytes(bytes)
-        .unwrap_or_else(|_| Uuid7::compose(now.unix_millis().unsigned_abs(), [0u8; 10]));
-    TelemetryGapId::from_uuid7(id)
-}
-
-/// The durable form of one gap revision.
-fn gap_item(scope: &ScopeKey, revision: &GapRevision) -> HashMap<String, AttributeValue> {
-    let mut item = HashMap::new();
-    item.insert(PK.to_owned(), AttributeValue::S(keys::gap_pk(scope)));
-    item.insert(
-        SK.to_owned(),
-        AttributeValue::S(keys::gap_sk(revision.gap_id, revision.revision)),
-    );
-    item.insert(
-        ITEM_TYPE.to_owned(),
-        AttributeValue::S("telemetry_gap".to_owned()),
-    );
-    item.insert(
-        "gapId".to_owned(),
-        AttributeValue::S(revision.gap_id.to_string()),
-    );
-    item.insert(
-        "revision".to_owned(),
-        AttributeValue::N(revision.revision.to_string()),
-    );
-    item.insert(
-        STATE.to_owned(),
-        AttributeValue::S(revision.state.as_str().to_owned()),
-    );
-    item.insert(
-        "reason".to_owned(),
-        AttributeValue::S(revision.reason.as_str().to_owned()),
-    );
-    item.insert("scopeKey".to_owned(), AttributeValue::S(scope.to_key()));
-    item.insert(
-        "signals".to_owned(),
-        AttributeValue::Ss(
-            revision
-                .signals
-                .iter()
-                .map(|signal| signal.as_str().to_owned())
-                .collect(),
-        ),
-    );
-    item.insert(
-        "unbounded".to_owned(),
-        AttributeValue::Bool(revision.unbounded),
-    );
-    item.insert("recoverable".to_owned(), AttributeValue::Bool(false));
-    item.insert(
-        "openedAt".to_owned(),
-        AttributeValue::S(revision.opened_at.to_wire()),
-    );
-    item.insert(
-        "revisedAt".to_owned(),
-        AttributeValue::S(revision.revised_at.to_wire()),
-    );
-    if let Some(range) = revision.ordinal_range {
-        item.insert(
-            "fromSequence".to_owned(),
-            AttributeValue::N(range.lo().to_string()),
-        );
-        item.insert(
-            "toSequence".to_owned(),
-            AttributeValue::N(range.hi().to_string()),
-        );
-    }
-    item
 }
 
 /// The storage usage fact delivered to the usage queue.
@@ -1896,7 +2053,6 @@ mod tests {
 
     use aex_observation_domain::keys::{self, ControlDomain};
     use aex_observation_domain::limits;
-    use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_observation_store_aws::expressions::{Index, PK, SK, is_safe_expression};
     use aex_observation_store_aws::spool::{GateState, Pending, SpoolChunk};
     use aex_wire::types::{Region, Timestamp};
@@ -1904,7 +2060,7 @@ mod tests {
 
     use super::{
         BatchOutcome, DUE_SENTINEL, DutySettings, ItemId, WAKE_STALE_MS, counter_shard, due_at,
-        due_ref, elapsed, gate_state, pending_of, signals_of, wake_is_stale,
+        due_ref, elapsed, gate_state, pending_of, wake_is_stale,
     };
 
     fn now() -> Timestamp {
@@ -1987,17 +2143,6 @@ mod tests {
         assert!(pending.contains(&Pending::Wake));
         assert!(!pending.contains(&Pending::Index));
         assert!(pending_of(&HashMap::new()).is_empty());
-    }
-
-    #[test]
-    fn an_item_without_a_signal_list_covers_every_stored_signal() {
-        assert_eq!(signals_of(&HashMap::new()), SignalSet::authority());
-        let mut item = HashMap::new();
-        item.insert(
-            "signals".to_owned(),
-            AttributeValue::Ss(vec!["logs".to_owned(), "nonsense".to_owned()]),
-        );
-        assert_eq!(signals_of(&item), SignalSet::from_signal(Signal::Logs));
     }
 
     #[test]

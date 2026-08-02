@@ -261,13 +261,20 @@ schemas:
       expiresAt: { type: timestamp, doc: "When the token stops verifying." }
       scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
 
+  OrganizationAccount:
+    doc: One organization's operational state in a multi-organization dashboard snapshot.
+    type: object
+    fields:
+      organizationId: { type: id, of: organization, doc: "The organization this state governs." }
+      state: { type: ref, to: AccountOperationalState, doc: "The organization's current operational state." }
+
   DashboardBootstrap:
     doc: The one bounded read that fills the dashboard shell.
     type: object
     fields:
       userId: { type: id, of: user, doc: "The signed-in person." }
       email: { type: string, min: 3, max: 320, doc: "Their email address." }
-      account: { type: ref, to: AccountOperationalState, doc: "Their account operational state." }
+      accounts: { type: array, max: 100, items: { type: ref, to: OrganizationAccount }, doc: "Current operational state for each organization in this snapshot." }
       organizations: { type: array, max: 100, items: { type: ref, to: Organization }, doc: "Organizations they belong to." }
       workspaces: { type: array, max: 500, items: { type: ref, to: Workspace }, doc: "Workspaces they can reach." }
       generatedAt: { type: timestamp, doc: "When this snapshot was taken." }

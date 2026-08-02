@@ -136,6 +136,30 @@ impl Config {
         let plane = plane_name(lookup, PLANE)?;
         let region = region(lookup, REGION)?;
         let max_attempts = bounded_usize(lookup, MAX_ATTEMPTS, 1, 64)?;
+        let strict_max_attempts =
+            usize::try_from(crate::MAX_ATTEMPTS).map_err(|_| ConfigError::Invalid {
+                name: MAX_ATTEMPTS,
+                reason: "the strict-v1 poison boundary does not fit this target".to_owned(),
+            })?;
+        if max_attempts != strict_max_attempts {
+            return Err(ConfigError::Invalid {
+                name: MAX_ATTEMPTS,
+                reason: format!(
+                    "must equal the strict-v1 poison boundary ({})",
+                    crate::MAX_ATTEMPTS
+                ),
+            });
+        }
+        let due_scan_shards = bounded_u64(lookup, DUE_SCAN_SHARDS, 1, 4_096)?;
+        if due_scan_shards != aex_work_dynamodb::keys::DUE_SHARDS {
+            return Err(ConfigError::Invalid {
+                name: DUE_SCAN_SHARDS,
+                reason: format!(
+                    "must equal the regional-work contract ({})",
+                    aex_work_dynamodb::keys::DUE_SHARDS
+                ),
+            });
+        }
         Ok(Self {
             plane,
             region,
@@ -152,7 +176,7 @@ impl Config {
             content_bucket: required(lookup, CONTENT_BUCKET)?,
             content_bucket_owner: required(lookup, CONTENT_BUCKET_OWNER)?,
             denial_projection_table: required(lookup, DENIAL_PROJECTION_TABLE)?,
-            due_scan_shards: bounded_u64(lookup, DUE_SCAN_SHARDS, 1, 4_096)?,
+            due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
                 |_| ConfigError::Invalid {
                     name: LEASE_MS,

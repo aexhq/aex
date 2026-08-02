@@ -38,11 +38,14 @@ integration = "blocked on a cross-stream gap: `data-image-literal` bans `Generic
 [features]
 default = ["session-authority", "authz-projection"]
 # The `session-authority` key templates, row codecs and transactions.
-session-authority = ["dep:aex-operation-domain"]
+session-authority = ["dep:aex-operation-domain", "dep:aex-runtime-control"]
 # The read-only `regional-authz-projection` reader. A deployable that needs only
 # the projection depends on this crate with `default-features = false,
 # features = ["authz-projection"]` and links no session write symbol (D-21).
 authz-projection = []
+# The central worker's write-only projection adapter. Regional request roles
+# never enable this feature.
+authz-projection-write = []
 # Engine-backed targets. The unit lane does not build them, so a machine with no
 # container runtime still runs the per-stream gate.
 integration-engines = ["dep:tokio"]
@@ -64,6 +67,9 @@ xxhash-rust.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-observation-domain = { path = "../aex-observation-domain" }
 aex-operation-domain = { path = "../aex-operation-domain", optional = true }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-runtime-control = { path = "../aex-runtime-control", optional = true }
+futures.workspace = true
 
 tokio = { workspace = true, optional = true }
 

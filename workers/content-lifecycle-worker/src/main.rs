@@ -7,9 +7,13 @@
 
 use std::process::ExitCode;
 
+use aex_content_dynamodb::store::ContentStore;
 use aex_regional_http::config::ConfigError;
+use aex_session_dynamodb::paging::PageBudget;
+use aex_wire::types::Timestamp;
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
 use content_lifecycle_worker::config::{Config, Mode};
+use content_lifecycle_worker::expiry::expire_due_grants;
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Why `content-lifecycle-worker` stopped.
@@ -67,11 +71,7 @@ async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Resu
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
-    let content = aex_content_dynamodb::store::ContentStore::new(
-        dynamodb.clone(),
-        config.content_table.clone(),
-    );
-    let work = aex_work_dynamodb::store::WorkStore::new(dynamodb, config.work_table.clone());
+    let content = ContentStore::new(dynamodb.clone(), config.content_table.clone());
 
     // The object client exists only in the role that may use it. A `reconcile`
     // process that never constructs an S3 client cannot delete an object even if
@@ -83,14 +83,16 @@ async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Resu
     };
     let role = Role {
         mode: config.mode,
-        content_table: content.table().to_owned(),
-        work_table: work.table().to_owned(),
+        content,
+        work_table: config.work_table.clone(),
+        expiry_scan_shards: config.expiry_scan_shards,
+        expiry_page_items: config.expiry_page_items,
         objects,
     };
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
         let role = role.clone();
-        async move { role.handle(event.payload) }
+        async move { role.handle(event.payload).await }
     }))
     .await
     .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
@@ -100,13 +102,15 @@ async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Resu
 #[derive(Clone)]
 struct Role {
     mode: Mode,
-    content_table: String,
+    content: ContentStore,
     work_table: String,
+    expiry_scan_shards: Option<u16>,
+    expiry_page_items: Option<u32>,
     objects: Option<aws_sdk_s3::Client>,
 }
 
 impl Role {
-    fn handle(&self, payload: serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+    async fn handle(&self, payload: serde_json::Value) -> Result<serde_json::Value, LambdaError> {
         if payload
             .get("Records")
             .is_some_and(serde_json::Value::is_array)
@@ -125,10 +129,34 @@ impl Role {
                 "`delete` mode is queue-triggered and answers no schedule",
             ));
         }
+        if self.mode == Mode::Expiry {
+            return self.expire_grants().await;
+        }
         Ok(serde_json::json!({
             "mode": self.mode.as_str(),
-            "contentTable": self.content_table,
+            "contentTable": self.content.table(),
             "workTable": self.work_table,
+        }))
+    }
+
+    async fn expire_grants(&self) -> Result<serde_json::Value, LambdaError> {
+        let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
+        let shards = self
+            .expiry_scan_shards
+            .ok_or_else(|| LambdaError::from("expiry role has no admitted shard bound"))?;
+        let page_items = self
+            .expiry_page_items
+            .ok_or_else(|| LambdaError::from("expiry role has no admitted page bound"))?;
+        let budget =
+            PageBudget::new(page_items).map_err(|error| LambdaError::from(error.to_string()))?;
+        let report = expire_due_grants(self.content.clone(), shards, now, budget)
+            .await
+            .map_err(|error| LambdaError::from(error.to_string()))?;
+        Ok(serde_json::json!({
+            "mode": self.mode.as_str(),
+            "expiredGrants": report.expired_grants,
+            "shardsScanned": report.shards_scanned,
+            "shardsWithMore": report.shards_with_more,
         }))
     }
 
@@ -152,11 +180,25 @@ impl Role {
     }
 }
 
+/// The host clock, read once per scheduled invocation.
+fn now() -> Result<Timestamp, ClockError> {
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| ClockError)?;
+    let millis = i64::try_from(since.as_millis()).map_err(|_| ClockError)?;
+    Timestamp::from_unix_millis(millis).map_err(|_| ClockError)
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("the host clock is not a representable wire instant")]
+struct ClockError;
+
 impl std::fmt::Debug for Role {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Role")
             .field("mode", &self.mode.as_str())
+            .field("content_table", &self.content.table())
             .field("holds_object_client", &self.objects.is_some())
             .finish_non_exhaustive()
     }

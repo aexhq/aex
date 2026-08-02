@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
+//! `sha256:1186e3b9ca9d4778ac1fea9788954f5bbfd78a2e88749cd41e198288d1206c18`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -240,8 +240,8 @@ impl Currency {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardBootstrap {
-    /// Their account operational state.
-    pub account: AccountOperationalState,
+    /// Current operational state for each organization in this snapshot.
+    pub accounts: Vec<OrganizationAccount>,
     /// Their email address.
     pub email: String,
     /// When this snapshot was taken.
@@ -501,6 +501,16 @@ pub struct Organization {
     pub name: String,
     /// URL-safe name.
     pub slug: String,
+}
+
+/// One organization's operational state in a multi-organization dashboard snapshot.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct OrganizationAccount {
+    /// The organization this state governs.
+    pub organization_id: OrganizationId,
+    /// The organization's current operational state.
+    pub state: AccountOperationalState,
 }
 
 /// Create an organization.
@@ -1903,8 +1913,9 @@ pub struct TelemetryGap {
     pub session_id: Option<SessionId>,
     /// Affected signals.
     pub signals: Vec<ObservationSignal>,
-    /// The affected observation-time window.
-    pub time_range: TimeRange,
+    /// The affected observation-time window, when its extent is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_range: Option<TimeRange>,
     /// Last affected position, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_sequence: Option<DecimalU128>,
@@ -4309,6 +4320,8 @@ pub struct CentralOperationsListQuery {
     /// Page size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// The organization whose operations are listed.
+    pub organization_id: OrganizationId,
     /// Restrict to one status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<OperationStatus>,

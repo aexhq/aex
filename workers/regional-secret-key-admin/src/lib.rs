@@ -1,5 +1,7 @@
 //! Exclusive, idempotent regional branch-key administration kernel.
 
+pub mod admin;
+pub mod aws;
 pub mod config;
 
 pub use config::Config;

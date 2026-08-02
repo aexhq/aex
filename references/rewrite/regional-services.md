@@ -50,8 +50,13 @@ the accepted work order:
 - `content-lifecycle-worker`: exact 24-hour staged grace; every owner/root/grant/
   operation pin recheck; deletion-denial recheck under a fence; exact
   unversioned object key, `If-Match`, and explicit expected bucket owner;
-  precondition-mismatch handling; and mode-specific delete capability
-  admission.
+  precondition-mismatch handling; mode-specific delete capability admission;
+  and a production `expiry` slice for download grants. Grant rows now carry a
+  sparse 64-shard due key, the scheduled role reads an explicitly bounded page
+  from each admitted shard, and a conditional two-delete transaction removes
+  the expired grant with its exact grant pin. The transaction checks the
+  authority `expiresAt` on both surviving rows, admits already-absent rows for
+  retry/TTL idempotency, and never scans or treats TTL timing as a fence.
 - `regional-stream`: closed wake modes and the two-task `ddb_streams` assertion;
   authoritative reads after wake hints; one origin for stream and none for
   listen; separate session/observation/telemetry quotas; dual telemetry charge;
@@ -82,9 +87,16 @@ These items remain and are not represented as complete:
   `release/unearned-evidence.json` continues to record it. The stream socket
   workload contract is authored, but its live `Driver` executor remains due in
   `aex-live-regional-stream` once a deployed descriptor exists.
-- `content-lifecycle-worker` has the conservative staged/delete kernel, but the
-  complete mark/sweep/inventory orchestration and actual DynamoDB/S3 adapters
-  are not wired.
+- `content-lifecycle-worker` has the conservative staged/delete kernel and the
+  concrete DynamoDB grant-expiry role, but complete mark/sweep/inventory and
+  fenced object-delete orchestration are not wired. Pending-upload expiry is
+  also intentionally not wired: the registry upload row does not persist S3's
+  provider multipart-upload id or an equivalent durable handle, so it cannot
+  issue the exact `AbortMultipartUpload`; and a `Completing` row can represent
+  an ambiguous completion, where `NoSuchUpload` may mean the final object
+  exists rather than that deletion is safe. Persisting that handle and durable
+  completion evidence at upload admission is prerequisite to a safe
+  S3-then-conditional-DynamoDB cleanup sequence.
 - `regional-stream` has the state machines and generated route partition, but
   not the ALB listener, live DynamoDB Streams reader, bounded network queue, or
   SIGTERM task-drain loop.
@@ -96,6 +108,32 @@ These items remain and are not represented as complete:
 
 These were deferred to preserve a tested, compiling depth-first kernel rather
 than introduce fake adapters or compatibility shims for missing peer APIs.
+
+### Grant-expiry vertical receipt and residuals
+
+The implemented expiry path is deliberately one complete authority slice, not
+a claim that all four lifecycle modes are complete:
+
+- `regional-content` owns the authored and generated `gsi_expiry` definition;
+  its 64 partitions prevent a literal due hot key, and the projection contains
+  only workspace, digest and expiry evidence (base keys supply the token
+  digest). Existing content-lifecycle IAM already limits this role to `Query`
+  and `TransactWriteItems` on this table and its indexes; expiry constructs no
+  S3 client.
+- `AEX_EXPIRY_SCAN_SHARDS` is admitted in `1..=64` and
+  `AEX_EXPIRY_PAGE_ITEMS` in `1..=100`. One tick reads at most that product and
+  runs at most 16 writes concurrently. A shard reporting another page is
+  observable in the response and progresses on the next five-minute tick
+  because committed rows immediately lose their sparse index keys.
+- A write failure is returned only after the selected in-flight page settles.
+  Lambda/EventBridge retry is safe because the two-row transaction admits
+  missing rows and rechecks explicit expiry. The delivery repository must still
+  attach the scheduled invocation retry policy, DLQ and age alarm; this public
+  repository contains the deployable and table/IAM contract, not that regional
+  schedule composition.
+- Live DynamoDB TTL lag, concurrent scheduled invocations, IAM allow/deny and
+  DLQ evidence remain in `aex-live-content-lifecycle-worker` and are still
+  unearned. No local test or handoff prose represents them as executed.
 
 ## Public types for peers
 
@@ -359,11 +397,17 @@ mistake that otherwise survive deployment are refused at start-up:
 - **`content-lifecycle-worker`** — one binary, four roles. The mode selects the
   required variable set, the S3 client is constructed only in `delete` mode, and
   the object-delete capability is refused in both directions: `delete` cannot
-  start without it and no other role may hold it.
+  start without it and no other role may hold it. `expiry` executes the bounded
+  sharded download-grant cleanup; it caps each shard page at 100 and holds at
+  most 16 grant+pin transactions in flight. It settles the selected page before
+  returning an invocation error, so the scheduler retry preserves successes
+  and idempotently re-evaluates only remaining authority rows.
 - **`regional-secret-key-admin`** — the three `clap` commands, the exit-code
   interface (`0` acted, `3` already current, `1` refused), and start-up denial of
   a table that is not the configured keystore, a cross-region key, an unattested
-  run and every product-table binding.
+  run and every product-table binding. Its production adapter now strongly reads
+  the active row, obtains wrapped branch material directly from KMS, and commits
+  the immutable version plus active pointer in one fenced transaction.
 
 ### The one blocking gap
 
@@ -426,7 +470,7 @@ Every name below is required unless marked. There is no default for any of them.
 | `regional-secret-api` | `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_SECRET_KEYSTORE_TABLE`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_SECRET_BRANCH_KEY_CACHE_BYTES`, `AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS`, `AEX_ASSERTION_CACHE_BYTES`, `AEX_MAX_JSON_BODY_BYTES` |
 | `regional-stream` | `AEX_STREAM_PORT`, `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_OBSERVATION_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_STREAM_WAKE_MODE`, `AEX_STREAM_MAX_TASKS`, `AEX_STREAM_MAX_CONNECTIONS`, `AEX_STREAM_MAX_CONNECTIONS_SESSION`, `AEX_STREAM_MAX_CONNECTIONS_OBSERVATION`, `AEX_STREAM_MAX_CONNECTIONS_PER_WORKSPACE`, `AEX_STREAM_CONNECTION_BUFFER_BYTES`, `AEX_STREAM_WRITE_STALL_MS`, `AEX_STREAM_DRAIN_DEADLINE_MS`, `AEX_ASSERTION_CACHE_BYTES`; plus `AEX_SESSION_TABLE_STREAM_ARN` and `AEX_OBSERVATION_TABLE_STREAM_ARN` in `ddb_streams` mode only |
 | `session-operation-worker` | `AEX_OPERATION_QUEUE_URL`, `AEX_OPERATION_DLQ_URL`, `AEX_WORK_TABLE`, `AEX_SESSION_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_DUE_SCAN_SHARDS`, `AEX_LEASE_MS`, `AEX_STEP_DEADLINE_MS`, `AEX_MAX_ATTEMPTS` |
-| `content-lifecycle-worker` | `AEX_MODE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_GC_STAGE_GRACE_HOURS`, `AEX_UPLOAD_GRACE_HOURS`, `AEX_DECLARED_CAPABILITIES`; plus `AEX_CONTENT_QUEUE_URL` and `AEX_CONTENT_DLQ_URL` in `delete` mode, `AEX_MARK_PAGE_ITEMS` and `AEX_SWEEP_PAGE_ITEMS` in `marksweep` mode, and optional `AEX_INVENTORY_BUCKET` in `reconcile` mode |
+| `content-lifecycle-worker` | `AEX_MODE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_GC_STAGE_GRACE_HOURS`, `AEX_UPLOAD_GRACE_HOURS`, `AEX_DECLARED_CAPABILITIES`; plus `AEX_EXPIRY_SCAN_SHARDS` and `AEX_EXPIRY_PAGE_ITEMS` in `expiry` mode, `AEX_CONTENT_QUEUE_URL` and `AEX_CONTENT_DLQ_URL` in `delete` mode, `AEX_MARK_PAGE_ITEMS` and `AEX_SWEEP_PAGE_ITEMS` in `marksweep` mode, and optional `AEX_INVENTORY_BUCKET` in `reconcile` mode |
 | `regional-secret-key-admin` | `AEX_SECRET_KEYSTORE_TABLE`, `AEX_KEYSTORE_LOGICAL_NAME`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_ATTESTATION_OPERATION_ID` |
 
 Forbidden bindings, which refuse the process when present:
@@ -951,7 +995,7 @@ generated models rather than in the adapters.
 | the 1 `usage` | The public regional model now reports the quantities the fold actually produces. Monetary rating remains on central finance surfaces backed by private rate books; `publishedSequence` / `projectedSequence` match the domain frontier and `serviceThrough` is optional. The remaining blocker is a query planner that implements the full multi-category, time-range, grouping and continuation contract rather than exposing the store's one-row primitive. | usage application + regional services |
 | the 3 `approvals` | `cancelled` and `expired` are distinct reachable states and every approval carries a caller-supplied future deadline. `GET` and list are served through strongly consistent reads and a session-bound cursor. Only response remains blocked on the atomic write/revalidation adapter. | regional services write path |
 | the 3 `operations` | The domain and row codec now preserve phase, exact typed result payload, durable failure, lifecycle timestamps and `WorkspaceDelete`; public projection parses payload under the authoritative envelope kind. `ContentGc` is excluded from both point projection and the sparse public index. The remaining blocker is a `SessionQueries` point/list adapter with complete filter and pagination semantics; no operation route is mounted yet. | regional stores + regional services |
-| the 3 `workspace` | `AEX_REGIONAL_API_URL` is validated configuration. Profile and effective-limit records have separate, typed cold projection rows and a read-only port, keeping placement narrow. Routes remain absent because `central-control-worker` does not yet write those rows and the verified assertion still lacks the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). No reader invents defaults or pause facts. | central identity/control producer |
+| the 3 `workspace` | All three remain absent. The cold reader can decode effective-limit rows, but `ProjectionWriter` exposes only placement, profile and key-revocation writes; `central-control-worker::project_view` calls only profile and placement. Central control has no authoritative default, override or effective-limit authority to produce a `workspace_limit` row. Mounting the limit routes would therefore publish permanent `not_found`/empty answers as if they were authoritative. `WorkspaceCurrentGet` is separately blocked because the verified assertion and cold profile do not supply the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). | central identity/control authority + producer |
 | the 10 registry `*_get`/`*_put`, 6 `files`, 4 `uploads` | Unchanged: the content decrypt path, the session's persisted root, and presigning. | as recorded above |
 
 ### Where the missing `Workspace` fields belong
@@ -983,6 +1027,51 @@ The recommended split, for `central-control-worker` to confirm:
   `changedAt`, revision, pause reason or optional restoration/deletion facts.
 - `status`, `region`, `id` and `organizationId` are already on the placement row.
 
+### Why the workspace-limit readers remain unmounted
+
+The regional half is mechanically ready but not end-to-end authoritative:
+`WorkspaceProjection::read_limit` and `page_limits` perform strongly consistent,
+tenant-checked reads, and the stored row carries every field in
+`EffectiveWorkspaceLimit`. The producing half does not exist. The concrete
+`ProjectionWriter` has `put_placement`, `put_profile` and `put_revocation` only;
+the worker's `project_view` invokes profile then placement, and no central
+control table or port owns default, override or effective-limit values.
+
+An absent effective row cannot mean "use the registry default": the registry
+describes identity and shape, not an authoritative value, source, revision or
+change instant. Serving the point route as `not_found` and the collection as an
+empty page would therefore convert an incomplete projection into a confident
+customer answer. RS-18 keeps both routes out of `SERVED` until central control
+defines the authority and publishes the rows. This is a missing producer, not a
+missing invocation of an existing one.
+
+### Why the usage store is not yet a complete public query planner
+
+`UsageQueryStore` is now a real, read-only adapter, but mounting `usage_query`
+directly over its `aggregates` method would still publish a narrower operation
+than the contract declares:
+
+- one adapter call reads exactly one generation, workspace, category, month and
+  granularity, while `UsageQuery` accepts up to four categories and an arbitrary
+  half-open time range that can cross month partitions;
+- only hourly and daily rollups are readable. An arbitrary timestamp boundary
+  can cut through either bucket, and the store exposes no detail read with which
+  to answer that boundary exactly;
+- stored rows retain `service`, resource kind, receipt source, basis, session,
+  run and operation. The public `groupBy` set names only category, region,
+  workspace, session, run and operation, while every published attribution still
+  requires one `source`. Collapsing rows therefore needs an explicit source
+  projection rule; selecting a convenient stored value would be a guess;
+- a continuation must bind the generation, normalized filters and grouping,
+  every category/month partition already exhausted, and the current keyset
+  position. The adapter exposes only the last sort key of one partition.
+
+Consequently there is no smaller exact planner to compose today. The route stays
+unmounted until the usage application owns those multi-partition, boundary,
+grouping and continuation semantics. This conclusion does not depend on money:
+the regional model correctly contains quantities only, and no rate or monetary
+default is introduced here.
+
 ### Decisions taken beyond the sections above
 
 | # | Decision | Rationale |
@@ -996,3 +1085,122 @@ The recommended split, for `central-control-worker` to confirm:
 | RD-07 | Approval expiry is explicit input, not a hidden default | The policy owner supplies a future deadline. The domain refuses an absent window and turns a response racing the deadline into an `Expired` commit. |
 | RD-08 | Public operation payloads are decoded under the envelope kind | Stored content has no second discriminant. A mismatch is typed corruption, while internal `ContentGc` never enters the public index or point result. |
 | RD-09 | Workspace profile and limits use cold rows and a separate port | Placement stays the narrow per-request authorization item. Effective values are durable feed records, including their source; generated registry metadata is never treated as a value. |
+| RD-10 | The two effective-limit reads remain unmounted after auditing the producer | The reader is complete, but central control owns no authoritative limit values and writes no limit row. Returning permanent `not_found` or empty answers would conceal that missing authority rather than serve the contract. |
+| RD-11 | `usage_query` remains unmounted after auditing the landed read store | A single-partition aggregate primitive cannot exactly implement the published multi-category, arbitrary-range, grouping and continuation contract. The regional edge neither guesses a source/default nor widens the contract to fit the store. |
+
+## Key administration continuation (2026-08-02)
+
+The one-shot key admin no longer treats printing an action as success. Creation
+and rotation derive the version-row identity from the attested operation, so a
+retry targets the same immutable generation. KMS
+`GenerateDataKeyWithoutPlaintext` returns only wrapped material to the process;
+the version row and `branch:ACTIVE` row then commit in one
+`TransactWriteItems`. Rotation conditions the active replacement on both the
+previous version pointer and hierarchy generation. A conditional failure is
+resolved with a new strongly consistent read, which distinguishes a lost
+acknowledgement of this operation from a competing operation.
+
+Only bounded identity facts enter the KMS encryption context. The operator's
+rotation reason is stored as SHA-256 because encryption context is diagnostic
+metadata, not a place for operator or customer prose. `verify` strongly rereads
+the exact active record, confirms the configured root-key lineage, calls KMS
+with the stored context and holds the returned plaintext only in a zeroizing
+buffer. The authored table grant now includes `TransactWriteItems`; the
+canonical generated regional-table bundle must be regenerated with the change.
+
+The implementation keeps the prelaunch custom envelope decision: it writes the
+provider-compatible keystore attribute vocabulary directly because the rejected
+Encryption SDK dependency is not present in this workspace. No ordinary
+application role gains this write adapter or the table/KMS combination it
+requires.
+
+## Session-operation worker continuation (2026-08-02)
+
+The inherited Lambda was still a transport skeleton: every SQS record was
+returned as failed, and the scheduled trigger counted configured shards without
+reading the due index. It now composes the real work and operation authorities.
+Both the EventBridge Pipe/SQS projection and each bounded scheduled shard page
+are treated only as hints; the worker strongly reloads the base work row and
+operation row, checks workspace/session/operation/version binding, claims or
+takes over under the work fence, and acknowledges only a durable outcome.
+
+Two complete step outcomes are served:
+
+- an already terminal operation retires its exact work row under the fence;
+- a running, cancellation-requested operation that has not crossed
+  `committedAt` is changed to `cancelled` in the same two-action DynamoDB
+  transaction that retires the exact fenced work row.
+
+The cancel transaction uses the stable `cancel:{operationId}` provider token
+(36 bytes for the canonical id) and conditions the operation on tenant,
+operation id, exact observed version, `running`, `cancelRequested = true`, and
+the absent commit latch. A transport-ambiguous response is resolved by strongly
+reading both transaction targets. Neither write is blindly retried. Queue
+records use Lambda partial-batch failure; a due scan reports any unserved or
+invalid operation step as an invocation failure rather than draining it.
+
+Scheduled recovery runs at most 16 shard pipelines concurrently. Each pipeline
+strongly loads the existing `work_cursor`, queries strictly after its full
+base-plus-index key, and conditionally advances the cursor only after every row
+in the page has been attempted. A full page advances; the last or empty page
+wraps to the shard start. Deferred rows therefore remain uncompleted and keep
+the invocation red, but they cannot pin terminal recovery behind the first 25
+index rows forever.
+
+This is not yet a claim that provider-backed continuations are implemented.
+Session purge, workspace regional purge, and paged persist/fork remain
+fail-closed because the following canonical authorities do not exist in the
+public tree:
+
+1. the `SessionTransaction::ContinueOperation` adapter/compiler, including a
+   step commit that writes operation/work state and a durable effect receipt
+   together;
+2. a producer that admits the canonical `operation.step` row and its queue
+   hint for these non-inline operation kinds;
+3. session/content ports for bounded owner-edge, active-run/approval/effect,
+   pin, custody, and persisted-root traversal/removal, plus the denial
+   projection guard required before a purge tombstone;
+4. poison-at-attempt-eight terminalization in the real adapter path.
+
+Those are authority-contract gaps, not calls the Lambda may replace with local
+best effort. Until they land, nonterminal provider effects are retried and the
+scheduled path fails loudly.
+
+## Content expiry performance review continuation (2026-08-02)
+
+The scheduled download-grant path no longer waits for all writes from one shard
+before querying the next. One invocation now has two independently bounded
+stages: it attempts every admitted shard query with at most 16 reads in flight,
+then attempts every grant returned by the successful pages with at most 16
+grant-and-pin transactions in flight. A scan failure does not cancel the other
+shards or the writes selected by their valid pages. Any scan, write or task
+failure still fails the invocation, but only after all possible work settles;
+the failure carries exact attempted/scanned/more/selected/expired and failure
+counts, so partial success is explicit rather than inferred.
+
+The fairness audit found one precise residual that this continuation does not
+pretend to fix. `gsi_expiry` is ordered by `expiresAt#token` inside each of its
+64 shards, every query starts at the oldest due row, and `GrantExpiryPage`
+publishes only `more`. If permanent condition/corruption failures occupy the
+whole admitted page for one shard, later grants in that shard remain beyond the
+page and can starve; other shards continue independently. A transient failure,
+or fewer permanent failures than the page budget, still leaves capacity for
+progress.
+
+There is no safe cursor to persist in the authored contract: `regional-content`
+defines no expiry-cursor item type, key, fence or concurrent-invocation owner,
+and the scheduled invocation's response is not the next invocation's input.
+Keeping `LastEvaluatedKey` only in one warm Lambda would lose progress on a cold
+start and split ownership across concurrent invocations. Reversing the index
+order would merely move starvation to older rows. A durable fairness fix must
+first add an owned, fenced per-shard cursor with wrap/recovery semantics to the
+regional-content authority; inventing that authority inside this worker would
+be unsafe.
+
+Verification on `rw/continue-content-expiry-performance`: package formatting
+and clippy with warnings denied are clean; the worker package runs 16 tests with
+16 passed and none skipped; and the diff whitespace check is clean. The broader
+workspace structural check initially found one inherited target-classification
+gap outside this change. Public `main` closes it in `14109eb1` by mapping the
+existing `session-operation-worker` reconciliation target to its declared unit
+layer; `aex-workspace-check` is green at 136 members and 143 packages.

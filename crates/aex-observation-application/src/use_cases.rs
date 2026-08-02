@@ -13,15 +13,15 @@
 //! A diagnostic drop must never mutate completeness, deletion or money truth,
 //! so the gap is durable before the caller is told it succeeded.
 
-use aex_observation_domain::gap::{GapRevision, TimeWindow};
+use aex_observation_domain::gap::{GapRecord, GapRevision, TimeWindow};
 use aex_observation_domain::keys::ScopeKey;
 use aex_observation_domain::limits;
 use aex_observation_domain::signal::SignalSet;
-use aex_wire::ids::TelemetryGapId;
+use aex_wire::ids::{TelemetryGapId, WorkspaceId};
 use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::Timestamp;
 
-use crate::ports::{CommitReceipt, CommitRequest, ObservationAuthority, PortError};
+use crate::ports::{CommitReceipt, CommitRequest, GapSink, ObservationAuthority, PortError};
 
 /// What a trusted producer wants when the commit cannot be made.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -64,6 +64,8 @@ pub enum AdmissionError {
 /// One trusted in-process admission.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SemanticAdmissionRequest {
+    /// The workspace that owns the scope and its sparse gap-index entry.
+    pub workspace: WorkspaceId,
     /// Which scope.
     pub scope: ScopeKey,
     /// Which signals.
@@ -88,18 +90,19 @@ pub enum SemanticAdmission {
     /// The batch committed.
     Committed(CommitReceipt),
     /// The batch did not commit and an explicit gap was recorded instead.
-    Gapped(GapRevision),
+    Gapped(GapRecord),
 }
 
 /// The admission use case.
-pub struct AdmitBatch<A> {
+pub struct AdmitBatch<A, G> {
     authority: A,
+    gaps: G,
 }
 
-impl<A: ObservationAuthority> AdmitBatch<A> {
+impl<A: ObservationAuthority, G: GapSink> AdmitBatch<A, G> {
     /// Builds the use case over one authority.
-    pub const fn new(authority: A) -> Self {
-        Self { authority }
+    pub const fn new(authority: A, gaps: G) -> Self {
+        Self { authority, gaps }
     }
 
     /// Asserts the commit-clock bound the snapshot contract depends on.
@@ -130,12 +133,12 @@ impl<A: ObservationAuthority> AdmitBatch<A> {
     /// the caller elected [`GapOnFailure::Fail`], and
     /// [`AdmissionError::GapNotRecorded`] when the gap itself could not be
     /// written.
-    pub fn admit_semantic(
+    pub async fn admit_semantic(
         &self,
         request: &SemanticAdmissionRequest,
     ) -> Result<SemanticAdmission, AdmissionError> {
         Self::check_clock(request.now, request.now)?;
-        let pinned = self.authority.deletion_epoch(&request.scope)?;
+        let pinned = self.authority.deletion_epoch(&request.scope).await?;
 
         let commit = CommitRequest {
             scope: request.scope,
@@ -146,7 +149,7 @@ impl<A: ObservationAuthority> AdmitBatch<A> {
             accepted_at: request.now,
         };
 
-        match self.authority.commit(&commit) {
+        match self.authority.commit(&commit).await {
             Ok(receipt) => Ok(SemanticAdmission::Committed(receipt)),
             Err(error) => match request.on_failure {
                 GapOnFailure::Fail => Err(AdmissionError::Port(error)),
@@ -158,12 +161,23 @@ impl<A: ObservationAuthority> AdmitBatch<A> {
                         Some(request.window),
                         request.now,
                     );
-                    self.authority.open_gap(&revision).map_err(|inner| {
+                    let record = GapRecord::try_new(
+                        request.workspace,
+                        request.scope,
+                        revision,
+                        Some(u64::from(request.records)),
+                        Some(request.logical_bytes),
+                        false,
+                    )
+                    .map_err(|inner| AdmissionError::GapNotRecorded {
+                        reason: inner.to_string().into_boxed_str(),
+                    })?;
+                    self.gaps.append_gap(&record).await.map_err(|inner| {
                         AdmissionError::GapNotRecorded {
                             reason: inner.to_string().into_boxed_str(),
                         }
                     })?;
-                    Ok(SemanticAdmission::Gapped(revision))
+                    Ok(SemanticAdmission::Gapped(record))
                 }
             },
         }
@@ -191,15 +205,15 @@ mod tests {
         AdmissionError, AdmitBatch, GapOnFailure, SemanticAdmission, SemanticAdmissionRequest,
         reason_for,
     };
-    use crate::ports::{CommitReceipt, CommitRequest, ObservationAuthority, PortError};
-    use aex_observation_domain::gap::{GapRevision, TimeWindow};
+    use crate::ports::{CommitReceipt, CommitRequest, GapSink, ObservationAuthority, PortError};
+    use aex_observation_domain::gap::{GapRecord, TimeWindow};
     use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::limits;
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_wire::ids::{PrefixedId as _, TelemetryGapId};
     use aex_wire::models::TelemetryGapReason;
     use aex_wire::types::Timestamp;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     fn instant(millis: i64) -> Timestamp {
         Timestamp::from_unix_millis(millis).expect("representable")
@@ -217,19 +231,20 @@ mod tests {
             .expect("fixture parses")
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct Double {
         commit_error: Option<PortError>,
         gap_error: Option<PortError>,
-        gaps: Mutex<Vec<GapRevision>>,
+        gaps: Arc<Mutex<Vec<GapRecord>>>,
     }
 
+    #[async_trait::async_trait]
     impl ObservationAuthority for Double {
-        fn deletion_epoch(&self, _scope: &ScopeKey) -> Result<u64, PortError> {
+        async fn deletion_epoch(&self, _scope: &ScopeKey) -> Result<u64, PortError> {
             Ok(7)
         }
 
-        fn commit(&self, request: &CommitRequest) -> Result<CommitReceipt, PortError> {
+        async fn commit(&self, request: &CommitRequest) -> Result<CommitReceipt, PortError> {
             if let Some(error) = &self.commit_error {
                 return Err(error.clone());
             }
@@ -241,21 +256,23 @@ mod tests {
                 new_series: 0,
             })
         }
+    }
 
-        fn open_gap(&self, revision: &GapRevision) -> Result<(), PortError> {
+    #[async_trait::async_trait]
+    impl GapSink for Double {
+        async fn append_gap(&self, record: &GapRecord) -> Result<(), PortError> {
             if let Some(error) = &self.gap_error {
                 return Err(error.clone());
             }
-            self.gaps
-                .lock()
-                .expect("not poisoned")
-                .push(revision.clone());
+            self.gaps.lock().expect("not poisoned").push(record.clone());
             Ok(())
         }
     }
 
     fn request(on_failure: GapOnFailure) -> SemanticAdmissionRequest {
         SemanticAdmissionRequest {
+            workspace: aex_wire::ids::WorkspaceId::parse("wsp_0000000001e40r2081040g2081")
+                .expect("fixture parses"),
             scope: scope(),
             signals: SignalSet::from_signal(Signal::Logs),
             records: 4,
@@ -277,10 +294,11 @@ mod tests {
 
     #[test]
     fn a_healthy_commit_returns_the_receipt() {
-        let use_case = AdmitBatch::new(Double::default());
-        let outcome = use_case
-            .admit_semantic(&request(GapOnFailure::Fail))
-            .expect("admits");
+        let double = Double::default();
+        let use_case = AdmitBatch::new(double.clone(), double);
+        let outcome =
+            futures::executor::block_on(use_case.admit_semantic(&request(GapOnFailure::Fail)))
+                .expect("admits");
         match outcome {
             SemanticAdmission::Committed(receipt) => {
                 assert_eq!(receipt.accepted_lo, 0);
@@ -299,15 +317,17 @@ mod tests {
             }),
             ..Double::default()
         };
-        let use_case = AdmitBatch::new(double);
-        let outcome = use_case
-            .admit_semantic(&request(GapOnFailure::Open))
-            .expect("completes with a gap");
+        let use_case = AdmitBatch::new(double.clone(), double);
+        let outcome =
+            futures::executor::block_on(use_case.admit_semantic(&request(GapOnFailure::Open)))
+                .expect("completes with a gap");
         match outcome {
-            SemanticAdmission::Gapped(revision) => {
-                assert_eq!(revision.reason, TelemetryGapReason::ProducerDropped);
-                assert!(!revision.unbounded, "the window is known");
-                assert_eq!(revision.revision, 0);
+            SemanticAdmission::Gapped(record) => {
+                assert_eq!(record.revision.reason, TelemetryGapReason::ProducerDropped);
+                assert!(!record.revision.unbounded, "the window is known");
+                assert_eq!(record.revision.revision, 0);
+                assert_eq!(record.attempted_records, Some(4));
+                assert_eq!(record.attempted_bytes, Some(512));
             }
             other @ SemanticAdmission::Committed(_) => panic!("expected a gap, got {other:?}"),
         }
@@ -319,10 +339,10 @@ mod tests {
             commit_error: Some(PortError::CommitAmbiguous),
             ..Double::default()
         };
-        let use_case = AdmitBatch::new(double);
-        let error = use_case
-            .admit_semantic(&request(GapOnFailure::Fail))
-            .expect_err("fails");
+        let use_case = AdmitBatch::new(double.clone(), double);
+        let error =
+            futures::executor::block_on(use_case.admit_semantic(&request(GapOnFailure::Fail)))
+                .expect_err("fails");
         assert!(matches!(
             error,
             AdmissionError::Port(PortError::CommitAmbiguous)
@@ -339,23 +359,23 @@ mod tests {
             }),
             ..Double::default()
         };
-        let use_case = AdmitBatch::new(double);
-        let error = use_case
-            .admit_semantic(&request(GapOnFailure::Open))
-            .expect_err("fails");
+        let use_case = AdmitBatch::new(double.clone(), double);
+        let error =
+            futures::executor::block_on(use_case.admit_semantic(&request(GapOnFailure::Open)))
+                .expect_err("fails");
         assert!(matches!(error, AdmissionError::GapNotRecorded { .. }));
     }
 
     #[test]
     fn the_commit_clock_bound_fails_closed() {
-        AdmitBatch::<Double>::check_clock(instant(1_000), instant(1_000))
+        AdmitBatch::<Double, Double>::check_clock(instant(1_000), instant(1_000))
             .expect("no skew is admitted");
-        AdmitBatch::<Double>::check_clock(
+        AdmitBatch::<Double, Double>::check_clock(
             instant(1_000),
             instant(1_000 - limits::OBS_CLOCK_SKEW_MAX_MS + 1),
         )
         .expect("inside the bound is admitted");
-        let error = AdmitBatch::<Double>::check_clock(
+        let error = AdmitBatch::<Double, Double>::check_clock(
             instant(1_000),
             instant(1_000 - limits::OBS_CLOCK_SKEW_MAX_MS),
         )

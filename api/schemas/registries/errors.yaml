@@ -16,8 +16,11 @@ errors:
   - { code: not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such resource" }
   - { code: gone, status: 410, retryable: false, class: not_found, stage: tombstone_and_parent, message: "the resource was deleted" }
   - { code: idempotency_conflict, status: 409, retryable: false, class: conflict, stage: idempotency_identity, message: "the idempotency key was reused with a different intent" }
+  - { code: idempotency_in_flight, status: 409, retryable: true, class: conflict, stage: idempotency_identity, message: "an identical idempotent request is still in flight" }
+  - { code: api_key_secret_unavailable, status: 409, retryable: false, class: conflict, stage: idempotency_identity, message: "the API key was already created and its one-time secret cannot be replayed", remedy: "use the originally returned secret or mint a replacement key" }
   - { code: operation_idempotency_conflict, status: 409, retryable: false, class: conflict, stage: operation_identity, message: "the operation id was reused with a different intent" }
   - { code: invalid_request, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the request body failed strict validation" }
+  - { code: invalid_scope, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the requested scope set is empty, duplicated, unknown, or exceeds the credential ceiling" }
   - { code: invalid_cursor, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the cursor is malformed, expired, or bound to a different query" }
   - { code: invalid_file_selection, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the include or exclude selection is not a valid file selection" }
   - { code: invalid_range, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the byte range is absent, empty, or larger than one grant may sign" }
@@ -29,6 +32,8 @@ errors:
   - { code: session_deleting, status: 409, retryable: false, class: state, stage: tombstone_and_parent, message: "the session is being deleted" }
   - { code: session_deleted, status: 410, retryable: false, class: not_found, stage: tombstone_and_parent, message: "the session was deleted" }
   - { code: deletion_in_progress, status: 409, retryable: false, class: conflict, stage: tombstone_and_parent, message: "a deletion of this resource is already running" }
+  - { code: resource_conflict, status: 409, retryable: false, class: conflict, stage: domain_state, message: "the requested resource conflicts with an existing resource or state" }
+  - { code: last_owner_required, status: 409, retryable: false, class: state, stage: domain_state, message: "an organization must retain at least one active owner" }
   - { code: operation_not_cancelable, status: 409, retryable: false, class: state, stage: domain_state, message: "the operation has passed its cancellation point" }
   - { code: approval_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such approval" }
   - { code: approval_already_resolved, status: 409, retryable: false, class: conflict, stage: domain_state, message: "the approval already has a decision" }
@@ -67,4 +72,6 @@ errors:
   - { code: observability_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the observation authority could not be reached" }
   - { code: rate_limited, status: 429, retryable: true, class: quota, stage: domain_state, message: "too many requests" }
   - { code: upstream_error, status: 502, retryable: true, class: unavailable, stage: commit, message: "a dependency failed" }
+  - { code: workspace_provision_pending, status: 503, retryable: true, class: unavailable, stage: commit, message: "workspace provisioning may still be completing", remedy: "retry the identical request with the same Idempotency-Key" }
+  - { code: commit_outcome_unknown, status: 503, retryable: true, class: unavailable, stage: commit, message: "the commit outcome is unknown", remedy: "retry the identical request with the same replay identity" }
   - { code: internal_error, status: 500, retryable: false, class: internal, stage: commit, message: "an unexpected condition occurred" }

@@ -35,3 +35,6 @@ time.workspace = true
 uuid.workspace = true
 aex-observation-domain = { path = "../aex-observation-domain" }
 aex-wire = { path = "../aex-wire" }
+
+[dev-dependencies]
+futures = { workspace = true, features = ["executor"] }

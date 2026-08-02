@@ -332,6 +332,7 @@ pub struct DownloadGrant {
 /// [`EncodeError`] when the token digest could not enter a key.
 pub fn encode_grant(grant: &DownloadGrant) -> Result<Item, EncodeError> {
     let key = keys::grant(&grant.token_sha256)?;
+    let expiry_shard = keys::expiry_shard(&grant.token_sha256);
     Ok(ItemBuilder::new(DOWNLOAD_GRANT)
         .set(PK, s(key.pk))
         .set(SK, s(key.sk))
@@ -343,6 +344,11 @@ pub fn encode_grant(grant: &DownloadGrant) -> Result<Item, EncodeError> {
         .set("measurementId", s(grant.measurement.to_string()))
         .set("mediaType", s(grant.media_type.clone()))
         .set("expiresAt", stamp(grant.expires_at))
+        .set(keys::EXPIRY_PK, s(keys::expiry_partition(expiry_shard)))
+        .set(
+            keys::EXPIRY_SK,
+            s(keys::expiry_sort(grant.expires_at, &grant.token_sha256)?),
+        )
         .set(
             "expiresAtEpochSeconds",
             n_i64(ttl_epoch_seconds(grant.expires_at)),

@@ -1,10 +1,12 @@
 //! Start-up configuration.
 //!
 //! Nothing here has a default. A variable that identifies a table, a queue, a
-//! provider endpoint or a region must be supplied explicitly, because a defaulted
-//! resource identifier silently binds the process to the wrong plane, region or
-//! table — and for this worker "the wrong table" means suspending another plane's
-//! generations.
+//! region must be supplied explicitly, because a defaulted resource identifier
+//! silently binds the process to the wrong plane, region or table — and for this
+//! worker "the wrong table" means suspending another plane's generations. The
+//! provider endpoint is the sole exception: the official SDK's regional endpoint
+//! is the production default, and the variable is only an explicit test or
+//! compatibility override.
 //!
 //! What is deliberately **not** configurable: the 180000 ms true-idle threshold and
 //! the eight-hour lifetime margins. They are pinned constants in
@@ -43,7 +45,7 @@ pub const DUE_PAGE_READS_VAR: &str = "AEX_RUNTIME_DUE_PAGE_READS";
 pub const PRICING_VERSION_VAR: &str = "AEX_PRICING_VERSION";
 
 /// Every variable this worker requires, in the order it validates them.
-pub const REQUIRED_VARS: [&str; 13] = [
+pub const REQUIRED_VARS: [&str; 12] = [
     PLANE_VAR,
     REGION_VAR,
     RUNTIME_ACTIVITY_TABLE_VAR,
@@ -51,7 +53,6 @@ pub const REQUIRED_VARS: [&str; 13] = [
     LIFECYCLE_QUEUE_VAR,
     COMPUTE_QUEUE_VAR,
     STORAGE_QUEUE_VAR,
-    PROVIDER_ENDPOINT_VAR,
     IMAGE_IDENTIFIER_VAR,
     DUE_SHARDS_VAR,
     DUE_PAGE_ITEMS_VAR,
@@ -120,7 +121,9 @@ pub struct Config {
     /// The storage-authority usage ingress.
     pub storage_queue_url: String,
     /// The `MicroVM` control-plane endpoint.
-    pub provider_endpoint: String,
+    /// Optional endpoint override for an explicit test or compatibility endpoint.
+    /// Production normally uses the official SDK region endpoint.
+    pub provider_endpoint: Option<String>,
     /// The published Hands image the orphan sweep scopes to.
     pub image_identifier: String,
     /// How many shards the due index is spread over.
@@ -181,7 +184,9 @@ impl Config {
             lifecycle_queue_url: endpoint(&lookup, LIFECYCLE_QUEUE_VAR, region)?,
             compute_queue_url: endpoint(&lookup, COMPUTE_QUEUE_VAR, region)?,
             storage_queue_url: endpoint(&lookup, STORAGE_QUEUE_VAR, region)?,
-            provider_endpoint: endpoint(&lookup, PROVIDER_ENDPOINT_VAR, region)?,
+            provider_endpoint: lookup(PROVIDER_ENDPOINT_VAR)
+                .map(|_| endpoint(&lookup, PROVIDER_ENDPOINT_VAR, region))
+                .transpose()?,
             image_identifier: required(&lookup, IMAGE_IDENTIFIER_VAR)?,
             due_shards: positive(&lookup, DUE_SHARDS_VAR)?,
             page: PageBudget {
@@ -333,7 +338,7 @@ mod tests {
     fn every_required_variable_is_named_when_it_is_missing() {
         assert_eq!(
             REQUIRED_VARS.len(),
-            complete().len(),
+            complete().len() - 1,
             "the fixture and the required set must not drift"
         );
         for name in REQUIRED_VARS {
@@ -345,6 +350,15 @@ mod tests {
                 "removing {name}"
             );
         }
+    }
+
+    #[test]
+    fn provider_endpoint_override_is_optional_and_the_sdk_default_is_preferred() {
+        let mut vars = complete();
+        vars.remove(PROVIDER_ENDPOINT_VAR);
+        let config = read(&vars).expect("the official regional SDK endpoint is sufficient");
+        assert!(config.provider_endpoint.is_none());
+        assert!(!REQUIRED_VARS.contains(&PROVIDER_ENDPOINT_VAR));
     }
 
     #[test]

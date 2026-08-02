@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "session-authority",
   "owner": "regional-stores",
-  "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations and idempotency receipts. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+  "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations, idempotency receipts, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -124,9 +124,15 @@
     "budget_return",
     "spend_reservation",
     "operation",
-    "idempotency_receipt"
+    "idempotency_receipt",
+    "regional_workspace_control"
   ],
   "iam": [
+    {
+      "role": "regional-control",
+      "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
+      "resources": ["table"]
+    },
     {
       "role": "regional-session-api",
       "actions": [
@@ -159,6 +165,15 @@
         "dynamodb:TransactWriteItems",
         "dynamodb:UpdateItem",
         "dynamodb:PutItem"
+      ],
+      "resources": ["table"]
+    },
+    {
+      "role": "runtime-control-worker",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:DescribeTable"
       ],
       "resources": ["table"]
     },

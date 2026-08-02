@@ -109,6 +109,8 @@ impl Participant {
     pub const WORK_USAGE_STORAGE: Self = Self::new("work.usage_storage");
     /// The purge worker's wake.
     pub const WORK_PURGE: Self = Self::new("work.purge");
+    /// One due shard's durable reconciliation position.
+    pub const WORK_CURSOR: Self = Self::new("work.cursor");
     /// A parent agent's fanout page.
     pub const AGENT_FANOUT_PAGE: Self = Self::new("agent.fanout_page");
     /// The garbage-collection epoch.

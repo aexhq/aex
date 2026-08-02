@@ -52,6 +52,10 @@ pub mod event;
 #[cfg(feature = "session-authority")]
 pub mod keys;
 #[cfg(feature = "session-authority")]
+pub mod regional_control;
+#[cfg(feature = "session-authority")]
+pub mod runtime_effects;
+#[cfg(feature = "session-authority")]
 pub mod store;
 #[cfg(feature = "session-authority")]
 pub mod transactions;
@@ -61,11 +65,18 @@ pub mod transactions;
 // features = ["authz-projection"]` — the exact composition D-21 exists to
 // permit — fail to compile, which nothing noticed because the default set turns
 // both on.
-#[cfg(any(feature = "session-authority", feature = "authz-projection"))]
+#[cfg(any(
+    feature = "session-authority",
+    feature = "authz-projection",
+    feature = "authz-projection-write"
+))]
 pub mod wire_pending;
 
 #[cfg(feature = "authz-projection")]
 pub mod projection;
+
+#[cfg(feature = "authz-projection-write")]
+pub mod projection_write;
 
 pub use attr::{CodecError, Item};
 pub use component::{Component, KeyError};

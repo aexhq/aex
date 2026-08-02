@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use aex_control_domain::{
     ApiKey, AuditEvent, Epoch, EpochSubjectKind, IntentHash, Invitation, Membership, Operation,
-    OrgRole, Organization, OutboxMessage, ScopeSet, Slug, Workspace,
+    OperationStatus, OrgRole, Organization, OutboxMessage, ScopeSet, Slug, Workspace,
 };
 
 pub use aex_identity_app::ports::{
@@ -277,6 +277,8 @@ pub struct RevokeApiKeyTx {
     pub workspace_id: Uuid,
     /// The `If-Match` revision the caller asserted, when they supplied one.
     pub expected_revision: Option<u64>,
+    /// The regional revocation projection committed with the epoch advance.
+    pub outbox: OutboxMessage,
     /// The audit row committed alongside.
     pub audit: AuditEvent,
     /// When it happened.
@@ -332,8 +334,124 @@ pub struct ListApiKeys {
 pub struct ListOperations {
     /// Which organization.
     pub organization_id: Uuid,
+    /// Restrict to one public kind.
+    pub kind: Option<String>,
+    /// Restrict to one lifecycle state.
+    pub status: Option<OperationStatus>,
     /// Paging.
     pub page: PageRequest,
+}
+
+/// An organization together with the requesting user's current role.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrganizationView {
+    /// The durable organization.
+    pub organization: Organization,
+    /// The requesting user's active role.
+    pub caller_role: OrgRole,
+}
+
+/// A membership together with the identity-owned email projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipView {
+    /// The durable membership.
+    pub membership: Membership,
+    /// The member's current normalized email.
+    pub email: String,
+}
+
+/// The lossless public subset of `finance.account_state_v1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountProfile {
+    /// Active or paused. An absent profile is unavailable and is not a value here.
+    pub state: aex_control_domain::AccountState,
+    /// Finance's stable state reason, when present.
+    pub reason: Option<String>,
+    /// Monotonic finance revision.
+    pub revision: u64,
+    /// When finance last changed the state.
+    pub changed_at: OffsetDateTime,
+    /// The monotone account revocation epoch projected with the state.
+    pub epoch: u64,
+}
+
+/// A workspace together with the account state it inherits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceView {
+    /// The durable workspace.
+    pub workspace: Workspace,
+    /// The owning organization's current account profile.
+    pub account: AccountProfile,
+    /// The workspace revocation epoch projected with its lifecycle.
+    pub workspace_epoch: u64,
+}
+
+/// A public operation together with facts needed for its typed result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationView {
+    /// The durable operation.
+    pub operation: Operation,
+    /// The workspace tombstone instant, once deletion succeeded.
+    pub workspace_deleted_at: Option<OffsetDateTime>,
+}
+
+/// Read projections used only by the public control boundary.
+#[async_trait]
+pub trait ControlViewStore: Send + Sync {
+    /// Lists the caller's organizations with the role used to admit each row.
+    async fn list_organization_views(
+        &self,
+        query: &ListOrganizations,
+    ) -> Result<Page<OrganizationView>, StoreError>;
+
+    /// Reads one organization only when the caller has an active membership.
+    async fn get_organization_view(
+        &self,
+        organization_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<OrganizationView>, StoreError>;
+
+    /// Lists memberships with identity-owned email addresses.
+    async fn list_membership_views(
+        &self,
+        organization_id: Uuid,
+        page: &PageRequest,
+    ) -> Result<Page<MembershipView>, StoreError>;
+
+    /// Lists visible workspaces with their inherited account state.
+    async fn list_workspace_views(
+        &self,
+        query: &ListWorkspaces,
+    ) -> Result<Page<WorkspaceView>, StoreError>;
+
+    /// Reads one visible workspace and its inherited account state.
+    async fn get_workspace_view(&self, id: Uuid) -> Result<Option<WorkspaceView>, StoreError>;
+
+    /// Reads one public operation with result projection facts.
+    async fn get_operation_view(&self, id: Uuid) -> Result<Option<OperationView>, StoreError>;
+
+    /// Lists public operations with bound kind and status filters.
+    async fn list_operation_views(
+        &self,
+        query: &ListOperations,
+    ) -> Result<Page<OperationView>, StoreError>;
+
+    /// Reads one user's current normalized email.
+    async fn user_email(&self, user_id: Uuid) -> Result<Option<String>, StoreError>;
+
+    /// Reads the full public account profile. Absence means unavailable.
+    async fn account_profile(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Option<AccountProfile>, StoreError>;
+
+    /// Resolves the replay row attached to a durable operation. The direct
+    /// operation-recovery lane needs this to close a provision even if its
+    /// outbox message is unavailable.
+    async fn idempotency_id_for_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> Result<Option<Uuid>, StoreError>;
 }
 
 /// Claim due operations for a worker.

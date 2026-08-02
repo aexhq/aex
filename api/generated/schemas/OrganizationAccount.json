@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.aex.dev/v1/OrganizationAccount.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One organization's operational state in a multi-organization dashboard snapshot.",
+  "properties": {
+    "organizationId": {
+      "description": "The organization this state governs.",
+      "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "organization"
+    },
+    "state": {
+      "$ref": "aex:schema:AccountOperationalState",
+      "description": "The organization's current operational state."
+    }
+  },
+  "required": [
+    "organizationId",
+    "state"
+  ],
+  "title": "OrganizationAccount",
+  "type": "object"
+}

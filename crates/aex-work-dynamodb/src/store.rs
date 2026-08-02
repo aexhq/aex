@@ -27,6 +27,9 @@ pub struct DuePage {
     /// The instant the scan covered, so the reconciler can persist its position
     /// without re-reading the base table.
     pub scanned_through: Option<Timestamp>,
+    /// Whether another due row follows this page before the query's upper
+    /// bound.
+    pub has_more: bool,
 }
 
 /// One row of the slim due-index projection.
@@ -37,6 +40,8 @@ pub struct DuePage {
 pub struct DueEntry {
     /// Which record.
     pub work_id: String,
+    /// Tenant whose authority row must be reloaded before work begins.
+    pub workspace: WorkspaceId,
     /// Its kind.
     pub kind: String,
     /// Its state.
@@ -49,6 +54,8 @@ pub struct DueEntry {
     pub fence: u64,
     /// When the current lease expires, when it is claimed.
     pub lease_expires_at: Option<Timestamp>,
+    /// The exact sparse-index position used by the reconciliation cursor.
+    pub effective_due_at: Timestamp,
 }
 
 // TODO(cross-stream): `aex-session-app` publishes no work authority. Its ports are
@@ -105,6 +112,29 @@ pub trait WorkAuthority: Send + Sync + 'static {
         shard: u16,
         now: Timestamp,
         budget: PageBudget,
+    ) -> Result<DuePage, StoreError>;
+
+    /// Strongly reads one shard's persisted reconciliation position.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport or strict decode failure.
+    async fn load_cursor(&self, shard: u16) -> Result<Option<ReconciliationCursor>, StoreError>;
+
+    /// Scans one due shard strictly after its persisted position.
+    ///
+    /// A cursor whose `last_work_id` is absent represents the wrapped start of
+    /// the shard.
+    ///
+    /// # Errors
+    ///
+    /// As [`WorkAuthority::scan_due`].
+    async fn scan_due_after(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: PageBudget,
+        after: Option<&ReconciliationCursor>,
     ) -> Result<DuePage, StoreError>;
 
     /// Retires a record under its fence.
@@ -267,6 +297,58 @@ impl WorkAuthority for WorkStore {
         now: Timestamp,
         budget: PageBudget,
     ) -> Result<DuePage, StoreError> {
+        self.scan_due_after(shard, now, budget, None).await
+    }
+
+    async fn load_cursor(&self, shard: u16) -> Result<Option<ReconciliationCursor>, StoreError> {
+        let cursor_key = keys::cursor(shard);
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .set_key(Some(key(&cursor_key.pk, &cursor_key.sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+        let Some(item) = output.item else {
+            return Ok(None);
+        };
+        let cursor = codec::decode_cursor(&item)?;
+        if cursor.shard != shard {
+            return Err(StoreError::Invalid {
+                detail: format!(
+                    "work cursor for shard {shard} decoded as shard {}",
+                    cursor.shard
+                ),
+            });
+        }
+        Ok(Some(cursor))
+    }
+
+    async fn scan_due_after(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: PageBudget,
+        after: Option<&ReconciliationCursor>,
+    ) -> Result<DuePage, StoreError> {
+        if after.is_some_and(|cursor| cursor.shard != shard) {
+            return Err(StoreError::Invalid {
+                detail: "a due-scan cursor belongs to another shard".to_owned(),
+            });
+        }
+        let start = after
+            .and_then(|cursor| {
+                cursor
+                    .last_work_id
+                    .as_deref()
+                    .map(|work_id| (cursor.scanned_through_effective_due_at, work_id))
+            })
+            .map(|(effective_due_at, work_id)| {
+                due_exclusive_start(shard, effective_due_at, work_id)
+            })
+            .transpose()?;
         let output = self
             .client
             .query()
@@ -276,14 +358,18 @@ impl WorkAuthority for WorkStore {
             .expression_attribute_names("#pk", keys::DUE_PK)
             .expression_attribute_names("#sk", keys::DUE_SK)
             .expression_attribute_values(":pk", s(keys::due_partition_for_shard(shard)))
-            // The upper bound carries the separator so the whole of that
-            // millisecond is included whatever work identity follows it.
-            .expression_attribute_values(":now", s(format!("{}#", now.to_wire())))
+            // The upper bound carries a scalar above every ASCII work-id byte,
+            // so the whole of that millisecond is included. A bare trailing
+            // separator sorts *before* every `#{workId}` and would miss work
+            // due at exactly `now`.
+            .expression_attribute_values(":now", s(format!("{}#\u{10ffff}", now.to_wire())))
             .limit(budget.limit())
+            .set_exclusive_start_key(start)
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
 
+        let has_more = output.last_evaluated_key.is_some();
         let mut items = Vec::new();
         for item in output.items.unwrap_or_default() {
             // The due index is an `INCLUDE` projection and does not carry the
@@ -291,20 +377,43 @@ impl WorkAuthority for WorkStore {
             // index is sparse on `duePartition`, which only a work row writes,
             // so the family is already established by the key.
             let row = Row::bind_projected(&item, codec::WORK);
+            let work_id = row.string("workId")?.to_owned();
+            let expected_key = keys::work(&work_id)?;
+            if row.string(aex_session_dynamodb::attr::PK)? != expected_key.pk
+                || row.string(aex_session_dynamodb::attr::SK)? != expected_key.sk
+                || row.string(keys::DUE_PK)? != keys::due_partition_for_shard(shard)
+            {
+                return Err(StoreError::Invalid {
+                    detail: format!("work `{work_id}` carries forged base or due-index keys"),
+                });
+            }
+            let priority = u8::try_from(row.u64("priority")?).map_err(|_| StoreError::Invalid {
+                detail: "a due-index priority does not fit its declared band".to_owned(),
+            })?;
+            let effective_due_at = keys::effective_due_at(row.timestamp("dueAt")?, priority)?;
+            let expected_sort = keys::due_sort(effective_due_at, &work_id)?;
+            if row.string(keys::DUE_SK)? != expected_sort {
+                return Err(StoreError::Invalid {
+                    detail: format!("work `{work_id}` carries a forged due-index position"),
+                });
+            }
             items.push(DueEntry {
-                work_id: row.string("workId")?.to_owned(),
+                work_id,
+                workspace: row.id::<WorkspaceId>("workspaceId")?,
                 kind: row.enumerated("kind", keys::KINDS)?.to_owned(),
                 state: row.enumerated("state", keys::STATES)?.to_owned(),
                 attempt: row.u64("attempt")?,
                 max_attempts: row.u64("maxAttempts")?,
                 fence: row.u64("fence")?,
                 lease_expires_at: row.opt_timestamp("leaseExpiresAt")?,
+                effective_due_at,
             });
         }
-        let scanned_through = (!items.is_empty()).then_some(now);
+        let scanned_through = items.last().map(|item| item.effective_due_at);
         Ok(DuePage {
             items,
             scanned_through,
+            has_more,
         })
     }
 
@@ -331,7 +440,8 @@ impl WorkAuthority for WorkStore {
         let previous = cursor.revision.checked_sub(1).ok_or(StoreError::Invalid {
             detail: "a cursor advance always follows a revision".to_owned(),
         })?;
-        self.client
+        let outcome = self
+            .client
             .put_item()
             .table_name(&self.table)
             .set_item(Some(codec::encode_cursor(cursor)))
@@ -339,8 +449,39 @@ impl WorkAuthority for WorkStore {
             .expression_attribute_values(":previous", n(previous))
             .return_values_on_condition_check_failure(ReturnValuesOnConditionCheckFailure::AllOld)
             .send()
-            .await
-            .map_err(|error| classify(&error, Idempotence::Write(Resolution::TargetItem)))?;
-        Ok(())
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(
+                    aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(failed),
+                ) = error.as_service_error()
+                {
+                    return Err(StoreError::PreconditionFailed {
+                        participant: Participant::WORK_CURSOR,
+                        observed: failed.item.clone().map(Box::new),
+                    });
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
     }
+}
+
+fn due_exclusive_start(
+    shard: u16,
+    effective_due_at: Timestamp,
+    work_id: &str,
+) -> Result<Item, StoreError> {
+    let work_key = keys::work(work_id)?;
+    let mut start = key(&work_key.pk, &work_key.sk);
+    start.insert(
+        keys::DUE_PK.to_owned(),
+        s(keys::due_partition_for_shard(shard)),
+    );
+    start.insert(
+        keys::DUE_SK.to_owned(),
+        s(keys::due_sort(effective_due_at, work_id)?),
+    );
+    Ok(start)
 }

@@ -23,6 +23,8 @@ use core::pin::Pin;
 
 use aex_hands_protocol::lifecycle::ProviderRequestId;
 use aex_hands_protocol::rpc::Fence;
+use aex_usage_domain::fact::FactDraft;
+use aex_usage_domain::meter::Category;
 use aex_wire::ids::{GenerationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -166,6 +168,8 @@ pub struct GenerationPlan {
     pub generation: GenerationId,
     /// The state the caller read.
     pub expected_state: GenerationState,
+    /// The fence the caller read.
+    pub expected_fence: Fence,
     /// The revision the caller read.
     pub expected_revision: Revision,
     /// The state to land.
@@ -176,8 +180,22 @@ pub struct GenerationPlan {
     pub microvm: Option<MicrovmId>,
     /// The transport mode, once negotiated.
     pub transport_mode: Option<TransportMode>,
+    /// Accounting cursors to land atomically with the state transition.
+    /// `None` preserves all three values.
+    pub accounting: Option<GenerationAccountingPlan>,
     /// When the write happens.
     pub at: Timestamp,
+}
+
+/// Accounting cursors advanced by one settled lifecycle transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenerationAccountingPlan {
+    /// Start of the next open accounting interval.
+    pub accounted_from: Timestamp,
+    /// Start of retained snapshot residence, only while suspended.
+    pub suspended_at: Option<Timestamp>,
+    /// Next snapshot generation ordinal.
+    pub snapshot_ordinal: u32,
 }
 
 /// What a committed generation write landed.
@@ -225,8 +243,35 @@ pub struct LifecycleReceiptPlan {
     pub observed_state: Option<ProviderState>,
     /// The snapshot residence this settlement opened or closed.
     pub snapshot: Option<SnapshotResidence>,
+    /// Usage drafts written to the transactional outbox with the receipt.
+    pub usage: Vec<UsageOutboxPlan>,
+    /// Final head/accounting transition committed with the receipt and outbox.
+    ///
+    /// `None` is reserved for an indeterminate provider outcome whose open intent
+    /// stays in `unknown` for reconciliation.
+    pub generation_commit: Option<GenerationPlan>,
     /// When the settlement happened.
     pub settled_at: Timestamp,
+}
+
+/// One usage draft to persist with a lifecycle settlement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageOutboxPlan {
+    /// Authority ingress the draft belongs to.
+    pub category: Category,
+    /// Canonical untrusted draft.
+    pub draft: FactDraft,
+}
+
+/// One durable usage draft awaiting delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageOutboxEntry {
+    /// Generation whose lifecycle interval produced it.
+    pub generation: GenerationId,
+    /// Authority ingress the draft belongs to.
+    pub category: Category,
+    /// Canonical untrusted draft.
+    pub draft: FactDraft,
 }
 
 /// A settled lifecycle intent as the store recorded it.
@@ -357,6 +402,17 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
         plan: &'a LifecycleReceiptPlan,
     ) -> StoreFuture<'a, LifecycleReceipt>;
 
+    /// Strongly reads all undelivered usage drafts for one generation.
+    fn load_usage_outbox(&self, generation: GenerationId)
+    -> StoreFuture<'_, Vec<UsageOutboxEntry>>;
+
+    /// Removes one draft only after its authority ingress accepted the enqueue.
+    fn mark_usage_emitted<'a>(
+        &'a self,
+        generation: GenerationId,
+        draft: &'a FactDraft,
+    ) -> StoreFuture<'a, ()>;
+
     /// Records one idle evaluation and rearms the due index.
     fn record_probe<'a>(&'a self, probe: &'a IdleProbe) -> StoreFuture<'a, ()>;
 
@@ -377,11 +433,11 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
 /// because acting on a counter that was just proven wrong is how a running job
 /// gets snapshotted.
 ///
-/// `TODO(cross-stream) regional stores`: implement this over the bounded
-/// strongly-consistent open-Hands-effect query in `aex-session-dynamodb`. It is a
-/// separate port from [`RuntimeActivityStore`] on purpose: the two read different
-/// tables, and folding them into one trait would let a control-plane adapter
-/// silently acquire a session-authority read.
+/// The production implementation is the bounded strongly-consistent query in
+/// `aex-session-dynamodb`. It is a separate port from
+/// [`RuntimeActivityStore`] on purpose: the two read different tables, and
+/// folding them into one trait would let a control-plane adapter silently acquire
+/// a session-authority read.
 pub trait OpenEffectCounter: Send + Sync + 'static {
     /// How many Hands effects the session authority currently holds open for this
     /// generation.

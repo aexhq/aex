@@ -5,11 +5,13 @@
 //! true: there is no attribute here that could carry a prompt, a body or a
 //! secret, and a decode refuses anything outside the declared vocabularies.
 
+use aex_hands_protocol::lifecycle::KeepaliveLease;
 use aex_hands_protocol::rpc::Fence;
-use aex_runtime_control::generation::{GenerationState, Revision};
+use aex_runtime_control::generation::{GenerationState, Revision, TransportMode};
+use aex_runtime_control::lifecycle::{IntentRecord, Lifetime, MicrovmId};
 use aex_session_dynamodb::attr::{CodecError, Item, ItemBuilder, PK, Row, SK, n, s, stamp};
 use aex_session_dynamodb::component::KeyError;
-use aex_wire::ids::{GenerationId, SessionId, WorkspaceId};
+use aex_wire::ids::{GenerationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::types::{ComputeSize, Timestamp};
 
 use crate::keys;
@@ -46,6 +48,8 @@ pub struct GenerationRow {
     pub session: SessionId,
     /// The owning workspace.
     pub workspace: WorkspaceId,
+    /// The billed organization.
+    pub organization: OrganizationId,
     /// The generation.
     pub generation: GenerationId,
     /// Its compute shape.
@@ -70,6 +74,26 @@ pub struct GenerationRow {
     pub keepalive_lease_until: Option<Timestamp>,
     /// When the provider's own lifetime ends.
     pub provider_lifetime_expires_at: Option<Timestamp>,
+    /// Provider identity in the canonical lifecycle model.
+    pub microvm: Option<MicrovmId>,
+    /// Provider lifetime start.
+    pub lifetime: Option<Lifetime>,
+    /// Start of the open accounting interval.
+    pub accounted_from: Timestamp,
+    /// The one open lifecycle intent, if any.
+    pub open_intent: Option<IntentRecord>,
+    /// When the current suspension began.
+    pub suspended_at: Option<Timestamp>,
+    /// Stable snapshot lifecycle ordinal.
+    pub snapshot_ordinal: u32,
+    /// Declared retained snapshot bytes.
+    pub snapshot_bytes: u64,
+    /// When the runtime-control suspend lock expires.
+    pub suspend_lock_expires_at: Option<Timestamp>,
+    /// The complete paid keepalive lease.
+    pub keepalive_lease: Option<KeepaliveLease>,
+    /// Negotiated guest transport.
+    pub transport_mode: Option<TransportMode>,
     /// When the reaper should look again.
     pub next_evaluate_at: Timestamp,
     /// When the head last changed.
@@ -84,6 +108,11 @@ pub struct GenerationRow {
 /// # Errors
 ///
 /// [`EncodeError`] when a key component is unusable.
+///
+/// # Panics
+///
+/// Only if serialization of the closed [`IntentRecord`] or [`KeepaliveLease`]
+/// data model fails; neither type contains a fallible JSON value.
 pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
     let key = keys::head(row.session, row.generation);
     let builder = ItemBuilder::new(HANDS_GENERATION)
@@ -91,6 +120,7 @@ pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
         .set(SK, s(key.sk))
         .set("sessionId", s(row.session.to_string()))
         .set("workspaceId", s(row.workspace.to_string()))
+        .set("organizationId", s(row.organization.to_string()))
         .set("generationId", s(row.generation.to_string()))
         .set("size", s(row.size.as_str()))
         .set("state", s(keys::state_str(row.state)))
@@ -98,7 +128,10 @@ pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
         .set("revision", n(row.revision.value()))
         .set_opt(
             "providerVmId",
-            row.provider_vm_id.as_ref().map(|id| s(id.clone())),
+            row.microvm
+                .as_ref()
+                .map(|microvm| s(microvm.0.clone()))
+                .or_else(|| row.provider_vm_id.as_ref().map(|id| s(id.clone()))),
         )
         .set_opt(
             "imageIdentifier",
@@ -111,6 +144,39 @@ pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
         .set_opt(
             "providerLifetimeExpiresAt",
             row.provider_lifetime_expires_at.map(stamp),
+        )
+        .set_opt(
+            "providerLaunchedAt",
+            row.lifetime.map(|lifetime| stamp(lifetime.launched_at)),
+        )
+        .set("accountedFrom", stamp(row.accounted_from))
+        .set_opt("suspendedAt", row.suspended_at.map(stamp))
+        .set("snapshotOrdinal", n(u64::from(row.snapshot_ordinal)))
+        .set("snapshotBytes", n(row.snapshot_bytes))
+        .set_opt(
+            "suspendLockExpiresAt",
+            row.suspend_lock_expires_at.map(stamp),
+        )
+        .set_opt(
+            "openIntent",
+            row.open_intent
+                .as_ref()
+                .map(|intent| s(serde_json::to_string(intent).expect("IntentRecord serializes"))),
+        )
+        .set_opt(
+            "keepaliveLease",
+            row.keepalive_lease
+                .as_ref()
+                .map(|lease| s(serde_json::to_string(lease).expect("KeepaliveLease serializes"))),
+        )
+        .set_opt(
+            "transportMode",
+            row.transport_mode.map(|mode| {
+                s(match mode {
+                    TransportMode::Multiplexed => "multiplexed",
+                    TransportMode::PerRequest => "per_request",
+                })
+            }),
         )
         .set("nextEvaluateAt", stamp(row.next_evaluate_at))
         .set("updatedAt", stamp(row.updated_at));
@@ -148,6 +214,7 @@ pub fn decode_generation(item: &Item, asserted: WorkspaceId) -> Result<Generatio
     Ok(GenerationRow {
         session: row.id::<SessionId>("sessionId")?,
         workspace: asserted,
+        organization: row.id::<OrganizationId>("organizationId")?,
         generation: row.id::<GenerationId>("generationId")?,
         size,
         state: keys::state_of(row.enumerated("state", keys::STATES)?).ok_or(
@@ -172,9 +239,71 @@ pub fn decode_generation(item: &Item, asserted: WorkspaceId) -> Result<Generatio
         idle_since: row.opt_timestamp("idleSince")?,
         keepalive_lease_until: row.opt_timestamp("keepaliveLeaseUntil")?,
         provider_lifetime_expires_at: row.opt_timestamp("providerLifetimeExpiresAt")?,
+        microvm: row
+            .opt_string("providerVmId")?
+            .map(|id| MicrovmId(id.to_owned())),
+        lifetime: row
+            .opt_timestamp("providerLaunchedAt")?
+            .map(|launched_at| Lifetime { launched_at }),
+        accounted_from: row.timestamp("accountedFrom")?,
+        open_intent: row
+            .opt_string("openIntent")?
+            .map(|json| {
+                serde_json::from_str(json).map_err(|error| CodecError::Malformed {
+                    item_type: HANDS_GENERATION,
+                    attribute: "openIntent",
+                    reason: error.to_string(),
+                })
+            })
+            .transpose()?,
+        suspended_at: row.opt_timestamp("suspendedAt")?,
+        snapshot_ordinal: u32::try_from(row.u64("snapshotOrdinal")?).map_err(|_| {
+            CodecError::Malformed {
+                item_type: HANDS_GENERATION,
+                attribute: "snapshotOrdinal",
+                reason: "outside u32".to_owned(),
+            }
+        })?,
+        snapshot_bytes: row.u64("snapshotBytes")?,
+        suspend_lock_expires_at: row.opt_timestamp("suspendLockExpiresAt")?,
+        keepalive_lease: row
+            .opt_string("keepaliveLease")?
+            .map(|json| {
+                serde_json::from_str(json).map_err(|error| CodecError::Malformed {
+                    item_type: HANDS_GENERATION,
+                    attribute: "keepaliveLease",
+                    reason: error.to_string(),
+                })
+            })
+            .transpose()?,
+        transport_mode: match row.opt_string("transportMode")? {
+            None => None,
+            Some("multiplexed") => Some(TransportMode::Multiplexed),
+            Some("per_request") => Some(TransportMode::PerRequest),
+            Some(_) => {
+                return Err(CodecError::Malformed {
+                    item_type: HANDS_GENERATION,
+                    attribute: "transportMode",
+                    reason: "outside the transport vocabulary".to_owned(),
+                });
+            }
+        },
         next_evaluate_at: row.timestamp("nextEvaluateAt")?,
         updated_at: row.timestamp("updatedAt")?,
     })
+}
+
+/// Decodes a generation without a caller-supplied tenant assertion.
+///
+/// Used only after a point read by globally unique generation identity.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] for any missing, mistyped or out-of-vocabulary
+/// attribute.
+pub fn decode_generation_view(item: &Item) -> Result<GenerationRow, CodecError> {
+    let row = Row::bind(item, HANDS_GENERATION)?;
+    decode_generation(item, row.id::<WorkspaceId>("workspaceId")?)
 }
 
 /// One lifecycle intent.

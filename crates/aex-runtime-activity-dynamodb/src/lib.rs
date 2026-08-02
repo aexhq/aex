@@ -28,4 +28,4 @@ pub mod keys;
 pub mod store;
 
 pub use codec::{CurrentGeneration, GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt};
-pub use store::{DueGeneration, RuntimeActivityDynamoStore, RuntimeActivityStore};
+pub use store::{DueGeneration, RuntimeActivityDynamoStore};

@@ -4,7 +4,7 @@ mod support;
 
 use aex_hands_protocol::rpc::Fence;
 use aex_runtime_activity_dynamodb::keys;
-use aex_runtime_activity_dynamodb::store::{RuntimeActivityDynamoStore, RuntimeActivityStore};
+use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
 use aex_runtime_control::generation::{GenerationState, Revision};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::PageBudget;
