@@ -140,30 +140,6 @@ SELECT pepper_version, count(*) AS live FROM (
   UNION ALL SELECT pepper_version FROM identity.device_authorization WHERE status IN ('pending','approved')
 ) s GROUP BY pepper_version;
 
--- Grants are an allowlist. There is no `REVOKE` denylist to keep in step with
--- dropped tables, which is exactly how the system this replaces acquired a
--- deploy-breaking revoke against a table that no longer existed.
-GRANT USAGE ON SCHEMA identity TO aex_identity_api, aex_authz;
-
-GRANT SELECT, INSERT, UPDATE ON
-      identity.user,
-      identity.external_identity,
-      identity.dashboard_session,
-      identity.email_challenge,
-      identity.device_authorization,
-      identity.account_token
-  TO aex_identity_api;
-GRANT DELETE ON identity.external_identity, identity.dashboard_session TO aex_identity_api;
-GRANT SELECT ON identity.credential_pepper, identity.credential_pepper_usage TO aex_identity_api;
-
--- `central-authz` is read-only everywhere. Its readiness probe asserts that a
--- write fails, so a role misconfiguration is a start-up failure rather than a
--- runtime surprise.
-GRANT SELECT ON
-      identity.user,
-      identity.dashboard_session,
-      identity.account_token,
-      identity.credential_pepper
-  TO aex_authz;
-
-GRANT SELECT ON identity.user TO aex_control_api, aex_control_worker;
+-- Who may read or write any of the above is `grants.toml`, not this file.
+-- `aex_identity_api` holds the write surface, `aex_authz` reads four tables and
+-- writes none, and the two control roles see nothing here but `identity.user`.

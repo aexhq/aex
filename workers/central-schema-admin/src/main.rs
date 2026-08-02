@@ -1,19 +1,16 @@
 //! One-shot central schema administration task.
-
-mod grants;
-mod migration;
+//!
+//! Every schema fact lives in the library beside this file; the binary is the
+//! CLI, the exit contract and the receipt, and nothing else.
 
 use std::path::PathBuf;
 
 use aex_wire::canonical::to_jcs_string;
+use central_schema_admin::ADVISORY_LOCK_KEY;
+use central_schema_admin::grants::{self, GrantSet};
+use central_schema_admin::migration::{self, MigrationBundle};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-
-use crate::grants::GrantSet;
-use crate::migration::MigrationBundle;
-
-/// Fixed outer advisory lock, ASCII `AEX_MIGR`.
-pub const ADVISORY_LOCK_KEY: i64 = 0x4145_585F_4D49_4752;
 
 /// One-shot schema administration CLI.
 #[derive(Debug, Parser)]
@@ -258,8 +255,7 @@ mod tests {
     use clap::Parser as _;
 
     use super::{ADVISORY_LOCK_KEY, Cli, Exit, run};
-    use crate::grants::{GrantSet, grants_path};
-    use crate::migration::{MigrationBundle, bundle_path, native_migrator};
+    use central_schema_admin::migration::{MigrationBundle, bundle_path, native_migrator};
 
     fn plan_args() -> Vec<&'static str> {
         vec![
@@ -313,10 +309,10 @@ mod tests {
     }
 
     #[test]
-    fn bundle_is_linear_and_headers_match_filenames() {
+    fn bundle_is_linear_and_every_header_parses() {
         let path = bundle_path();
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
-        assert_eq!(bundle.head(), 20_260_801_000_600);
+        assert_eq!(bundle.head(), 20_260_801_000_700);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -327,6 +323,7 @@ mod tests {
                 20_260_801_000_400,
                 20_260_801_000_500,
                 20_260_801_000_600,
+                20_260_801_000_700,
             ]
         );
         assert!(
@@ -348,18 +345,31 @@ mod tests {
     }
 
     #[test]
-    fn declarative_grants_never_mutate_journal_or_let_costs_charge() {
-        let grants = GrantSet::load(grants_path()).expect("grant allowlist parses");
-        grants
-            .validate_money_boundaries()
-            .expect("money boundaries hold");
-        let text = std::fs::read_to_string(grants_path()).expect("fixture read");
-        assert!(!text.contains("journal_transaction:SELECT,INSERT,UPDATE"));
-        assert!(!text.contains("journal_posting:SELECT,INSERT,UPDATE"));
-        let provider = grants.role("aex_provider_cost").expect("cost role");
-        assert_eq!(
-            provider.tables,
-            ["finance.provider_cost_fact:SELECT,INSERT"]
-        );
+    fn no_migration_body_carries_a_privilege() {
+        // The release gate refuses a `GRANT` or `REVOKE` in a migration body and
+        // this asserts the same property from the other side, so the split
+        // between "a migration creates objects" and "grants.toml says who may
+        // touch them" cannot be undone by a body nobody re-bundled.
+        let directory = bundle_path();
+        let entries = std::fs::read_dir(&directory).expect("the bundle directory lists");
+        let mut checked = 0_usize;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|extension| extension != "sql") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).expect("a migration body reads");
+            for (number, line) in body.lines().enumerate() {
+                let statement = line.trim_start().to_ascii_uppercase();
+                assert!(
+                    !statement.starts_with("GRANT ") && !statement.starts_with("REVOKE "),
+                    "{}:{}: privileges belong in grants.toml",
+                    path.display(),
+                    number + 1
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked >= 7, "only {checked} migration bodies were read");
     }
 }

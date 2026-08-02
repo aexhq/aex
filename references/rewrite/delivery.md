@@ -167,16 +167,13 @@ edges and the path map routes their directories to their real npm nodes.
    migration body is rejected; a non-transactional migration without a
    `.repair.sql` sibling is rejected.
 
-   **Still owed, and now precisely.** The headers are in the declared shape and
-   the bundle still refuses, with 28 `migration-inline-grant` violations across
-   `20260801000000_bootstrap.sql`, `20260801000100_identity.sql`,
-   `20260801000300_control_functions.sql` and
-   `20260801000400_finance_roles_and_schema.sql`. Moving those `GRANT` and
-   `REVOKE` statements into `grants.toml` is the identity and finance streams'
-   decision about their own privilege model. Until it happens there is no
-   `migrations/central/bundle.lock.json`, no central bundle digest, and a
-   composition manifest can only record the three central migration identities
-   as unearned.
+   **Settled.** The identity and finance streams took the privilege decision
+   this gate was waiting on. All 28 `migration-inline-grant` violations are gone:
+   `grants.toml` is `schema_version = 2` and now declares the database-wide
+   denial, per-role `CONNECT`, schema `USAGE`, table privileges and function
+   `EXECUTE`, which `central_schema_admin::grants::GrantSet::render` turns into
+   ordered SQL. `migrations/central/bundle.lock.json` exists, so
+   `migration-bundle-missing` is cleared and the central bundle digest is real.
 5. **`release/policy/seams.toml`**, **`test-profiles.toml`**,
    **`test-images.toml`** and **`workload-registry.toml`** are the
    test-architecture stream's content inside my directory. I do not author or

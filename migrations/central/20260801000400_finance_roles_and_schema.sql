@@ -21,8 +21,11 @@ BEGIN
 END
 $$;
 
-REVOKE ALL ON SCHEMA schema_admin FROM PUBLIC;
-REVOKE ALL ON SCHEMA finance FROM PUBLIC;
+-- `REVOKE ALL ON SCHEMA … FROM PUBLIC` for both schemas is declared in
+-- `grants.toml`, beside the `USAGE` that qualifies it. `ALTER DEFAULT
+-- PRIVILEGES` stays here: it is a property of the schema rather than an entry in
+-- an allowlist, and it governs objects that do not exist yet, which an allowlist
+-- of named tables cannot describe.
 ALTER DEFAULT PRIVILEGES IN SCHEMA schema_admin REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA finance REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA finance REVOKE ALL ON SEQUENCES FROM PUBLIC;

@@ -1,8 +1,29 @@
 //! Migration bundle parsing and native `SQLx` construction.
+//!
+//! # The header
+//!
+//! The first line of every migration is
+//! `-- aex-migration: tx=<yes|no> destructive=<no|yes> phase=<phase>`, three
+//! unordered `key=value` fields separated by spaces. The identity is the
+//! **filename** — `<14 digits>_<slug>.sql` — and is deliberately not repeated
+//! inside the body, because a body that restates its own name is a second place
+//! for the name to be wrong.
+//!
+//! `aex-release-tool migration bundle` is the release gate for exactly this
+//! line and for [`PHASES`]. This parser matches it field for field; a file that
+//! this crate admits and the gate refuses, or the reverse, is the drift both
+//! exist to prevent.
 
 use std::path::{Path, PathBuf};
 
 use sqlx::migrate::Migrator;
+
+/// The phase vocabulary, identical to the release gate's.
+///
+/// A backfill is a *command* (`central-schema-admin backfill`) driven by
+/// `schema_admin.backfill_cursor`, not a phase; the migration that carries one
+/// is `phase=data`.
+pub const PHASES: [&str; 4] = ["expand", "contract", "baseline", "data"];
 
 /// A parsed migration file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,7 +36,7 @@ pub struct MigrationFile {
     pub transactional: bool,
     /// Whether a backup evidence gate is required.
     pub destructive: bool,
-    /// Expand/backfill/switch/contract/baseline phase.
+    /// One of [`PHASES`].
     pub phase: String,
 }
 
@@ -63,10 +84,7 @@ impl MigrationBundle {
                 .map_err(|_| BundleError::Filename)?;
             let content = std::fs::read_to_string(&file).map_err(BundleError::Io)?;
             let first = content.lines().next().ok_or(BundleError::Header)?;
-            let parsed = parse_header(first)?;
-            if parsed.version != version || parsed.slug != slug {
-                return Err(BundleError::HeaderFilenameMismatch);
-            }
+            let parsed = parse_header(first, version, slug)?;
             if !parsed.transactional {
                 let repair = path.join(format!("{version_text}_{slug}.repair.sql"));
                 if !content
@@ -123,43 +141,40 @@ pub fn bundle_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/central")
 }
 
-fn parse_header(line: &str) -> Result<MigrationFile, BundleError> {
+/// Parses one header line for the migration the filename already identifies.
+fn parse_header(line: &str, version: i64, slug: &str) -> Result<MigrationFile, BundleError> {
     let body = line
-        .strip_prefix("-- aex-migration: ")
-        .ok_or(BundleError::Header)?;
-    let mut sections = body.split(" | ");
-    let identity = sections.next().ok_or(BundleError::Header)?;
-    let tx = sections.next().ok_or(BundleError::Header)?;
-    let destructive = sections.next().ok_or(BundleError::Header)?;
-    let phase = sections.next().ok_or(BundleError::Header)?;
-    if sections.next().is_some() {
-        return Err(BundleError::Header);
+        .trim_start()
+        .strip_prefix("-- aex-migration:")
+        .ok_or(BundleError::Header)?
+        .trim();
+    let mut transactional = None;
+    let mut destructive = None;
+    let mut phase = None;
+    for field in body.split_whitespace() {
+        let (key, value) = field.split_once('=').ok_or(BundleError::Header)?;
+        let flag = || match value {
+            "yes" => Ok(true),
+            "no" => Ok(false),
+            _ => Err(BundleError::Header),
+        };
+        match key {
+            "tx" => transactional = Some(flag()?),
+            "destructive" => destructive = Some(flag()?),
+            "phase" if PHASES.contains(&value) => phase = Some(value.to_owned()),
+            _ => return Err(BundleError::Header),
+        }
     }
-    let (version, slug) = identity.split_once(' ').ok_or(BundleError::Header)?;
-    let version = version.parse::<i64>().map_err(|_| BundleError::Header)?;
-    let transactional = match tx {
-        "tx=yes" => true,
-        "tx=no" => false,
-        _ => return Err(BundleError::Header),
-    };
-    let destructive = match destructive {
-        "destructive=yes" => true,
-        "destructive=no" => false,
-        _ => return Err(BundleError::Header),
-    };
-    let phase = phase.strip_prefix("phase=").ok_or(BundleError::Header)?;
-    if !matches!(
-        phase,
-        "expand" | "backfill" | "switch" | "contract" | "baseline"
-    ) {
+    let (Some(transactional), Some(destructive), Some(phase)) = (transactional, destructive, phase)
+    else {
         return Err(BundleError::Header);
-    }
+    };
     Ok(MigrationFile {
         version,
         slug: slug.to_owned(),
         transactional,
         destructive,
-        phase: phase.to_owned(),
+        phase,
     })
 }
 
@@ -175,9 +190,6 @@ pub enum BundleError {
     /// First line is not the exact AEX header.
     #[error("migration header is invalid")]
     Header,
-    /// Header and filename identify different migrations.
-    #[error("migration header differs from filename")]
-    HeaderFilenameMismatch,
     /// Chain is duplicate or non-increasing.
     #[error("migration chain is not strictly increasing")]
     NonLinear,
@@ -187,4 +199,61 @@ pub enum BundleError {
     /// A non-transactional migration lacks its deterministic repair.
     #[error("non-transactional migration lacks -- no-transaction or sibling repair")]
     MissingRepair,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PHASES, parse_header};
+
+    #[test]
+    fn the_header_carries_three_unordered_fields_and_no_identity() {
+        let parsed = parse_header(
+            "-- aex-migration: phase=expand destructive=yes tx=no",
+            20_260_801_000_700,
+            "slug",
+        )
+        .expect("the declared field set parses in any order");
+        assert_eq!(parsed.version, 20_260_801_000_700);
+        assert_eq!(parsed.slug, "slug");
+        assert!(!parsed.transactional);
+        assert!(parsed.destructive);
+        assert_eq!(parsed.phase, "expand");
+    }
+
+    #[test]
+    fn the_phase_vocabulary_is_exactly_the_release_gates() {
+        // `aex-release-tool::migration::parse_header` admits these four and
+        // nothing else. A file this crate accepts and the gate rejects would
+        // pass review and fail the release.
+        assert_eq!(PHASES, ["expand", "contract", "baseline", "data"]);
+        for phase in PHASES {
+            parse_header(
+                &format!("-- aex-migration: tx=yes destructive=no phase={phase}"),
+                1,
+                "s",
+            )
+            .expect("every declared phase parses");
+        }
+        for rejected in ["backfill", "switch", "", "Expand"] {
+            parse_header(
+                &format!("-- aex-migration: tx=yes destructive=no phase={rejected}"),
+                1,
+                "s",
+            )
+            .expect_err("an undeclared phase is refused");
+        }
+    }
+
+    #[test]
+    fn a_missing_field_an_unknown_field_and_a_bare_word_are_all_refused() {
+        for line in [
+            "-- aex-migration: tx=yes destructive=no",
+            "-- aex-migration: tx=yes destructive=no phase=expand speed=fast",
+            "-- aex-migration: tx=yes destructive=no phase=expand extra",
+            "-- aex-migration: tx=maybe destructive=no phase=expand",
+            "-- something else",
+        ] {
+            parse_header(line, 1, "s").expect_err("an incomplete header is refused");
+        }
+    }
 }
