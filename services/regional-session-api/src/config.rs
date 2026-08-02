@@ -8,7 +8,7 @@
 use aex_regional_http::config::{
     Arn, ConfigError, Lookup, arn_in_region, bounded_usize, forbidden, plane_name, region, required,
 };
-use aex_wire::types::Region;
+use aex_wire::types::{HttpsUrl, Region};
 
 /// The deployable this configuration belongs to.
 pub const DEPLOYABLE: &str = "regional-session-api";
@@ -17,6 +17,8 @@ pub const DEPLOYABLE: &str = "regional-session-api";
 pub const PLANE: &str = "AEX_PLANE";
 /// The region this process is pinned to.
 pub const REGION: &str = "AEX_REGION";
+/// The canonical public base URL for this regional API.
+pub const REGIONAL_API_URL: &str = "AEX_REGIONAL_API_URL";
 /// The release digest reported by `/internal/readyz`.
 pub const RELEASE_DIGEST: &str = "AEX_RELEASE_DIGEST";
 /// The `central-authz` function this edge resolves assertions through.
@@ -57,9 +59,10 @@ pub const MAX_PAGE_ITEMS: &str = "AEX_MAX_PAGE_ITEMS";
 pub const MAX_PAGE_BYTES: &str = "AEX_MAX_PAGE_BYTES";
 
 /// Every variable a healthy `regional-session-api` requires, in declaration order.
-pub const REQUIRED: [&str; 21] = [
+pub const REQUIRED: [&str; 22] = [
     PLANE,
     REGION,
+    REGIONAL_API_URL,
     RELEASE_DIGEST,
     AUTHZ_FUNCTION_ARN,
     AUTHZ_VERIFY_KEYS_PARAM,
@@ -109,6 +112,8 @@ pub struct Config {
     pub plane: aex_identity_domain::assertion::Plane,
     /// Pinned region.
     pub region: Region,
+    /// Canonical public base URL for workspace discovery responses.
+    pub regional_api_url: HttpsUrl,
     /// Release digest reported by readiness.
     pub release_digest: String,
     /// `central-authz` function.
@@ -170,6 +175,13 @@ impl Config {
         }
         let plane = plane_name(lookup, PLANE)?;
         let region = region(lookup, REGION)?;
+        let regional_api_url =
+            HttpsUrl::parse(&required(lookup, REGIONAL_API_URL)?).map_err(|error| {
+                ConfigError::Invalid {
+                    name: REGIONAL_API_URL,
+                    reason: error.to_string(),
+                }
+            })?;
         let content_kms_key = arn_in_region(lookup, CONTENT_KMS_KEY_ARN, region, "kms")?;
         let content_bucket_owner = required(lookup, CONTENT_BUCKET_OWNER)?;
         if content_bucket_owner != content_kms_key.account {
@@ -184,6 +196,7 @@ impl Config {
         Ok(Self {
             plane,
             region,
+            regional_api_url,
             release_digest: required(lookup, RELEASE_DIGEST)?,
             authz_function: arn_in_region(lookup, AUTHZ_FUNCTION_ARN, region, "lambda")?,
             authz_verify_keys_param: required(lookup, AUTHZ_VERIFY_KEYS_PARAM)?,

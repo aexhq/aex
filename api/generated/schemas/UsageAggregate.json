@@ -1,7 +1,7 @@
 {
   "$id": "https://schemas.aex.dev/v1/UsageAggregate.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One rated aggregate, discriminated by priced category.",
+  "description": "One resource aggregate, discriminated by category.",
   "oneOf": [
     {
       "$ref": "aex:schema:UsageStorageAggregate",

@@ -87,6 +87,19 @@
         ],
         "type": "object"
       },
+      "ApiError": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "aex:schema:ApiErrorBody",
+            "description": "The failure."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "ApiErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -1225,7 +1238,7 @@
             "x-aex-time": "rfc3339-ms"
           },
           "error": {
-            "$ref": "aex:schema:ApiErrorBody",
+            "$ref": "aex:schema:OperationFailure",
             "description": "The terminal failure."
           },
           "id": {
@@ -1289,6 +1302,29 @@
           "status",
           "updatedAt",
           "workspaceId"
+        ],
+        "type": "object"
+      },
+      "OperationFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "The stable public failure code.",
+            "type": "string",
+            "x-aex-registry": "errors"
+          },
+          "detail": {
+            "description": "Customer-safe detail, when the domain produced it.",
+            "x-aex-canonical-json": true
+          },
+          "retryable": {
+            "description": "Whether the same operation step may be retried.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "retryable"
         ],
         "type": "object"
       },
@@ -1551,6 +1587,17 @@
         },
         "required": [],
         "type": "object"
+      },
+      "ProviderId": {
+        "enum": [
+          "openai",
+          "anthropic",
+          "deepseek",
+          "zai",
+          "moonshotai",
+          "google"
+        ],
+        "type": "string"
       },
       "ResolvedCompute": {
         "additionalProperties": false,

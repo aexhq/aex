@@ -977,3 +977,40 @@ fn a_dispatch_outcome_of_a_group_without_a_stream_can_never_be_a_stream() {
     .expect("dispatch");
     assert!(outcome.into_unary().is_some());
 }
+
+#[test]
+fn regional_read_models_match_their_authoritative_producers() {
+    let workspace = workspace_id().to_string();
+    for spelling in ["cancelled", "expired"] {
+        let status: aex_wire::models::ApprovalStatus =
+            serde_json::from_str(&format!("\"{spelling}\"")).expect("declared approval status");
+        assert_eq!(status.as_str(), spelling);
+    }
+
+    let attribution: aex_wire::models::UsageAttribution =
+        serde_json::from_value(serde_json::json!({
+            "region": "eu-west-1",
+            "workspaceId": workspace,
+            "source": "runtime_activity",
+            "serviceTime": {
+                "gte": "2026-08-01T00:00:00.000Z",
+                "lt": "2026-08-01T01:00:00.000Z"
+            }
+        }))
+        .expect("complete attribution without a regional rate book");
+    assert_eq!(attribution.source, "runtime_activity");
+
+    let frontier: aex_wire::models::UsageFrontier = serde_json::from_value(serde_json::json!({
+        "region": "eu-west-1",
+        "workspaceId": workspace_id().to_string(),
+        "category": "compute",
+        "acceptedSequence": "8",
+        "projectedSequence": "7",
+        "publishedSequence": "6",
+        "settledSequence": "5"
+    }))
+    .expect("domain stage names and an as-yet unknown service-time frontier");
+    assert_eq!(frontier.projected_sequence.to_string(), "7");
+    assert_eq!(frontier.published_sequence.to_string(), "6");
+    assert!(frontier.service_through.is_none());
+}

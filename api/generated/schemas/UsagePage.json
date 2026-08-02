@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/UsagePage.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One page of rated usage plus the frontiers that bound its completeness.",
+  "description": "One page of usage quantities plus the frontiers that bound its completeness. Monetary statements remain a central finance read.",
   "properties": {
     "frontiers": {
       "description": "Pipeline frontiers.",

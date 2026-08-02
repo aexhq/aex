@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:59e34898162c64c1db62bddd64160849b2d637a95288fba02d3694ca98accc7d`.
+//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

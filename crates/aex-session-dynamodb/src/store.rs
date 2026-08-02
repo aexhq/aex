@@ -12,7 +12,7 @@ use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 
-use crate::attr::Item;
+use crate::attr::{CodecError, Item};
 use crate::codec;
 use crate::error::{Idempotence, Resolution, StoreError, classify, decode_cancellation};
 use crate::keys;
@@ -266,6 +266,22 @@ impl SessionReads {
     }
 }
 
+fn approval_for_session(
+    item: &Item,
+    workspace: WorkspaceId,
+    session: SessionId,
+) -> Result<Approval, StoreError> {
+    let approval = codec::decode_approval(item, workspace)?;
+    if approval.binding.session != session {
+        return Err(StoreError::Corrupt(CodecError::Malformed {
+            item_type: codec::APPROVAL,
+            attribute: "sessionId",
+            reason: "does not match the session partition queried".to_owned(),
+        }));
+    }
+    Ok(approval)
+}
+
 #[async_trait]
 impl SessionQueries for SessionReads {
     async fn read_head(
@@ -289,7 +305,7 @@ impl SessionQueries for SessionReads {
         let key = keys::approval(session, approval);
         match self.get(&key.pk, &key.sk).await? {
             None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_approval(&item, workspace)?)),
+            Some(item) => Ok(Some(approval_for_session(&item, workspace, session)?)),
         }
     }
 
@@ -321,7 +337,7 @@ impl SessionQueries for SessionReads {
 
         let mut items = Vec::new();
         for item in output.items.unwrap_or_default() {
-            items.push(codec::decode_approval(&item, workspace)?);
+            items.push(approval_for_session(&item, workspace, session)?);
         }
         let next = output
             .last_evaluated_key

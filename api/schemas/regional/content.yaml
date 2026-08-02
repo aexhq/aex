@@ -473,7 +473,8 @@ schemas:
       - { value: pending, doc: "Waiting on a decision." }
       - { value: approved, doc: "Approved; the bound call may run." }
       - { value: denied, doc: "Denied; the bound call will not run." }
-      - { value: expired, doc: "The bound call is no longer runnable." }
+      - { value: cancelled, doc: "Withdrawn by a stop, cancellation, deletion, pause, continuity loss, tool-call cancellation, or binding drift." }
+      - { value: expired, doc: "Its explicit decision deadline elapsed." }
 
   ApprovalDecision:
     doc: The two decisions a caller may make.
@@ -491,8 +492,11 @@ schemas:
       toolCallId: { type: id, of: tool_call, doc: "The tool call." }
       toolName: { type: resource_name, doc: "The canonical tool name." }
       argumentsDigest: { type: content_hash, doc: "Canonical digest of the arguments." }
-      implementationDigest: { type: content_hash, doc: "Digest of the tool implementation and config." }
+      implementationDigest: { type: content_hash, doc: "Digest of the tool implementation." }
+      configDigest: { type: content_hash, doc: "Digest of the resolved tool configuration." }
       expectedGenerationId: { type: id, of: generation, optional: true, doc: "The generation the call must run in." }
+      expectedCustodyRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The credential-custody revision the call expects." }
+      expectedConfigRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The configuration revision the call expects." }
 
   Approval:
     doc: A pending or resolved tool approval.

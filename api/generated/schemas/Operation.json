@@ -21,7 +21,7 @@
       "x-aex-time": "rfc3339-ms"
     },
     "error": {
-      "$ref": "aex:schema:ApiErrorBody",
+      "$ref": "aex:schema:OperationFailure",
       "description": "The terminal failure."
     },
     "id": {

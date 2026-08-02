@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/UsageQuery.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A bounded query over rated usage.",
+  "description": "A bounded query over authoritative regional usage quantities.",
   "properties": {
     "categories": {
       "description": "Restrict to these categories.",

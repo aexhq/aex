@@ -38,7 +38,7 @@ integration = "blocked on a cross-stream gap: `data-image-literal` bans `Generic
 [features]
 default = ["session-authority", "authz-projection"]
 # The `session-authority` key templates, row codecs and transactions.
-session-authority = []
+session-authority = ["dep:aex-operation-domain"]
 # The read-only `regional-authz-projection` reader. A deployable that needs only
 # the projection depends on this crate with `default-features = false,
 # features = ["authz-projection"]` and links no session write symbol (D-21).
@@ -62,6 +62,7 @@ thiserror.workspace = true
 time.workspace = true
 xxhash-rust.workspace = true
 aex-wire = { path = "../aex-wire" }
+aex-operation-domain = { path = "../aex-operation-domain", optional = true }
 
 tokio = { workspace = true, optional = true }
 

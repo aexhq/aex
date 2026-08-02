@@ -834,6 +834,7 @@ dependencies = [
  "aex-wire",
  "blake3",
  "proptest",
+ "serde_json",
  "thiserror",
  "time",
 ]
@@ -1160,6 +1161,7 @@ dependencies = [
 name = "aex-session-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-operation-domain",
  "aex-wire",
  "async-trait",
  "aws-config",
