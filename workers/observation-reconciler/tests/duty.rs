@@ -654,12 +654,47 @@ fn exhausted() -> DueItem {
         AttributeValue::S("W#wsp_0000000001e40r2081040g2081".to_owned()),
     );
     attributes.insert(
-        "acceptedSeqLo".to_owned(),
-        AttributeValue::N("4".to_owned()),
+        "workspaceId".to_owned(),
+        AttributeValue::S("wsp_0000000001e40r2081040g2081".to_owned()),
     );
     attributes.insert(
-        "acceptedSeqHi".to_owned(),
-        AttributeValue::N("9".to_owned()),
+        "lossCandidates".to_owned(),
+        AttributeValue::L(vec![AttributeValue::M(HashMap::from([
+            (
+                "gapId".to_owned(),
+                AttributeValue::S("gap_0000000001e40r2081040g2081".to_owned()),
+            ),
+            ("signal".to_owned(), AttributeValue::S("logs".to_owned())),
+            (
+                "acceptedSeqLo".to_owned(),
+                AttributeValue::N("4".to_owned()),
+            ),
+            (
+                "acceptedSeqHiExclusive".to_owned(),
+                AttributeValue::N("9".to_owned()),
+            ),
+            (
+                "attemptedRecords".to_owned(),
+                AttributeValue::N("5".to_owned()),
+            ),
+            (
+                "attemptedBytes".to_owned(),
+                AttributeValue::N("512".to_owned()),
+            ),
+            (
+                "timeRange".to_owned(),
+                AttributeValue::M(HashMap::from([
+                    (
+                        "gte".to_owned(),
+                        AttributeValue::S("2026-08-01T08:59:59.000Z".to_owned()),
+                    ),
+                    (
+                        "lt".to_owned(),
+                        AttributeValue::S("2026-08-01T09:00:00.001Z".to_owned()),
+                    ),
+                ])),
+            ),
+        ]))]),
     );
     DueItem {
         id: ItemId::new("bch_1"),
@@ -700,19 +735,24 @@ async fn an_item_past_the_attempt_ceiling_is_quarantined_with_a_durable_reason()
 
 #[tokio::test]
 async fn a_quarantined_spool_chunk_escalates_to_a_durable_gap_rather_than_vanishing() {
-    let (engine, transport) = replaying(ControlDomain::SpoolRepair, 2);
+    let (engine, transport) = replaying(ControlDomain::SpoolRepair, 1);
     engine
         .quarantine(&exhausted(), "the index never settled", now())
         .await
-        .expect("both durable writes land");
+        .expect("the atomic durable write lands");
 
     let requests: Vec<_> = transport.actual_requests().collect();
     assert_eq!(
         requests.len(),
-        2,
-        "a lost chunk is quarantined *and* recorded as a gap"
+        1,
+        "the gap and source terminalization are one transaction"
     );
-    let gap = body_of(requests[1]);
+    let transaction = body_of(requests[0]);
+    let actions = transaction["TransactItems"]
+        .as_array()
+        .expect("transaction actions");
+    assert_eq!(actions.len(), 2, "one gap Put and one source Update");
+    let gap = &actions[0]["Put"];
     let item = &gap["Item"];
     assert_eq!(item["itemType"]["S"].as_str(), Some("telemetry_gap"));
     assert_eq!(
@@ -720,8 +760,21 @@ async fn a_quarantined_spool_chunk_escalates_to_a_durable_gap_rather_than_vanish
         Some("spool_lost"),
         "`pipeline_loss` is spelled `spool_lost` on the wire"
     );
-    assert_eq!(item["fromSequence"]["N"].as_str(), Some("4"));
-    assert_eq!(item["toSequence"]["N"].as_str(), Some("9"));
+    assert_eq!(item["ordinalRange"]["M"]["lo"]["N"].as_str(), Some("4"));
+    assert_eq!(item["ordinalRange"]["M"]["hi"]["N"].as_str(), Some("8"));
+    assert_eq!(
+        item["workspaceId"]["S"].as_str(),
+        Some("wsp_0000000001e40r2081040g2081")
+    );
+    assert_eq!(
+        item["gwPk"]["S"].as_str(),
+        Some("GAPW#wsp_0000000001e40r2081040g2081")
+    );
+    assert_eq!(item["attemptedRecords"]["N"].as_str(), Some("5"));
+    assert!(
+        item.get("timeRange").is_some(),
+        "the exact time window is retained"
+    );
     assert!(
         item["pk"]["S"]
             .as_str()
@@ -731,9 +784,20 @@ async fn a_quarantined_spool_chunk_escalates_to_a_durable_gap_rather_than_vanish
     );
     assert_eq!(
         gap["ConditionExpression"].as_str().map(str::to_owned),
-        Some("attribute_not_exists(#n0)".to_owned()),
+        Some("attribute_not_exists(#n0) AND attribute_not_exists(#n1)".to_owned()),
         "a gap revision is immutable"
     );
+    assert!(
+        actions[1]["Update"]["UpdateExpression"]
+            .as_str()
+            .is_some_and(|update| update.contains("REMOVE ")),
+        "the same transaction removes the source from the due index"
+    );
+    let condition = actions[1]["Update"]["ConditionExpression"]
+        .as_str()
+        .expect("the source update is fenced");
+    assert!(condition.contains("attribute_exists"), "{condition}");
+    assert!(condition.contains(" = "), "{condition}");
 }
 
 // --- dependency hygiene ------------------------------------------------------
