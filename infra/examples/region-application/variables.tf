@@ -82,6 +82,7 @@ variable "stream_pipe" {
   type = object({
     name           = string
     filter_pattern = string
+    input_template = string
     batch_size     = number
   })
   description = "The pipe that turns journal mutations into operation hints."

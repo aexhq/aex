@@ -33,6 +33,7 @@
           "kind",
           "state",
           "dueAt",
+          "priority",
           "attempt",
           "maxAttempts",
           "fence",
@@ -105,6 +106,11 @@
       "role": "brain-mux",
       "actions": ["dynamodb:TransactWriteItems", "dynamodb:GetItem"],
       "resources": ["table"]
+    },
+    {
+      "role": "brain-mux",
+      "actions": ["dynamodb:Query"],
+      "resources": ["table", "index/*"]
     },
     {
       "role": "regional-stream",
