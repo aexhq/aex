@@ -44,6 +44,7 @@ variables {
   stream_pipe = {
     name           = "aex-dev-session-journal-hint"
     filter_pattern = "{\"eventName\":[\"INSERT\",\"MODIFY\"]}"
+    input_template = "{\"workId\": <$.dynamodb.NewImage.workId.S>}"
     batch_size     = 10
   }
 
@@ -107,12 +108,13 @@ variables {
       wildcard_resource_allowlist = []
       action_grants = [
         {
-          sid              = "ReadJournal"
-          actions          = ["dynamodb:GetItem", "dynamodb:Query"]
-          resources        = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal"]
-          scopable         = true
-          condition_key    = "aws:ResourceTag/aex:plane"
-          condition_values = ["dev"]
+          sid                = "ReadJournal"
+          actions            = ["dynamodb:GetItem", "dynamodb:Query"]
+          resources          = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal"]
+          scopable           = true
+          condition_operator = "ForAllValues:StringLike"
+          condition_key      = "dynamodb:LeadingKeys"
+          condition_values   = ["SESSION#*"]
         },
       ]
     }
@@ -125,6 +127,12 @@ run "the_region_application_plans" {
   assert {
     condition     = length(module.role) == 2
     error_message = "One execution role must be created per deployable."
+  }
+
+
+  assert {
+    condition     = jsondecode(module.role["regional-stream"].inline_policy_json).Statement[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["SESSION#*"]
+    error_message = "The region wrapper must preserve reviewed set-qualified conditions."
   }
 }
 

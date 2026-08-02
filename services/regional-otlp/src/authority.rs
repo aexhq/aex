@@ -20,6 +20,7 @@ use aex_observation_domain::canonical::{CanonicalValue, canonical_bytes, sha256_
 use aex_observation_domain::frontier::DeletionState;
 use aex_observation_domain::keys::{self, BucketHour, ScopeKey};
 use aex_observation_domain::limits;
+use aex_observation_domain::order::OrderTuple;
 use aex_observation_domain::series::SeriesHash;
 use aex_observation_domain::signal::{Signal, SignalSet};
 use aex_observation_store_aws::expressions::{ExpressionBuilder, ITEM_TYPE, PK, SK};
@@ -27,7 +28,8 @@ use aex_observation_store_aws::spool::GateState;
 use aex_observation_store_aws::store::{AdmissionPlan, StagedRecord, StoreError, pack_pages};
 use aex_otlp_admission::NormalizedObservation;
 use aex_wire::ids::{
-    OrganizationId, PrefixedId as _, TelemetryBatchId, TelemetryGapId, Uuid7, WorkspaceId,
+    ObservationId, OrganizationId, PrefixedId as _, TelemetryBatchId, TelemetryGapId, Uuid7,
+    WorkspaceId,
 };
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update, WriteRequest};
@@ -364,6 +366,11 @@ impl AdmissionAuthority {
 
         // Step 6 — transaction P.
         self.prepare(request, &plan, now).await?;
+        if let Some(receipt) = self.receipt_state(request).await?
+            && receipt.state == StoredReceipt::Committed
+        {
+            return self.replay_committed(request, &plan, &receipt).await;
+        }
 
         // Step 7 — stage bodies and pages. Nothing here is reachable or billed
         // until the commit publishes the accepted range.
@@ -371,7 +378,7 @@ impl AdmissionAuthority {
         for observation in &request.observations {
             placements.push(self.stage_body(request.workspace, observation).await?);
         }
-        self.stage_pages(request, &pages, &staged).await?;
+        let page_digests = self.stage_pages(request, &pages, &staged).await?;
 
         // Step 8 — transaction C.
         let mut allocations = Vec::new();
@@ -399,16 +406,87 @@ impl AdmissionAuthority {
                 limit: limits::OBS_CLOCK_SKEW_MAX_MS,
             });
         }
-        self.commit(request, &plan, &allocations, pinned_epoch, now)
-            .await?;
+        self.commit(
+            request,
+            &plan,
+            &allocations,
+            &page_digests,
+            pinned_epoch,
+            now,
+        )
+        .await?;
+
+        // Always consume the durable winner, including after an ambiguous C
+        // outcome or a concurrent retry won the receipt race. Local allocation
+        // guesses and the caller's retry clock are never materialization facts.
+        let receipt = self
+            .receipt_state(request)
+            .await?
+            .filter(|receipt| receipt.state == StoredReceipt::Committed)
+            .ok_or(AuthorityError::Malformed {
+                item: "admission_receipt",
+                attribute: "state",
+            })?;
+        confirm_page_manifest(&page_digests, &receipt.page_digests)?;
 
         // Step 9 — materialize, idempotently, from the staged pages.
-        self.materialize(request, &allocations, &placements, abucket, now)
-            .await?;
+        let accepted_at = receipt.accepted_at.ok_or(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "acceptedAt",
+        })?;
+        self.materialize(
+            request,
+            &receipt.allocations,
+            &placements,
+            BucketHour::from_timestamp(accepted_at),
+            accepted_at,
+        )
+        .await?;
 
         Ok(AdmissionReceipt {
             batch_id: request.batch_id,
-            accepted_at: now,
+            accepted_at,
+            accepted: request.observations.len() as u64,
+            logical_bytes: plan.logical_bytes(),
+        })
+    }
+
+    /// Replays materialization from the committed receipt's immutable facts.
+    async fn replay_committed(
+        &self,
+        request: &AdmissionRequest,
+        plan: &AdmissionPlan,
+        receipt: &StoredReceiptRecord,
+    ) -> Result<AdmissionReceipt, AuthorityError> {
+        let accepted_at = receipt.accepted_at.ok_or(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "acceptedAt",
+        })?;
+        let staged = request
+            .observations
+            .iter()
+            .map(|observation| StagedRecord {
+                signal: observation.signal,
+                canonical: observation.canonical.clone(),
+            })
+            .collect::<Vec<_>>();
+        let pages = pack_pages(&staged)?;
+        confirm_page_manifest(&staged_page_digests(&pages, &staged), &receipt.page_digests)?;
+        let mut placements = Vec::with_capacity(request.observations.len());
+        for observation in &request.observations {
+            placements.push(self.stage_body(request.workspace, observation).await?);
+        }
+        self.materialize(
+            request,
+            &receipt.allocations,
+            &placements,
+            BucketHour::from_timestamp(accepted_at),
+            accepted_at,
+        )
+        .await?;
+        Ok(AdmissionReceipt {
+            batch_id: request.batch_id,
+            accepted_at,
             accepted: request.observations.len() as u64,
             logical_bytes: plan.logical_bytes(),
         })
@@ -422,10 +500,11 @@ impl AdmissionAuthority {
         now: Timestamp,
     ) -> Result<(), AuthorityError> {
         let mut builder = ExpressionBuilder::new();
-        let condition = aex_observation_store_aws::expressions::prepare_condition(
-            &mut builder,
-            &request.intent_digest,
-        );
+        // Only the creator reserves quota. An equal-intent retry resolves the
+        // failed create through the durable receipt below; allowing PutItem to
+        // overwrite a preparing receipt would execute the paired ADD again and
+        // leak the same reservation on every retry.
+        let condition = aex_observation_store_aws::expressions::immutable_condition(&mut builder);
         let expires = now.unix_millis() + limits::OBS_PREPARE_TTL_MS;
         let receipt = Put::builder()
             .table_name(&self.table)
@@ -465,10 +544,15 @@ impl AdmissionAuthority {
             Err(error) => {
                 // Resolve by batch identity rather than retrying blindly.
                 match self.receipt_state(request).await? {
-                    Some(StoredReceipt::Preparing | StoredReceipt::Committed) => Ok(()),
-                    Some(StoredReceipt::Aborted) | None => {
-                        Err(AuthorityError::provider("TransactWriteItems", error))
-                    }
+                    Some(StoredReceiptRecord {
+                        state: StoredReceipt::Preparing | StoredReceipt::Committed,
+                        ..
+                    }) => Ok(()),
+                    Some(StoredReceiptRecord {
+                        state: StoredReceipt::Aborted,
+                        ..
+                    })
+                    | None => Err(AuthorityError::provider("TransactWriteItems", error)),
                 }
             }
         }
@@ -478,7 +562,7 @@ impl AdmissionAuthority {
     async fn receipt_state(
         &self,
         request: &AdmissionRequest,
-    ) -> Result<Option<StoredReceipt>, AuthorityError> {
+    ) -> Result<Option<StoredReceiptRecord>, AuthorityError> {
         let Some(item) = self
             .get(
                 &keys::batch_pk(request.workspace, request.batch_id),
@@ -497,9 +581,27 @@ impl AdmissionAuthority {
                 batch: request.batch_id.to_string(),
             });
         }
-        Ok(Some(StoredReceipt::parse(
-            string(&item, "state").unwrap_or("preparing"),
-        )))
+        let state = StoredReceipt::parse(string(&item, "state").unwrap_or("preparing"));
+        let (accepted_at, allocations, page_digests) = if state == StoredReceipt::Committed {
+            (
+                Some(
+                    timestamp(&item, "acceptedAt").ok_or(AuthorityError::Malformed {
+                        item: "admission_receipt",
+                        attribute: "acceptedAt",
+                    })?,
+                ),
+                decode_allocations(request, &item)?,
+                decode_page_digests(request, &item)?,
+            )
+        } else {
+            (None, Vec::new(), Vec::new())
+        };
+        Ok(Some(StoredReceiptRecord {
+            state,
+            accepted_at,
+            allocations,
+            page_digests,
+        }))
     }
 
     /// Stages one immutable body, inline or in `S3`.
@@ -551,15 +653,12 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         pages: &[aex_observation_store_aws::PageSpan],
         staged: &[StagedRecord],
-    ) -> Result<(), AuthorityError> {
+    ) -> Result<Vec<String>, AuthorityError> {
         let expires = seconds_from_now(limits::OBS_PREPARE_TTL_MS);
         let mut writes = Vec::new();
+        let mut digests = Vec::with_capacity(pages.len());
         for (ordinal, span) in pages.iter().enumerate() {
-            let mut encoded = Vec::with_capacity(span.bytes);
-            for record in &staged[span.start..span.end] {
-                encoded.extend_from_slice(&record.canonical);
-                encoded.push(b'\n');
-            }
+            let encoded = staged_page_bytes(span, staged);
             let digest = sha256_hex(&encoded);
             let mut item = HashMap::new();
             item.insert(
@@ -577,7 +676,7 @@ impl AdmissionAuthority {
                 AttributeValue::S("staged_page".to_owned()),
             );
             item.insert("page".to_owned(), AttributeValue::N(ordinal.to_string()));
-            item.insert("pageDigest".to_owned(), AttributeValue::S(digest));
+            item.insert("pageDigest".to_owned(), AttributeValue::S(digest.clone()));
             item.insert(
                 "records".to_owned(),
                 AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(encoded)),
@@ -604,8 +703,10 @@ impl AdmissionAuthority {
                     )
                     .build(),
             );
+            digests.push(digest);
         }
-        self.batch_write(writes).await
+        self.batch_write(writes).await?;
+        Ok(digests)
     }
 
     /// Transaction C: publish the accepted range and the durable spool chunk.
@@ -618,12 +719,13 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         plan: &AdmissionPlan,
         allocations: &[Allocation],
+        page_digests: &[String],
         pinned_epoch: u64,
         now: Timestamp,
     ) -> Result<(), AuthorityError> {
-        let mut actions = vec![self.publish_receipt(request, now)?];
+        let mut actions = vec![self.publish_receipt(request, allocations, page_digests, now)?];
         for allocation in allocations {
-            actions.push(self.advance_frontier(request, plan, allocation)?);
+            actions.push(self.advance_frontier(request, allocation, now)?);
         }
         actions.push(self.deletion_fence(request, pinned_epoch)?);
         actions.push(self.put(spool_item(request, allocations, now))?);
@@ -639,10 +741,15 @@ impl AdmissionAuthority {
             Ok(_) => Ok(()),
             // Resolve by batch identity, never by retrying the transaction.
             Err(error) => match self.receipt_state(request).await? {
-                Some(StoredReceipt::Committed) => Ok(()),
-                Some(StoredReceipt::Preparing | StoredReceipt::Aborted) | None => {
-                    Err(AuthorityError::provider("TransactWriteItems", error))
-                }
+                Some(StoredReceiptRecord {
+                    state: StoredReceipt::Committed,
+                    ..
+                }) => Ok(()),
+                Some(StoredReceiptRecord {
+                    state: StoredReceipt::Preparing | StoredReceipt::Aborted,
+                    ..
+                })
+                | None => Err(AuthorityError::provider("TransactWriteItems", error)),
             },
         }
     }
@@ -651,6 +758,8 @@ impl AdmissionAuthority {
     fn publish_receipt(
         &self,
         request: &AdmissionRequest,
+        allocations: &[Allocation],
+        page_digests: &[String],
         now: Timestamp,
     ) -> Result<TransactWriteItem, AuthorityError> {
         let mut receipt = ExpressionBuilder::new();
@@ -658,6 +767,16 @@ impl AdmissionAuthority {
         let committed = receipt.string("committed");
         let accepted_at = receipt.name("acceptedAt");
         let at = receipt.string(now.to_wire());
+        let allocation_ranges = receipt.name("allocations");
+        let ranges = receipt.value(encode_allocations(allocations));
+        let page_digests_name = receipt.name("pageDigests");
+        let page_digests_value = receipt.value(AttributeValue::L(
+            page_digests
+                .iter()
+                .cloned()
+                .map(AttributeValue::S)
+                .collect(),
+        ));
         let preparing = receipt.string("preparing");
         let state_condition = receipt.name("state");
         Ok(TransactWriteItem::builder()
@@ -669,7 +788,11 @@ impl AdmissionAuthority {
                         AttributeValue::S(keys::batch_pk(request.workspace, request.batch_id)),
                     )
                     .key(SK, AttributeValue::S("RECEIPT".to_owned()))
-                    .update_expression(format!("SET {state} = {committed}, {accepted_at} = {at}"))
+                    .update_expression(format!(
+                        "SET {state} = {committed}, {accepted_at} = {at}, \
+                         {allocation_ranges} = {ranges}, \
+                         {page_digests_name} = {page_digests_value}"
+                    ))
                     .condition_expression(format!("{state_condition} = {preparing}"))
                     .set_expression_attribute_names(Some(receipt.names()))
                     .set_expression_attribute_values(Some(receipt.values()))
@@ -683,17 +806,32 @@ impl AdmissionAuthority {
     fn advance_frontier(
         &self,
         request: &AdmissionRequest,
-        plan: &AdmissionPlan,
         allocation: &Allocation,
+        now: Timestamp,
     ) -> Result<TransactWriteItem, AuthorityError> {
         let mut frontier = ExpressionBuilder::new();
+        let item_type = frontier.name(ITEM_TYPE);
+        let frontier_type = frontier.string("frontier");
+        let accepted_at = frontier.name("acceptedAt");
+        let accepted_time = frontier.string(now.to_wire());
+        let earliest_accepted_at = frontier.name("earliestAcceptedAt");
+        let earliest_name = frontier.name("earliestAcceptedAt");
+        let earliest_accepted_seq = frontier.name("earliestAcceptedSeq");
+        let earliest_seq_name = frontier.name("earliestAcceptedSeq");
+        let allocation_lo = frontier.number(allocation.lo);
         let accepted = frontier.name("accepted");
         let revision = frontier.name("revision");
         let count = frontier.name("count");
         let bytes = frontier.name("logicalBytes");
         let advance = frontier.number(allocation.hi - allocation.lo);
         let one = frontier.number(1u64);
-        let byte_delta = frontier.number(plan.logical_bytes());
+        let signal_bytes = request
+            .observations
+            .iter()
+            .filter(|observation| observation.signal == allocation.signal)
+            .map(|observation| u64::try_from(observation.canonical.len()).unwrap_or(u64::MAX))
+            .sum::<u64>();
+        let byte_delta = frontier.number(signal_bytes);
         let expected = frontier.number(allocation.revision);
         let expected_name = frontier.name("revision");
         let absent = frontier.name(PK);
@@ -704,7 +842,10 @@ impl AdmissionAuthority {
                     .key(PK, AttributeValue::S(keys::frontier_pk(&request.scope)))
                     .key(SK, AttributeValue::S(keys::frontier_sk(allocation.signal)))
                     .update_expression(format!(
-                        "ADD {accepted} {advance}, {revision} {one}, {count} {advance}, \
+                        "SET {item_type} = {frontier_type}, {accepted_at} = {accepted_time}, \
+                         {earliest_accepted_at} = if_not_exists({earliest_name}, {accepted_time}), \
+                         {earliest_accepted_seq} = if_not_exists({earliest_seq_name}, {allocation_lo}) \
+                         ADD {accepted} {advance}, {revision} {one}, {count} {advance}, \
                          {bytes} {byte_delta}"
                     ))
                     .condition_expression(format!(
@@ -855,6 +996,34 @@ impl AdmissionAuthority {
             .map_err(|error| AuthorityError::provider("GetItem", error))?;
         Ok(response.item)
     }
+}
+
+/// Serializes one staged page exactly as its immutable `DynamoDB` row stores it.
+///
+/// A canonical JCS value contains no literal newlines outside its escaped
+/// strings, so the delimiter preserves the page's exact record boundaries.
+/// The committed receipt binds the digest of these exact bytes.
+fn staged_page_bytes(
+    span: &aex_observation_store_aws::PageSpan,
+    staged: &[StagedRecord],
+) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(span.bytes.saturating_add(span.end - span.start));
+    for record in &staged[span.start..span.end] {
+        encoded.extend_from_slice(&record.canonical);
+        encoded.push(b'\n');
+    }
+    encoded
+}
+
+/// Returns the ordered digest manifest a committed receipt binds.
+fn staged_page_digests(
+    pages: &[aex_observation_store_aws::PageSpan],
+    staged: &[StagedRecord],
+) -> Vec<String> {
+    pages
+        .iter()
+        .map(|span| sha256_hex(&staged_page_bytes(span, staged)))
+        .collect()
 }
 
 /// The `preparing` receipt item.
@@ -1058,7 +1227,7 @@ fn observed_window(
     ]))
 }
 
-/// Derives one UUIDv7 gap id from the immutable batch id and concrete signal.
+/// Derives one `UUIDv7` gap id from the immutable batch id and concrete signal.
 fn gap_id_for(batch: TelemetryBatchId, signal: Signal) -> TelemetryGapId {
     let mut bytes = *batch.uuid7().as_bytes();
     bytes[15] ^= signal.rank().saturating_add(1);
@@ -1130,9 +1299,23 @@ struct ItemContext<'a> {
 }
 
 impl ItemContext<'_> {
-    /// The zero-padded accepted ordinal every index sort key ends with.
-    fn ordinal(&self) -> String {
-        keys::pad_seq(u128::from(self.accepted_seq))
+    /// The deterministic identity retained by every materialization replay.
+    fn observation_id(&self) -> ObservationId {
+        stable_observation_id(
+            self.request.batch_id,
+            self.observation.signal,
+            self.accepted_seq,
+        )
+    }
+
+    /// The physical ordering key for one primary position.
+    fn order_key(&self, primary: Timestamp) -> String {
+        aex_observation_domain::order::order_sort_key(OrderTuple::new(
+            primary,
+            self.observation.signal,
+            self.observation_id(),
+            1,
+        ))
     }
 }
 
@@ -1172,17 +1355,14 @@ fn identity_attributes(item: &mut HashMap<String, AttributeValue>, context: &Ite
             *shard,
         )),
     );
-    item.insert(
-        SK.to_owned(),
-        AttributeValue::S(keys::observation_sk(*accepted_seq)),
-    );
+    item.insert(SK.to_owned(), AttributeValue::S(context.order_key(*now)));
     item.insert(
         ITEM_TYPE.to_owned(),
         AttributeValue::S("observation".to_owned()),
     );
     item.insert(
         "observationId".to_owned(),
-        AttributeValue::S(mint_observation_id(*now)),
+        AttributeValue::S(context.observation_id().to_string()),
     );
     item.insert("revision".to_owned(), AttributeValue::N("1".to_owned()));
     item.insert(
@@ -1260,7 +1440,6 @@ fn body_attributes(
 /// The trace and metric index attributes, written only when they apply.
 fn sparse_index_attributes(item: &mut HashMap<String, AttributeValue>, context: &ItemContext<'_>) {
     let observation = context.observation;
-    let ordinal = context.ordinal();
     if let Some(trace) = &observation.trace_id {
         item.insert("traceId".to_owned(), AttributeValue::S(trace.clone()));
         item.insert(
@@ -1269,7 +1448,7 @@ fn sparse_index_attributes(item: &mut HashMap<String, AttributeValue>, context: 
         );
         item.insert(
             "trSk".to_owned(),
-            AttributeValue::S(format!("{}#{ordinal}", observation.signal.rank())),
+            AttributeValue::S(context.order_key(observation.time)),
         );
     }
     if let Some(span) = &observation.span_id {
@@ -1287,11 +1466,7 @@ fn sparse_index_attributes(item: &mut HashMap<String, AttributeValue>, context: 
         );
         item.insert(
             "mSk".to_owned(),
-            AttributeValue::S(format!(
-                "{}#{}",
-                observation.time.to_wire(),
-                observation.series_hash.clone().unwrap_or_default()
-            )),
+            AttributeValue::S(context.order_key(observation.time)),
         );
     }
     if let Some(hash) = &observation.series_hash {
@@ -1314,8 +1489,6 @@ fn dense_index_attributes(item: &mut HashMap<String, AttributeValue>, context: &
         now,
         ..
     } = context;
-    let ordinal = context.ordinal();
-    let event_time = observation.time.to_wire();
     let signal = observation.signal.as_str();
     item.insert(
         "tPk".to_owned(),
@@ -1327,7 +1500,7 @@ fn dense_index_attributes(item: &mut HashMap<String, AttributeValue>, context: &
     );
     item.insert(
         "tSk".to_owned(),
-        AttributeValue::S(format!("{event_time}#{ordinal}")),
+        AttributeValue::S(context.order_key(observation.time)),
     );
     item.insert(
         "wPk".to_owned(),
@@ -1337,14 +1510,7 @@ fn dense_index_attributes(item: &mut HashMap<String, AttributeValue>, context: &
             abucket.as_str()
         )),
     );
-    item.insert(
-        "wSk".to_owned(),
-        AttributeValue::S(format!(
-            "{}#{}#{ordinal}",
-            now.to_wire(),
-            request.scope.hash8()
-        )),
-    );
+    item.insert("wSk".to_owned(), AttributeValue::S(context.order_key(*now)));
     item.insert(
         "wtPk".to_owned(),
         AttributeValue::S(format!(
@@ -1355,7 +1521,7 @@ fn dense_index_attributes(item: &mut HashMap<String, AttributeValue>, context: &
     );
     item.insert(
         "wtSk".to_owned(),
-        AttributeValue::S(format!("{event_time}#{ordinal}")),
+        AttributeValue::S(context.order_key(observation.time)),
     );
 }
 
@@ -1366,14 +1532,25 @@ pub fn spool_shard(batch: &str) -> u8 {
     u8::from_str_radix(&digest[0..2], 16).unwrap_or(0) % 16
 }
 
-/// Mints one observation id.
-fn mint_observation_id(now: Timestamp) -> String {
-    use aex_wire::ids::PrefixedId as _;
-    let bytes = *uuid::Uuid::now_v7().as_bytes();
-    let id = aex_wire::ids::Uuid7::from_bytes(bytes).unwrap_or_else(|_| {
-        aex_wire::ids::Uuid7::compose(now.unix_millis().unsigned_abs(), [0u8; 10])
-    });
-    aex_wire::ids::ObservationId::from_uuid7(id).to_string()
+/// Derives one replay-stable observation id from its committed batch position.
+fn stable_observation_id(
+    batch: TelemetryBatchId,
+    signal: Signal,
+    accepted_seq: u64,
+) -> ObservationId {
+    use sha2::Digest as _;
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(batch.to_string().as_bytes());
+    hasher.update([signal.rank()]);
+    hasher.update(accepted_seq.to_be_bytes());
+    let digest = hasher.finalize();
+    let mut entropy = [0_u8; 10];
+    entropy.copy_from_slice(&digest[..10]);
+    ObservationId::from_uuid7(aex_wire::ids::Uuid7::compose(
+        batch.uuid7().unix_millis(),
+        entropy,
+    ))
 }
 
 /// Epoch seconds `after_ms` milliseconds from now.
@@ -1431,6 +1608,184 @@ fn number(item: &HashMap<String, AttributeValue>, name: &str) -> Option<u64> {
         .and_then(|text| text.parse().ok())
 }
 
+/// Reads a fixed-width wire timestamp attribute.
+fn timestamp(item: &HashMap<String, AttributeValue>, name: &str) -> Option<Timestamp> {
+    string(item, name).and_then(|value| Timestamp::parse(value).ok())
+}
+
+/// Encodes the immutable per-signal allocation winner on the committed receipt.
+fn encode_allocations(allocations: &[Allocation]) -> AttributeValue {
+    AttributeValue::L(
+        allocations
+            .iter()
+            .map(|allocation| {
+                AttributeValue::M(HashMap::from([
+                    (
+                        "signal".to_owned(),
+                        AttributeValue::S(allocation.signal.as_str().to_owned()),
+                    ),
+                    (
+                        "lo".to_owned(),
+                        AttributeValue::N(allocation.lo.to_string()),
+                    ),
+                    (
+                        "hi".to_owned(),
+                        AttributeValue::N(allocation.hi.to_string()),
+                    ),
+                    (
+                        "revision".to_owned(),
+                        AttributeValue::N(allocation.revision.to_string()),
+                    ),
+                ]))
+            })
+            .collect(),
+    )
+}
+
+/// Decodes and cross-checks the committed allocation ranges against the intent.
+fn decode_allocations(
+    request: &AdmissionRequest,
+    item: &HashMap<String, AttributeValue>,
+) -> Result<Vec<Allocation>, AuthorityError> {
+    let encoded = item
+        .get("allocations")
+        .and_then(|value| value.as_l().ok())
+        .ok_or(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "allocations",
+        })?;
+    let mut allocations = Vec::with_capacity(encoded.len());
+    let mut seen = SignalSet::EMPTY;
+    for entry in encoded {
+        let map = entry.as_m().map_err(|_| AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "allocations",
+        })?;
+        let signal = map
+            .get("signal")
+            .and_then(|value| value.as_s().ok())
+            .and_then(|value| {
+                Signal::ALL
+                    .iter()
+                    .copied()
+                    .find(|signal| signal.as_str() == value)
+            })
+            .ok_or(AuthorityError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations.signal",
+            })?;
+        if seen.contains(signal) {
+            return Err(AuthorityError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations.signal",
+            });
+        }
+        seen = seen.with(signal);
+        let value = |name: &'static str| {
+            map.get(name)
+                .and_then(|value| value.as_n().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or(AuthorityError::Malformed {
+                    item: "admission_receipt",
+                    attribute: name,
+                })
+        };
+        let allocation = Allocation {
+            signal,
+            lo: value("lo")?,
+            hi: value("hi")?,
+            revision: value("revision")?,
+        };
+        let expected = request
+            .observations
+            .iter()
+            .filter(|observation| observation.signal == signal)
+            .count() as u64;
+        if allocation.hi.checked_sub(allocation.lo) != Some(expected) || expected == 0 {
+            return Err(AuthorityError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations",
+            });
+        }
+        allocations.push(allocation);
+    }
+    let expected = request
+        .observations
+        .iter()
+        .fold(SignalSet::EMPTY, |signals, observation| {
+            signals.with(observation.signal)
+        });
+    if seen != expected {
+        return Err(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "allocations",
+        });
+    }
+    Ok(allocations)
+}
+
+/// Decodes the committed ordered staged-page digest manifest.
+fn decode_page_digests(
+    request: &AdmissionRequest,
+    item: &HashMap<String, AttributeValue>,
+) -> Result<Vec<String>, AuthorityError> {
+    let digests = item
+        .get("pageDigests")
+        .and_then(|value| value.as_l().ok())
+        .ok_or(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "pageDigests",
+        })?
+        .iter()
+        .map(|value| {
+            let digest = value.as_s().map_err(|_| AuthorityError::Malformed {
+                item: "admission_receipt",
+                attribute: "pageDigests",
+            })?;
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(AuthorityError::Malformed {
+                    item: "admission_receipt",
+                    attribute: "pageDigests",
+                });
+            }
+            Ok(digest.clone())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if !request.observations.is_empty() && digests.is_empty() {
+        return Err(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "pageDigests",
+        });
+    }
+    Ok(digests)
+}
+
+/// Refuses a committed winner whose manifest is not the staged batch's proof.
+fn confirm_page_manifest(expected: &[String], committed: &[String]) -> Result<(), AuthorityError> {
+    if expected == committed {
+        Ok(())
+    } else {
+        Err(AuthorityError::Malformed {
+            item: "admission_receipt",
+            attribute: "pageDigests",
+        })
+    }
+}
+
+/// The complete durable result needed to replay a committed admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoredReceiptRecord {
+    state: StoredReceipt,
+    accepted_at: Option<Timestamp>,
+    allocations: Vec<Allocation>,
+    /// Ordered staged-page digests committed with the visibility boundary.
+    page_digests: Vec<String>,
+}
+
 /// The durable state a stored receipt is in.
 ///
 /// An ambiguous transaction outcome is resolved by reading this and branching,
@@ -1461,14 +1816,17 @@ impl StoredReceipt {
 mod tests {
     use super::{
         AdmissionRequest, Allocation, AuthorityError, BODY_PREFIX, BUCKET_SHARDS,
-        MATERIALIZE_CHUNK, PreparedObservation, gap_id_for, spool_item, spool_shard,
+        MATERIALIZE_CHUNK, PreparedObservation, confirm_page_manifest, decode_allocations,
+        decode_page_digests, encode_allocations, gap_id_for, spool_item, spool_shard,
+        stable_observation_id, staged_page_digests,
     };
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::signal::Signal;
-    use aex_observation_store_aws::store::StoreError;
-    use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, WorkspaceId};
+    use aex_observation_store_aws::store::{PageSpan, StagedRecord, StoreError};
+    use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
+    use aws_sdk_dynamodb::types::AttributeValue;
 
     fn observation(signal: Signal, time: i64, bytes: usize) -> PreparedObservation {
         PreparedObservation {
@@ -1528,6 +1886,81 @@ mod tests {
         let logs = gap_id_for(batch, Signal::Logs);
         assert_eq!(logs, gap_id_for(batch, Signal::Logs));
         assert_ne!(logs, gap_id_for(batch, Signal::Metrics));
+    }
+
+    #[test]
+    fn committed_page_digests_bind_the_exact_ordered_staged_bytes() {
+        let staged = vec![
+            StagedRecord {
+                signal: Signal::Logs,
+                canonical: b"{\"a\":1}".to_vec(),
+            },
+            StagedRecord {
+                signal: Signal::Logs,
+                canonical: b"{\"b\":2}".to_vec(),
+            },
+        ];
+        let pages = vec![
+            PageSpan {
+                start: 0,
+                end: 1,
+                bytes: staged[0].canonical.len(),
+            },
+            PageSpan {
+                start: 1,
+                end: 2,
+                bytes: staged[1].canonical.len(),
+            },
+        ];
+        let manifest = staged_page_digests(&pages, &staged);
+        assert_eq!(manifest.len(), 2);
+        assert!(manifest.iter().all(|digest| digest.len() == 64));
+
+        let swapped = staged_page_digests(&pages, &[staged[1].clone(), staged[0].clone()]);
+        assert_ne!(manifest, swapped, "page order is part of the receipt proof");
+
+        let item = std::collections::HashMap::from([(
+            "pageDigests".to_owned(),
+            AttributeValue::L(manifest.iter().cloned().map(AttributeValue::S).collect()),
+        )]);
+        let workspace =
+            WorkspaceId::parse("wsp_0000000001e40r2081040g2081").expect("workspace fixture");
+        let request = AdmissionRequest {
+            batch_id: TelemetryBatchId::parse("bch_0000000001e40r2081040g2081")
+                .expect("batch fixture"),
+            organization: OrganizationId::parse("org_0000000001e40r2081040g2081")
+                .expect("organization fixture"),
+            workspace,
+            scope: ScopeKey::Workspace(workspace),
+            intent_digest: "0".repeat(64),
+            observations: vec![observation(Signal::Logs, 1, 1)],
+        };
+        assert_eq!(
+            decode_page_digests(&request, &item).expect("strict manifest"),
+            manifest
+        );
+        assert!(confirm_page_manifest(&manifest, &manifest).is_ok());
+        assert!(
+            confirm_page_manifest(&manifest, &swapped).is_err(),
+            "an ambiguous or concurrent C winner may not materialize another page set"
+        );
+
+        let upper = std::collections::HashMap::from([(
+            "pageDigests".to_owned(),
+            AttributeValue::L(vec![AttributeValue::S(format!("A{}", &manifest[0][1..]))]),
+        )]);
+        assert!(
+            decode_page_digests(&request, &upper).is_err(),
+            "the receipt uses one lowercase digest spelling"
+        );
+        let empty = std::collections::HashMap::from([(
+            "pageDigests".to_owned(),
+            AttributeValue::L(Vec::new()),
+        )]);
+        assert!(
+            decode_page_digests(&request, &empty).is_err(),
+            "a non-empty committed admission must bind at least one staged page"
+        );
     }
 
     #[test]
@@ -1613,5 +2046,75 @@ mod tests {
         assert_ne!(BODY_PREFIX, "content");
         assert_eq!(MATERIALIZE_CHUNK, 25);
         const { assert!(BUCKET_SHARDS >= 1) }
+    }
+
+    #[test]
+    fn observation_identity_is_stable_across_materialization_replay() {
+        let batch = TelemetryBatchId::from_uuid7(Uuid7::compose(1, [8; 10]));
+        let first = stable_observation_id(batch, Signal::Logs, 41);
+        assert_eq!(
+            first,
+            stable_observation_id(batch, Signal::Logs, 41),
+            "the same committed position must rematerialize the same id"
+        );
+        assert_eq!(first.uuid7().unix_millis(), batch.uuid7().unix_millis());
+        assert_ne!(first, stable_observation_id(batch, Signal::Logs, 42));
+        assert_ne!(first, stable_observation_id(batch, Signal::Spans, 41));
+    }
+
+    #[test]
+    fn a_committed_receipt_round_trips_the_exact_allocation_winner() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [2; 10]));
+        let request = AdmissionRequest {
+            batch_id: TelemetryBatchId::from_uuid7(Uuid7::compose(3, [3; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            workspace,
+            scope: ScopeKey::Workspace(workspace),
+            intent_digest: "digest".to_owned(),
+            observations: vec![
+                prepared(Signal::Logs),
+                prepared(Signal::Logs),
+                prepared(Signal::Spans),
+            ],
+        };
+        let allocations = vec![
+            Allocation {
+                signal: Signal::Logs,
+                lo: 10,
+                hi: 12,
+                revision: 4,
+            },
+            Allocation {
+                signal: Signal::Spans,
+                lo: 20,
+                hi: 21,
+                revision: 7,
+            },
+        ];
+        let mut item = std::collections::HashMap::from([(
+            "allocations".to_owned(),
+            encode_allocations(&allocations),
+        )]);
+        assert_eq!(
+            decode_allocations(&request, &item).expect("decodes"),
+            allocations
+        );
+
+        item.insert("allocations".to_owned(), AttributeValue::L(Vec::new()));
+        assert!(decode_allocations(&request, &item).is_err());
+    }
+
+    fn prepared(signal: Signal) -> PreparedObservation {
+        PreparedObservation {
+            signal,
+            time: Timestamp::from_unix_millis(1).expect("bounded"),
+            canonical: b"null".to_vec(),
+            body: CanonicalValue::Null,
+            attr_digest: "digest".to_owned(),
+            trace_id: None,
+            span_id: None,
+            metric_name: None,
+            series_hash: None,
+        }
     }
 }

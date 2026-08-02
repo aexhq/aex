@@ -4,6 +4,7 @@
 //! failure, never a reason to invent a default reason, signal, range or owner.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 
 use aex_observation_domain::gap::{
     GapRecord, GapRevision, GapState, OrdinalRange, PRODUCIBLE_REASONS, TimeWindow,
@@ -23,7 +24,7 @@ pub const GAP_ITEM_TYPE: &str = "telemetry_gap";
 /// Why a gap row could not be encoded or decoded.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum GapCodecError {
-    /// A required attribute was absent or had the wrong DynamoDB type.
+    /// A required attribute was absent or had the wrong `DynamoDB` type.
     #[error("gap attribute `{attribute}` is missing or has the wrong type")]
     Attribute {
         /// The malformed attribute.
@@ -51,7 +52,7 @@ pub enum GapStoreError {
         /// The failed append invariant.
         reason: Box<str>,
     },
-    /// DynamoDB did not establish an outcome that could be resolved by key.
+    /// `DynamoDB` did not establish an outcome that could be resolved by key.
     #[error("the observation authority is unavailable during {operation}: {reason}")]
     Provider {
         /// The provider operation.
@@ -61,7 +62,7 @@ pub enum GapStoreError {
     },
 }
 
-/// Async DynamoDB adapter for immutable gap revisions.
+/// Async `DynamoDB` adapter for immutable gap revisions.
 #[derive(Clone, Debug)]
 pub struct GapStore {
     dynamodb: aws_sdk_dynamodb::Client,
@@ -87,7 +88,7 @@ impl GapStore {
     /// # Errors
     ///
     /// Returns [`GapStoreError::Conflict`] for missing predecessors or unequal
-    /// replays and [`GapStoreError::Provider`] when DynamoDB remains unknown.
+    /// replays and [`GapStoreError::Provider`] when `DynamoDB` remains unknown.
     pub async fn append(&self, record: &GapRecord) -> Result<(), GapStoreError> {
         let item = encode(record)?;
         if let Some(found) = self.read_exact(record).await? {
@@ -194,6 +195,10 @@ impl GapCodecError {
 ///
 /// Returns [`GapCodecError`] when public fields were mutated into a shape that
 /// contradicts the durable gap invariants.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the paired durable codec attributes stay together for direct audit against decode"
+)]
 pub fn encode(record: &GapRecord) -> Result<HashMap<String, AttributeValue>, GapCodecError> {
     validate(record)?;
     let revision = &record.revision;
@@ -335,7 +340,9 @@ pub fn append_action(table: &str, record: &GapRecord) -> Result<TransactWriteIte
 ///
 /// Returns [`GapCodecError`] for every missing, mistyped or contradictory
 /// durable fact. No field is defaulted.
-pub fn decode(item: &HashMap<String, AttributeValue>) -> Result<GapRecord, GapCodecError> {
+pub fn decode<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
+) -> Result<GapRecord, GapCodecError> {
     if string(item, ITEM_TYPE)? != GAP_ITEM_TYPE {
         return Err(GapCodecError::inconsistent(
             ITEM_TYPE,
@@ -487,8 +494,8 @@ fn validate_successor(previous: &GapRecord, next: &GapRecord) -> Result<(), GapS
     }
 }
 
-fn validate_keys(
-    item: &HashMap<String, AttributeValue>,
+fn validate_keys<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
     record: &GapRecord,
 ) -> Result<(), GapCodecError> {
     let expected = [
@@ -536,8 +543,8 @@ fn optional_number(
     }
 }
 
-fn string<'a>(
-    item: &'a HashMap<String, AttributeValue>,
+fn string<'a, S: BuildHasher>(
+    item: &'a HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<&'a str, GapCodecError> {
     item.get(name)
@@ -546,8 +553,8 @@ fn string<'a>(
         .ok_or_else(|| GapCodecError::attribute(name))
 }
 
-fn optional_string<'a>(
-    item: &'a HashMap<String, AttributeValue>,
+fn optional_string<'a, S: BuildHasher>(
+    item: &'a HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<Option<&'a str>, GapCodecError> {
     let Some(value) = item.get(name) else {
@@ -560,22 +567,22 @@ fn optional_string<'a>(
         .map_err(|_| GapCodecError::attribute(name))
 }
 
-fn number(
-    item: &HashMap<String, AttributeValue>,
+fn number<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<u64, GapCodecError> {
     string_number(item, name)?.map_or_else(|| Err(GapCodecError::attribute(name)), Ok)
 }
 
-fn optional_number_value(
-    item: &HashMap<String, AttributeValue>,
+fn optional_number_value<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<Option<u64>, GapCodecError> {
     string_number(item, name)
 }
 
-fn string_number(
-    item: &HashMap<String, AttributeValue>,
+fn string_number<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<Option<u64>, GapCodecError> {
     let Some(value) = item.get(name) else {
@@ -587,8 +594,8 @@ fn string_number(
         .map_err(|_| GapCodecError::attribute(name))
 }
 
-fn boolean(
-    item: &HashMap<String, AttributeValue>,
+fn boolean<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<bool, GapCodecError> {
     item.get(name)
@@ -597,8 +604,8 @@ fn boolean(
         .ok_or_else(|| GapCodecError::attribute(name))
 }
 
-fn timestamp(
-    item: &HashMap<String, AttributeValue>,
+fn timestamp<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
     name: &'static str,
 ) -> Result<Timestamp, GapCodecError> {
     Timestamp::parse(string(item, name)?).map_err(|_| GapCodecError::attribute(name))
@@ -620,7 +627,9 @@ fn parse_reason(value: &str) -> Result<TelemetryGapReason, GapCodecError> {
         .ok_or_else(|| GapCodecError::attribute("reason"))
 }
 
-fn parse_signals(item: &HashMap<String, AttributeValue>) -> Result<SignalSet, GapCodecError> {
+fn parse_signals<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
+) -> Result<SignalSet, GapCodecError> {
     let values = item
         .get("signals")
         .and_then(|value| value.as_l().ok())
@@ -642,8 +651,8 @@ fn parse_signals(item: &HashMap<String, AttributeValue>) -> Result<SignalSet, Ga
     Ok(signals)
 }
 
-fn optional_time_range(
-    item: &HashMap<String, AttributeValue>,
+fn optional_time_range<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
 ) -> Result<Option<TimeWindow>, GapCodecError> {
     let Some(value) = item.get("timeRange") else {
         return Ok(None);
@@ -658,8 +667,8 @@ fn optional_time_range(
         .ok_or_else(|| GapCodecError::inconsistent("timeRange", "empty or inverted"))
 }
 
-fn optional_ordinal_range(
-    item: &HashMap<String, AttributeValue>,
+fn optional_ordinal_range<S: BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
 ) -> Result<Option<OrdinalRange>, GapCodecError> {
     let Some(value) = item.get("ordinalRange") else {
         return Ok(None);

@@ -27,7 +27,10 @@ pub mod plan;
 pub use aggregate::{Aggregation, Calculation, TDigest};
 pub use ast::{CmpOp, FieldRef, FilterRow, MapRow, Predicate, QueryError, TextOp, resolve};
 pub use coverage::{Consistency, Coverage, Snapshot};
-pub use cursor::{CursorError, ObservationCursorBinding, SegmentPosition, TraceRevisionMode};
+pub use cursor::{
+    CursorError, ObservationCursorBinding, ObservationResume, ResumeKey, ResumeTuple,
+    SegmentPosition, SegmentResume, SegmentState, TraceRevisionMode,
+};
 pub use plan::{
     Access, Budget, Dimension, NormalizedQuery, PageOutcome, Plan, ScopeAxis, Spend, Walk,
     classify, plan,

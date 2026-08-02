@@ -13,6 +13,7 @@ use aex_observation_domain::gap::{GapRecord, TimeWindow};
 use aex_observation_domain::keys::{self, ScopeKey};
 use aex_observation_domain::order::{OrderBy, OrderTuple};
 use aex_observation_domain::signal::{Signal, SignalSet};
+use aex_observation_query::ast::{CmpOp, FieldRef, Predicate};
 use aex_observation_query::plan::plan;
 use aex_regional_http::cursor::CursorKeyRing;
 use aex_regional_http::stream::split_records;
@@ -232,6 +233,18 @@ impl ObservationRequest {
         session.map_or(ScopeKey::Workspace(self.workspace()), ScopeKey::Session)
     }
 
+    /// Strongly reads and applies the deletion fence for a non-paged route.
+    async fn deletion_epoch(&self, scope: &ScopeKey) -> WireResult<u64> {
+        let (epoch, state) = self
+            .service
+            .reader
+            .deletion_fence(scope, self.workspace())
+            .await
+            .map_err(|error| read_error(&error))?;
+        ensure_queryable(scope, state)?;
+        Ok(epoch)
+    }
+
     /// Serves one bounded page.
     async fn page(
         &self,
@@ -250,28 +263,32 @@ impl ObservationRequest {
         let frontier = self
             .service
             .reader
-            .frontier(&scope, &normalized)
+            .frontier(&scope, self.workspace(), &normalized)
             .await
             .map_err(|error| read_error(&error))?;
-        let snapshot = self
-            .service
-            .reader
-            .pin(frontier, now)
-            .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
-        let binding = query::binding(
+        let request_binding = query::page_request_binding(
             cx,
             cx.route,
             self.service.region,
             &scope,
             self.workspace(),
             &normalized,
-            snapshot,
-        )?;
-        let after = body
-            .cursor
-            .as_ref()
-            .map(|token| query::resume(&self.service.cursor_ring, token, &binding, now))
-            .transpose()?;
+            frontier.deletion_epoch,
+        );
+        let (snapshot, resume) = if let Some(token) = body.cursor.as_ref() {
+            let (snapshot, resume) =
+                query::resume_page(&self.service.cursor_ring, token, &request_binding, now)?;
+            (snapshot, Some(resume))
+        } else {
+            let snapshot = self
+                .service
+                .reader
+                .pin(frontier, now)
+                .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
+            (snapshot, None)
+        };
+        ensure_queryable(&scope, frontier.deletion_state)?;
+        let binding = query::page_binding(&request_binding, snapshot)?;
         let plan = plan(
             &normalized,
             query::budget_for(self.service.budget, normalized.limit),
@@ -286,15 +303,17 @@ impl ObservationRequest {
                 &normalized,
                 &plan,
                 snapshot,
-                after.as_ref(),
+                None,
+                resume.as_ref(),
+                false,
             )
             .await
             .map_err(|error| read_error(&error))?;
-        let next_cursor = match (page.more, page.last) {
-            (true, Some(last)) => Some(query::issue(
+        let next_cursor = match (page.more, page.resume.as_ref()) {
+            (true, Some(resume)) => Some(query::issue_page(
                 self.service.cursor_ring.current(),
                 &binding,
-                last,
+                resume,
                 now,
             )?),
             _ => None,
@@ -356,6 +375,12 @@ impl ObservationRequest {
         // producer reports an old observation timestamp after the socket opens.
         normalized.order_by = OrderBy::Accepted;
         let now = now()?;
+        let frontier = self
+            .service
+            .reader
+            .frontier(&scope, self.workspace(), &normalized)
+            .await
+            .map_err(|error| read_error(&error))?;
         let request_binding = query::stream_request_binding(
             cx,
             cx.route,
@@ -363,25 +388,24 @@ impl ObservationRequest {
             &scope,
             self.workspace(),
             &normalized,
+            frontier.deletion_epoch,
         );
-        let frontier = self
-            .service
-            .reader
-            .frontier(&scope, &normalized)
-            .await
-            .map_err(|error| read_error(&error))?;
-        let (snapshot, after) = if let Some(cursor) = resume.as_ref() {
-            let (snapshot, after) =
+        let (snapshot, after, segment_resume) = if let Some(cursor) = resume.as_ref() {
+            let (snapshot, resumed) =
                 query::resume_stream(&self.service.cursor_ring, cursor, &request_binding, now)?;
-            (snapshot, Some(after))
+            match resumed {
+                query::StreamResume::Tuple(after) => (snapshot, Some(after), None),
+                query::StreamResume::Segments(resume) => (snapshot, None, Some(resume)),
+            }
         } else {
             let snapshot = self
                 .service
                 .reader
                 .pin(frontier, now)
                 .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
-            (snapshot, None)
+            (snapshot, None, None)
         };
+        ensure_queryable(&scope, frontier.deletion_state)?;
         let binding = query::stream_binding(&request_binding, snapshot)?;
         let plan = plan(
             &normalized,
@@ -412,6 +436,7 @@ impl ObservationRequest {
             snapshot,
             follow,
             after,
+            resume: segment_resume,
             frontier,
             request_id: cx.request_id.clone(),
             wake,
@@ -448,14 +473,15 @@ impl ObservationRequest {
             query::normalize(&synthetic, signals, self.service.budget.max_returned)?,
             &scope,
         );
-        normalized.metric_name = Some(body.metric.clone().into_boxed_str());
+        bind_metric_selection(&mut normalized, &scope, &body.metric);
         let now = now()?;
         let frontier = self
             .service
             .reader
-            .frontier(&scope, &normalized)
+            .frontier(&scope, self.workspace(), &normalized)
             .await
             .map_err(|error| read_error(&error))?;
+        ensure_queryable(&scope, frontier.deletion_state)?;
         let snapshot = self
             .service
             .reader
@@ -469,7 +495,16 @@ impl ObservationRequest {
         let page = self
             .service
             .reader
-            .read_page(&scope, self.workspace(), &normalized, &plan, snapshot, None)
+            .read_page(
+                &scope,
+                self.workspace(),
+                &normalized,
+                &plan,
+                snapshot,
+                None,
+                None,
+                false,
+            )
             .await
             .map_err(|error| read_error(&error))?;
         // The aggregation is a single bounded streaming pass; the scan budget is
@@ -516,13 +551,18 @@ impl ObservationRequest {
     }
 
     /// Reads one assembled trace.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "assembling a trace keeps its bounded hydration and wire projection in one request path"
+    )]
     async fn trace(&self, session: SessionId, trace_id: TraceId) -> WireResult<TraceDetail> {
         let scope = ScopeKey::Session(session);
+        self.deletion_epoch(&scope).await?;
         let items = self
             .service
             .reader
-            .read_range(
-                Some(aex_observation_store_aws::expressions::Index::Trace),
+            .read_hydrated_range(
+                aex_observation_store_aws::expressions::Index::Trace,
                 &crate::reader::KeyBinding {
                     attribute: "trPk".to_owned(),
                     value: format!("TRC#{}#{trace_id}", scope.to_key()),
@@ -629,6 +669,7 @@ impl ObservationRequest {
         gap: TelemetryGapId,
     ) -> WireResult<TelemetryGap> {
         let scope = self.scope(session);
+        self.deletion_epoch(&scope).await?;
         let record = self
             .service
             .reader
@@ -650,6 +691,7 @@ impl ObservationRequest {
         body: TelemetryGapQuery,
     ) -> WireResult<TelemetryGapPage> {
         let scope = self.scope(session);
+        self.deletion_epoch(&scope).await?;
         let now = now()?;
         let request_binding = query::gap_request_binding(
             cx,
@@ -734,6 +776,7 @@ impl ObservationRequest {
                 .map_err(|_| WireError::new(ErrorCode::InternalError))?,
         );
         let scope = self.scope(session);
+        let deletion_epoch = self.deletion_epoch(&scope).await?;
         let mut item = std::collections::HashMap::new();
         item.insert(
             "pk".to_owned(),
@@ -777,11 +820,15 @@ impl ObservationRequest {
             "cancelRequested".to_owned(),
             aws_sdk_dynamodb::types::AttributeValue::Bool(false),
         );
+        item.insert(
+            "deletionEpochPinned".to_owned(),
+            aws_sdk_dynamodb::types::AttributeValue::N(deletion_epoch.to_string()),
+        );
         let mut builder = aex_observation_store_aws::expressions::ExpressionBuilder::new();
         let condition = aex_observation_store_aws::expressions::immutable_condition(&mut builder);
         self.service
             .reader
-            .put_conditional(item, &condition, builder.names(), builder.values())
+            .put_export_control(item, &condition, builder.names(), builder.values())
             .await
             .map_err(|error| read_error(&error))?;
         Ok(Accepted(Operation {
@@ -808,6 +855,7 @@ impl ObservationRequest {
         session: Option<SessionId>,
         export: ExportId,
     ) -> WireResult<TelemetryExport> {
+        self.deletion_epoch(&self.scope(session)).await?;
         let item = self
             .service
             .reader
@@ -834,7 +882,7 @@ impl ObservationRequest {
         let existing = builder.name("pk");
         self.service
             .reader
-            .update_conditional(
+            .update_export_control(
                 &keys::export_pk(self.workspace(), export),
                 "STATE",
                 &format!("SET {state} = {revoked}, {revoked_at} = {at}, {cancel} = {truth}"),
@@ -897,6 +945,29 @@ impl ObservationRequest {
     }
 }
 
+fn bind_metric_selection(
+    query: &mut aex_observation_query::plan::NormalizedQuery,
+    scope: &ScopeKey,
+    metric: &str,
+) {
+    let exact = Predicate::Cmp {
+        field: FieldRef::Signal(Signal::Metrics, "metricName".into()),
+        op: CmpOp::Eq,
+        value: aex_observation_domain::canonical::CanonicalValue::Str(metric.into()),
+    };
+    query.predicate = Some(match query.predicate.take() {
+        Some(existing) => Predicate::And(vec![exact, existing]),
+        None => exact,
+    });
+    query.metric_name = match scope {
+        ScopeKey::Workspace(_) => Some(metric.into()),
+        // The workspace metric index has no session component. Session
+        // aggregation stays on the session-bound scope-time partitions and
+        // applies the exact projected metric-name predicate there.
+        ScopeKey::Session(_) => None,
+    };
+}
+
 /// Everything one frame producer owns for the life of a connection.
 struct Produce {
     sender: ndjson::FrameSender,
@@ -909,6 +980,7 @@ struct Produce {
     snapshot: aex_observation_query::coverage::Snapshot,
     follow: bool,
     after: Option<OrderTuple>,
+    resume: Option<aex_observation_query::ObservationResume>,
     frontier: crate::reader::Frontier,
     request_id: aex_wire::types::RequestId,
     wake: Option<crate::wake::WakeSubscription>,
@@ -928,6 +1000,7 @@ struct Produce {
 async fn produce(mut task: Produce) {
     let deadline = std::time::Instant::now() + task.service.stream.connection_budget;
     let mut after = task.after;
+    let mut resume = task.resume;
     let mut poll_delay = task.service.stream.poll_min;
     let mut next_heartbeat = std::time::Instant::now() + task.service.stream.heartbeat;
     // Revalidate once before the first authoritative read, then periodically.
@@ -978,9 +1051,10 @@ async fn produce(mut task: Produce) {
                 let frontier = task
                     .service
                     .reader
-                    .frontier(&task.scope, &task.normalized)
+                    .frontier(&task.scope, task.workspace, &task.normalized)
                     .await
                     .map_err(|error| read_error(&error))?;
+                ensure_queryable(&task.scope, frontier.deletion_state)?;
                 let snapshot = task
                     .service
                     .reader
@@ -1019,25 +1093,22 @@ async fn produce(mut task: Produce) {
             };
             task.binding.snapshot = token;
         }
-        let gaps = match task
+        let Ok(gaps) = task
             .service
             .reader
             .gap_history(&task.scope, task.workspace, task.snapshot)
             .await
-        {
-            Ok(gaps) => gaps,
-            Err(_) => {
-                let cursor = task.sender.sent().cloned();
-                let _ = task
-                    .sender
-                    .send(&ndjson::rotate(
-                        cursor,
-                        RotateReason::UpstreamUnavailable,
-                        true,
-                    ))
-                    .await;
-                return;
-            }
+        else {
+            let cursor = task.sender.sent().cloned();
+            let _ = task
+                .sender
+                .send(&ndjson::rotate(
+                    cursor,
+                    RotateReason::UpstreamUnavailable,
+                    true,
+                ))
+                .await;
+            return;
         };
         let current_coverage = match query::coverage(
             task.snapshot,
@@ -1086,6 +1157,8 @@ async fn produce(mut task: Produce) {
                 &task.plan,
                 task.snapshot,
                 after.as_ref(),
+                resume.as_ref(),
+                task.follow,
             )
             .await;
         let Ok(page) = outcome else {
@@ -1101,6 +1174,7 @@ async fn produce(mut task: Produce) {
             return;
         };
         let more = page.more;
+        let page_resume = page.resume.clone();
         let progressed = !page.items.is_empty();
         if !page.items.is_empty() {
             let Some(last) = page.last else {
@@ -1135,12 +1209,21 @@ async fn produce(mut task: Produce) {
                 }
             }
             let issued_at = now().unwrap_or_else(|_| task.snapshot.accepted_at());
-            let Ok(cursor) = query::issue(
-                task.service.cursor_ring.current(),
-                &task.binding,
-                last,
-                issued_at,
-            ) else {
+            let issued = match (more, page_resume.as_ref()) {
+                (true, Some(resume)) => query::issue_page(
+                    task.service.cursor_ring.current(),
+                    &task.binding,
+                    resume,
+                    issued_at,
+                ),
+                _ => query::issue(
+                    task.service.cursor_ring.current(),
+                    &task.binding,
+                    last,
+                    issued_at,
+                ),
+            };
+            let Ok(cursor) = issued else {
                 let cursor = task.sender.sent().cloned();
                 let _ = task
                     .sender
@@ -1162,9 +1245,17 @@ async fn produce(mut task: Produce) {
             {
                 return;
             }
-            after = Some(last);
             poll_delay = task.service.stream.poll_min;
             next_heartbeat = std::time::Instant::now() + task.service.stream.heartbeat;
+        }
+        if more {
+            resume = page_resume;
+            after = None;
+        } else {
+            resume = None;
+            if let Some(last) = page.last {
+                after = Some(last);
+            }
         }
         if std::time::Instant::now() >= deadline {
             break;
@@ -1281,6 +1372,24 @@ fn unreachable_timestamp() -> Timestamp {
     })
 }
 
+/// Applies the authoritative deletion fence after any cursor epoch comparison.
+fn ensure_queryable(scope: &ScopeKey, state: crate::reader::ScopeDeletionState) -> WireResult<()> {
+    use crate::reader::ScopeDeletionState;
+
+    match (scope, state) {
+        (_, ScopeDeletionState::Open) => Ok(()),
+        (ScopeKey::Session(_), ScopeDeletionState::Deleting) => {
+            Err(WireError::new(ErrorCode::SessionDeleting))
+        }
+        (ScopeKey::Session(_), ScopeDeletionState::Deleted) => {
+            Err(WireError::new(ErrorCode::SessionDeleted))
+        }
+        (ScopeKey::Workspace(_), ScopeDeletionState::Deleting | ScopeDeletionState::Deleted) => {
+            Err(WireError::new(ErrorCode::Gone))
+        }
+    }
+}
+
 /// Maps a read failure onto the public vocabulary.
 fn read_error(error: &ReadError) -> WireError {
     match error {
@@ -1291,7 +1400,10 @@ fn read_error(error: &ReadError) -> WireError {
         // now means exactly that, never a lagging projection.
         ReadError::Provider { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
             .with_retry_after(Duration::from_secs(1)),
-        ReadError::Malformed { .. } => WireError::new(ErrorCode::InternalError),
+        ReadError::InvalidResume => WireError::new(ErrorCode::InvalidCursor),
+        ReadError::Malformed { .. } | ReadError::InvalidWriteTarget { .. } => {
+            WireError::new(ErrorCode::InternalError)
+        }
     }
 }
 
@@ -1777,18 +1889,22 @@ impl TelemetryLifecycleApi for ObservationRequest {
 mod tests {
     use std::collections::BTreeMap;
 
+    use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::gap::{GapRecord, GapRevision, TimeWindow};
-    use aex_observation_domain::keys::ScopeKey;
+    use aex_observation_domain::keys::{BucketHour, ScopeKey};
+    use aex_observation_domain::order::{Direction, OrderBy};
     use aex_observation_domain::signal::{Signal, SignalSet};
-    use aex_wire::ids::{PrefixedId as _, TelemetryGapId, WorkspaceId};
+    use aex_observation_query::ast::MapRow;
+    use aex_observation_query::plan::{Access, Budget, NormalizedQuery, ScopeAxis, plan};
+    use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryGapId, Uuid7, WorkspaceId};
     use aex_wire::models::{
         ExportStatus, ObservationOrigin, ObservationOriginEarliest, TelemetryGapReason,
     };
     use aex_wire::types::Timestamp;
 
     use super::{
-        GRANT_LIFETIME, LISTEN_BUDGET, export_status, gap_to_wire, listen_window, unseen_gaps,
-        window_for,
+        GRANT_LIFETIME, LISTEN_BUDGET, bind_metric_selection, export_status, gap_to_wire,
+        listen_window, unseen_gaps, window_for,
     };
 
     fn gap() -> GapRecord {
@@ -1852,10 +1968,82 @@ mod tests {
     }
 
     #[test]
+    fn two_session_metric_queries_use_isolated_scope_partitions_and_exact_names() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let first = ScopeKey::Session(SessionId::from_uuid7(Uuid7::compose(2, [2; 10])));
+        let second = ScopeKey::Session(SessionId::from_uuid7(Uuid7::compose(2, [3; 10])));
+        let from = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("time");
+        let mut query = NormalizedQuery {
+            axis: ScopeAxis::Scope,
+            signals: SignalSet::from_signal(Signal::Metrics),
+            predicate: None,
+            time_gte: from,
+            time_lt: Timestamp::parse("2026-08-01T10:00:00.000Z").expect("time"),
+            order_by: OrderBy::Time,
+            direction: Direction::Ascending,
+            limit: 100,
+            trace_id: None,
+            metric_name: None,
+        };
+        bind_metric_selection(&mut query, &first, "http.server.duration");
+        let planned = plan(&query, Budget::default()).expect("query plans");
+        assert_eq!(planned.walks[0].access, Access::ScopeTime);
+
+        let bucket = BucketHour::from_timestamp(from);
+        let first_partition = crate::reader::segment_key(
+            &first,
+            workspace,
+            &query,
+            Access::ScopeTime,
+            Signal::Metrics,
+            bucket,
+            0,
+        )
+        .expect("first session segment")
+        .0
+        .value;
+        let second_partition = crate::reader::segment_key(
+            &second,
+            workspace,
+            &query,
+            Access::ScopeTime,
+            Signal::Metrics,
+            bucket,
+            0,
+        )
+        .expect("second session segment")
+        .0
+        .value;
+        assert_ne!(first_partition, second_partition);
+
+        let predicate = query.predicate.as_ref().expect("exact name predicate");
+        let matching = MapRow {
+            fields: std::collections::BTreeMap::from([(
+                "metricName".to_owned(),
+                CanonicalValue::Str("http.server.duration".into()),
+            )]),
+            attributes: std::collections::BTreeMap::new(),
+        };
+        let other = MapRow {
+            fields: std::collections::BTreeMap::from([(
+                "metricName".to_owned(),
+                CanonicalValue::Str("process.cpu.time".into()),
+            )]),
+            attributes: std::collections::BTreeMap::new(),
+        };
+        assert!(predicate.evaluate(&matching));
+        assert!(!predicate.evaluate(&other));
+    }
+
+    #[test]
     fn an_unbounded_gap_stays_unbounded_on_the_wire() {
         let wire = gap_to_wire(&gap());
         assert!(wire.time_range.is_none());
-        assert_eq!(wire.observation_count.map(|value| value.get()), Some(2));
+        assert_eq!(
+            wire.observation_count
+                .map(aex_wire::types::DecimalU128::get),
+            Some(2)
+        );
     }
 
     #[test]
@@ -1869,7 +2057,7 @@ mod tests {
         let mut seen = BTreeMap::new();
         assert_eq!(
             unseen_gaps(
-                &[open.clone()],
+                std::slice::from_ref(&open),
                 SignalSet::from_signal(Signal::Logs),
                 window,
                 &seen
@@ -1880,7 +2068,7 @@ mod tests {
         seen.insert(open.revision.gap_id, open.revision.revision);
         assert!(
             unseen_gaps(
-                &[open.clone()],
+                std::slice::from_ref(&open),
                 SignalSet::from_signal(Signal::Logs),
                 window,
                 &seen

@@ -65,6 +65,7 @@ thiserror.workspace = true
 time.workspace = true
 xxhash-rust.workspace = true
 aex-wire = { path = "../aex-wire" }
+aex-observation-domain = { path = "../aex-observation-domain" }
 aex-operation-domain = { path = "../aex-operation-domain", optional = true }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control", optional = true }

@@ -910,10 +910,10 @@ impl DutyEngine {
         for signal in signals.in_authority().iter() {
             for shard in 0..DEFAULT_BUCKET_SHARDS {
                 counted += self
-                    .count_between(
+                    .count_sequence_between(
                         &keys::observation_pk(scope, signal, bucket, shard),
-                        &keys::observation_sk(lo),
-                        &keys::observation_sk(hi.saturating_sub(1)),
+                        lo,
+                        hi,
                     )
                     .await?;
             }
@@ -1649,28 +1649,38 @@ impl DutyEngine {
     }
 
     /// Counts one inclusive sort-key range without reading it.
-    async fn count_between(&self, pk: &str, lo: &str, hi: &str) -> Result<u64, DutyError> {
+    async fn count_sequence_between(&self, pk: &str, lo: u64, hi: u64) -> Result<u64, DutyError> {
         let mut builder = ExpressionBuilder::new();
         let partition = builder.name(PK);
-        let sort = builder.name(SK);
         let bound = builder.string(pk.to_owned());
-        let low = builder.string(lo.to_owned());
-        let high = builder.string(hi.to_owned());
-        let response = self
-            .dynamodb
-            .query()
-            .table_name(&self.settings.table)
-            .key_condition_expression(format!(
-                "{partition} = {bound} AND {sort} BETWEEN {low} AND {high}"
-            ))
-            .select(Select::Count)
-            .set_expression_attribute_names(Some(builder.names()))
-            .set_expression_attribute_values(Some(builder.values()))
-            .limit(i32::from(self.settings.page))
-            .send()
-            .await
-            .map_err(|error| DutyError::provider("Query", error))?;
-        Ok(u64::try_from(response.count()).unwrap_or(0))
+        let accepted = builder.name("acceptedSeq");
+        let low = builder.number(lo);
+        let high = builder.number(hi.saturating_sub(1));
+        let names = builder.names();
+        let values = builder.values();
+        let mut start = None;
+        let mut count = 0_u64;
+        loop {
+            let response = self
+                .dynamodb
+                .query()
+                .table_name(&self.settings.table)
+                .key_condition_expression(format!("{partition} = {bound}"))
+                .filter_expression(format!("{accepted} BETWEEN {low} AND {high}"))
+                .select(Select::Count)
+                .set_expression_attribute_names(Some(names.clone()))
+                .set_expression_attribute_values(Some(values.clone()))
+                .set_exclusive_start_key(start.take())
+                .limit(i32::from(self.settings.page))
+                .send()
+                .await
+                .map_err(|error| DutyError::provider("Query", error))?;
+            count = count.saturating_add(u64::try_from(response.count()).unwrap_or(0));
+            start = response.last_evaluated_key;
+            if start.is_none() {
+                return Ok(count);
+            }
+        }
     }
 
     /// Deletes one item by key.

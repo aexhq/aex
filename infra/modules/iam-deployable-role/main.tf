@@ -25,7 +25,7 @@ locals {
         },
         g.scopable ? {
           Condition = {
-            StringEquals = { (g.condition_key) = g.condition_values }
+            (g.condition_operator) = { (g.condition_key) = g.condition_values }
           }
         } : {}
       )

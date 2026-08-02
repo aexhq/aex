@@ -18,6 +18,12 @@ pub const WORKSPACE_EVENT_INDEX: &str = "gsi_workspace_events";
 pub const WORKSPACE_EVENT_PK: &str = "evPk";
 /// Workspace event sort attribute.
 pub const WORKSPACE_EVENT_SK: &str = "evSk";
+/// Sparse session event-time index name.
+pub const SESSION_EVENT_INDEX: &str = "gsi_session_events";
+/// Session event-time partition attribute.
+pub const SESSION_EVENT_PK: &str = "esPk";
+/// Session event-time sort attribute.
+pub const SESSION_EVENT_SK: &str = "esSk";
 
 /// The deletion state a long-lived session-scoped read must enforce.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,6 +97,23 @@ pub fn session_read_state<S: std::hash::BuildHasher>(
     }
 }
 
+/// Strictly decodes the monotonic deletion epoch from a validated session head.
+///
+/// # Errors
+///
+/// Returns the same fail-closed attribute names as [`session_read_state`], or
+/// `deletionEpoch` when the authoritative numeric fence is absent or malformed.
+pub fn session_deletion_epoch<S: std::hash::BuildHasher>(
+    item: &HashMap<String, AttributeValue, S>,
+    asserted_workspace: WorkspaceId,
+) -> Result<u64, &'static str> {
+    session_read_state(item, asserted_workspace)?;
+    item.get("deletionEpoch")
+        .and_then(|value| value.as_n().ok())
+        .and_then(|value| value.parse().ok())
+        .ok_or("deletionEpoch")
+}
+
 /// `EVTW#{workspace_id}#{YYYY-MM-DDTHH}`.
 #[must_use]
 pub fn workspace_event_partition(workspace: WorkspaceId, occurred_at: Timestamp) -> String {
@@ -104,14 +127,32 @@ pub fn workspace_event_partition_hour(workspace: WorkspaceId, hour: &str) -> Str
     format!("EVTW#{workspace}#{hour}")
 }
 
-/// `{occurred_at}#{session_id}#{event_id}`.
+/// `EVTS#{session_id}#{YYYY-MM-DDTHH}`.
+#[must_use]
+pub fn session_event_partition(session: SessionId, occurred_at: Timestamp) -> String {
+    let instant = occurred_at.to_wire();
+    session_event_partition_hour(session, instant.get(..13).unwrap_or(&instant))
+}
+
+/// `EVTS#{session_id}#{YYYY-MM-DDTHH}` for one already-normalized hour.
+#[must_use]
+pub fn session_event_partition_hour(session: SessionId, hour: &str) -> String {
+    format!("EVTS#{session}#{hour}")
+}
+
+/// The canonical observation merge tuple for one native event.
 #[must_use]
 pub fn workspace_event_sort(
-    session: SessionId,
+    _session: SessionId,
     event: ObservationId,
     occurred_at: Timestamp,
 ) -> String {
-    format!("{}#{session}#{event}", occurred_at.to_wire())
+    aex_observation_domain::order::order_sort_key(aex_observation_domain::order::OrderTuple::new(
+        occurred_at,
+        aex_observation_domain::signal::Signal::Events,
+        event,
+        1,
+    ))
 }
 
 #[cfg(test)]
@@ -121,7 +162,7 @@ mod tests {
     use aex_wire::ids::{PrefixedId as _, SessionId, Uuid7};
     use aws_sdk_dynamodb::types::AttributeValue;
 
-    use super::{SessionReadState, head, parse_event, session_read_state};
+    use super::{SessionReadState, head, parse_event, session_deletion_epoch, session_read_state};
 
     #[test]
     fn only_native_event_keys_classify() {
@@ -149,11 +190,16 @@ mod tests {
                 "lifecycle".to_owned(),
                 AttributeValue::S("active".to_owned()),
             ),
+            (
+                "deletionEpoch".to_owned(),
+                AttributeValue::N("3".to_owned()),
+            ),
         ]);
         assert_eq!(
             session_read_state(&item, workspace),
             Ok(SessionReadState::Active)
         );
+        assert_eq!(session_deletion_epoch(&item, workspace), Ok(3));
         item.insert(
             "lifecycle".to_owned(),
             AttributeValue::S("purging".to_owned()),

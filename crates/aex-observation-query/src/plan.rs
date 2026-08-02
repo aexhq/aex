@@ -28,7 +28,10 @@ pub enum ScopeAxis {
 }
 
 /// The index a walk reads.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Access {
     /// The base table, strongly consistent, accepted-ordered.
     BaseTable,
@@ -322,10 +325,16 @@ fn access_for(query: &NormalizedQuery, signal: Signal) -> Access {
     if signal == Signal::Events {
         return Access::SessionAuthority;
     }
-    if query.trace_id.is_some() && matches!(signal, Signal::Spans | Signal::Traces) {
+    // Sparse indexes are observation-time ordered. Accepted-order queries must
+    // stay on the accepted-time authority/index so each segment is monotonic in
+    // the tuple the reader merges.
+    if query.order_by == OrderBy::Time
+        && query.trace_id.is_some()
+        && matches!(signal, Signal::Spans | Signal::Traces)
+    {
         return Access::Trace;
     }
-    if query.metric_name.is_some() && signal == Signal::Metrics {
+    if query.order_by == OrderBy::Time && query.metric_name.is_some() && signal == Signal::Metrics {
         return Access::Metric;
     }
     match (query.axis, query.order_by) {
@@ -426,6 +435,31 @@ mod tests {
         assert_eq!(
             plan(&metrics, Budget::default()).expect("plans").walks[0].access,
             Access::Metric
+        );
+    }
+
+    #[test]
+    fn accepted_order_never_uses_an_observation_time_sparse_index() {
+        let mut spans = query(
+            ScopeAxis::Scope,
+            OrderBy::Accepted,
+            SignalSet::from_signal(Signal::Spans),
+        );
+        spans.trace_id = Some("aabb".into());
+        assert_eq!(
+            plan(&spans, Budget::default()).expect("plans").walks[0].access,
+            Access::BaseTable
+        );
+
+        let mut metrics = query(
+            ScopeAxis::Workspace,
+            OrderBy::Accepted,
+            SignalSet::from_signal(Signal::Metrics),
+        );
+        metrics.metric_name = Some("http.server.duration".into());
+        assert_eq!(
+            plan(&metrics, Budget::default()).expect("plans").walks[0].access,
+            Access::WorkspaceAccepted
         );
     }
 

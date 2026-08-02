@@ -90,16 +90,6 @@
       "resources": ["table"]
     },
     {
-      "role": "regional-observation-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
-      "resources": ["table"]
-    },
-    {
-      "role": "regional-stream",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
-      "resources": ["table"]
-    },
-    {
       "role": "brain-mux",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
       "resources": ["table"]

@@ -15,6 +15,8 @@ pub enum Capability {
     ReadAuthority,
     /// `dynamodb:TransactWriteItems`/`PutItem`/`UpdateItem` on admission rows.
     WriteAdmission,
+    /// `dynamodb:PutItem`/`UpdateItem` on export-control rows only.
+    WriteExportControl,
     /// `dynamodb:BatchWriteItem` on `OBS#` for deletion.
     DeleteObservations,
     /// `s3:GetObject` on `observations/*`.
@@ -37,6 +39,7 @@ impl Capability {
     pub const ALL: &'static [Capability] = &[
         Capability::ReadAuthority,
         Capability::WriteAdmission,
+        Capability::WriteExportControl,
         Capability::DeleteObservations,
         Capability::ReadBodies,
         Capability::WriteBodies,
@@ -52,6 +55,7 @@ impl Capability {
         match self {
             Self::ReadAuthority => "read_authority",
             Self::WriteAdmission => "write_admission",
+            Self::WriteExportControl => "write_export_control",
             Self::DeleteObservations => "delete_observations",
             Self::ReadBodies => "read_bodies",
             Self::WriteBodies => "write_bodies",
@@ -99,7 +103,11 @@ impl Role {
     #[must_use]
     pub const fn granted(self) -> &'static [Capability] {
         match self {
-            Self::ObservationApi => &[Capability::ReadAuthority, Capability::ReadBodies],
+            Self::ObservationApi => &[
+                Capability::ReadAuthority,
+                Capability::WriteExportControl,
+                Capability::ReadBodies,
+            ],
             Self::Otlp => &[
                 Capability::WriteAdmission,
                 Capability::WriteBodies,
@@ -180,7 +188,7 @@ mod tests {
     use super::{Capability, Role, assert_grant};
 
     #[test]
-    fn the_query_api_holds_no_write_on_the_observation_table() {
+    fn the_query_api_writes_only_export_control_rows() {
         for forbidden in [
             Capability::WriteAdmission,
             Capability::WriteBodies,
@@ -190,6 +198,7 @@ mod tests {
             assert!(!Role::ObservationApi.holds(forbidden), "{forbidden:?}");
             assert!(assert_grant(Role::ObservationApi, &[forbidden]).is_err());
         }
+        assert!(Role::ObservationApi.holds(Capability::WriteExportControl));
     }
 
     #[test]

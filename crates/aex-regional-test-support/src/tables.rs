@@ -211,6 +211,20 @@ pub struct IamGrant {
     pub actions: Vec<String>,
     /// Which resource ARNs the actions apply to.
     pub resources: Vec<String>,
+    /// Optional request-shape restriction applied to this statement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<IamCondition>,
+}
+
+/// One generated IAM request condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IamCondition {
+    /// IAM condition operator, including any required set qualifier.
+    pub operator: String,
+    /// IAM condition context key.
+    pub key: String,
+    /// Accepted request-context values.
+    pub values: Vec<String>,
 }
 
 /// One regional table generation definition.
@@ -662,6 +676,209 @@ mod tests {
                      exception must never be wider than the thing it excepts",
                     table.table,
                     index.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regional_stream_holds_only_the_authority_reads_and_two_wake_streams_it_uses() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let mut grants = Vec::new();
+        for table in &tables {
+            for grant in &table.iam {
+                if grant.role == "regional-stream" {
+                    grants.push((
+                        table.table.as_str(),
+                        grant.actions.as_slice(),
+                        grant.resources.as_slice(),
+                    ));
+                }
+            }
+        }
+        grants.sort_by(|left, right| (left.0, left.2.join(",")).cmp(&(right.0, right.2.join(","))));
+
+        let strings = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let mut expected = vec![
+            (
+                "observation-authority",
+                strings(&[
+                    "dynamodb:DescribeTable",
+                    "dynamodb:GetItem",
+                    "dynamodb:BatchGetItem",
+                    "dynamodb:Query",
+                ]),
+                strings(&["table", "index/*"]),
+            ),
+            (
+                "observation-authority",
+                strings(&[
+                    "dynamodb:GetRecords",
+                    "dynamodb:GetShardIterator",
+                    "dynamodb:DescribeStream",
+                ]),
+                strings(&["stream"]),
+            ),
+            (
+                "regional-authz-projection",
+                strings(&["dynamodb:GetItem", "dynamodb:Query"]),
+                strings(&["table"]),
+            ),
+            (
+                "session-authority",
+                strings(&[
+                    "dynamodb:DescribeTable",
+                    "dynamodb:GetItem",
+                    "dynamodb:Query",
+                ]),
+                strings(&["table", "index/*"]),
+            ),
+            (
+                "session-authority",
+                strings(&[
+                    "dynamodb:GetRecords",
+                    "dynamodb:GetShardIterator",
+                    "dynamodb:DescribeStream",
+                ]),
+                strings(&["stream"]),
+            ),
+        ];
+        expected
+            .sort_by(|left, right| (left.0, left.2.join(",")).cmp(&(right.0, right.2.join(","))));
+        let actual = grants
+            .into_iter()
+            .map(|(table, actions, resources)| (table, actions.to_vec(), resources.to_vec()))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn regional_observation_api_holds_only_its_query_and_export_control_tables() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let mut grants = Vec::new();
+        for table in &tables {
+            for grant in &table.iam {
+                if grant.role == "regional-observation-api" {
+                    grants.push((
+                        table.table.as_str(),
+                        grant.actions.as_slice(),
+                        grant.resources.as_slice(),
+                    ));
+                }
+            }
+        }
+        grants.sort_by(|left, right| (left.0, left.1.join(",")).cmp(&(right.0, right.1.join(","))));
+
+        let strings = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let expected = vec![
+            (
+                "observation-authority",
+                strings(&[
+                    "dynamodb:DescribeTable",
+                    "dynamodb:GetItem",
+                    "dynamodb:BatchGetItem",
+                    "dynamodb:Query",
+                ]),
+                strings(&["table", "index/*"]),
+            ),
+            (
+                "observation-authority",
+                strings(&["dynamodb:PutItem", "dynamodb:UpdateItem"]),
+                strings(&["table"]),
+            ),
+            (
+                "regional-authz-projection",
+                strings(&["dynamodb:GetItem", "dynamodb:Query"]),
+                strings(&["table"]),
+            ),
+            (
+                "session-authority",
+                strings(&[
+                    "dynamodb:DescribeTable",
+                    "dynamodb:GetItem",
+                    "dynamodb:Query",
+                ]),
+                strings(&["table", "index/*"]),
+            ),
+        ];
+        let mut expected = expected;
+        expected
+            .sort_by(|left, right| (left.0, left.1.join(",")).cmp(&(right.0, right.1.join(","))));
+        let actual = grants
+            .into_iter()
+            .map(|(table, actions, resources)| (table, actions.to_vec(), resources.to_vec()))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn observation_api_writes_are_restricted_to_export_partition_keys() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "observation-authority")
+            .expect("the observation authority is declared");
+        let writes = table
+            .iam
+            .iter()
+            .filter(|grant| {
+                grant.role == "regional-observation-api"
+                    && grant.actions.iter().any(|action| {
+                        matches!(action.as_str(), "dynamodb:PutItem" | "dynamodb:UpdateItem")
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(writes.len(), 1);
+        let write = writes[0];
+        assert_eq!(write.resources, ["table"]);
+        let condition = write
+            .condition
+            .as_ref()
+            .expect("export writes carry a leading-key condition");
+        assert_eq!(condition.operator, "ForAllValues:StringLike");
+        assert_eq!(condition.key, "dynamodb:LeadingKeys");
+        assert_eq!(condition.values, ["EXPORT#*"]);
+    }
+
+    #[test]
+    fn the_event_indexes_project_every_field_their_decoder_requires() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let session = tables
+            .iter()
+            .find(|table| table.table == "session-authority")
+            .expect("the session authority is declared");
+        for index_name in ["gsi_workspace_events", "gsi_session_events"] {
+            let index = session
+                .global_secondary_indexes
+                .iter()
+                .find(|index| index.name == index_name)
+                .unwrap_or_else(|| panic!("the {index_name} index is declared"));
+            for required in [
+                "itemType",
+                "workspaceId",
+                "sessionId",
+                "eventSeq",
+                "eventId",
+                "type",
+                "bodyInline",
+                "bodyDigest",
+                "occurredAt",
+                "outboxState",
+            ] {
+                assert!(
+                    index.projection.attributes.iter().any(|name| name == required),
+                    "{index_name} omits decoder field `{required}`"
                 );
             }
         }

@@ -76,6 +76,15 @@ variables {
           condition_key    = "aws:ResourceTag/aex:plane"
           condition_values = ["dev"]
         },
+        {
+          sid                = "ExportControlOnly"
+          actions            = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+          resources          = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-observation-authority"]
+          scopable           = true
+          condition_operator = "ForAllValues:StringLike"
+          condition_key      = "dynamodb:LeadingKeys"
+          condition_values   = ["EXPORT#*"]
+        },
       ]
     }
 
@@ -117,6 +126,12 @@ run "the_central_application_plans" {
   assert {
     condition     = length(module.role) == 2
     error_message = "One execution role must be created per deployable."
+  }
+
+
+  assert {
+    condition     = jsondecode(module.role["finance-api"].inline_policy_json).Statement[1].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["EXPORT#*"]
+    error_message = "The central wrapper must preserve reviewed set-qualified conditions."
   }
 }
 

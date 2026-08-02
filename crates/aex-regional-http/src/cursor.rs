@@ -9,6 +9,7 @@ use aex_wire::routes::RouteId;
 use aex_wire::types::{Region, Timestamp};
 use base64::Engine as _;
 use hmac::{KeyInit as _, Mac as _};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -123,6 +124,15 @@ pub struct CursorResume {
     pub snapshot: SnapshotToken,
     /// The last fully delivered ordering tuple.
     pub tuple: SortTuple,
+}
+
+/// Authenticated typed resume state recovered from a cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorStateResume<T> {
+    /// The original settled snapshot.
+    pub snapshot: SnapshotToken,
+    /// The route-specific, bounded continuation state.
+    pub state: T,
 }
 
 /// The ordered authority fields needed to resume a read.
@@ -280,7 +290,10 @@ struct Payload {
     order: Order,
     snapshot: SnapshotToken,
     issued_at_ms: i64,
-    tuple: SortTuple,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tuple: Option<SortTuple>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<serde_json::Value>,
 }
 
 /// Encodes an authenticated `cur_` token using the workspace JCS implementation.
@@ -306,15 +319,45 @@ pub fn encode(
         order: binding.order,
         snapshot: binding.snapshot.clone(),
         issued_at_ms: now.unix_millis(),
-        tuple: tuple.clone(),
+        tuple: Some(tuple.clone()),
+        state: None,
     };
-    let body = aex_wire::canonical::to_jcs_bytes(&payload).map_err(|_| CursorError::Malformed)?;
-    let tag = sign(key, &body);
-    let mut envelope = Vec::with_capacity(TAG_BYTES + body.len());
-    envelope.extend_from_slice(&tag);
-    envelope.extend_from_slice(&body);
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(envelope);
-    Cursor::parse(&format!("{}{encoded}", Cursor::PREFIX)).map_err(|_| CursorError::Malformed)
+    encode_payload(key, &payload)
+}
+
+/// Encodes authenticated route-specific continuation state.
+///
+/// The final `cur_` envelope remains subject to [`Cursor::MAX_BYTES`], so even
+/// a serializable state cannot turn this bounded public primitive into an
+/// unbounded provider cursor.
+///
+/// # Errors
+///
+/// Returns [`CursorError::Malformed`] when the state cannot be represented or
+/// the signed envelope would exceed the public cursor ceiling.
+pub fn encode_state<T: Serialize>(
+    key: &CursorKey,
+    binding: &CursorBinding,
+    state: &T,
+    now: Timestamp,
+) -> Result<Cursor, CursorError> {
+    let state = serde_json::to_value(state).map_err(|_| CursorError::Malformed)?;
+    let payload = Payload {
+        v: 2,
+        kid: key.id.clone(),
+        route: binding.route.as_str().to_owned(),
+        principal: binding.principal_scope,
+        region: binding.region,
+        workspace: binding.workspace_id.to_string(),
+        session: binding.session_id.map(|id| id.to_string()),
+        query: binding.query_hash,
+        order: binding.order,
+        snapshot: binding.snapshot.clone(),
+        issued_at_ms: now.unix_millis(),
+        tuple: None,
+        state: Some(state),
+    };
+    encode_payload(key, &payload)
 }
 
 /// Verifies the token before parsing its authenticated payload.
@@ -350,6 +393,56 @@ pub fn decode_resume(
     binding: &CursorRequestBinding,
     now: Timestamp,
 ) -> Result<CursorResume, CursorError> {
+    let payload = decode_payload(ring, token, binding, now)?;
+    if payload.v != 1 || payload.state.is_some() {
+        return Err(CursorError::NotBound);
+    }
+    Ok(CursorResume {
+        snapshot: payload.snapshot,
+        tuple: payload.tuple.ok_or(CursorError::Malformed)?,
+    })
+}
+
+/// Verifies a cursor and returns its authenticated snapshot and typed state.
+///
+/// # Errors
+///
+/// Returns [`CursorError`] for malformed, unbound, expired, or wrong-version
+/// tokens, and when the authenticated state does not decode as `T`.
+pub fn decode_state_resume<T: DeserializeOwned>(
+    ring: &CursorKeyRing,
+    token: &Cursor,
+    binding: &CursorRequestBinding,
+    now: Timestamp,
+) -> Result<CursorStateResume<T>, CursorError> {
+    let payload = decode_payload(ring, token, binding, now)?;
+    if payload.v != 2 || payload.tuple.is_some() {
+        return Err(CursorError::NotBound);
+    }
+    let state = serde_json::from_value(payload.state.ok_or(CursorError::Malformed)?)
+        .map_err(|_| CursorError::Malformed)?;
+    Ok(CursorStateResume {
+        snapshot: payload.snapshot,
+        state,
+    })
+}
+
+fn encode_payload(key: &CursorKey, payload: &Payload) -> Result<Cursor, CursorError> {
+    let body = aex_wire::canonical::to_jcs_bytes(payload).map_err(|_| CursorError::Malformed)?;
+    let tag = sign(key, &body);
+    let mut envelope = Vec::with_capacity(TAG_BYTES + body.len());
+    envelope.extend_from_slice(&tag);
+    envelope.extend_from_slice(&body);
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(envelope);
+    Cursor::parse(&format!("{}{encoded}", Cursor::PREFIX)).map_err(|_| CursorError::Malformed)
+}
+
+fn decode_payload(
+    ring: &CursorKeyRing,
+    token: &Cursor,
+    binding: &CursorRequestBinding,
+    now: Timestamp,
+) -> Result<Payload, CursorError> {
     let encoded = token
         .as_str()
         .strip_prefix(Cursor::PREFIX)
@@ -367,8 +460,7 @@ pub fn decode_resume(
         .find(|key| constant_time_eq(tag, &sign(key, body)))
         .ok_or(CursorError::NotBound)?;
     let payload: Payload = serde_json::from_slice(body).map_err(|_| CursorError::Malformed)?;
-    if payload.v != 1
-        || payload.kid != matched.id
+    if payload.kid != matched.id
         || payload.route != binding.route.as_str()
         || payload.principal != binding.principal_scope
         || payload.region != binding.region
@@ -386,10 +478,13 @@ pub fn decode_resume(
     if age > SNAPSHOT_MILLIS {
         return Err(CursorError::Expired);
     }
-    Ok(CursorResume {
-        snapshot: payload.snapshot,
-        tuple: payload.tuple,
-    })
+    if (payload.v == 1 && (payload.tuple.is_none() || payload.state.is_some()))
+        || (payload.v == 2 && (payload.tuple.is_some() || payload.state.is_none()))
+        || !matches!(payload.v, 1 | 2)
+    {
+        return Err(CursorError::Malformed);
+    }
+    Ok(payload)
 }
 
 fn sign(key: &CursorKey, body: &[u8]) -> [u8; TAG_BYTES] {

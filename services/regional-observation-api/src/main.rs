@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
 use aex_observation_store_aws::health::{Probe, Readiness, readiness};
-use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
 use aex_wire::dispatch::RequestLimits;
 
 use crate::mount::{AUDIENCE, AppState};
@@ -33,9 +32,6 @@ pub const REQUIRED_PROBES: &[Probe] = &[
     Probe::CursorKeyRing,
     Probe::SessionAuthority,
 ];
-
-/// The key id every cursor this deployment mints is signed under.
-pub const CURSOR_KEY_ID: &str = "observation-cursor";
 
 /// Why `regional-observation-api` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -117,35 +113,31 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         config.index_settle_ms,
     );
 
-    let mut passed = Vec::new();
-    reader.probe().await.map_err(|error| RunError::Probe {
+    let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
+    // All five independent provider proofs share one cold-start window. Key
+    // material is still resolved exactly once and never enters the environment
+    // or Terraform state.
+    let (probe, ring, anchors) = tokio::join!(
+        reader.probe(),
+        parameters.cursor_key_ring(&config.cursor_key_ref),
+        parameters.trust_anchors(&config.authz_verify_keys_param),
+    );
+    probe.map_err(|error| RunError::Probe {
         reason: error.to_string(),
     })?;
-    passed.push(Probe::ObservationTable);
-    passed.push(Probe::ObservationBucket);
-
-    // The `events` signal is read through the semantic port over
-    // `session-authority`; the table must be reachable before a route that
-    // serves `events` is mounted.
-    dynamodb
-        .describe_table()
-        .table_name(&config.session_table)
-        .send()
-        .await
-        .map_err(|error| RunError::Probe {
-            reason: format!("`session-authority` is not readable: {error}"),
-        })?;
-
-    let ring_key = CursorKey::new(CURSOR_KEY_ID, config.cursor_key.clone()).map_err(|error| {
-        RunError::Probe {
-            reason: error.to_string(),
-        }
-    })?;
-    let ring = CursorKeyRing::new(ring_key, Vec::new()).map_err(|error| RunError::Probe {
+    let ring = ring.map_err(|error| RunError::Probe {
         reason: error.to_string(),
     })?;
+    let anchors = anchors.map_err(|error| RunError::Edge {
+        reason: error.to_string(),
+    })?;
+
+    let mut passed = vec![
+        Probe::ObservationTable,
+        Probe::ObservationBucket,
+        Probe::SessionAuthority,
+    ];
     passed.push(Probe::CursorKeyRing);
-    passed.push(Probe::SessionAuthority);
 
     compose(ROLE.granted(), &passed)?;
 
@@ -153,13 +145,6 @@ pub async fn run(config: Config) -> Result<(), RunError> {
     // IAM-invoked rather than routed, so this is a direct invoke and the caller's
     // execution role is the authentication; the credential is named by
     // `(keyId, presentedDigest)` and never sent.
-    let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
-    let anchors = parameters
-        .trust_anchors(&config.authz_verify_keys_param)
-        .await
-        .map_err(|error| RunError::Edge {
-            reason: error.to_string(),
-        })?;
     let edge = aex_regional_http::edge::RegionalEdge::new(
         aex_regional_http::authz::LambdaAssertionSource::new(
             aws_sdk_lambda::Client::new(&aws),
@@ -242,7 +227,9 @@ async fn main() -> std::process::ExitCode {
             config.region.as_str().to_owned(),
         ),
     );
-    let outcome = run(config).await;
+    // Keep the composed request-serving future off the Lambda bootstrap stack;
+    // its bounded merge state deliberately carries several provider heads.
+    let outcome = Box::pin(run(config)).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {

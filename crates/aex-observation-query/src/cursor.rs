@@ -10,12 +10,17 @@
 //! mismatch check, so a cursor that would mean something different on the next
 //! request is rejected rather than silently reinterpreted.
 
+use std::collections::BTreeSet;
+
+use aex_observation_domain::keys::{BucketHour, ScopeKey};
 use aex_observation_domain::order::{Direction, OrderBy, OrderTuple};
 use aex_observation_domain::signal::{Signal, SignalSet};
-use aex_wire::ids::{SessionId, WorkspaceId};
+use aex_wire::ids::{ObservationId, SessionId, WorkspaceId};
 use aex_wire::types::{Region, Timestamp};
+use serde::{Deserialize, Serialize};
 
 use crate::coverage::Snapshot;
+use crate::plan::Access;
 
 /// Which revisions a trace read returns.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -24,6 +29,367 @@ pub enum TraceRevisionMode {
     LatestAtSnapshot,
     /// Every revision.
     All,
+}
+
+/// The ordering tuple in compact cursor form.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResumeTuple {
+    #[serde(rename = "p")]
+    primary_ms: i64,
+    #[serde(rename = "g")]
+    signal: Signal,
+    #[serde(rename = "o")]
+    observation_id: String,
+    #[serde(rename = "r")]
+    revision: u64,
+}
+
+impl ResumeTuple {
+    /// Captures one public ordering tuple.
+    #[must_use]
+    pub fn from_order(tuple: OrderTuple) -> Self {
+        Self {
+            primary_ms: tuple.primary.unix_millis(),
+            signal: tuple.signal(),
+            observation_id: tuple.observation_id.to_string(),
+            revision: tuple.revision,
+        }
+    }
+
+    /// Reconstructs and validates the public ordering tuple.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorError::InvalidState`] for an invalid timestamp or id.
+    pub fn to_order(&self) -> Result<OrderTuple, CursorError> {
+        let primary = Timestamp::from_unix_millis(self.primary_ms).map_err(|_| {
+            CursorError::InvalidState {
+                field: "last tuple",
+            }
+        })?;
+        let observation_id = self.observation_id.parse::<ObservationId>().map_err(|_| {
+            CursorError::InvalidState {
+                field: "last tuple",
+            }
+        })?;
+        Ok(OrderTuple::new(
+            primary,
+            self.signal,
+            observation_id,
+            self.revision,
+        ))
+    }
+}
+
+/// The minimum facts required to reconstruct one exact `DynamoDB` resume key.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResumeKey {
+    /// The row's scope, needed when a workspace segment crosses sessions.
+    #[serde(rename = "c")]
+    pub scope: String,
+    /// The provider-index ordering instant.
+    #[serde(rename = "p")]
+    pub primary_ms: i64,
+    /// The base-table accepted ordering instant.
+    #[serde(rename = "a")]
+    pub accepted_ms: i64,
+    /// Stable observation identity.
+    #[serde(rename = "o")]
+    pub observation_id: String,
+    /// Immutable observation revision.
+    #[serde(rename = "r")]
+    pub revision: u64,
+    /// Base-table shard, which differs from sparse-index fan-out.
+    #[serde(rename = "h", default)]
+    pub base_shard: u8,
+    /// Native session-event sequence, absent for observation-authority rows.
+    #[serde(rename = "e", skip_serializing_if = "Option::is_none")]
+    pub event_seq: Option<u64>,
+}
+
+impl ResumeKey {
+    /// Validates every typed key component before it reaches a provider call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorError::InvalidState`] for invalid scope, timestamps, or
+    /// observation identity.
+    pub fn validate(&self) -> Result<(), CursorError> {
+        ScopeKey::parse(&self.scope).map_err(|_| CursorError::InvalidState {
+            field: "resume scope",
+        })?;
+        Timestamp::from_unix_millis(self.primary_ms).map_err(|_| CursorError::InvalidState {
+            field: "resume time",
+        })?;
+        Timestamp::from_unix_millis(self.accepted_ms).map_err(|_| CursorError::InvalidState {
+            field: "accepted time",
+        })?;
+        self.observation_id
+            .parse::<ObservationId>()
+            .map_err(|_| CursorError::InvalidState {
+                field: "resume observation",
+            })?;
+        Ok(())
+    }
+}
+
+/// Durable progress within one physical bucket segment.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum SegmentState {
+    /// The provider segment has not been opened.
+    #[serde(rename = "u")]
+    Unstarted,
+    /// Resume strictly after this exact provider key.
+    #[serde(rename = "a")]
+    After(ResumeKey),
+    /// The provider proved this segment exhausted.
+    #[serde(rename = "e")]
+    Exhausted,
+}
+
+/// One physical segment's independently authenticated progress.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SegmentResume {
+    /// Which provider access rail is being walked.
+    #[serde(rename = "a")]
+    pub access: Access,
+    /// Which signal the segment carries.
+    #[serde(rename = "g")]
+    pub signal: Signal,
+    /// Which shard within the bucket.
+    #[serde(rename = "h")]
+    pub shard: u8,
+    /// Durable consumed position.
+    #[serde(rename = "s")]
+    pub state: SegmentState,
+}
+
+/// Bounded, bucket-major continuation state for one observation page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationResume {
+    /// The one bucket whose segments may still be open.
+    pub bucket: String,
+    /// The last tuple fully delivered to the caller.
+    pub last_tuple: ResumeTuple,
+    /// Every segment in the current bucket; earlier buckets are exhausted and
+    /// later buckets are untouched.
+    pub segments: Vec<SegmentResume>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ObservationResumeWire(
+    String,
+    (i64, u8, String, u64),
+    Vec<(u8, u8, u8, SegmentStateWire)>,
+);
+
+#[derive(Serialize, Deserialize)]
+enum SegmentStateWire {
+    #[serde(rename = "u")]
+    Unstarted,
+    #[serde(rename = "a")]
+    After((String, i64, i64, String, u64, u8, Option<u64>)),
+    #[serde(rename = "e")]
+    Exhausted,
+}
+
+impl Serialize for ObservationResume {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let wire = ObservationResumeWire(
+            self.bucket.clone(),
+            (
+                self.last_tuple.primary_ms,
+                self.last_tuple.signal.rank(),
+                self.last_tuple.observation_id.clone(),
+                self.last_tuple.revision,
+            ),
+            self.segments
+                .iter()
+                .map(|segment| {
+                    (
+                        access_rank(segment.access),
+                        segment.signal.rank(),
+                        segment.shard,
+                        match &segment.state {
+                            SegmentState::Unstarted => SegmentStateWire::Unstarted,
+                            SegmentState::Exhausted => SegmentStateWire::Exhausted,
+                            SegmentState::After(key) => SegmentStateWire::After((
+                                key.scope.clone(),
+                                key.primary_ms,
+                                key.accepted_ms,
+                                key.observation_id.clone(),
+                                key.revision,
+                                key.base_shard,
+                                key.event_seq,
+                            )),
+                        },
+                    )
+                })
+                .collect(),
+        );
+        wire.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ObservationResume {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ObservationResumeWire::deserialize(deserializer)?;
+        let signal = signal_from_rank(wire.1.1)
+            .ok_or_else(|| serde::de::Error::custom("invalid tuple signal"))?;
+        let mut segments = Vec::with_capacity(wire.2.len());
+        for (access, signal_rank, shard, state) in wire.2 {
+            let access = access_from_rank(access)
+                .ok_or_else(|| serde::de::Error::custom("invalid segment access"))?;
+            let signal = signal_from_rank(signal_rank)
+                .ok_or_else(|| serde::de::Error::custom("invalid segment signal"))?;
+            let state = match state {
+                SegmentStateWire::Unstarted => SegmentState::Unstarted,
+                SegmentStateWire::Exhausted => SegmentState::Exhausted,
+                SegmentStateWire::After((
+                    scope,
+                    primary_ms,
+                    accepted_ms,
+                    observation_id,
+                    revision,
+                    base_shard,
+                    event_seq,
+                )) => SegmentState::After(ResumeKey {
+                    scope,
+                    primary_ms,
+                    accepted_ms,
+                    observation_id,
+                    revision,
+                    base_shard,
+                    event_seq,
+                }),
+            };
+            segments.push(SegmentResume {
+                access,
+                signal,
+                shard,
+                state,
+            });
+        }
+        Ok(Self {
+            bucket: wire.0,
+            last_tuple: ResumeTuple {
+                primary_ms: wire.1.0,
+                signal,
+                observation_id: wire.1.2,
+                revision: wire.1.3,
+            },
+            segments,
+        })
+    }
+}
+
+const fn access_rank(access: Access) -> u8 {
+    match access {
+        Access::BaseTable => 0,
+        Access::ScopeTime => 1,
+        Access::WorkspaceAccepted => 2,
+        Access::WorkspaceTime => 3,
+        Access::Metric => 4,
+        Access::Trace => 5,
+        Access::Gap => 6,
+        Access::SessionAuthority => 7,
+    }
+}
+
+const fn access_from_rank(rank: u8) -> Option<Access> {
+    match rank {
+        0 => Some(Access::BaseTable),
+        1 => Some(Access::ScopeTime),
+        2 => Some(Access::WorkspaceAccepted),
+        3 => Some(Access::WorkspaceTime),
+        4 => Some(Access::Metric),
+        5 => Some(Access::Trace),
+        6 => Some(Access::Gap),
+        7 => Some(Access::SessionAuthority),
+        _ => None,
+    }
+}
+
+fn signal_from_rank(rank: u8) -> Option<Signal> {
+    Signal::ALL
+        .iter()
+        .copied()
+        .find(|signal| signal.rank() == rank)
+}
+
+impl ObservationResume {
+    /// Builds and validates bounded continuation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorError`] for an invalid bucket, tuple, duplicate segment,
+    /// or an open-position list above `signals x MAX_SHARDS`.
+    pub fn new(
+        bucket: BucketHour,
+        last_tuple: OrderTuple,
+        segments: Vec<SegmentResume>,
+    ) -> Result<Self, CursorError> {
+        let resume = Self {
+            bucket: bucket.to_string(),
+            last_tuple: ResumeTuple::from_order(last_tuple),
+            segments,
+        };
+        resume.validate()?;
+        Ok(resume)
+    }
+
+    /// Validates authenticated state after deserialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorError`] when any state component is invalid or unbounded.
+    pub fn validate(&self) -> Result<(), CursorError> {
+        BucketHour::parse(&self.bucket)
+            .map_err(|_| CursorError::InvalidState { field: "bucket" })?;
+        self.last_tuple.to_order()?;
+        let limit = Signal::ALL.len() * MAX_SHARDS;
+        if self.segments.len() > limit {
+            return Err(CursorError::Unbounded {
+                observed: self.segments.len(),
+                limit,
+            });
+        }
+        let mut coordinates = BTreeSet::new();
+        for segment in &self.segments {
+            if usize::from(segment.shard) >= MAX_SHARDS
+                || !coordinates.insert((segment.access, segment.signal, segment.shard))
+            {
+                return Err(CursorError::InvalidState { field: "segments" });
+            }
+            if let SegmentState::After(key) = &segment.state {
+                key.validate()?;
+                if key.event_seq.is_some() != (segment.signal == Signal::Events) {
+                    return Err(CursorError::InvalidState {
+                        field: "segment key",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Parses the current bucket.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorError::InvalidState`] only if validation was skipped.
+    pub fn parsed_bucket(&self) -> Result<BucketHour, CursorError> {
+        BucketHour::parse(&self.bucket).map_err(|_| CursorError::InvalidState { field: "bucket" })
+    }
+
+    /// Reconstructs the last fully delivered tuple.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorError::InvalidState`] only if validation was skipped.
+    pub fn last_order(&self) -> Result<OrderTuple, CursorError> {
+        self.last_tuple.to_order()
+    }
 }
 
 /// The position a walk resumes from inside one segment.
@@ -99,6 +465,12 @@ pub enum CursorError {
         /// The bound.
         limit: usize,
     },
+    /// Authenticated route state was structurally invalid.
+    #[error("the cursor carries invalid {field}")]
+    InvalidState {
+        /// Which compact state component was invalid.
+        field: &'static str,
+    },
 }
 
 /// The life of a cursor.
@@ -164,10 +536,11 @@ impl ObservationCursorBinding {
 #[cfg(test)]
 mod tests {
     use super::{
-        CURSOR_LIFETIME_MS, CursorError, ObservationCursorBinding, SegmentPosition,
-        TraceRevisionMode,
+        CURSOR_LIFETIME_MS, CursorError, ObservationCursorBinding, ObservationResume, ResumeKey,
+        SegmentPosition, SegmentResume, SegmentState, TraceRevisionMode,
     };
     use crate::coverage::Snapshot;
+    use crate::plan::Access;
     use aex_observation_domain::order::{Direction, OrderBy, OrderTuple};
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_wire::ids::PrefixedId as _;
@@ -319,5 +692,55 @@ mod tests {
             oversized.check(&binding(), instant(2_000)),
             Err(CursorError::Unbounded { .. })
         ));
+    }
+
+    #[test]
+    fn typed_resume_state_round_trips_exact_segment_positions() {
+        let last = binding().last_tuple;
+        let resume = ObservationResume::new(
+            aex_observation_domain::keys::BucketHour::parse("2026-08-01T09").expect("bucket"),
+            last,
+            vec![SegmentResume {
+                access: Access::ScopeTime,
+                signal: Signal::Logs,
+                shard: 2,
+                state: SegmentState::After(ResumeKey {
+                    scope: binding().session.map_or_else(
+                        || format!("W#{}", binding().workspace),
+                        |session| format!("S#{session}"),
+                    ),
+                    primary_ms: 10,
+                    accepted_ms: 20,
+                    observation_id: last.observation_id.to_string(),
+                    revision: last.revision,
+                    base_shard: 2,
+                    event_seq: None,
+                }),
+            }],
+        )
+        .expect("resume validates");
+        let encoded = serde_json::to_vec(&resume).expect("serializes");
+        let decoded: ObservationResume = serde_json::from_slice(&encoded).expect("deserializes");
+        decoded.validate().expect("authenticated state validates");
+        assert_eq!(decoded.last_order().expect("tuple"), last);
+        assert_eq!(decoded, resume);
+    }
+
+    #[test]
+    fn duplicate_segment_coordinates_fail_closed() {
+        let segment = SegmentResume {
+            access: Access::ScopeTime,
+            signal: Signal::Logs,
+            shard: 0,
+            state: SegmentState::Unstarted,
+        };
+        assert_eq!(
+            ObservationResume::new(
+                aex_observation_domain::keys::BucketHour::parse("2026-08-01T09").expect("bucket"),
+                binding().last_tuple,
+                vec![segment.clone(), segment],
+            ),
+            Err(CursorError::InvalidState { field: "segments" })
+        );
     }
 }

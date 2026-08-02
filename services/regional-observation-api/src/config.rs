@@ -30,10 +30,8 @@ pub const QUERY_SEGMENTS_VAR: &str = "AEX_OBS_QUERY_SEGMENTS";
 pub const QUERY_READ_BYTES_VAR: &str = "AEX_OBS_QUERY_READ_BYTES";
 /// Environment variable naming the metric-aggregation scan budget.
 pub const METRIC_AGGREGATE_SCAN_VAR: &str = "AEX_OBS_METRIC_AGGREGATE_SCAN";
-/// Environment variable naming the export ECS cluster the admission records.
-pub const EXPORT_CLUSTER_VAR: &str = "AEX_EXPORT_CLUSTER";
-/// Environment variable naming the cursor signing key.
-pub const CURSOR_KEY_VAR: &str = "AEX_OBS_CURSOR_KEY";
+/// Environment variable naming the Parameter Store cursor signing key ring.
+pub const CURSOR_KEY_REF_VAR: &str = "AEX_CURSOR_SIGNING_KEY_REF";
 /// Environment variable naming the `central-authz` function this edge invokes.
 ///
 /// `central-authz` is IAM-invoked, not routed. There is no URL: a role without
@@ -66,8 +64,7 @@ pub const REQUIRED_VARS: &[&str] = &[
     QUERY_SEGMENTS_VAR,
     QUERY_READ_BYTES_VAR,
     METRIC_AGGREGATE_SCAN_VAR,
-    EXPORT_CLUSTER_VAR,
-    CURSOR_KEY_VAR,
+    CURSOR_KEY_REF_VAR,
     AUTHZ_FUNCTION_ARN_VAR,
     AUTHZ_VERIFY_KEYS_PARAM_VAR,
     AUTHZ_PROJECTION_TABLE_VAR,
@@ -115,10 +112,8 @@ pub struct Config {
     pub budget: Budget,
     /// The metric-aggregation scan budget.
     pub metric_aggregate_scan: u64,
-    /// The ECS cluster an admitted export names.
-    pub export_cluster: String,
-    /// The cursor signing key.
-    pub cursor_key: Vec<u8>,
+    /// The Parameter Store reference for the cursor signing key ring.
+    pub cursor_key_ref: String,
     /// The `central-authz` function this edge invokes for an assertion.
     pub authz_function_arn: String,
     /// The Parameter Store name holding the assertion trust anchors.
@@ -220,8 +215,7 @@ impl Config {
                 METRIC_AGGREGATE_SCAN_VAR,
                 limits::METRIC_AGGREGATE_SCAN,
             )?,
-            export_cluster: required(&lookup, EXPORT_CLUSTER_VAR)?,
-            cursor_key: key(&lookup, CURSOR_KEY_VAR)?,
+            cursor_key_ref: required(&lookup, CURSOR_KEY_REF_VAR)?,
             authz_function_arn: required(&lookup, AUTHZ_FUNCTION_ARN_VAR)?,
             authz_verify_keys_param: required(&lookup, AUTHZ_VERIFY_KEYS_PARAM_VAR)?,
             authz_projection_table: required(&lookup, AUTHZ_PROJECTION_TABLE_VAR)?,
@@ -299,32 +293,6 @@ where
     Ok(value)
 }
 
-/// Reads a base64 symmetric key of at least 32 bytes.
-fn key<F>(lookup: &F, name: &'static str) -> Result<Vec<u8>, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    use base64::Engine as _;
-
-    let raw = required(lookup, name)?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(raw.trim())
-        .map_err(|error| ConfigError::Invalid {
-            name,
-            reason: format!("expected base64 key material: {error}"),
-        })?;
-    if bytes.len() < aex_regional_http::cursor::MIN_KEY_BYTES {
-        return Err(ConfigError::Invalid {
-            name,
-            reason: format!(
-                "a signing key must be at least {} bytes",
-                aex_regional_http::cursor::MIN_KEY_BYTES
-            ),
-        });
-    }
-    Ok(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -333,16 +301,11 @@ mod tests {
 
     use super::{
         ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_VAR, Config, ConfigError, EXPORT_CLUSTER_VAR,
-        INDEX_SETTLE_VAR, METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR,
-        PLANE_VAR, QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
+        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_REF_VAR, Config, ConfigError, INDEX_SETTLE_VAR,
+        METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
+        QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
         REQUIRED_VARS, SESSION_TABLE_VAR,
     };
-
-    fn base64(bytes: &[u8]) -> String {
-        use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    }
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
@@ -357,10 +320,9 @@ mod tests {
             (QUERY_READ_BYTES_VAR, (32 * 1024 * 1024).to_string()),
             (METRIC_AGGREGATE_SCAN_VAR, "2000000".to_owned()),
             (
-                EXPORT_CLUSTER_VAR,
-                "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-export".to_owned(),
+                CURSOR_KEY_REF_VAR,
+                "/aex/dev/regional/cursor-signing-key".to_owned(),
             ),
-            (CURSOR_KEY_VAR, base64(&[5u8; 32])),
             (
                 AUTHZ_FUNCTION_ARN_VAR,
                 "arn:aws:lambda:eu-west-1:000000000000:function:central-authz".to_owned(),
@@ -388,7 +350,10 @@ mod tests {
         assert_eq!(config.region.as_str(), "eu-west-1");
         assert_eq!(config.index_settle_ms, limits::OBS_INDEX_SETTLE_MS);
         assert_eq!(config.budget.max_segments, limits::QUERY_MAX_SEGMENTS);
-        assert_eq!(config.cursor_key.len(), 32);
+        assert_eq!(
+            config.cursor_key_ref,
+            "/aex/dev/regional/cursor-signing-key"
+        );
     }
 
     #[test]
@@ -450,19 +415,6 @@ mod tests {
                 "{error:?}"
             );
         }
-    }
-
-    #[test]
-    fn a_short_cursor_key_refuses_to_start() {
-        let mut vars = complete();
-        vars.insert(CURSOR_KEY_VAR, base64(&[1u8; 8]));
-        assert!(matches!(
-            read(&vars),
-            Err(ConfigError::Invalid {
-                name: CURSOR_KEY_VAR,
-                ..
-            })
-        ));
     }
 
     #[test]

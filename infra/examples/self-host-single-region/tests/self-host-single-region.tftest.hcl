@@ -137,12 +137,13 @@ variables {
     wildcard_resource_allowlist = ["kms:GenerateRandom"]
     action_grants = [
       {
-        sid              = "SessionJournal"
-        actions          = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:TransactWriteItems"]
-        resources        = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-prd-euw1-session-journal"]
-        scopable         = true
-        condition_key    = "aws:ResourceTag/aex:plane"
-        condition_values = ["prd"]
+        sid                = "SessionJournal"
+        actions            = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:TransactWriteItems"]
+        resources          = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-prd-euw1-session-journal"]
+        scopable           = true
+        condition_operator = "ForAllValues:StringLike"
+        condition_key      = "dynamodb:LeadingKeys"
+        condition_values   = ["SESSION#*"]
       },
     ]
   }
@@ -159,6 +160,12 @@ run "the_self_host_root_plans" {
   assert {
     condition     = module.artifacts.bucket == "aex-infra-artifacts-prd-0a1b2c3d"
     error_message = "The artifact bucket name must be derived from the plane and suffix."
+  }
+
+
+  assert {
+    condition     = jsondecode(module.session_api_role.inline_policy_json).Statement[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["SESSION#*"]
+    error_message = "The self-host wrapper must preserve reviewed set-qualified conditions."
   }
 }
 

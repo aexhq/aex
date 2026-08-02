@@ -10,16 +10,17 @@
 //! placeholders, and every key component is formatted only from values the
 //! domain already validated.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use aex_observation_domain::canonical::CanonicalValue;
 use aex_observation_domain::gap::GapRecord;
 use aex_observation_domain::keys::{self, BucketHour, ScopeKey};
-use aex_observation_domain::order::{Direction, OrderTuple};
+use aex_observation_domain::order::{Direction, OrderTuple, order_sort_key};
 use aex_observation_domain::signal::Signal;
 use aex_observation_query::ast::MapRow;
 use aex_observation_query::coverage::Snapshot;
-use aex_observation_query::plan::{Access, NormalizedQuery, PageOutcome, Spend, classify};
+use aex_observation_query::plan::{Access, Budget, NormalizedQuery, Spend};
+use aex_observation_query::{ObservationResume, ResumeKey, SegmentResume, SegmentState};
 use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
 use aex_observation_store_aws::gap::decode as decode_gap;
 use aex_wire::ids::{
@@ -28,12 +29,22 @@ use aex_wire::ids::{
 use aex_wire::models::{Observation, ObservationSignal};
 use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
+use futures::{StreamExt as _, TryStreamExt as _};
 
 /// The shard count one bucket is written across, matching the admission edge.
 ///
 /// Fixed for the life of a bucket, so a reader never has to guess how many
 /// partitions to merge.
 pub const BUCKET_SHARDS: u8 = 4;
+
+/// `DynamoDB` accepts at most one hundred keys in one `BatchGetItem` request.
+const BATCH_GET_MAX_KEYS: usize = 100;
+/// Unprocessed keys are retried a small, bounded number of times in addition
+/// to the SDK's transport retry policy.
+const BATCH_GET_UNPROCESSED_RETRIES: u8 = 3;
+/// The maximum provider reads allowed to execute at once while filling the
+/// heads needed for an exact k-way merge.
+const MAX_PARALLEL_SEGMENT_READS: usize = 16;
 
 /// Maximum immutable gap revisions one query may inspect before failing closed.
 pub const GAP_REVISION_BUDGET: u32 = 5_000;
@@ -54,6 +65,15 @@ pub enum ReadError {
     Malformed {
         /// Which attribute.
         attribute: &'static str,
+    },
+    /// Authenticated continuation state does not describe this exact plan.
+    #[error("cursor resume state does not match the current query plan")]
+    InvalidResume,
+    /// A write adapter was asked to target a row outside export control.
+    #[error("{operation} refused a non-export-control key")]
+    InvalidWriteTarget {
+        /// Which write path rejected the key.
+        operation: &'static str,
     },
     /// A single page could make no progress at all.
     ///
@@ -90,21 +110,68 @@ pub struct Page {
     pub more: bool,
     /// The last tuple emitted, which the cursor binds.
     pub last: Option<OrderTuple>,
+    /// Exact per-segment progress when more may exist.
+    pub resume: Option<ObservationResume>,
 }
 
-/// One fully paged, budget-bounded index segment.
+/// One provider page from a physical index segment.
 struct SegmentBatch {
     items: Vec<HashMap<String, AttributeValue>>,
     exhausted: bool,
 }
 
-/// The accepted frontier of one scope.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SegmentDescriptor {
+    bucket: BucketHour,
+    access: Access,
+    signal: Signal,
+    shard: u8,
+}
+
+struct Candidate {
+    tuple: OrderTuple,
+    observation: Observation,
+    row: MapRow,
+    resume_key: ResumeKey,
+}
+
+struct OpenSegment {
+    descriptor: SegmentDescriptor,
+    state: SegmentState,
+    buffered: VecDeque<Candidate>,
+    provider_exhausted: bool,
+    opened_this_page: bool,
+}
+
+struct SegmentLoad {
+    buffered: VecDeque<Candidate>,
+    provider_exhausted: bool,
+    items_scanned: u32,
+    bytes_read: u64,
+}
+
+/// The safe complete and retained frontiers of one query selection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Frontier {
-    /// The latest accepted instant across the queried signals.
+    /// Every selected signal is complete through this instant.
     pub accepted_at: Timestamp,
-    /// The earliest retained accepted instant, which is `earliestReplay`.
+    /// Every selected signal is retained from this instant, which is `earliestReplay`.
     pub earliest_accepted_at: Timestamp,
+    /// The authoritative deletion epoch bound into every cursor.
+    pub deletion_epoch: u64,
+    /// Whether the scope remains queryable at that epoch.
+    pub deletion_state: ScopeDeletionState,
+}
+
+/// The query-visible state of the authoritative scope deletion fence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScopeDeletionState {
+    /// Reads may proceed.
+    Open,
+    /// A deletion is fenced and still in progress.
+    Deleting,
+    /// Deletion has been proven complete (or the session head is gone).
+    Deleted,
 }
 
 /// The bounded reader over the observation authority.
@@ -158,24 +225,31 @@ impl ObservationReader {
     /// Returns [`ReadError::Provider`] when either probe fails. A probe that has
     /// not passed is never assumed to have passed.
     pub async fn probe(&self) -> Result<(), ReadError> {
-        self.dynamodb
-            .describe_table()
-            .table_name(&self.table)
-            .send()
-            .await
-            .map_err(|error| ReadError::provider("DescribeTable", error))?;
-        self.dynamodb
-            .describe_table()
-            .table_name(&self.session_table)
-            .send()
-            .await
-            .map_err(|error| ReadError::provider("DescribeSessionTable", error))?;
-        self.s3
-            .head_bucket()
-            .bucket(&self.bucket)
-            .send()
-            .await
-            .map_err(|error| ReadError::provider("HeadBucket", error))?;
+        let observation = async {
+            self.dynamodb
+                .describe_table()
+                .table_name(&self.table)
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("DescribeTable", error))
+        };
+        let session = async {
+            self.dynamodb
+                .describe_table()
+                .table_name(&self.session_table)
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("DescribeSessionTable", error))
+        };
+        let bucket = async {
+            self.s3
+                .head_bucket()
+                .bucket(&self.bucket)
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("HeadBucket", error))
+        };
+        tokio::try_join!(observation, session, bucket)?;
         Ok(())
     }
 
@@ -187,10 +261,11 @@ impl ObservationReader {
     pub async fn frontier(
         &self,
         scope: &ScopeKey,
+        workspace: WorkspaceId,
         query: &NormalizedQuery,
     ) -> Result<Frontier, ReadError> {
-        let mut accepted = Timestamp::from_unix_millis(0).unwrap_or(query.time_gte);
-        let mut earliest: Option<Timestamp> = None;
+        let (deletion_epoch, deletion_state) = self.deletion_fence(scope, workspace).await?;
+        let mut frontiers = Vec::new();
         for signal in query.signals.in_authority().iter() {
             let Some(item) = self
                 .get(&keys::frontier_pk(scope), &keys::frontier_sk(signal))
@@ -198,25 +273,74 @@ impl ObservationReader {
             else {
                 continue;
             };
-            if let Some(at) = timestamp(&item, "acceptedAt")
-                && at.unix_millis() > accepted.unix_millis()
-            {
-                accepted = at;
-            }
-            if let Some(at) = timestamp(&item, "earliestAcceptedAt") {
-                earliest = Some(earliest.map_or(at, |current| {
-                    if at.unix_millis() < current.unix_millis() {
-                        at
-                    } else {
-                        current
-                    }
-                }));
-            }
+            let accepted_at = timestamp(&item, "acceptedAt").ok_or(ReadError::Malformed {
+                attribute: "acceptedAt",
+            })?;
+            frontiers.push(Frontier {
+                accepted_at,
+                earliest_accepted_at: timestamp(&item, "earliestAcceptedAt").unwrap_or(accepted_at),
+                deletion_epoch,
+                deletion_state,
+            });
         }
-        Ok(Frontier {
-            accepted_at: accepted,
-            earliest_accepted_at: earliest.unwrap_or(accepted),
-        })
+        let mut combined = combine_frontiers(query, frontiers);
+        combined.deletion_epoch = deletion_epoch;
+        combined.deletion_state = deletion_state;
+        Ok(combined)
+    }
+
+    /// Reads the deletion fence from the authority that owns the queried scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadError::Provider`] when the authoritative point read fails,
+    /// and [`ReadError::Malformed`] when the strongly read fence is incomplete.
+    pub async fn deletion_fence(
+        &self,
+        scope: &ScopeKey,
+        workspace: WorkspaceId,
+    ) -> Result<(u64, ScopeDeletionState), ReadError> {
+        if let ScopeKey::Session(session) = scope {
+            let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);
+            let Some(item) = self.get_session(&pk, sk).await? else {
+                return Ok((0, ScopeDeletionState::Deleted));
+            };
+            let state = aex_session_dynamodb::stream_keys::session_read_state(&item, workspace)
+                .map_err(|attribute| ReadError::Malformed { attribute })?;
+            let epoch = aex_session_dynamodb::stream_keys::session_deletion_epoch(&item, workspace)
+                .map_err(|attribute| ReadError::Malformed { attribute })?;
+            return Ok((
+                epoch,
+                match state {
+                    aex_session_dynamodb::stream_keys::SessionReadState::Active => {
+                        ScopeDeletionState::Open
+                    }
+                    aex_session_dynamodb::stream_keys::SessionReadState::Deleting => {
+                        ScopeDeletionState::Deleting
+                    }
+                    aex_session_dynamodb::stream_keys::SessionReadState::Deleted => {
+                        ScopeDeletionState::Deleted
+                    }
+                },
+            ));
+        }
+        let Some(item) = self
+            .get(&keys::frontier_pk(scope), keys::DELETION_SK)
+            .await?
+        else {
+            return Ok((0, ScopeDeletionState::Open));
+        };
+        let epoch = number(&item, "deletionEpoch").ok_or(ReadError::Malformed {
+            attribute: "deletionEpoch",
+        })?;
+        let state = string(&item, "state").ok_or(ReadError::Malformed { attribute: "state" })?;
+        let state = match state.as_str() {
+            "none" => ScopeDeletionState::Open,
+            "fencing" | "deleting" | "verifying" => ScopeDeletionState::Deleting,
+            "complete" => ScopeDeletionState::Deleted,
+            _ => return Err(ReadError::Malformed { attribute: "state" }),
+        };
+        Ok((epoch, state))
     }
 
     /// Pins the snapshot every page of one query reads at.
@@ -254,8 +378,9 @@ impl ObservationReader {
     /// exceeds the scan budget before yielding a single item, and
     /// [`ReadError::Provider`] when the authority is unreachable.
     #[allow(
+        clippy::too_many_arguments,
         clippy::too_many_lines,
-        reason = "the bounded multi-index merge keeps budget accounting, snapshot filtering and total ordering in one audit surface"
+        reason = "the page state machine binds one query and maintains its exact merge/cursor invariants in one reviewable transaction"
     )]
     pub async fn read_page(
         &self,
@@ -265,153 +390,483 @@ impl ObservationReader {
         plan: &aex_observation_query::plan::Plan,
         snapshot: Snapshot,
         after: Option<&OrderTuple>,
+        resume: Option<&ObservationResume>,
+        preserve_snapshot_tail: bool,
     ) -> Result<Page, ReadError> {
-        let mut rows: Vec<(OrderTuple, Observation, MapRow)> = Vec::new();
-        let mut spend = Spend::default();
-        let mut exhausted_range = true;
-
-        'walks: for walk in &plan.walks {
-            let buckets = if walk.access == Access::SessionAuthority
-                && matches!(scope, ScopeKey::Session(_))
-            {
-                vec![BucketHour::from_timestamp(query.time_gte)]
-            } else {
-                Self::buckets(query)
-            };
-            for bucket in buckets {
-                if spend.segments >= plan.budget.max_segments
-                    || spend.items_scanned >= plan.budget.max_items_scanned
-                    || spend.bytes_read >= plan.budget.max_bytes_read
-                {
-                    exhausted_range = false;
-                    break 'walks;
-                }
-                let shard_count = if walk.access == Access::SessionAuthority {
-                    1
-                } else {
-                    BUCKET_SHARDS
-                };
-                for shard in 0..shard_count {
-                    let remaining_items = plan
-                        .budget
-                        .max_items_scanned
-                        .saturating_sub(spend.items_scanned);
-                    let remaining_segments =
-                        plan.budget.max_segments.saturating_sub(spend.segments);
-                    if remaining_items == 0 || remaining_segments == 0 {
-                        exhausted_range = false;
-                        break 'walks;
-                    }
-                    let fair_share = if walk.access == Access::SessionAuthority
-                        && matches!(scope, ScopeKey::Session(_))
-                    {
-                        remaining_items
-                    } else {
-                        remaining_items
-                            .div_ceil(u32::from(remaining_segments))
-                            .max(u32::from(query.limit))
-                            .min(remaining_items)
-                    };
-                    let remaining_bytes =
-                        plan.budget.max_bytes_read.saturating_sub(spend.bytes_read);
-                    spend.segments = spend.segments.saturating_add(1);
-                    let segment = self
-                        .query_segment(
-                            scope,
-                            workspace,
-                            query,
-                            walk.access,
-                            walk.signal,
-                            bucket,
-                            shard,
-                            fair_share,
-                            remaining_bytes,
-                        )
-                        .await?;
-                    exhausted_range &= segment.exhausted;
-                    spend.items_scanned = spend
-                        .items_scanned
-                        .saturating_add(u32::try_from(segment.items.len()).unwrap_or(u32::MAX));
-                    for item in segment.items {
-                        spend.bytes_read = spend.bytes_read.saturating_add(
-                            aex_observation_store_aws::store::item_size(&item) as u64,
-                        );
-                        let Some((tuple, observation, row)) =
-                            (if walk.access == Access::SessionAuthority {
-                                Self::decode_event(&item, scope, workspace, query.order_by)?
-                            } else {
-                                Self::decode(&item, walk.signal, query.order_by)?
-                            })
-                        else {
-                            continue;
-                        };
-                        if observation.accepted_at > snapshot.accepted_at() {
-                            continue;
-                        }
-                        if !inside(&tuple, query, after) {
-                            continue;
-                        }
-                        if let Some(predicate) = &query.predicate
-                            && !predicate.evaluate(&row)
-                        {
-                            continue;
-                        }
-                        rows.push((tuple, observation, row));
-                    }
-                    if spend.items_scanned >= plan.budget.max_items_scanned
-                        || spend.bytes_read >= plan.budget.max_bytes_read
-                    {
-                        exhausted_range = false;
-                        break 'walks;
-                    }
-                }
-            }
+        if preserve_snapshot_tail
+            && query.order_by != aex_observation_domain::order::OrderBy::Accepted
+        {
+            return Err(ReadError::InvalidResume);
         }
-
-        rows.sort_by(|left, right| match query.direction {
-            Direction::Ascending => left.0.cmp(&right.0),
-            Direction::Descending => right.0.cmp(&left.0),
-        });
-        let limit = usize::from(query.limit);
-        let more = rows.len() > limit || !exhausted_range;
-        rows.truncate(limit);
-        spend.returned = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-
-        if rows.is_empty() && !exhausted_range {
-            return Err(ReadError::BudgetExhausted {
-                dimension: "scanned_items",
-                scanned: spend.items_scanned,
+        let groups = Self::segment_groups(scope, query, plan);
+        if groups.is_empty() {
+            return Ok(Page {
+                items: Vec::new(),
+                spend: Spend::default(),
+                more: false,
+                last: None,
+                resume: None,
             });
         }
 
-        match classify(&plan.budget, &spend, exhausted_range) {
-            PageOutcome::NoProgress { dimension, .. } => Err(ReadError::BudgetExhausted {
-                dimension: dimension.as_str(),
-                scanned: spend.items_scanned,
-            }),
-            PageOutcome::Complete | PageOutcome::Short { .. } => {
-                let last = rows.last().map(|(tuple, _, _)| *tuple);
-                Ok(Page {
-                    items: rows
-                        .into_iter()
-                        .map(|(_, observation, _)| observation)
-                        .collect(),
-                    spend,
-                    more,
-                    last,
+        let (first_group, prior_last) = if let Some(resume) = resume {
+            resume.validate().map_err(|_| ReadError::InvalidResume)?;
+            let bucket = resume
+                .parsed_bucket()
+                .map_err(|_| ReadError::InvalidResume)?;
+            let index = groups
+                .iter()
+                .position(|(candidate, _)| *candidate == bucket)
+                .ok_or(ReadError::InvalidResume)?;
+            (
+                index,
+                Some(resume.last_order().map_err(|_| ReadError::InvalidResume)?),
+            )
+        } else {
+            (0, after.copied())
+        };
+
+        let mut rows = Vec::new();
+        let mut spend = Spend::default();
+        let mut last_progressed = prior_last;
+        let mut last_returned = prior_last;
+        let mut progressed_this_page = false;
+
+        for (group_index, (bucket, descriptors)) in groups.iter().enumerate().skip(first_group) {
+            let resume_states = if group_index == first_group {
+                resume.map(|resume| {
+                    resume
+                        .segments
+                        .iter()
+                        .map(|segment| {
+                            (
+                                (segment.access, segment.signal, segment.shard),
+                                segment.state.clone(),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
                 })
+            } else {
+                None
+            };
+            if let Some(states) = &resume_states {
+                let expected = descriptors
+                    .iter()
+                    .map(|segment| (segment.access, segment.signal, segment.shard))
+                    .collect::<BTreeSet<_>>();
+                if states.keys().copied().collect::<BTreeSet<_>>() != expected {
+                    return Err(ReadError::InvalidResume);
+                }
+            }
+            let mut open = descriptors
+                .iter()
+                .map(|descriptor| OpenSegment {
+                    descriptor: *descriptor,
+                    state: resume_states
+                        .as_ref()
+                        .and_then(|states| {
+                            states.get(&(descriptor.access, descriptor.signal, descriptor.shard))
+                        })
+                        .cloned()
+                        .unwrap_or(SegmentState::Unstarted),
+                    buffered: VecDeque::new(),
+                    provider_exhausted: false,
+                    opened_this_page: false,
+                })
+                .collect::<Vec<_>>();
+            for segment in &mut open {
+                if segment.state == SegmentState::Exhausted {
+                    segment.provider_exhausted = true;
+                }
+            }
+
+            loop {
+                if !self
+                    .refill_segments(scope, workspace, query, plan, &mut open, &mut spend)
+                    .await?
+                {
+                    if !progressed_this_page {
+                        return Err(ReadError::BudgetExhausted {
+                            dimension: budget_dimension(&plan.budget, &spend),
+                            scanned: spend.items_scanned,
+                        });
+                    }
+                    let Some(last) = last_progressed else {
+                        return Err(ReadError::InvalidResume);
+                    };
+                    let resume = page_resume(*bucket, last, &open)?;
+                    spend.returned = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+                    return Ok(Page {
+                        items: rows,
+                        spend,
+                        more: true,
+                        last: Some(last),
+                        resume: Some(resume),
+                    });
+                }
+
+                let next = open
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, segment)| {
+                        segment.buffered.front().map(|candidate| (index, candidate))
+                    })
+                    .min_by(|(_, left), (_, right)| {
+                        query.direction.compare(&left.tuple, &right.tuple)
+                    })
+                    .map(|(index, _)| index);
+                let Some(index) = next else {
+                    break;
+                };
+                let Some(candidate) = open[index].buffered.pop_front() else {
+                    return Err(ReadError::InvalidResume);
+                };
+                if preserve_snapshot_tail
+                    && candidate.observation.accepted_at > snapshot.accepted_at()
+                {
+                    // Accepted-order provider segments are monotone. A follower
+                    // must leave the first row beyond its current snapshot
+                    // unconsumed so the next, later snapshot can reveal it.
+                    // Returning a global tuple rather than a segment cursor
+                    // deliberately re-reads predicate-only trailing progress,
+                    // which is the safe side of the no-skip boundary.
+                    open[index].buffered.push_front(candidate);
+                    spend.returned = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+                    return Ok(Page {
+                        items: rows,
+                        spend,
+                        more: false,
+                        last: last_returned,
+                        resume: None,
+                    });
+                }
+                last_progressed = Some(candidate.tuple);
+                progressed_this_page = true;
+                open[index].state =
+                    if open[index].buffered.is_empty() && open[index].provider_exhausted {
+                        SegmentState::Exhausted
+                    } else {
+                        SegmentState::After(candidate.resume_key.clone())
+                    };
+
+                if candidate.observation.accepted_at > snapshot.accepted_at()
+                    || !inside(&candidate.tuple, query, prior_last.as_ref())
+                    || query
+                        .predicate
+                        .as_ref()
+                        .is_some_and(|predicate| !predicate.evaluate(&candidate.row))
+                {
+                    continue;
+                }
+                rows.push(candidate.observation);
+                last_returned = Some(candidate.tuple);
+                if rows.len() == usize::from(query.limit) {
+                    let current_has_more = open
+                        .iter()
+                        .any(|segment| !segment.buffered.is_empty() || !segment.provider_exhausted);
+                    let more = current_has_more || group_index + 1 < groups.len();
+                    spend.returned = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+                    let resume = more
+                        .then(|| page_resume(*bucket, candidate.tuple, &open))
+                        .transpose()?;
+                    return Ok(Page {
+                        items: rows,
+                        spend,
+                        more,
+                        last: Some(candidate.tuple),
+                        resume,
+                    });
+                }
             }
         }
+
+        spend.returned = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+        Ok(Page {
+            items: rows,
+            spend,
+            more: false,
+            last: last_returned,
+            resume: None,
+        })
+    }
+
+    fn segment_groups(
+        scope: &ScopeKey,
+        query: &NormalizedQuery,
+        plan: &aex_observation_query::plan::Plan,
+    ) -> Vec<(BucketHour, Vec<SegmentDescriptor>)> {
+        let mut grouped = BTreeMap::<BucketHour, Vec<SegmentDescriptor>>::new();
+        for walk in &plan.walks {
+            let shard_count = if matches!(
+                walk.access,
+                Access::SessionAuthority | Access::Metric | Access::Trace
+            ) {
+                1
+            } else {
+                BUCKET_SHARDS
+            };
+            for bucket in Self::ordered_buckets(scope, query, walk.access) {
+                for shard in 0..shard_count {
+                    grouped.entry(bucket).or_default().push(SegmentDescriptor {
+                        bucket,
+                        access: walk.access,
+                        signal: walk.signal,
+                        shard,
+                    });
+                }
+            }
+        }
+        let mut groups = grouped.into_iter().collect::<Vec<_>>();
+        for (_, descriptors) in &mut groups {
+            descriptors.sort_by_key(|segment| (segment.signal, segment.access, segment.shard));
+        }
+        if query.direction == Direction::Descending {
+            groups.reverse();
+        }
+        groups
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a parallel refill binds the query, plan, open segment set and shared page spend"
+    )]
+    async fn refill_segments(
+        &self,
+        scope: &ScopeKey,
+        workspace: WorkspaceId,
+        query: &NormalizedQuery,
+        plan: &aex_observation_query::plan::Plan,
+        open: &mut [OpenSegment],
+        spend: &mut Spend,
+    ) -> Result<bool, ReadError> {
+        let needy = open
+            .iter()
+            .enumerate()
+            .filter(|(_, segment)| segment.buffered.is_empty() && !segment.provider_exhausted)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if needy.is_empty() {
+            return Ok(true);
+        }
+        let newly_opened = needy
+            .iter()
+            .filter(|index| !open[**index].opened_this_page)
+            .count();
+        let remaining_segments = plan.budget.max_segments.saturating_sub(spend.segments);
+        let remaining_items = plan
+            .budget
+            .max_items_scanned
+            .saturating_sub(spend.items_scanned);
+        if usize::from(remaining_segments) < newly_opened
+            || usize::try_from(remaining_items).unwrap_or(usize::MAX) < needy.len()
+            || spend.bytes_read >= plan.budget.max_bytes_read
+        {
+            return Ok(false);
+        }
+        let batch_items = (remaining_items / u32::try_from(needy.len()).unwrap_or(u32::MAX))
+            .min(u32::from(query.limit).max(1));
+        for index in &needy {
+            if !open[*index].opened_this_page {
+                open[*index].opened_this_page = true;
+                spend.segments = spend.segments.saturating_add(1);
+            }
+        }
+        let requests = needy
+            .iter()
+            .map(|index| (open[*index].descriptor, open[*index].state.clone()))
+            .collect::<Vec<_>>();
+        // Every live segment needs a head before the k-way merge may choose its
+        // next row, but polling every provider request at once would make the
+        // fanout itself unbounded. `buffered` preserves request order while
+        // limiting in-flight reads; waiting for the complete set preserves the
+        // merge invariant.
+        let loads =
+            futures::stream::iter(requests.into_iter().map(|(descriptor, state)| async move {
+                self.load_segment(
+                    scope,
+                    workspace,
+                    query,
+                    plan,
+                    descriptor,
+                    &state,
+                    batch_items,
+                )
+                .await
+            }))
+            .buffered(MAX_PARALLEL_SEGMENT_READS)
+            .try_collect::<Vec<_>>()
+            .await?;
+        for (index, load) in needy.into_iter().zip(loads) {
+            spend.items_scanned = spend.items_scanned.saturating_add(load.items_scanned);
+            spend.bytes_read = spend.bytes_read.saturating_add(load.bytes_read);
+            open[index].provider_exhausted = load.provider_exhausted;
+            open[index].buffered = load.buffered;
+            if open[index].buffered.is_empty() && open[index].provider_exhausted {
+                open[index].state = SegmentState::Exhausted;
+            }
+        }
+        Ok(true)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "loading one immutable segment requires its full physical coordinate and bounded provider page size"
+    )]
+    async fn load_segment(
+        &self,
+        scope: &ScopeKey,
+        workspace: WorkspaceId,
+        query: &NormalizedQuery,
+        plan: &aex_observation_query::plan::Plan,
+        descriptor: SegmentDescriptor,
+        state: &SegmentState,
+        batch_items: u32,
+    ) -> Result<SegmentLoad, ReadError> {
+        let start = match state {
+            SegmentState::Unstarted => None,
+            SegmentState::After(key) => {
+                Some(resume_key_map(scope, workspace, query, descriptor, key)?)
+            }
+            SegmentState::Exhausted => return Err(ReadError::InvalidResume),
+        };
+        let batch = self
+            .query_segment_page(scope, workspace, query, descriptor, batch_items, start)
+            .await?;
+        if batch.items.is_empty() && !batch.exhausted {
+            return Err(ReadError::Provider {
+                operation: "Query",
+                reason: "provider returned an empty page with a continuation key".to_owned(),
+            });
+        }
+        let items_scanned = u32::try_from(batch.items.len()).unwrap_or(u32::MAX);
+        let mut bytes_read = batch
+            .items
+            .iter()
+            .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
+            .sum::<u64>();
+        let resume_keys = batch
+            .items
+            .iter()
+            .map(|item| item_resume_key(item, descriptor, scope))
+            .collect::<Result<Vec<_>, _>>()?;
+        let needs_hydration = matches!(descriptor.access, Access::Metric | Access::Trace)
+            || (plan.needs_base_fetch && descriptor.access.index_name().is_some());
+        let items = if needs_hydration {
+            let hydrated = self.hydrate_base_rows(batch.items).await?;
+            bytes_read = bytes_read.saturating_add(
+                hydrated
+                    .iter()
+                    .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
+                    .sum::<u64>(),
+            );
+            hydrated
+        } else {
+            batch.items
+        };
+        if items.len() != resume_keys.len() {
+            return Err(ReadError::Malformed { attribute: "pk" });
+        }
+        let mut buffered = VecDeque::with_capacity(items.len());
+        for (item, resume_key) in items.into_iter().zip(resume_keys) {
+            let decoded = if descriptor.access == Access::SessionAuthority {
+                Self::decode_event(&item, scope, workspace, query.order_by)?
+            } else {
+                Self::decode(&item, descriptor.signal, query.order_by)?
+            }
+            .ok_or(ReadError::Malformed {
+                attribute: "observationId",
+            })?;
+            buffered.push_back(Candidate {
+                tuple: decoded.0,
+                observation: decoded.1,
+                row: decoded.2,
+                resume_key,
+            });
+        }
+        Ok(SegmentLoad {
+            buffered,
+            provider_exhausted: batch.exhausted,
+            items_scanned,
+            bytes_read,
+        })
+    }
+
+    /// Rehydrates slim GSI rows from the strongly consistent base table before
+    /// evaluating residual `attributes.*` predicates.
+    async fn hydrate_base_rows(
+        &self,
+        projected: Vec<HashMap<String, AttributeValue>>,
+    ) -> Result<Vec<HashMap<String, AttributeValue>>, ReadError> {
+        let mut hydrated = HashMap::with_capacity(projected.len());
+        for chunk in projected.chunks(BATCH_GET_MAX_KEYS) {
+            let keys = chunk
+                .iter()
+                .map(primary_key)
+                .collect::<Result<Vec<_>, _>>()?;
+            let request = aws_sdk_dynamodb::types::KeysAndAttributes::builder()
+                .set_keys(Some(keys))
+                .consistent_read(true)
+                .build()
+                .map_err(|error| ReadError::provider("BatchGetItem", error))?;
+            let mut request_items = HashMap::from([(self.table.clone(), request)]);
+            let mut retries = 0_u8;
+            loop {
+                let response = self
+                    .dynamodb
+                    .batch_get_item()
+                    .set_request_items(Some(request_items))
+                    .send()
+                    .await
+                    .map_err(|error| ReadError::provider("BatchGetItem", error))?;
+                if let Some(items) = response
+                    .responses
+                    .as_ref()
+                    .and_then(|responses| responses.get(&self.table))
+                {
+                    for item in items {
+                        hydrated.insert(primary_key_pair(item)?, item.clone());
+                    }
+                }
+                request_items = response.unprocessed_keys.unwrap_or_default();
+                if request_items.is_empty() {
+                    break;
+                }
+                if retries >= BATCH_GET_UNPROCESSED_RETRIES {
+                    return Err(ReadError::Provider {
+                        operation: "BatchGetItem",
+                        reason: "provider repeatedly returned unprocessed base-row keys".to_owned(),
+                    });
+                }
+                retries = retries.saturating_add(1);
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    5_u64 << u32::from(retries),
+                ))
+                .await;
+            }
+        }
+
+        projected
+            .iter()
+            .map(primary_key_pair)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|keys| {
+                keys.into_iter()
+                    .filter_map(|key| hydrated.remove(&key))
+                    .collect()
+            })
     }
 
     /// The non-empty hour buckets one query walks, bounded by its time range.
     fn buckets(query: &NormalizedQuery) -> Vec<BucketHour> {
         let mut buckets = Vec::new();
         let mut current = BucketHour::from_timestamp(query.time_gte);
-        let end = BucketHour::from_timestamp(query.time_lt);
-        loop {
+        let end = query.time_lt.to_datetime();
+        while current.start() < end && buckets.len() < usize::from(u16::MAX) {
             buckets.push(current);
-            if current.as_str() >= end.as_str() || buckets.len() >= usize::from(u16::MAX) {
+            // An exclusive upper bound inside the current hour is terminal.
+            // Stopping here also avoids asking for the successor of the last
+            // representable wire hour.
+            if BucketHour::from_timestamp(query.time_lt) == current {
                 break;
             }
             current = current.next();
@@ -419,35 +874,54 @@ impl ObservationReader {
         buckets
     }
 
-    /// One bounded `Query` against exactly one index partition.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "a segment is identified by exactly these seven coordinates"
-    )]
-    async fn query_segment(
+    /// The exact logical hour buckets one access opens, in provider direction.
+    ///
+    /// Trace partitions span all time and metric partitions span one day, but
+    /// they are deliberately reopened through disjoint hour ranges. That keeps
+    /// them in the same bucket-major merge as hourly event and dense-index
+    /// partitions, so no later-hour row can escape ahead of another signal.
+    fn ordered_buckets(
+        _scope: &ScopeKey,
+        query: &NormalizedQuery,
+        _access: Access,
+    ) -> Vec<BucketHour> {
+        let mut buckets = Self::buckets(query);
+        if query.direction == Direction::Descending {
+            buckets.reverse();
+        }
+        buckets
+    }
+
+    /// Reads one provider page from exactly one physical segment.
+    async fn query_segment_page(
         &self,
         scope: &ScopeKey,
         workspace: WorkspaceId,
         query: &NormalizedQuery,
-        access: Access,
-        signal: Signal,
-        bucket: BucketHour,
-        shard: u8,
+        descriptor: SegmentDescriptor,
         max_items: u32,
-        max_bytes: u64,
+        start: Option<HashMap<String, AttributeValue>>,
     ) -> Result<SegmentBatch, ReadError> {
-        if access == Access::SessionAuthority {
+        if descriptor.access == Access::SessionAuthority {
             return self
-                .query_event_segment(scope, workspace, query, bucket, max_items, max_bytes)
+                .query_event_segment(scope, workspace, query, descriptor.bucket, max_items, start)
                 .await;
         }
-        let Some((partition, sort)) = segment_key(scope, workspace, access, signal, bucket, shard)
-        else {
-            // `events` are read through the semantic port over
-            // `session-authority`; they never live in this table.
-            return Ok(SegmentBatch {
-                items: Vec::new(),
-                exhausted: true,
+        let Some((partition, sort)) = segment_key(
+            scope,
+            workspace,
+            query,
+            descriptor.access,
+            descriptor.signal,
+            descriptor.bucket,
+            descriptor.shard,
+        ) else {
+            return Err(ReadError::Provider {
+                operation: "QueryPlan",
+                reason: format!(
+                    "{:?} requires an exact sparse-index selector",
+                    descriptor.access
+                ),
             });
         };
         let mut builder = ExpressionBuilder::new();
@@ -456,64 +930,34 @@ impl ObservationReader {
         let sk_name = builder.name(&sort.attribute);
         let lo = builder.string(sort.lo);
         let hi = builder.string(sort.hi);
-        let condition = format!("{pk_name} = {pk_value} AND {sk_name} BETWEEN {lo} AND {hi}");
+        let condition =
+            format!("{pk_name} = {pk_value} AND {sk_name} >= {lo} AND {sk_name} < {hi}");
 
         let names = builder.names();
         let values = builder.values();
-        let mut items = Vec::new();
-        let mut bytes = 0_u64;
-        let mut start = None;
-        loop {
-            let remaining =
-                max_items.saturating_sub(u32::try_from(items.len()).unwrap_or(u32::MAX));
-            if remaining == 0 {
-                return Ok(SegmentBatch {
-                    items,
-                    exhausted: false,
-                });
-            }
-            let mut request = self
-                .dynamodb
-                .query()
-                .table_name(&self.table)
-                .key_condition_expression(condition.clone())
-                .set_expression_attribute_names(Some(names.clone()))
-                .set_expression_attribute_values(Some(values.clone()))
-                .set_exclusive_start_key(start.take())
-                .limit(i32::try_from(remaining).unwrap_or(i32::MAX))
-                .scan_index_forward(matches!(query.direction, Direction::Ascending));
-            if let Some(index) = access.index_name() {
-                request = request.index_name(index);
-            } else {
-                // The base table is the strongly consistent accepted-order read.
-                request = request.consistent_read(true);
-            }
-            let response = request
-                .send()
-                .await
-                .map_err(|error| ReadError::provider("Query", error))?;
-            let next = response.last_evaluated_key;
-            let page = response.items.unwrap_or_default();
-            bytes = bytes.saturating_add(
-                page.iter()
-                    .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
-                    .sum::<u64>(),
-            );
-            items.extend(page);
-            if next.is_none() {
-                return Ok(SegmentBatch {
-                    items,
-                    exhausted: true,
-                });
-            }
-            if bytes >= max_bytes {
-                return Ok(SegmentBatch {
-                    items,
-                    exhausted: false,
-                });
-            }
-            start = next;
+        let mut request = self
+            .dynamodb
+            .query()
+            .table_name(&self.table)
+            .key_condition_expression(condition)
+            .set_expression_attribute_names(Some(names))
+            .set_expression_attribute_values(Some(values))
+            .set_exclusive_start_key(start)
+            .limit(i32::try_from(max_items).unwrap_or(i32::MAX))
+            .scan_index_forward(matches!(query.direction, Direction::Ascending));
+        if let Some(index) = descriptor.access.index_name() {
+            request = request.index_name(index);
+        } else {
+            request = request.consistent_read(true);
         }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| ReadError::provider("Query", error))?;
+        Ok(SegmentBatch {
+            exhausted: response.last_evaluated_key.is_none(),
+            items: response.items.unwrap_or_default(),
+        })
     }
 
     /// One bounded native-event query against the semantic session authority.
@@ -524,96 +968,56 @@ impl ObservationReader {
         query: &NormalizedQuery,
         bucket: BucketHour,
         max_items: u32,
-        max_bytes: u64,
+        start: Option<HashMap<String, AttributeValue>>,
     ) -> Result<SegmentBatch, ReadError> {
-        let (index, partition_attribute, sort_attribute, partition, lo, hi, consistent) =
-            match scope {
-                ScopeKey::Session(session) => (
-                    None,
-                    PK,
-                    SK,
-                    format!("SESSION#{session}"),
-                    "EVT#".to_owned(),
-                    "EVT#\u{fffe}".to_owned(),
-                    true,
+        let (index, partition_attribute, sort_attribute, partition) = match scope {
+            ScopeKey::Session(session) => (
+                aex_session_dynamodb::stream_keys::SESSION_EVENT_INDEX,
+                aex_session_dynamodb::stream_keys::SESSION_EVENT_PK,
+                aex_session_dynamodb::stream_keys::SESSION_EVENT_SK,
+                aex_session_dynamodb::stream_keys::session_event_partition_hour(
+                    *session,
+                    bucket.as_str(),
                 ),
-                ScopeKey::Workspace(_) => (
-                    Some(aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_INDEX),
-                    aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_PK,
-                    aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_SK,
-                    aex_session_dynamodb::stream_keys::workspace_event_partition_hour(
-                        workspace,
-                        bucket.as_str(),
-                    ),
-                    query.time_gte.to_wire(),
-                    query.time_lt.to_wire(),
-                    false,
+            ),
+            ScopeKey::Workspace(_) => (
+                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_INDEX,
+                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_PK,
+                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_SK,
+                aex_session_dynamodb::stream_keys::workspace_event_partition_hour(
+                    workspace,
+                    bucket.as_str(),
                 ),
-            };
+            ),
+        };
         let mut builder = ExpressionBuilder::new();
         let pk_name = builder.name(partition_attribute);
         let pk_value = builder.string(partition);
         let sk_name = builder.name(sort_attribute);
-        let lo = builder.string(lo);
-        let hi = builder.string(hi);
+        let lo = builder.string(query.time_gte.to_wire());
+        let hi = builder.string(query.time_lt.to_wire());
         let condition =
             format!("{pk_name} = {pk_value} AND {sk_name} >= {lo} AND {sk_name} < {hi}");
         let names = builder.names();
         let values = builder.values();
-        let mut items = Vec::new();
-        let mut bytes = 0_u64;
-        let mut start = None;
-        loop {
-            let remaining =
-                max_items.saturating_sub(u32::try_from(items.len()).unwrap_or(u32::MAX));
-            if remaining == 0 {
-                return Ok(SegmentBatch {
-                    items,
-                    exhausted: false,
-                });
-            }
-            let mut request = self
-                .dynamodb
-                .query()
-                .table_name(&self.session_table)
-                .key_condition_expression(condition.clone())
-                .set_expression_attribute_names(Some(names.clone()))
-                .set_expression_attribute_values(Some(values.clone()))
-                .set_exclusive_start_key(start.take())
-                .limit(i32::try_from(remaining).unwrap_or(i32::MAX))
-                .scan_index_forward(matches!(query.direction, Direction::Ascending));
-            if let Some(index) = index {
-                request = request.index_name(index);
-            }
-            if consistent {
-                request = request.consistent_read(true);
-            }
-            let response = request
-                .send()
-                .await
-                .map_err(|error| ReadError::provider("QuerySessionEvents", error))?;
-            let next = response.last_evaluated_key;
-            let page = response.items.unwrap_or_default();
-            bytes = bytes.saturating_add(
-                page.iter()
-                    .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
-                    .sum::<u64>(),
-            );
-            items.extend(page);
-            if next.is_none() {
-                return Ok(SegmentBatch {
-                    items,
-                    exhausted: true,
-                });
-            }
-            if bytes >= max_bytes {
-                return Ok(SegmentBatch {
-                    items,
-                    exhausted: false,
-                });
-            }
-            start = next;
-        }
+        let response = self
+            .dynamodb
+            .query()
+            .table_name(&self.session_table)
+            .index_name(index)
+            .key_condition_expression(condition)
+            .set_expression_attribute_names(Some(names))
+            .set_expression_attribute_values(Some(values))
+            .set_exclusive_start_key(start)
+            .limit(i32::try_from(max_items).unwrap_or(i32::MAX))
+            .scan_index_forward(matches!(query.direction, Direction::Ascending))
+            .send()
+            .await
+            .map_err(|error| ReadError::provider("QuerySessionEvents", error))?;
+        Ok(SegmentBatch {
+            exhausted: response.last_evaluated_key.is_none(),
+            items: response.items.unwrap_or_default(),
+        })
     }
 
     /// Decodes one stored item into the wire shape and its filter row.
@@ -761,12 +1165,31 @@ impl ObservationReader {
         Ok(response.item)
     }
 
+    /// A strongly consistent point read on the peer-owned session authority.
+    async fn get_session(
+        &self,
+        pk: &str,
+        sk: &str,
+    ) -> Result<Option<HashMap<String, AttributeValue>>, ReadError> {
+        let response = self
+            .dynamodb
+            .get_item()
+            .table_name(&self.session_table)
+            .key(PK, AttributeValue::S(pk.to_owned()))
+            .key(SK, AttributeValue::S(sk.to_owned()))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| ReadError::provider("GetSessionHead", error))?;
+        Ok(response.item)
+    }
+
     /// Reads every item of one partition under a bounded sort-key range.
     ///
     /// # Errors
     ///
     /// Returns [`ReadError::Provider`] when the read fails.
-    pub async fn read_range(
+    pub(crate) async fn read_range(
         &self,
         index: Option<Index>,
         partition: &KeyBinding,
@@ -800,7 +1223,30 @@ impl ObservationReader {
         Ok(response.items.unwrap_or_default())
     }
 
+    /// Reads a `KEYS_ONLY` index range and rehydrates its base rows in the same
+    /// order before returning them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadError::Provider`] when either the index query or bounded
+    /// base-table hydration fails.
+    pub(crate) async fn read_hydrated_range(
+        &self,
+        index: Index,
+        partition: &KeyBinding,
+        sort: &RangeBinding,
+        limit: u16,
+    ) -> Result<Vec<HashMap<String, AttributeValue>>, ReadError> {
+        let projected = self.read_range(Some(index), partition, sort, limit).await?;
+        self.hydrate_base_rows(projected).await
+    }
+
     /// Reads the latest immutable revision of one gap by its authoritative key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadError`] when the authoritative lookup fails or returns a
+    /// malformed gap row.
     pub async fn latest_gap(
         &self,
         scope: &ScopeKey,
@@ -839,6 +1285,11 @@ impl ObservationReader {
     /// Session reads are strongly consistent base-table queries. Workspace reads
     /// use the sparse index to discover keys, then strongly hydrate full base
     /// rows in bounded `BatchGetItem` calls before applying lifecycle semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadError`] when the lookup, hydration, or canonical decoding
+    /// of a durable gap revision fails.
     pub async fn gap_history(
         &self,
         scope: &ScopeKey,
@@ -990,20 +1441,21 @@ impl ObservationReader {
         self.get(pk, sk).await
     }
 
-    /// Writes one item under a caller-supplied condition.
+    /// Writes one export-control item under a caller-supplied condition.
     ///
     /// # Errors
     ///
     /// Returns [`ReadError::Provider`] when the write fails, including when the
     /// condition did not hold — losing a fenced write is a normal outcome that
     /// the caller branches on rather than retries.
-    pub async fn put_conditional(
+    pub(crate) async fn put_export_control(
         &self,
         item: HashMap<String, AttributeValue>,
         condition: &str,
         names: HashMap<String, String>,
         values: HashMap<String, AttributeValue>,
     ) -> Result<(), ReadError> {
+        validate_export_control_item(&item)?;
         self.dynamodb
             .put_item()
             .table_name(&self.table)
@@ -1017,13 +1469,13 @@ impl ObservationReader {
         Ok(())
     }
 
-    /// Updates one item under a caller-supplied condition.
+    /// Updates one export-control item under a caller-supplied condition.
     ///
     /// # Errors
     ///
     /// Returns [`ReadError::Provider`] when the update fails, including when the
     /// condition did not hold.
-    pub async fn update_conditional(
+    pub(crate) async fn update_export_control(
         &self,
         pk: &str,
         sk: &str,
@@ -1032,6 +1484,11 @@ impl ObservationReader {
         names: HashMap<String, String>,
         values: HashMap<String, AttributeValue>,
     ) -> Result<(), ReadError> {
+        if !is_export_control_key(pk, sk) {
+            return Err(ReadError::InvalidWriteTarget {
+                operation: "UpdateItem",
+            });
+        }
         self.dynamodb
             .update_item()
             .table_name(&self.table)
@@ -1087,7 +1544,8 @@ pub struct RangeBinding {
     pub attribute: String,
     /// The inclusive lower bound.
     pub lo: String,
-    /// The inclusive upper bound.
+    /// The upper bound. Segment reads treat it as exclusive; utility reads may
+    /// elect to include it for prefix-style ranges.
     pub hi: String,
 }
 
@@ -1098,6 +1556,7 @@ pub struct RangeBinding {
 pub fn segment_key(
     scope: &ScopeKey,
     workspace: WorkspaceId,
+    query: &NormalizedQuery,
     access: Access,
     signal: Signal,
     bucket: BucketHour,
@@ -1137,15 +1596,27 @@ pub fn segment_key(
             "wtSk".to_owned(),
         ),
         Access::Trace => (
-            format!("TRC#{}#", scope.to_key()),
+            format!("TRC#{}#{}", scope.to_key(), query.trace_id.as_deref()?),
             "trPk".to_owned(),
             "trSk".to_owned(),
         ),
         Access::Metric => (
-            format!("MET#{workspace}#"),
+            format!(
+                "MET#{workspace}#{}#{}",
+                query.metric_name.as_deref()?,
+                bucket.day()
+            ),
             "mPk".to_owned(),
             "mSk".to_owned(),
         ),
+    };
+    let bucket_start = Timestamp::from_datetime_trunc_ms(bucket.start()).ok()?;
+    let lo = query.time_gte.max(bucket_start);
+    let terminal_bucket = BucketHour::from_timestamp(query.time_lt);
+    let hi = if terminal_bucket == bucket {
+        query.time_lt
+    } else {
+        Timestamp::from_datetime_trunc_ms(bucket.next().start()).ok()?
     };
     Some((
         KeyBinding {
@@ -1154,13 +1625,265 @@ pub fn segment_key(
         },
         RangeBinding {
             attribute: sort_attribute,
-            // The sort key is a fixed-width rendering, so the widest legal range
-            // is exactly the empty string to the highest code point the key
-            // grammar admits.
-            lo: String::new(),
-            hi: "\u{fffe}".to_owned(),
+            // Every physical ordering key begins with the fixed-width primary
+            // timestamp. Prefix bounds therefore select precisely this
+            // logical half-open hour without fabricating a tuple sentinel.
+            lo: lo.to_wire(),
+            hi: hi.to_wire(),
         },
     ))
+}
+
+/// Combines per-signal completeness and retention facts for one query.
+///
+/// Native session events are synchronous authority rows rather than observation
+/// frontier rows. For the requested half-open range they therefore contribute
+/// its upper bound as the complete point and its lower bound as the retained
+/// floor. Observation signals narrow those facts: completeness is the minimum
+/// frontier, while replay safety begins at the maximum retained floor.
+fn combine_frontiers(
+    query: &NormalizedQuery,
+    frontiers: impl IntoIterator<Item = Frontier>,
+) -> Frontier {
+    let mut combined = if query.signals.contains(Signal::Events) {
+        Some(Frontier {
+            accepted_at: query.time_lt,
+            earliest_accepted_at: query.time_gte,
+            deletion_epoch: 0,
+            deletion_state: ScopeDeletionState::Open,
+        })
+    } else {
+        None
+    };
+    for frontier in frontiers {
+        combined = Some(combined.map_or(frontier, |current| {
+            Frontier {
+                accepted_at: current.accepted_at.min(frontier.accepted_at),
+                earliest_accepted_at: current
+                    .earliest_accepted_at
+                    .max(frontier.earliest_accepted_at),
+                deletion_epoch: current.deletion_epoch.max(frontier.deletion_epoch),
+                deletion_state: if current.deletion_state == ScopeDeletionState::Open {
+                    frontier.deletion_state
+                } else {
+                    current.deletion_state
+                },
+            }
+        }));
+    }
+    combined.unwrap_or(Frontier {
+        accepted_at: query.time_lt,
+        earliest_accepted_at: query.time_gte,
+        deletion_epoch: 0,
+        deletion_state: ScopeDeletionState::Open,
+    })
+}
+
+fn page_resume(
+    bucket: BucketHour,
+    last: OrderTuple,
+    open: &[OpenSegment],
+) -> Result<ObservationResume, ReadError> {
+    ObservationResume::new(
+        bucket,
+        last,
+        open.iter()
+            .map(|segment| SegmentResume {
+                access: segment.descriptor.access,
+                signal: segment.descriptor.signal,
+                shard: segment.descriptor.shard,
+                state: segment.state.clone(),
+            })
+            .collect(),
+    )
+    .map_err(|_| ReadError::InvalidResume)
+}
+
+fn budget_dimension(budget: &Budget, spend: &Spend) -> &'static str {
+    if spend.items_scanned >= budget.max_items_scanned {
+        "scanned_items"
+    } else if spend.bytes_read >= budget.max_bytes_read {
+        "bytes"
+    } else if spend.segments >= budget.max_segments {
+        "segments"
+    } else {
+        "provider_progress"
+    }
+}
+
+fn item_resume_key(
+    item: &HashMap<String, AttributeValue>,
+    descriptor: SegmentDescriptor,
+    asserted_scope: &ScopeKey,
+) -> Result<ResumeKey, ReadError> {
+    if descriptor.access == Access::SessionAuthority {
+        let session = string(item, "sessionId")
+            .and_then(|value| value.parse::<SessionId>().ok())
+            .ok_or(ReadError::Malformed {
+                attribute: "sessionId",
+            })?;
+        if let ScopeKey::Session(asserted) = asserted_scope
+            && session != *asserted
+        {
+            return Err(ReadError::Malformed {
+                attribute: "sessionId",
+            });
+        }
+        let occurred = timestamp(item, "occurredAt").ok_or(ReadError::Malformed {
+            attribute: "occurredAt",
+        })?;
+        return Ok(ResumeKey {
+            scope: ScopeKey::Session(session).to_key(),
+            primary_ms: occurred.unix_millis(),
+            accepted_ms: occurred.unix_millis(),
+            observation_id: string(item, "eventId").ok_or(ReadError::Malformed {
+                attribute: "eventId",
+            })?,
+            revision: 1,
+            base_shard: 0,
+            event_seq: Some(number(item, "eventSeq").ok_or(ReadError::Malformed {
+                attribute: "eventSeq",
+            })?),
+        });
+    }
+
+    let base = string(item, PK)
+        .as_deref()
+        .and_then(keys::parse_observation_pk)
+        .ok_or(ReadError::Malformed { attribute: PK })?;
+    if base.signal != descriptor.signal {
+        return Err(ReadError::Malformed {
+            attribute: "signal",
+        });
+    }
+    let primary = match descriptor.access {
+        Access::BaseTable | Access::WorkspaceAccepted => timestamp(item, "acceptedAt"),
+        _ => timestamp(item, "time"),
+    }
+    .ok_or(ReadError::Malformed { attribute: "time" })?;
+    let accepted = timestamp(item, "acceptedAt").ok_or(ReadError::Malformed {
+        attribute: "acceptedAt",
+    })?;
+    Ok(ResumeKey {
+        scope: base.scope.to_key(),
+        primary_ms: primary.unix_millis(),
+        accepted_ms: accepted.unix_millis(),
+        observation_id: string(item, "observationId").ok_or(ReadError::Malformed {
+            attribute: "observationId",
+        })?,
+        revision: number(item, "revision").unwrap_or(1),
+        base_shard: base.shard,
+        event_seq: None,
+    })
+}
+
+fn resume_key_map(
+    scope: &ScopeKey,
+    workspace: WorkspaceId,
+    query: &NormalizedQuery,
+    descriptor: SegmentDescriptor,
+    key: &ResumeKey,
+) -> Result<HashMap<String, AttributeValue>, ReadError> {
+    key.validate().map_err(|_| ReadError::InvalidResume)?;
+    let row_scope = ScopeKey::parse(&key.scope).map_err(|_| ReadError::InvalidResume)?;
+    let primary =
+        Timestamp::from_unix_millis(key.primary_ms).map_err(|_| ReadError::InvalidResume)?;
+    let accepted =
+        Timestamp::from_unix_millis(key.accepted_ms).map_err(|_| ReadError::InvalidResume)?;
+    let observation_id = key
+        .observation_id
+        .parse::<ObservationId>()
+        .map_err(|_| ReadError::InvalidResume)?;
+    let primary_sk = order_sort_key(OrderTuple::new(
+        primary,
+        descriptor.signal,
+        observation_id,
+        key.revision,
+    ));
+
+    if descriptor.access == Access::SessionAuthority {
+        let session = row_scope.session().ok_or(ReadError::InvalidResume)?;
+        if let ScopeKey::Session(asserted) = scope
+            && session != *asserted
+        {
+            return Err(ReadError::InvalidResume);
+        }
+        let event_seq = key.event_seq.ok_or(ReadError::InvalidResume)?;
+        let (resume_partition_attribute, resume_sort_attribute, partition) = match scope {
+            ScopeKey::Session(asserted) => (
+                aex_session_dynamodb::stream_keys::SESSION_EVENT_PK,
+                aex_session_dynamodb::stream_keys::SESSION_EVENT_SK,
+                aex_session_dynamodb::stream_keys::session_event_partition_hour(
+                    *asserted,
+                    descriptor.bucket.as_str(),
+                ),
+            ),
+            ScopeKey::Workspace(_) => (
+                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_PK,
+                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_SK,
+                aex_session_dynamodb::stream_keys::workspace_event_partition_hour(
+                    workspace,
+                    descriptor.bucket.as_str(),
+                ),
+            ),
+        };
+        return Ok(HashMap::from([
+            (
+                PK.to_owned(),
+                AttributeValue::S(format!("SESSION#{session}")),
+            ),
+            (
+                SK.to_owned(),
+                AttributeValue::S(format!("EVT#{}", keys::pad_seq(u128::from(event_seq)))),
+            ),
+            (
+                resume_partition_attribute.to_owned(),
+                AttributeValue::S(partition),
+            ),
+            (
+                resume_sort_attribute.to_owned(),
+                AttributeValue::S(primary_sk),
+            ),
+        ]));
+    }
+
+    if key.event_seq.is_some() || !descriptor.signal.in_observation_authority() {
+        return Err(ReadError::InvalidResume);
+    }
+    let accepted_bucket = BucketHour::from_timestamp(accepted);
+    let authority_partition = keys::observation_pk(
+        &row_scope,
+        descriptor.signal,
+        accepted_bucket,
+        key.base_shard,
+    );
+    let authority_sort = order_sort_key(OrderTuple::new(
+        accepted,
+        descriptor.signal,
+        observation_id,
+        key.revision,
+    ));
+    let mut result = HashMap::from([
+        (PK.to_owned(), AttributeValue::S(authority_partition)),
+        (SK.to_owned(), AttributeValue::S(authority_sort)),
+    ]);
+    if let Some((partition, sort)) = segment_key(
+        scope,
+        workspace,
+        query,
+        descriptor.access,
+        descriptor.signal,
+        descriptor.bucket,
+        descriptor.shard,
+    ) {
+        if descriptor.access.index_name().is_some() {
+            result.insert(partition.attribute, AttributeValue::S(partition.value));
+            result.insert(sort.attribute, AttributeValue::S(primary_sk));
+        }
+    } else {
+        return Err(ReadError::InvalidResume);
+    }
+    Ok(result)
 }
 
 /// Whether one tuple is inside the query's range and after the cursor.
@@ -1212,6 +1935,7 @@ fn filter_row(item: &HashMap<String, AttributeValue>) -> MapRow {
         "runId",
         "traceId",
         "spanId",
+        "metricName",
     ] {
         if let Some(text) = string(item, name) {
             fields.insert(name.to_owned(), CanonicalValue::Str(text.into()));
@@ -1249,6 +1973,46 @@ fn canonical(value: &AttributeValue) -> Option<CanonicalValue> {
     }
 }
 
+/// Extracts the exact base-table key carried by every GSI projection.
+fn primary_key(
+    item: &HashMap<String, AttributeValue>,
+) -> Result<HashMap<String, AttributeValue>, ReadError> {
+    let (pk, sk) = primary_key_pair(item)?;
+    Ok(HashMap::from([
+        (PK.to_owned(), AttributeValue::S(pk)),
+        (SK.to_owned(), AttributeValue::S(sk)),
+    ]))
+}
+
+/// Extracts a stable lookup key while proving both key attributes are strings.
+fn primary_key_pair(item: &HashMap<String, AttributeValue>) -> Result<(String, String), ReadError> {
+    let pk = string(item, PK).ok_or(ReadError::Malformed { attribute: PK })?;
+    let sk = string(item, SK).ok_or(ReadError::Malformed { attribute: SK })?;
+    Ok((pk, sk))
+}
+
+/// The only key family the finite observation API may mutate.
+fn is_export_control_key(pk: &str, sk: &str) -> bool {
+    pk.starts_with("EXPORT#") && sk == "STATE"
+}
+
+/// Proves a new row is the exact export-control shape before any provider call.
+fn validate_export_control_item(item: &HashMap<String, AttributeValue>) -> Result<(), ReadError> {
+    let pk = string(item, PK).ok_or(ReadError::InvalidWriteTarget {
+        operation: "PutItem",
+    })?;
+    let sk = string(item, SK).ok_or(ReadError::InvalidWriteTarget {
+        operation: "PutItem",
+    })?;
+    if is_export_control_key(&pk, &sk) && string(item, "itemType").as_deref() == Some("export") {
+        Ok(())
+    } else {
+        Err(ReadError::InvalidWriteTarget {
+            operation: "PutItem",
+        })
+    }
+}
+
 /// Reads a string attribute.
 pub(crate) fn string(item: &HashMap<String, AttributeValue>, name: &str) -> Option<String> {
     item.get(name).and_then(|value| value.as_s().ok()).cloned()
@@ -1277,17 +2041,25 @@ pub(crate) fn stored_signal(item: &HashMap<String, AttributeValue>) -> Option<Ob
 mod tests {
     use std::collections::HashMap;
 
-    use aex_observation_domain::keys::{BucketHour, ScopeKey};
-    use aex_observation_domain::order::OrderBy;
-    use aex_observation_domain::signal::Signal;
-    use aex_observation_query::plan::Access;
+    use aex_observation_domain::keys::{self, BucketHour, ScopeKey};
+    use aex_observation_domain::order::{Direction, OrderBy, OrderTuple, order_sort_key};
+    use aex_observation_domain::signal::{Signal, SignalSet};
+    use aex_observation_query::plan::{Access, Budget, NormalizedQuery, ScopeAxis, plan};
     use aex_wire::ids::{ObservationId, PrefixedId as _, SessionId, WorkspaceId};
     use aex_wire::models::ObservationSignal;
     use aex_wire::types::Timestamp;
+    use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
     use aws_sdk_dynamodb::primitives::Blob;
     use aws_sdk_dynamodb::types::AttributeValue;
+    use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient};
+    use aws_smithy_types::body::SdkBody;
 
-    use super::{BUCKET_SHARDS, ObservationReader, ReadError, segment_key};
+    use super::{
+        BUCKET_SHARDS, Frontier, MAX_PARALLEL_SEGMENT_READS, ObservationReader, ReadError,
+        ScopeDeletionState, SegmentDescriptor, combine_frontiers, filter_row,
+        is_export_control_key, item_resume_key, resume_key_map, segment_key,
+        validate_export_control_item,
+    };
 
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
@@ -1301,9 +2073,243 @@ mod tests {
         SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]))
     }
 
+    fn normalized_query() -> NormalizedQuery {
+        NormalizedQuery {
+            axis: ScopeAxis::Workspace,
+            signals: SignalSet::from_signal(Signal::Logs),
+            predicate: None,
+            time_gte: Timestamp::from_unix_millis(1_754_051_696_000).expect("bounded"),
+            time_lt: Timestamp::from_unix_millis(1_754_055_296_000).expect("bounded"),
+            order_by: OrderBy::Time,
+            direction: Direction::Ascending,
+            limit: 100,
+            trace_id: Some("0123456789abcdef0123456789abcdef".into()),
+            metric_name: Some("http.server.duration".into()),
+        }
+    }
+
+    fn replaying_reader(response: &str) -> (ObservationReader, StaticReplayClient) {
+        replaying_reader_responses(&[response])
+    }
+
+    fn replaying_reader_responses(responses: &[&str]) -> (ObservationReader, StaticReplayClient) {
+        let replay = StaticReplayClient::new(
+            responses
+                .iter()
+                .map(|response| {
+                    ReplayEvent::new(
+                        http::Request::builder()
+                            .method("POST")
+                            .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                            .body(SdkBody::empty())
+                            .expect("a request"),
+                        http::Response::builder()
+                            .status(200)
+                            .body(SdkBody::from((*response).to_owned()))
+                            .expect("a response"),
+                    )
+                })
+                .collect(),
+        );
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(Region::new("eu-west-1"))
+                .credentials_provider(Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .http_client(replay.clone())
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .build(),
+        );
+        (
+            ObservationReader::new(
+                dynamodb,
+                s3,
+                "observation-authority",
+                "session-authority",
+                "observations",
+                2_000,
+            ),
+            replay,
+        )
+    }
+
+    fn observation_response(
+        scope: &ScopeKey,
+        accepted: Timestamp,
+        observed: Timestamp,
+        id: ObservationId,
+        revision: u64,
+    ) -> String {
+        let pk = keys::observation_pk(scope, Signal::Logs, BucketHour::from_timestamp(accepted), 0);
+        let sk = order_sort_key(OrderTuple::new(accepted, Signal::Logs, id, revision));
+        format!(
+            r#"{{"Items":[{{"pk":{{"S":"{pk}"}},"sk":{{"S":"{sk}"}},"observationId":{{"S":"{id}"}},"revision":{{"N":"{revision}"}},"signal":{{"S":"logs"}},"workspaceId":{{"S":"{}"}},"time":{{"S":"{}"}},"acceptedAt":{{"S":"{}"}},"acceptedSeq":{{"N":"7"}},"bodyInline":{{"B":"e30="}},"indexed":{{"M":{{}}}}}}],"Count":1,"ScannedCount":1}}"#,
+            workspace(),
+            observed.to_wire(),
+            accepted.to_wire(),
+        )
+    }
+
+    #[test]
+    fn write_keys_are_confined_to_export_control_state() {
+        assert!(is_export_control_key("EXPORT#workspace#export", "STATE"));
+        assert!(!is_export_control_key("FRONTIER#workspace", "STATE"));
+        assert!(!is_export_control_key(
+            "EXPORT#workspace#export",
+            "CHECKPOINT"
+        ));
+    }
+
+    #[test]
+    fn a_put_refuses_admission_and_frontier_rows_before_the_provider() {
+        for (pk, sk, item_type) in [
+            ("OBS#scope#logs", "record", "observation"),
+            ("FRONTIER#scope", "logs", "frontier"),
+            ("EXPORT#workspace#export", "STATE", "frontier"),
+        ] {
+            let item = HashMap::from([
+                ("pk".to_owned(), AttributeValue::S(pk.to_owned())),
+                ("sk".to_owned(), AttributeValue::S(sk.to_owned())),
+                (
+                    "itemType".to_owned(),
+                    AttributeValue::S(item_type.to_owned()),
+                ),
+            ]);
+            assert!(matches!(
+                validate_export_control_item(&item),
+                Err(ReadError::InvalidWriteTarget {
+                    operation: "PutItem"
+                })
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn keys_only_rows_are_hydrated_before_residual_evaluation() {
+        let (reader, _replay) = replaying_reader(
+            r#"{"Responses":{"observation-authority":[{"pk":{"S":"OBS#scope#logs"},"sk":{"S":"record"},"attrS":{"M":{"environment":{"S":"production"}}}}]},"UnprocessedKeys":{}}"#,
+        );
+        let projected = vec![HashMap::from([
+            (
+                "pk".to_owned(),
+                AttributeValue::S("OBS#scope#logs".to_owned()),
+            ),
+            ("sk".to_owned(), AttributeValue::S("record".to_owned())),
+        ])];
+
+        let hydrated = reader
+            .hydrate_base_rows(projected)
+            .await
+            .expect("the base row hydrates");
+
+        assert_eq!(hydrated.len(), 1);
+        assert!(
+            filter_row(&hydrated[0])
+                .attributes
+                .contains_key("environment")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_exhausted_page_keeps_the_exact_returned_revision_as_its_follow_position() {
+        let scope = ScopeKey::Workspace(workspace());
+        let accepted = Timestamp::parse("2026-08-01T09:01:00.000Z").expect("accepted");
+        let observed = Timestamp::parse("2026-08-01T09:00:30.000Z").expect("observed");
+        let id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(
+            u64::try_from(accepted.unix_millis()).expect("positive fixture"),
+            [8; 10],
+        ));
+        let item = observation_response(&scope, accepted, observed, id, 7);
+        let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
+        let (reader, _replay) = replaying_reader_responses(&[&item, empty, empty, empty]);
+        let mut query = normalized_query();
+        query.trace_id = None;
+        query.metric_name = None;
+        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("range");
+        query.time_lt = Timestamp::parse("2026-08-01T10:00:00.000Z").expect("range");
+        let planned = plan(&query, Budget::default()).expect("plans");
+        let page = reader
+            .read_page(
+                &scope,
+                workspace(),
+                &query,
+                &planned,
+                aex_observation_query::coverage::Snapshot::at(
+                    Timestamp::parse("2026-08-01T09:02:00.000Z").expect("snapshot"),
+                ),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect("page reads");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.last.expect("follow position").revision, 7);
+    }
+
+    #[tokio::test]
+    async fn a_follower_does_not_advance_past_a_row_beyond_its_current_snapshot() {
+        let scope = ScopeKey::Workspace(workspace());
+        let accepted = Timestamp::parse("2026-08-01T09:03:00.000Z").expect("accepted");
+        let id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(
+            u64::try_from(accepted.unix_millis()).expect("positive fixture"),
+            [9; 10],
+        ));
+        let item = observation_response(&scope, accepted, accepted, id, 2);
+        let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
+        let (reader, _replay) = replaying_reader_responses(&[&item, empty, empty, empty]);
+        let mut query = normalized_query();
+        query.trace_id = None;
+        query.metric_name = None;
+        query.order_by = OrderBy::Accepted;
+        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("range");
+        query.time_lt = Timestamp::parse("2026-08-01T10:00:00.000Z").expect("range");
+        let planned = plan(&query, Budget::default()).expect("plans");
+        let page = reader
+            .read_page(
+                &scope,
+                workspace(),
+                &query,
+                &planned,
+                aex_observation_query::coverage::Snapshot::at(
+                    Timestamp::parse("2026-08-01T09:02:00.000Z").expect("snapshot"),
+                ),
+                None,
+                None,
+                true,
+            )
+            .await
+            .expect("page reads");
+
+        assert!(page.items.is_empty());
+        assert!(page.last.is_none());
+        assert!(page.resume.is_none());
+        assert!(!page.more);
+    }
+
     #[test]
     fn every_access_pattern_names_its_own_index_attributes() {
         let scope = ScopeKey::Workspace(workspace());
+        let query = normalized_query();
         for (access, expected_pk, expected_sk) in [
             (Access::BaseTable, "pk", "sk"),
             (Access::ScopeTime, "tPk", "tSk"),
@@ -1312,9 +2318,16 @@ mod tests {
             (Access::Trace, "trPk", "trSk"),
             (Access::Metric, "mPk", "mSk"),
         ] {
-            let (partition, sort) =
-                segment_key(&scope, workspace(), access, Signal::Logs, bucket(), 0)
-                    .expect("the access pattern is in this table");
+            let (partition, sort) = segment_key(
+                &scope,
+                workspace(),
+                &query,
+                access,
+                Signal::Logs,
+                bucket(),
+                0,
+            )
+            .expect("the access pattern is in this table");
             assert_eq!(partition.attribute, expected_pk);
             assert_eq!(sort.attribute, expected_sk);
             assert!(!partition.value.is_empty());
@@ -1324,10 +2337,12 @@ mod tests {
     #[test]
     fn the_events_signal_is_never_read_from_this_table() {
         let scope = ScopeKey::Workspace(workspace());
+        let query = normalized_query();
         assert!(
             segment_key(
                 &scope,
                 workspace(),
+                &query,
                 Access::SessionAuthority,
                 Signal::Events,
                 bucket(),
@@ -1336,6 +2351,323 @@ mod tests {
             .is_none(),
             "events live in session-authority and are read through the port"
         );
+    }
+
+    #[test]
+    fn sparse_reader_partitions_match_the_writer_templates() {
+        let scope = ScopeKey::Workspace(workspace());
+        let query = normalized_query();
+        let (trace, trace_range) = segment_key(
+            &scope,
+            workspace(),
+            &query,
+            Access::Trace,
+            Signal::Spans,
+            bucket(),
+            0,
+        )
+        .expect("the trace selector is exact");
+        assert_eq!(
+            trace.value,
+            format!("TRC#{}#0123456789abcdef0123456789abcdef", scope.to_key())
+        );
+        assert_eq!(trace_range.lo, query.time_gte.to_wire());
+        assert_eq!(
+            trace_range.hi,
+            Timestamp::from_datetime_trunc_ms(bucket().next().start())
+                .expect("next hour")
+                .to_wire()
+        );
+
+        let (metric, range) = segment_key(
+            &scope,
+            workspace(),
+            &query,
+            Access::Metric,
+            Signal::Metrics,
+            bucket(),
+            0,
+        )
+        .expect("the metric selector is exact");
+        assert_eq!(
+            metric.value,
+            format!(
+                "MET#{}#http.server.duration#{}",
+                workspace(),
+                bucket().day()
+            )
+        );
+        assert_eq!(range.lo, query.time_gte.to_wire());
+        assert_eq!(
+            range.hi,
+            Timestamp::from_datetime_trunc_ms(bucket().next().start())
+                .expect("next hour")
+                .to_wire()
+        );
+    }
+
+    #[test]
+    fn sparse_access_without_its_exact_selector_fails_closed() {
+        let scope = ScopeKey::Workspace(workspace());
+        let mut query = normalized_query();
+        query.trace_id = None;
+        assert!(
+            segment_key(
+                &scope,
+                workspace(),
+                &query,
+                Access::Trace,
+                Signal::Spans,
+                bucket(),
+                0,
+            )
+            .is_none()
+        );
+        query.metric_name = None;
+        assert!(
+            segment_key(
+                &scope,
+                workspace(),
+                &query,
+                Access::Metric,
+                Signal::Metrics,
+                bucket(),
+                0,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_consumed_index_row_reconstructs_the_exact_provider_resume_key() {
+        let scope = ScopeKey::Session(session());
+        let signal = Signal::Logs;
+        let time = Timestamp::parse("2025-08-01T09:02:03.004Z").expect("time");
+        let accepted = Timestamp::parse("2025-08-01T09:02:04.005Z").expect("accepted");
+        let id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(1, [9; 10]));
+        let descriptor = SegmentDescriptor {
+            bucket: BucketHour::from_timestamp(time),
+            access: Access::ScopeTime,
+            signal,
+            shard: 2,
+        };
+        let authority_partition =
+            keys::observation_pk(&scope, signal, BucketHour::from_timestamp(accepted), 3);
+        let authority_sort = order_sort_key(OrderTuple::new(accepted, signal, id, 1));
+        let (partition, sort) = segment_key(
+            &scope,
+            workspace(),
+            &normalized_query(),
+            descriptor.access,
+            signal,
+            descriptor.bucket,
+            descriptor.shard,
+        )
+        .expect("scope-time segment");
+        let index_sk = order_sort_key(OrderTuple::new(time, signal, id, 1));
+        let item = HashMap::from([
+            (
+                "pk".to_owned(),
+                AttributeValue::S(authority_partition.clone()),
+            ),
+            ("sk".to_owned(), AttributeValue::S(authority_sort.clone())),
+            (
+                partition.attribute.clone(),
+                AttributeValue::S(partition.value.clone()),
+            ),
+            (sort.attribute.clone(), AttributeValue::S(index_sk.clone())),
+            (
+                "observationId".to_owned(),
+                AttributeValue::S(id.to_string()),
+            ),
+            ("revision".to_owned(), AttributeValue::N("1".to_owned())),
+            ("time".to_owned(), AttributeValue::S(time.to_wire())),
+            (
+                "acceptedAt".to_owned(),
+                AttributeValue::S(accepted.to_wire()),
+            ),
+        ]);
+        let compact = item_resume_key(&item, descriptor, &scope).expect("compact key");
+        let rebuilt = resume_key_map(
+            &scope,
+            workspace(),
+            &normalized_query(),
+            descriptor,
+            &compact,
+        )
+        .expect("resume key rebuilds");
+        assert_eq!(rebuilt["pk"].as_s().expect("pk"), &authority_partition);
+        assert_eq!(rebuilt["sk"].as_s().expect("sk"), &authority_sort);
+        assert_eq!(
+            rebuilt[partition.attribute.as_str()]
+                .as_s()
+                .expect("index pk"),
+            &partition.value
+        );
+        assert_eq!(
+            rebuilt[sort.attribute.as_str()].as_s().expect("index sk"),
+            &index_sk
+        );
+    }
+
+    #[test]
+    fn telemetry_segments_are_grouped_bucket_first_before_any_later_bucket() {
+        let scope = ScopeKey::Session(session());
+        let mut query = normalized_query();
+        query.axis = ScopeAxis::Scope;
+        query.signals = SignalSet::all();
+        query.trace_id = None;
+        query.metric_name = None;
+        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("time");
+        query.time_lt = Timestamp::parse("2026-08-01T11:00:00.000Z").expect("time");
+        let planned = plan(&query, Budget::default()).expect("plans");
+        let groups = ObservationReader::segment_groups(&scope, &query, &planned);
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].0.as_str(), "2026-08-01T09");
+        assert_eq!(groups[1].0.as_str(), "2026-08-01T10");
+        assert_eq!(
+            groups[0].1.len(),
+            17,
+            "one event plus four shards x four signals"
+        );
+        assert_eq!(
+            groups[0]
+                .1
+                .iter()
+                .filter(|segment| segment.signal == Signal::Events)
+                .count(),
+            1
+        );
+        assert_eq!(groups[0].1.len(), MAX_PARALLEL_SEGMENT_READS + 1);
+    }
+
+    #[test]
+    fn mixed_trace_and_event_pagination_is_bucket_major_in_both_directions() {
+        let scope = ScopeKey::Session(session());
+        for (direction, expected) in [
+            (
+                Direction::Ascending,
+                ["2026-08-01T23", "2026-08-02T00", "2026-08-02T01"],
+            ),
+            (
+                Direction::Descending,
+                ["2026-08-02T01", "2026-08-02T00", "2026-08-01T23"],
+            ),
+        ] {
+            let mut query = normalized_query();
+            query.axis = ScopeAxis::Scope;
+            query.signals = SignalSet::from_signal(Signal::Events).with(Signal::Spans);
+            query.metric_name = None;
+            query.time_gte = Timestamp::parse("2026-08-01T23:30:00.000Z").expect("time");
+            query.time_lt = Timestamp::parse("2026-08-02T01:30:00.000Z").expect("time");
+            query.direction = direction;
+            let planned = plan(&query, Budget::default()).expect("plans");
+            let groups = ObservationReader::segment_groups(&scope, &query, &planned);
+
+            assert_eq!(
+                groups
+                    .iter()
+                    .map(|(bucket, _)| bucket.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            for (bucket, descriptors) in &groups {
+                assert_eq!(descriptors.len(), 2, "one event and one trace head");
+                assert!(
+                    descriptors
+                        .iter()
+                        .any(|segment| segment.access == Access::SessionAuthority)
+                );
+                let trace = descriptors
+                    .iter()
+                    .find(|segment| segment.access == Access::Trace)
+                    .expect("trace segment shares every event hour");
+                let (_, range) = segment_key(
+                    &scope,
+                    workspace(),
+                    &query,
+                    trace.access,
+                    trace.signal,
+                    *bucket,
+                    trace.shard,
+                )
+                .expect("trace key");
+                let (lo, hi) = expected_mixed_hour_range(*bucket);
+                assert_eq!((range.lo.as_str(), range.hi.as_str()), (lo, hi));
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_metric_and_log_pagination_reuses_days_through_disjoint_hours() {
+        let scope = ScopeKey::Workspace(workspace());
+        for (direction, expected) in [
+            (
+                Direction::Ascending,
+                ["2026-08-01T23", "2026-08-02T00", "2026-08-02T01"],
+            ),
+            (
+                Direction::Descending,
+                ["2026-08-02T01", "2026-08-02T00", "2026-08-01T23"],
+            ),
+        ] {
+            let mut query = normalized_query();
+            query.axis = ScopeAxis::Workspace;
+            query.signals = SignalSet::from_signal(Signal::Logs).with(Signal::Metrics);
+            query.trace_id = None;
+            query.time_gte = Timestamp::parse("2026-08-01T23:30:00.000Z").expect("time");
+            query.time_lt = Timestamp::parse("2026-08-02T01:30:00.000Z").expect("time");
+            query.direction = direction;
+            let planned = plan(&query, Budget::default()).expect("plans");
+            let groups = ObservationReader::segment_groups(&scope, &query, &planned);
+
+            assert_eq!(
+                groups
+                    .iter()
+                    .map(|(bucket, _)| bucket.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let mut metric_partitions = HashMap::new();
+            for (bucket, descriptors) in &groups {
+                assert_eq!(descriptors.len(), 5, "four log shards and one metric head");
+                let metric = descriptors
+                    .iter()
+                    .find(|segment| segment.access == Access::Metric)
+                    .expect("metric segment shares every log hour");
+                let (partition, range) = segment_key(
+                    &scope,
+                    workspace(),
+                    &query,
+                    metric.access,
+                    metric.signal,
+                    *bucket,
+                    metric.shard,
+                )
+                .expect("metric key");
+                metric_partitions.insert(bucket.as_str().to_owned(), partition.value);
+                let (lo, hi) = expected_mixed_hour_range(*bucket);
+                assert_eq!((range.lo.as_str(), range.hi.as_str()), (lo, hi));
+            }
+            assert_ne!(
+                metric_partitions["2026-08-01T23"],
+                metric_partitions["2026-08-02T00"]
+            );
+            assert_eq!(
+                metric_partitions["2026-08-02T00"],
+                metric_partitions["2026-08-02T01"]
+            );
+        }
+    }
+
+    fn expected_mixed_hour_range(bucket: BucketHour) -> (&'static str, &'static str) {
+        match bucket.as_str() {
+            "2026-08-01T23" => ("2026-08-01T23:30:00.000Z", "2026-08-02T00:00:00.000Z"),
+            "2026-08-02T00" => ("2026-08-02T00:00:00.000Z", "2026-08-02T01:00:00.000Z"),
+            "2026-08-02T01" => ("2026-08-02T01:00:00.000Z", "2026-08-02T01:30:00.000Z"),
+            other => panic!("unexpected bucket {other}"),
+        }
     }
 
     #[test]
@@ -1390,6 +2722,78 @@ mod tests {
         assert_eq!(observation.session_id, Some(session()));
         assert_eq!(observation.sequence.get(), 7);
         assert_eq!(observation.observed_at, occurred);
+    }
+
+    #[test]
+    fn events_seed_a_complete_frontier_for_the_requested_range() {
+        let mut query = normalized_query();
+        query.signals = SignalSet::from_signal(Signal::Events);
+
+        assert_eq!(
+            combine_frontiers(&query, []),
+            Frontier {
+                accepted_at: query.time_lt,
+                earliest_accepted_at: query.time_gte,
+                deletion_epoch: 0,
+                deletion_state: ScopeDeletionState::Open,
+            }
+        );
+    }
+
+    #[test]
+    fn mixed_frontiers_use_the_minimum_complete_point_and_maximum_retained_floor() {
+        let mut query = normalized_query();
+        query.signals = SignalSet::all();
+        query.time_gte = Timestamp::from_unix_millis(0).expect("bounded");
+        query.time_lt = Timestamp::from_unix_millis(1_000).expect("bounded");
+        let complete_later = Frontier {
+            accepted_at: Timestamp::from_unix_millis(800).expect("bounded"),
+            earliest_accepted_at: Timestamp::from_unix_millis(100).expect("bounded"),
+            deletion_epoch: 0,
+            deletion_state: ScopeDeletionState::Open,
+        };
+        let retained_later = Frontier {
+            accepted_at: Timestamp::from_unix_millis(600).expect("bounded"),
+            earliest_accepted_at: Timestamp::from_unix_millis(300).expect("bounded"),
+            deletion_epoch: 0,
+            deletion_state: ScopeDeletionState::Open,
+        };
+
+        assert_eq!(
+            combine_frontiers(&query, [complete_later, retained_later]),
+            Frontier {
+                accepted_at: retained_later.accepted_at,
+                earliest_accepted_at: retained_later.earliest_accepted_at,
+                deletion_epoch: 0,
+                deletion_state: ScopeDeletionState::Open,
+            }
+        );
+    }
+
+    #[test]
+    fn bucket_walks_are_half_open_and_reverse_as_a_whole() {
+        let mut query = normalized_query();
+        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("bounded");
+        query.time_lt = Timestamp::parse("2026-08-01T10:00:00.000Z").expect("bounded");
+        query.direction = Direction::Ascending;
+        let scope = ScopeKey::Workspace(workspace());
+
+        let ascending = ObservationReader::ordered_buckets(&scope, &query, Access::ScopeTime);
+        assert_eq!(
+            ascending.iter().map(BucketHour::as_str).collect::<Vec<_>>(),
+            ["2026-08-01T09"]
+        );
+
+        query.time_lt = Timestamp::parse("2026-08-01T10:00:00.001Z").expect("bounded");
+        query.direction = Direction::Descending;
+        let descending = ObservationReader::ordered_buckets(&scope, &query, Access::ScopeTime);
+        assert_eq!(
+            descending
+                .iter()
+                .map(BucketHour::as_str)
+                .collect::<Vec<_>>(),
+            ["2026-08-01T10", "2026-08-01T09"]
+        );
     }
 
     #[test]
