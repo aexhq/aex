@@ -1013,7 +1013,6 @@ dependencies = [
  "aex-session-dynamodb",
  "aex-test-harness",
  "aex-wire",
- "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-smithy-http-client",
@@ -1167,6 +1166,7 @@ name = "aex-session-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-operation-domain",
+ "aex-runtime-control",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -1175,6 +1175,7 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "base64 0.23.0",
+ "futures",
  "hex",
  "hmac 0.13.0",
  "insta",
