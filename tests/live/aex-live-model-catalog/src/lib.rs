@@ -1,4 +1,4 @@
-//! Live-test companion package for the `model-catalog` deployable.
+//! Live-test companion for the model-catalog component shipped in `brain-mux`.
 //!
 //! Primary live concerns: the real provider model qualification matrix plus disable and
 //! change probes.
