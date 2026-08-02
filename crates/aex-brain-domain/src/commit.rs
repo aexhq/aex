@@ -194,6 +194,17 @@ pub struct WakeCreate {
     pub shard: WorkShard,
 }
 
+/// The authoritative source wake retired by this decision.
+///
+/// The store derives the expected workspace, session and agent from the decision's
+/// authority and fence. Carrying only the immutable identity prevents a caller from
+/// supplying a second, contradictory tenant binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeRetirement {
+    /// The canonical `regional-work` identity whose sparse due-index keys are removed.
+    pub work_id: String,
+}
+
 /// A native lifecycle event or outbox pointer appended by this decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventAppend {
@@ -271,6 +282,8 @@ pub struct DecisionCommit {
     pub joins: Vec<JoinWrite>,
     /// Wakes created by this decision.
     pub wakes: Vec<WakeCreate>,
+    /// The delivered source wake this decision satisfies.
+    pub retired_wake: Option<WakeRetirement>,
     /// Events appended by this decision.
     pub events: Vec<EventAppend>,
     /// The run transition, at a run boundary.
@@ -394,10 +407,34 @@ impl DecisionCommit {
             .saturating_add(spawn_actions)
             .saturating_add(self.joins.len())
             .saturating_add(self.wakes.len())
+            .saturating_add(usize::from(self.retired_wake.is_some()))
             .saturating_add(self.events.len())
             .saturating_add(usize::from(self.run.is_some()))
             .saturating_add(usize::from(self.session.is_some()))
             .saturating_add(usize::from(self.idempotency.is_some()))
+    }
+
+    /// Whether this decision only retires its delivered source wake.
+    ///
+    /// A pure retirement checks the agent fence but does not manufacture a journal tail or
+    /// advance the agent revision. It is still one transaction with the session guard and
+    /// the conditional work update.
+    #[must_use]
+    pub fn is_retirement_only(&self) -> bool {
+        self.retired_wake.is_some()
+            && self.appends.is_empty()
+            && self.effects.is_empty()
+            && self.budget.is_empty()
+            && self.session_budget.is_empty()
+            && self.children.is_empty()
+            && self.joins.is_empty()
+            && self.wakes.is_empty()
+            && self.events.is_empty()
+            && self.run.is_none()
+            && self.session.is_none()
+            && self.idempotency.is_none()
+            && self.control.next_revision == self.guard.revision
+            && self.control.finish.is_none()
     }
 
     /// Rejects a decision that would not fit one transaction.
@@ -506,6 +543,7 @@ mod tests {
             children,
             joins: Vec::new(),
             wakes: Vec::new(),
+            retired_wake: None,
             events: Vec::new(),
             run: None,
             session: None,

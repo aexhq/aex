@@ -149,61 +149,86 @@ pub fn compile(
     // 2. The control item, under the whole precondition set. All five, always: each
     //    rejects a different way of being stale, and dropping one lets that writer publish.
     let control_key = shared::agent_control(session, agent);
-    let mut control = aws_sdk_dynamodb::types::Update::builder()
-        .table_name(table)
-        .set_key(Some(key(&control_key.pk, &control_key.sk)))
-        .condition_expression(
-            "revision = :revision AND fence = :fence AND claimOwner = :owner \
-             AND journalTail = :tail",
-        )
-        .expression_attribute_names("#status", "status")
-        .expression_attribute_values(":revision", n(commit.guard.revision.0))
-        .expression_attribute_values(":fence", n(commit.guard.fence.0))
-        .expression_attribute_values(
-            ":owner",
-            s(commit.guard.owner.0.as_hyphenated().to_string()),
-        )
-        .expression_attribute_values(
-            ":tail",
-            n(commit
-                .guard
-                .tail
-                .map_or(0, aex_brain_domain::ids::JournalSeq::get)),
-        )
-        .expression_attribute_values(":nextRevision", n(commit.control.next_revision.0))
-        .expression_attribute_values(":nextTail", n(commit.control.next_tail.get()))
-        .expression_attribute_values(":status", s(commit.control.phase.clone()))
-        .expression_attribute_values(":lease", stamp(lease))
-        .expression_attribute_values(":now", stamp(now))
-        .expression_attribute_values(":hasJournal", aex_session_dynamodb::attr::boolean(true));
-    let mut set_clause = "revision = :nextRevision, journalTail = :nextTail, \
-                          #status = :status, leaseExpiresAt = :lease, updatedAt = :now, \
-                          hasJournal = :hasJournal"
-        .to_owned();
-    if let Some(finish) = commit.control.finish {
-        set_clause.push_str(", finishReason = :finish");
-        control = control.expression_attribute_values(":finish", s(finish_name(finish)));
-    }
-    // The agent's own budget node lives on its control row, so its movements ride inside
-    // this one update rather than as a second action. Two actions on one item are illegal
-    // in a `DynamoDB` transaction, and giving the node its own row would give it a second
-    // fence to keep in step with this one.
-    let mut adds = Vec::new();
-    for (index, delta) in commit.budget.iter().enumerate() {
-        let placeholder = format!(":b{index}");
-        adds.push(format!("{} {placeholder}", used_attribute(delta.dimension)));
-        control = control.expression_attribute_values(placeholder, n(delta.quantity));
-    }
-    let expression = if adds.is_empty() {
-        format!("SET {set_clause}")
+    if commit.is_retirement_only() {
+        let tail_condition = if commit.guard.tail.is_some() {
+            "journalTail = :tail"
+        } else {
+            "attribute_not_exists(journalTail)"
+        };
+        let mut guard = aws_sdk_dynamodb::types::ConditionCheck::builder()
+            .table_name(table)
+            .set_key(Some(key(&control_key.pk, &control_key.sk)))
+            .condition_expression(format!(
+                "revision = :revision AND fence = :fence AND claimOwner = :owner AND {tail_condition}"
+            ))
+            .expression_attribute_values(":revision", n(commit.guard.revision.0))
+            .expression_attribute_values(":fence", n(commit.guard.fence.0))
+            .expression_attribute_values(
+                ":owner",
+                s(commit.guard.owner.0.as_hyphenated().to_string()),
+            );
+        if let Some(tail) = commit.guard.tail {
+            guard = guard.expression_attribute_values(":tail", n(tail.get()));
+        }
+        plan.condition_check(Participant::AGENT_CONTROL, guard)
+            .map_err(PlanError::Store)?;
     } else {
-        format!("SET {set_clause} ADD {}", adds.join(", "))
-    };
-    plan.update(
-        Participant::AGENT_CONTROL,
-        control.update_expression(expression),
-    )
-    .map_err(PlanError::Store)?;
+        let mut control = aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&control_key.pk, &control_key.sk)))
+            .condition_expression(
+                "revision = :revision AND fence = :fence AND claimOwner = :owner \
+                 AND journalTail = :tail",
+            )
+            .expression_attribute_names("#status", "status")
+            .expression_attribute_values(":revision", n(commit.guard.revision.0))
+            .expression_attribute_values(":fence", n(commit.guard.fence.0))
+            .expression_attribute_values(
+                ":owner",
+                s(commit.guard.owner.0.as_hyphenated().to_string()),
+            )
+            .expression_attribute_values(
+                ":tail",
+                n(commit
+                    .guard
+                    .tail
+                    .map_or(0, aex_brain_domain::ids::JournalSeq::get)),
+            )
+            .expression_attribute_values(":nextRevision", n(commit.control.next_revision.0))
+            .expression_attribute_values(":nextTail", n(commit.control.next_tail.get()))
+            .expression_attribute_values(":status", s(commit.control.phase.clone()))
+            .expression_attribute_values(":lease", stamp(lease))
+            .expression_attribute_values(":now", stamp(now))
+            .expression_attribute_values(":hasJournal", aex_session_dynamodb::attr::boolean(true));
+        let mut set_clause = "revision = :nextRevision, journalTail = :nextTail, \
+                              #status = :status, leaseExpiresAt = :lease, updatedAt = :now, \
+                              hasJournal = :hasJournal"
+            .to_owned();
+        if let Some(finish) = commit.control.finish {
+            set_clause.push_str(", finishReason = :finish");
+            control = control.expression_attribute_values(":finish", s(finish_name(finish)));
+        }
+        // The agent's own budget node lives on its control row, so its movements ride inside
+        // this one update rather than as a second action. Two actions on one item are illegal
+        // in a `DynamoDB` transaction, and giving the node its own row would give it a second
+        // fence to keep in step with this one.
+        let mut adds = Vec::new();
+        for (index, delta) in commit.budget.iter().enumerate() {
+            let placeholder = format!(":b{index}");
+            adds.push(format!("{} {placeholder}", used_attribute(delta.dimension)));
+            control = control.expression_attribute_values(placeholder, n(delta.quantity));
+        }
+        let expression = if adds.is_empty() {
+            format!("SET {set_clause}")
+        } else {
+            format!("SET {set_clause} ADD {}", adds.join(", "))
+        };
+        plan.update(
+            Participant::AGENT_CONTROL,
+            control.update_expression(expression),
+        )
+        .map_err(PlanError::Store)?;
+    }
 
     // 3. Every append, immutable. `attribute_not_exists` is what makes a redelivered
     //    decision idempotent: the second attempt loses the journal put instead of
@@ -603,6 +628,25 @@ pub fn compile(
         .map_err(PlanError::Store)?;
     }
 
+    // 10. The source wake is satisfied only inside this guarded transaction. The work
+    //     adapter owns the row shape and requires the exact pending, unclaimed agent wake;
+    //     completion removes both sparse due-index keys, so a successful activation cannot
+    //     be resurrected by the backstop.
+    if let Some(retired) = &commit.retired_wake {
+        let expected = aex_work_dynamodb::claim::PendingAgentWake {
+            work_id: retired.work_id.clone(),
+            workspace: context.authority.workspace,
+            session,
+            agent,
+        };
+        plan.update(
+            aex_work_dynamodb::claim::WAKE_DONE,
+            aex_work_dynamodb::claim::complete_pending_agent_wake(work_table, &expected, now)
+                .map_err(PlanError::Store)?,
+        )
+        .map_err(PlanError::Store)?;
+    }
+
     // The domain validator bounds the decision before anything is built; this bounds the
     // *compiled* plan, which is one action larger because of the head guard. Both exist:
     // the first tells a caller to page, the second is the number the service enforces.
@@ -618,17 +662,24 @@ pub fn compile(
 
 /// The transport deduplication identity of one decision.
 ///
-/// Derived from the agent and the tail it moves to, so a redelivered wake replanning the
-/// same step reuses it and the provider collapses the duplicate inside its ten-minute
-/// window. It is transport dedup only: the `attribute_not_exists` on the journal put is
-/// what makes the decision idempotent for ever.
+/// Derived from the agent, revision, tail and optional source wake. The source identity is
+/// load-bearing: a retirement-only transaction follows the final journal decision without
+/// advancing its tail, and reusing that earlier token for a different transaction would be
+/// rejected as an idempotent-parameter mismatch.
 #[must_use]
 pub fn client_request_token(commit: &DecisionCommit) -> String {
-    format!(
-        "brain:{}:{}",
+    let material = format!(
+        "{}:{}:{}:{}",
         commit.guard.key.agent.0.as_hyphenated(),
-        commit.control.next_tail.get()
-    )
+        commit.control.next_revision.0,
+        commit.control.next_tail.get(),
+        commit
+            .retired_wake
+            .as_ref()
+            .map_or("-", |wake| wake.work_id.as_str())
+    );
+    let encoded = blake3::hash(material.as_bytes()).to_hex().to_string();
+    format!("brain-{}", &encoded[..30])
 }
 
 fn budget_update(

@@ -8,7 +8,9 @@
 //! commit: the ack happens strictly after the decision commits, so a crash between them
 //! redelivers rather than loses.
 
-use aex_brain_application::ports::{BoxFuture, DurableWake, StoreError, WakeDelivery, WakeQueue};
+use aex_brain_application::ports::{
+    BoxFuture, DurableWake, StoreError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+};
 use aex_brain_domain::ids::{AgentId, AgentKey, SessionId, Timestamp, WakeId, WorkShard};
 use aex_brain_domain::journal::ParkReason;
 use aws_sdk_sqs::Client as SqsClient;
@@ -93,16 +95,73 @@ impl WakeQueue for SqsWakeQueue {
         })
     }
 
+    fn state<'a>(&'a self, wake: &'a DurableWake) -> BoxFuture<'a, Result<WakeState, StoreError>> {
+        Box::pin(async move {
+            let workspace = parse_workspace(&wake.tenant)?;
+            let source_key = aex_work_dynamodb::keys::work(&wake.work_id)
+                .map_err(|error| undecodable("regional-work/source wake", error.to_string()))?;
+            let output = self
+                .due
+                .client
+                .get_item()
+                .table_name(&self.due.table)
+                .set_key(Some(aex_session_dynamodb::plan::key(
+                    &source_key.pk,
+                    &source_key.sk,
+                )))
+                .consistent_read(true)
+                .send()
+                .await
+                .map_err(|error| StoreError::Transport {
+                    reason: format!("wake_state: {error}"),
+                    retryable: true,
+                })?;
+            let Some(item) = output.item else {
+                return Ok(WakeState::Retired);
+            };
+            let record = aex_work_dynamodb::codec::decode_work(&item, workspace)
+                .map_err(|error| undecodable("regional-work/source wake", error.to_string()))?;
+            let (session, agent) = crate::translate::agent_key(&wake.key)
+                .map_err(|error| undecodable("regional-work/source wake", error.to_string()))?;
+            if record.work_id != wake.work_id
+                || record.kind != "agent.wake"
+                || record.workspace != workspace
+                || record.session != Some(session)
+                || record.agent != Some(agent)
+                || wake.id != WakeId(wake_identity(&record.work_id))
+                || record.due_at.unix_millis()
+                    != wake.due.map(Timestamp::millis).unwrap_or_default()
+                || record.priority != wake.priority
+            {
+                return Err(undecodable(
+                    "regional-work/source wake",
+                    "the delivery does not match the authoritative agent wake",
+                ));
+            }
+            match record.state.as_str() {
+                "pending" => Ok(WakeState::Pending),
+                "done" | "poisoned" => Ok(WakeState::Retired),
+                other => Err(undecodable(
+                    "regional-work/source wake",
+                    format!("agent wake is in unsupported state `{other}`"),
+                )),
+            }
+        })
+    }
+
     fn extend_visibility<'a>(
         &'a self,
         delivery: &'a WakeDelivery,
         by: core::time::Duration,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
+            let WakeOrigin::Queue { receipt, .. } = &delivery.origin else {
+                return Ok(());
+            };
             self.client
                 .change_message_visibility()
                 .queue_url(&self.queue_url)
-                .receipt_handle(&delivery.receipt)
+                .receipt_handle(receipt)
                 .visibility_timeout(i32::try_from(by.as_secs()).unwrap_or(30))
                 .send()
                 .await
@@ -117,10 +176,13 @@ impl WakeQueue for SqsWakeQueue {
         after: core::time::Duration,
     ) -> BoxFuture<'_, Result<(), StoreError>> {
         Box::pin(async move {
+            let WakeOrigin::Queue { receipt, .. } = delivery.origin else {
+                return Ok(());
+            };
             self.client
                 .change_message_visibility()
                 .queue_url(&self.queue_url)
-                .receipt_handle(delivery.receipt)
+                .receipt_handle(receipt)
                 .visibility_timeout(i32::try_from(after.as_secs()).unwrap_or(0))
                 .send()
                 .await
@@ -131,10 +193,13 @@ impl WakeQueue for SqsWakeQueue {
 
     fn ack(&self, delivery: WakeDelivery) -> BoxFuture<'_, Result<(), StoreError>> {
         Box::pin(async move {
+            let WakeOrigin::Queue { receipt, .. } = delivery.origin else {
+                return Ok(());
+            };
             self.client
                 .delete_message()
                 .queue_url(&self.queue_url)
-                .receipt_handle(delivery.receipt)
+                .receipt_handle(receipt)
                 .send()
                 .await
                 .map_err(|error| sqs_error("ack", &error))?;
@@ -171,7 +236,7 @@ impl WakeQueue for SqsWakeQueue {
                 )
                 .expression_attribute_values(
                     ":due",
-                    aex_session_dynamodb::attr::s(due_before.to_wire()),
+                    aex_session_dynamodb::attr::s(format!("{}#", due_before.to_wire())),
                 )
                 .limit(i32::try_from(max).unwrap_or(50))
                 .send()
@@ -220,8 +285,10 @@ pub fn decode_message(message: aws_sdk_sqs::types::Message) -> Result<WakeDelive
     let wake = decode_body(&body)?;
     Ok(WakeDelivery {
         wake,
-        receipt,
-        receive_count,
+        origin: WakeOrigin::Queue {
+            receipt,
+            receive_count,
+        },
     })
 }
 
@@ -250,6 +317,7 @@ pub fn decode_body(body: &str) -> Result<DurableWake, StoreError> {
     let priority = json_priority(value.get("priority"))?;
     Ok(DurableWake {
         id: WakeId(wake_identity(work_id)),
+        work_id: work_id.to_owned(),
         key: AgentKey::new(session, agent),
         dedup_key: work_id.to_owned(),
         // The reason is a scheduling hint. What the agent actually owes is a total function
@@ -369,6 +437,9 @@ fn decode_due_entry(
     if due_string(item, "kind")? != "agent.wake" {
         return Ok(None);
     }
+    if due_string(item, "state")? != "pending" {
+        return Ok(None);
+    }
     let work_id = due_string(item, "workId")?;
     let session = parse_session(due_string(item, "sessionId")?)?;
     let agent = parse_agent(due_string(item, "agentId")?)?;
@@ -377,6 +448,7 @@ fn decode_due_entry(
     let priority = due_priority(item)?;
     Ok(Some(DurableWake {
         id: WakeId(wake_identity(work_id)),
+        work_id: work_id.to_owned(),
         key: AgentKey::new(session, agent),
         dedup_key: work_id.to_owned(),
         reason: ParkReason::AwaitingUserMessage,
@@ -421,6 +493,7 @@ mod tests {
         let body = body();
         let expected: serde_json::Value = serde_json::from_str(&body).expect("fixture JSON");
         let wake = decode_body(&body).expect("a well-formed projection");
+        assert_eq!(wake.work_id, "wrk_1");
         assert_eq!(wake.dedup_key, "wrk_1");
         assert_eq!(wake.priority, 2);
         assert_eq!(
@@ -475,7 +548,7 @@ mod tests {
             )
             .build();
         let delivery = decode_message(message).expect("well-formed");
-        assert_eq!(delivery.receive_count, 7);
+        assert_eq!(delivery.receive_count(), Some(7));
     }
 
     fn due_entry() -> (Item, aex_brain_domain::ids::AgentKey, String) {
@@ -530,5 +603,15 @@ mod tests {
         let (mut item, _, _) = due_entry();
         item.remove("agentId");
         assert!(decode_due_entry(&item).is_err());
+    }
+
+    #[test]
+    fn a_terminal_row_left_in_the_sparse_index_is_never_resurrected() {
+        let (mut item, _, _) = due_entry();
+        item.insert("state".to_owned(), s("done"));
+        assert_eq!(
+            decode_due_entry(&item).expect("a terminal state is understood"),
+            None
+        );
     }
 }

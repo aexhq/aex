@@ -19,8 +19,8 @@ use super::{
 };
 use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
-    CommitError, ConditionFailure, ProviderDispatchError, ProviderFailureClass, ProviderOutcome,
-    RedactedDetail, StoreError, WakeQueue as _,
+    ClockPort as _, CommitError, ConditionFailure, ProviderDispatchError, ProviderFailureClass,
+    ProviderOutcome, RedactedDetail, StoreError, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{
@@ -28,6 +28,7 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
+    WorkShard,
 };
 use aex_brain_domain::journal::{
     FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
@@ -401,6 +402,11 @@ fn a_crash_between_the_commit_and_the_ack_replays_without_a_second_generation() 
     let error = harness.run_next().expect_err("the ack did not land");
     assert!(matches!(error, ActivationError::Store(_)), "{error:?}");
     assert_eq!(harness.store.finish(key()), Some(FinishReason::Completed));
+    assert_eq!(
+        harness.queue.durable_depth(),
+        0,
+        "the source row retired in the terminal decision before the failed hint ack"
+    );
 
     let outcome = harness.run_next().expect("the redelivery runs");
     assert_eq!(outcome, Outcome::Idle, "a terminal agent owes nothing");
@@ -409,6 +415,35 @@ fn a_crash_between_the_commit_and_the_ack_replays_without_a_second_generation() 
         1,
         "the turn is not run again"
     );
+    assert_eq!(harness.queue.acked().len(), 1);
+}
+
+/// The final durable point is source-row retirement, not the queue ack. If that decision
+/// fails, the pending due row survives and a second owner can retire it without repeating
+/// any effect the journal already settled.
+#[test]
+fn a_crash_before_source_retirement_is_recovered_without_a_second_generation() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.wake();
+    harness.store.pass_commits(3);
+    harness
+        .store
+        .fail_next_commit(CommitError::Store(StoreError::Transport {
+            reason: "the task died before retiring regional-work".to_owned(),
+            retryable: true,
+        }));
+
+    let error = harness
+        .run_next()
+        .expect_err("the retirement decision did not commit");
+    assert!(matches!(error, ActivationError::Commit(_)), "{error:?}");
+    assert_eq!(harness.queue.durable_depth(), 1, "the due row survives");
+    assert!(harness.queue.acked().is_empty(), "no hint was acked early");
+
+    let outcome = harness.run_next().expect("a surviving owner retires it");
+    assert_eq!(outcome, Outcome::Idle);
+    assert_eq!(harness.provider.dispatched().len(), 1);
+    assert_eq!(harness.queue.durable_depth(), 0);
     assert_eq!(harness.queue.acked().len(), 1);
 }
 
@@ -707,6 +742,51 @@ fn a_batch_carrying_one_wake_twice_produces_one_generation() {
         "one agent, one dispatch"
     );
     assert_eq!(harness.queue.acked().len(), 2, "both deliveries are done");
+    assert_eq!(harness.queue.durable_depth(), 0, "one source row retired");
+}
+
+/// A stream projection is only a hint. The bounded due-shard pass must recover the same
+/// authoritative row when that hint never arrived, without fabricating an SQS receipt.
+#[test]
+fn a_lost_stream_hint_is_recovered_by_the_due_scan() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.policy.due_shards = 1;
+    let mut wake = wake_for(key(), "wrk-lost-hint");
+    wake.due = Some(harness.clock.now());
+    harness.queue.persist(wake, WorkShard(0));
+    let pump = WakeLoop::new(harness.activation(), Arc::new(AlwaysAdmit));
+
+    let report = block_on(pump.poll_once()).expect("the backstop poll succeeds");
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.received, 1);
+    assert_eq!(report.driven, 1);
+    assert_eq!(harness.provider.dispatched().len(), 1);
+    assert!(
+        harness.queue.acked().is_empty(),
+        "a due-scan delivery has no queue receipt to acknowledge"
+    );
+    assert_eq!(harness.queue.durable_depth(), 0);
+}
+
+/// Removing both sparse-index keys in the fenced retirement is what prevents a completed
+/// source row from being rediscovered forever by the recovery sweep.
+#[test]
+fn a_retired_wake_never_resurrects_from_the_due_index() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.policy.due_shards = 1;
+    let mut wake = wake_for(key(), "wrk-no-resurrection");
+    wake.due = Some(harness.clock.now());
+    harness.queue.project(wake);
+    harness
+        .run_next()
+        .expect("the activation retires its source");
+    let pump = WakeLoop::new(harness.activation(), Arc::new(AlwaysAdmit));
+
+    let report = block_on(pump.poll_once()).expect("the next sweep succeeds");
+    assert_eq!(report.recovered, 0);
+    assert_eq!(report.received, 0);
+    assert_eq!(harness.queue.durable_depth(), 0);
+    assert_eq!(harness.provider.dispatched().len(), 1);
 }
 
 /// A parked agent does not append a second `wait_opened` every time it is woken. Without

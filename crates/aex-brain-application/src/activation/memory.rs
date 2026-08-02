@@ -22,7 +22,7 @@ use crate::ports::{
     LeaseStore, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
     ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
     SteadyInstant, StoreError, StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
-    ToolRoutingError, WakeDelivery, WakeQueue,
+    ToolRoutingError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -749,10 +749,6 @@ impl JournalStore for MemoryStore {
         clippy::too_many_lines,
         reason = "the fixture enforces the whole precondition set in one place; splitting it would let a reader believe a precondition is checked somewhere it is not"
     )]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "the fixture enforces the whole precondition set in one place; splitting it would let a reader believe a precondition is checked somewhere it is not"
-    )]
     fn commit<'a>(
         &'a self,
         context: &'a DecisionContext,
@@ -800,6 +796,13 @@ impl JournalStore for MemoryStore {
             }
             if row.cancel_epoch != commit.guard.cancel_epoch {
                 return Err(ConditionFailure::CancelEpochAdvanced.into());
+            }
+            if let Some(retired) = &commit.retired_wake
+                && !self
+                    .queue
+                    .can_retire(retired, key, &context.authority.workspace.to_string())
+            {
+                return Err(ConditionFailure::WakeStateMoved.into());
             }
 
             let mut seq = commit.guard.tail.map_or(JournalSeq::ZERO, JournalSeq::next);
@@ -869,25 +872,34 @@ impl JournalStore for MemoryStore {
                     }
                 }
             }
-            row.revision = commit.control.next_revision;
-            row.tail = Some(commit.control.next_tail);
-            row.phase.clone_from(&commit.control.phase);
-            if let Some(finish) = commit.control.finish {
-                row.finish = Some(finish);
+            if !commit.is_retirement_only() {
+                row.revision = commit.control.next_revision;
+                row.tail = Some(commit.control.next_tail);
+                row.phase.clone_from(&commit.control.phase);
+                if let Some(finish) = commit.control.finish {
+                    row.finish = Some(finish);
+                }
             }
             let wakes: Vec<WakeId> = commit.wakes.iter().map(|wake| wake.id).collect();
             // The durable wake row is projected onto the queue, exactly as the
             // `regional-work` stream does. Nothing else ever puts a message there.
             for wake in &commit.wakes {
-                self.queue.project(DurableWake {
-                    id: wake.id,
-                    key: wake.key,
-                    dedup_key: wake.dedup_key.clone(),
-                    reason: wake.reason.clone(),
-                    due: wake.due,
-                    priority: wake.priority,
-                    tenant: wake.tenant.clone(),
-                });
+                self.queue.project_in_shard(
+                    DurableWake {
+                        id: wake.id,
+                        work_id: format!("wrk_{}", wake.id.0.as_simple()),
+                        key: wake.key,
+                        dedup_key: wake.dedup_key.clone(),
+                        reason: wake.reason.clone(),
+                        due: wake.due,
+                        priority: wake.priority,
+                        tenant: wake.tenant.clone(),
+                    },
+                    wake.shard,
+                );
+            }
+            if let Some(retired) = &commit.retired_wake {
+                self.queue.retire(retired);
             }
             Ok(CommitReceipt {
                 revision: row.revision,
@@ -1004,9 +1016,6 @@ impl LeaseStore for MemoryStore {
             let row = agents.get_mut(key).ok_or(ClaimError::HeldByOther {
                 expires_at: Timestamp::from_millis(0),
             })?;
-            if row.finish.is_some() {
-                return Err(ClaimError::Terminal);
-            }
             if row.lease_owner.is_some() && row.lease_expires_at.millis() > now.millis() {
                 return Err(ClaimError::HeldByOther {
                     expires_at: row.lease_expires_at,
@@ -1079,6 +1088,7 @@ impl LeaseStore for MemoryStore {
 /// delivery, so a test cannot accidentally prove the loop works on invented work.
 #[derive(Debug, Default)]
 pub struct MemoryQueue {
+    durable: Mutex<BTreeMap<WakeId, (DurableWake, WorkShard)>>,
     visible: Mutex<VecDeque<WakeDelivery>>,
     acked: Mutex<Vec<WakeDelivery>>,
     ack_faults: Mutex<VecDeque<StoreError>>,
@@ -1091,6 +1101,7 @@ impl MemoryQueue {
     #[must_use]
     pub fn new(log: Arc<Recorder>) -> Self {
         Self {
+            durable: Mutex::new(BTreeMap::new()),
             visible: Mutex::new(VecDeque::new()),
             acked: Mutex::new(Vec::new()),
             ack_faults: Mutex::new(VecDeque::new()),
@@ -1101,15 +1112,60 @@ impl MemoryQueue {
 
     /// Projects one durable wake onto the queue, as the work stream does.
     pub fn project(&self, wake: DurableWake) {
+        self.project_in_shard(wake, WorkShard(0));
+    }
+
+    /// Persists a durable wake without projecting its stream hint.
+    ///
+    /// This is the lost-hint fixture: only [`WakeQueue::due_scan`] can recover it.
+    pub fn persist(&self, wake: DurableWake, shard: WorkShard) {
+        self.durable
+            .lock()
+            .expect("not poisoned")
+            .insert(wake.id, (wake, shard));
+    }
+
+    fn project_in_shard(&self, wake: DurableWake, shard: WorkShard) {
+        self.persist(wake.clone(), shard);
         let receipt = self.receipts.fetch_add(1, Ordering::SeqCst);
         self.visible
             .lock()
             .expect("not poisoned")
             .push_back(WakeDelivery {
                 wake,
-                receipt: format!("rh-{receipt}"),
-                receive_count: 1,
+                origin: WakeOrigin::Queue {
+                    receipt: format!("rh-{receipt}"),
+                    receive_count: 1,
+                },
             });
+    }
+
+    /// How many authoritative wake rows remain in the sparse due set.
+    #[must_use]
+    pub fn durable_depth(&self) -> usize {
+        self.durable.lock().expect("not poisoned").len()
+    }
+
+    fn can_retire(
+        &self,
+        wake: &aex_brain_domain::commit::WakeRetirement,
+        key: AgentKey,
+        tenant: &str,
+    ) -> bool {
+        self.durable
+            .lock()
+            .expect("not poisoned")
+            .values()
+            .any(|(stored, _)| {
+                stored.work_id == wake.work_id && stored.key == key && stored.tenant == tenant
+            })
+    }
+
+    fn retire(&self, wake: &aex_brain_domain::commit::WakeRetirement) {
+        self.durable
+            .lock()
+            .expect("not poisoned")
+            .retain(|_, (stored, _)| stored.work_id != wake.work_id);
     }
 
     /// Scripts the next ack to fail, which is the crash between the commit and the ack.
@@ -1153,6 +1209,27 @@ impl WakeQueue for MemoryQueue {
         })
     }
 
+    fn state<'a>(&'a self, wake: &'a DurableWake) -> BoxFuture<'a, Result<WakeState, StoreError>> {
+        Box::pin(async move {
+            let durable = self.durable.lock().expect("not poisoned");
+            match durable.get(&wake.id) {
+                Some((stored, _))
+                    if stored.work_id == wake.work_id
+                        && stored.key == wake.key
+                        && stored.tenant == wake.tenant
+                        && stored.dedup_key == wake.dedup_key =>
+                {
+                    Ok(WakeState::Pending)
+                }
+                Some(_) => Err(StoreError::Undecodable {
+                    location: "regional-work/source wake".to_owned(),
+                    reason: "the delivery does not match the authoritative wake".to_owned(),
+                }),
+                None => Ok(WakeState::Retired),
+            }
+        })
+    }
+
     fn extend_visibility<'a>(
         &'a self,
         _delivery: &'a WakeDelivery,
@@ -1169,11 +1246,13 @@ impl WakeQueue for MemoryQueue {
         Box::pin(async move {
             self.note("release_delivery");
             let mut returned = delivery;
-            returned.receive_count = returned.receive_count.saturating_add(1);
-            self.visible
-                .lock()
-                .expect("not poisoned")
-                .push_back(returned);
+            if let WakeOrigin::Queue { receive_count, .. } = &mut returned.origin {
+                *receive_count = receive_count.saturating_add(1);
+                self.visible
+                    .lock()
+                    .expect("not poisoned")
+                    .push_back(returned);
+            }
             Ok(())
         })
     }
@@ -1181,6 +1260,9 @@ impl WakeQueue for MemoryQueue {
     fn ack(&self, delivery: WakeDelivery) -> BoxFuture<'_, Result<(), StoreError>> {
         Box::pin(async move {
             self.note("ack");
+            if matches!(delivery.origin, WakeOrigin::DueScan) {
+                return Ok(());
+            }
             if let Some(fault) = self.ack_faults.lock().expect("not poisoned").pop_front() {
                 return Err(fault);
             }
@@ -1191,11 +1273,25 @@ impl WakeQueue for MemoryQueue {
 
     fn due_scan(
         &self,
-        _shard: WorkShard,
-        _now: Timestamp,
-        _max: usize,
+        shard: WorkShard,
+        now: Timestamp,
+        max: usize,
     ) -> BoxFuture<'_, Result<Vec<DurableWake>, StoreError>> {
-        Box::pin(async { Ok(Vec::new()) })
+        Box::pin(async move {
+            self.note("due_scan");
+            Ok(self
+                .durable
+                .lock()
+                .expect("not poisoned")
+                .values()
+                .filter(|(wake, stored_shard)| {
+                    *stored_shard == shard
+                        && wake.due.is_some_and(|due| due.millis() <= now.millis())
+                })
+                .take(max)
+                .map(|(wake, _)| wake.clone())
+                .collect())
+        })
     }
 }
 
@@ -1207,6 +1303,7 @@ impl WakeQueue for MemoryQueue {
 pub fn wake_for(key: AgentKey, dedup: &str) -> DurableWake {
     DurableWake {
         id: WakeId(Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_00a1)),
+        work_id: dedup.to_owned(),
         key,
         dedup_key: dedup.to_owned(),
         reason: ParkReason::AwaitingUserMessage,

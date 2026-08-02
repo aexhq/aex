@@ -14,7 +14,7 @@
 
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::commit::{
-    ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, WakeCreate,
+    ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, WakeCreate, WakeRetirement,
 };
 use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, EffectClass, EffectKind, SettledOutcome,
@@ -63,6 +63,7 @@ pub struct Draft {
     effects: Vec<EffectWrite>,
     budget: Vec<BudgetDelta>,
     wakes: Vec<WakeCreate>,
+    retired_wake: Option<WakeRetirement>,
     phase: &'static str,
     finish: Option<FinishReason>,
 }
@@ -80,6 +81,7 @@ impl Draft {
             effects: Vec::new(),
             budget: Vec::new(),
             wakes: Vec::new(),
+            retired_wake: None,
             phase,
             finish: None,
         }
@@ -151,6 +153,14 @@ impl Draft {
         });
     }
 
+    /// Retires the durable wake that admitted this activation.
+    ///
+    /// The store binds this identity back to the decision's workspace, session and agent
+    /// and removes the sparse due-index keys in the same fenced transaction.
+    pub fn retire_wake(&mut self, work_id: String) {
+        self.retired_wake = Some(WakeRetirement { work_id });
+    }
+
     /// Whether this draft would change anything.
     ///
     /// A decision that carries no action is a defect rather than an optimization, and
@@ -162,6 +172,7 @@ impl Draft {
             && self.effects.is_empty()
             && self.budget.is_empty()
             && self.wakes.is_empty()
+            && self.retired_wake.is_none()
     }
 
     /// The records this draft appends, in order.
@@ -174,9 +185,19 @@ impl Draft {
     #[must_use]
     pub fn into_commit(self) -> DecisionCommit {
         let next_tail = JournalSeq(self.next_seq.get().saturating_sub(1));
+        let retirement_only = self.appends.is_empty()
+            && self.effects.is_empty()
+            && self.budget.is_empty()
+            && self.wakes.is_empty()
+            && self.retired_wake.is_some()
+            && self.finish.is_none();
         DecisionCommit {
             control: ControlUpdate {
-                next_revision: self.guard.revision.next(),
+                next_revision: if retirement_only {
+                    self.guard.revision
+                } else {
+                    self.guard.revision.next()
+                },
                 next_tail,
                 phase: self.phase.to_owned(),
                 finish: self.finish,
@@ -189,6 +210,7 @@ impl Draft {
             children: Vec::new(),
             joins: Vec::new(),
             wakes: self.wakes,
+            retired_wake: self.retired_wake,
             events: Vec::new(),
             run: None,
             session: None,

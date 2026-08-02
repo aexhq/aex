@@ -10,6 +10,7 @@
 use aex_session_dynamodb::attr::{n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{Participant, key};
+use aex_wire::ids::{AgentId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::builders::{PutBuilder, UpdateBuilder};
 
@@ -29,6 +30,23 @@ pub struct WorkClaim {
     pub attempt: u64,
     /// When the lease expires.
     pub lease_expires_at: Timestamp,
+}
+
+/// The immutable authority binding of an unclaimed agent wake.
+///
+/// Brain consumes this one work kind under its own session/agent fence, so it never takes a
+/// second work lease. The zero work fence and exact tenant/session/agent binding are still
+/// checked in the caller-owned transaction; this is conditional retirement, not cleanup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAgentWake {
+    /// The canonical work identity.
+    pub work_id: String,
+    /// The workspace the decision authority must still own.
+    pub workspace: WorkspaceId,
+    /// The session guarded by the decision transaction.
+    pub session: SessionId,
+    /// The agent guarded by the decision transaction.
+    pub agent: AgentId,
 }
 
 /// Builds the claim update.
@@ -128,6 +146,48 @@ pub fn complete(
         .expression_attribute_values(":ttl", codec::retirement_ttl(now)))
 }
 
+/// Builds the conditional retirement of an unclaimed Brain wake.
+///
+/// The update is intended to ride inside the same transaction as Brain's session and agent
+/// guards. It accepts only the exact pending `agent.wake` row at fence zero, moves it to
+/// `done`, and removes both sparse due-index attributes.
+///
+/// # Errors
+///
+/// [`StoreError::Key`] when the work identity could not enter a key.
+pub fn complete_pending_agent_wake(
+    table: &str,
+    wake: &PendingAgentWake,
+    now: Timestamp,
+) -> Result<UpdateBuilder, StoreError> {
+    let work_key = keys::work(&wake.work_id)?;
+    Ok(aws_sdk_dynamodb::types::Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&work_key.pk, &work_key.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND itemType = :work AND kind = :kind \
+             AND workId = :workId AND workspaceId = :workspaceId \
+             AND sessionId = :sessionId AND agentId = :agentId \
+             AND fence = :unclaimed AND #state = :pending",
+        )
+        .update_expression(
+            "SET #state = :done, updatedAt = :now, expiresAtEpochSeconds = :ttl \
+             REMOVE dueShardPk, dueShardSk",
+        )
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":work", s(codec::WORK))
+        .expression_attribute_values(":kind", s("agent.wake"))
+        .expression_attribute_values(":workId", s(wake.work_id.clone()))
+        .expression_attribute_values(":workspaceId", s(wake.workspace.to_string()))
+        .expression_attribute_values(":sessionId", s(wake.session.to_string()))
+        .expression_attribute_values(":agentId", s(wake.agent.to_string()))
+        .expression_attribute_values(":unclaimed", n(0))
+        .expression_attribute_values(":pending", s("pending"))
+        .expression_attribute_values(":done", s("done"))
+        .expression_attribute_values(":now", stamp(now))
+        .expression_attribute_values(":ttl", codec::retirement_ttl(now)))
+}
+
 /// Builds the poison update for a record whose attempt budget is spent.
 ///
 /// # Errors
@@ -192,9 +252,12 @@ pub const DEDUPE: Participant = Participant::WORK_DEDUPE;
 
 #[cfg(test)]
 mod tests {
+    use aex_wire::ids::{AgentId, PrefixedId, SessionId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
-    use super::{WorkClaim, claim, complete, poison, renew};
+    use super::{
+        PendingAgentWake, WorkClaim, claim, complete, complete_pending_agent_wake, poison, renew,
+    };
 
     const TABLE: &str = "dev-eu-west-1-regional-work";
 
@@ -209,6 +272,15 @@ mod tests {
             owner: "worker-1".to_owned(),
             attempt: 1,
             lease_expires_at: stamp(30_000),
+        }
+    }
+
+    fn pending_wake() -> PendingAgentWake {
+        PendingAgentWake {
+            work_id: "wrk_01".to_owned(),
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            session: SessionId::from_uuid7(Uuid7::compose(2, [2; 10])),
+            agent: AgentId::from_uuid7(Uuid7::compose(3, [3; 10])),
         }
     }
 
@@ -279,6 +351,32 @@ mod tests {
                 "{expression}"
             );
         }
+    }
+
+    #[test]
+    fn an_unclaimed_agent_wake_retires_only_under_its_exact_authority_binding() {
+        let expression = condition(
+            complete_pending_agent_wake(TABLE, &pending_wake(), stamp(0)).expect("builds"),
+        );
+        for required in [
+            "itemType = :work",
+            "kind = :kind",
+            "workId = :workId",
+            "workspaceId = :workspaceId",
+            "sessionId = :sessionId",
+            "agentId = :agentId",
+            "fence = :unclaimed",
+            "#state = :pending",
+        ] {
+            assert!(
+                expression.contains(required),
+                "missing `{required}`: {expression}"
+            );
+        }
+        assert!(
+            update(complete_pending_agent_wake(TABLE, &pending_wake(), stamp(0)).expect("builds"))
+                .contains("REMOVE dueShardPk, dueShardSk")
+        );
     }
 
     #[test]

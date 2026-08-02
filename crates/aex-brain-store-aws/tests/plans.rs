@@ -9,7 +9,7 @@ use aex_brain_application::ports::{DecisionContext, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
     ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, JoinWrite,
-    SPAWN_PAGE_CHILDREN, WakeCreate,
+    SPAWN_PAGE_CHILDREN, WakeCreate, WakeRetirement,
 };
 use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{
@@ -86,6 +86,7 @@ fn base(appends: Vec<JournalRecord>) -> DecisionCommit {
         children: Vec::new(),
         joins: Vec::new(),
         wakes: Vec::new(),
+        retired_wake: None,
         events: Vec::new(),
         run: None,
         session: None,
@@ -142,6 +143,65 @@ fn condition_of(action: &aws_sdk_dynamodb::types::TransactWriteItem) -> Option<S
                 .delete()
                 .and_then(|it| it.condition_expression().map(ToOwned::to_owned))
         })
+}
+
+#[test]
+fn source_retirement_is_one_fenced_transaction_and_removes_the_due_projection() {
+    let mut commit = base(Vec::new());
+    commit.control.next_revision = commit.guard.revision;
+    commit.retired_wake = Some(WakeRetirement {
+        work_id: "wrk_01".to_owned(),
+    });
+
+    let compiled = plan::compile(&tables(), &context(), &commit).expect("retirement compiles");
+    assert_eq!(
+        compiled.participants(),
+        &[
+            Participant::SESSION_HEAD_GUARD,
+            Participant::AGENT_CONTROL,
+            Participant::WORK_WAKE_DONE,
+        ]
+    );
+    assert!(
+        compiled.actions()[1].condition_check().is_some(),
+        "retirement checks the agent fence without manufacturing a journal decision"
+    );
+    let work = compiled.actions()[2].update().expect("a work update");
+    let condition = work.condition_expression().expect("conditional");
+    for required in [
+        "itemType = :work",
+        "kind = :kind",
+        "workId = :workId",
+        "workspaceId = :workspaceId",
+        "sessionId = :sessionId",
+        "agentId = :agentId",
+        "fence = :unclaimed",
+        "#state = :pending",
+    ] {
+        assert!(
+            condition.contains(required),
+            "missing `{required}`: {condition}"
+        );
+    }
+    let update = work.update_expression();
+    assert!(update.contains("#state = :done"), "{update}");
+    assert!(update.contains("REMOVE dueShardPk, dueShardSk"), "{update}");
+}
+
+#[test]
+fn a_retirement_never_reuses_the_journal_decisions_transport_token() {
+    let journal = base(Vec::new());
+    let mut retirement = journal.clone();
+    retirement.control.next_revision = retirement.guard.revision;
+    retirement.retired_wake = Some(WakeRetirement {
+        work_id: "wrk_01".to_owned(),
+    });
+
+    let journal_token = plan::client_request_token(&journal);
+    let retirement_token = plan::client_request_token(&retirement);
+    assert_ne!(journal_token, retirement_token);
+    assert!(journal_token.len() <= 36, "{journal_token}");
+    assert!(retirement_token.len() <= 36, "{retirement_token}");
 }
 
 /// The one-append form must produce the order the shared compiler publishes, restricted to
@@ -264,7 +324,7 @@ fn a_journal_put_is_immutable_so_a_redelivery_loses_rather_than_duplicates() {
 /// The transport dedup identity is derived, not minted, so a redelivered wake replanning
 /// the same step reuses it.
 #[test]
-fn the_client_request_token_is_a_function_of_the_agent_and_the_tail() {
+fn the_client_request_token_is_a_function_of_the_commit_identity() {
     let commit = base(vec![finished()]);
     let first = plan::compile(&tables(), &context(), &commit).expect("compiles");
     let second = plan::compile(&tables(), &context(), &commit).expect("compiles");

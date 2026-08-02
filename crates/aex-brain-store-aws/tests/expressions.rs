@@ -218,6 +218,7 @@ fn an_oversized_decision_never_reaches_the_transport() {
         children,
         joins: Vec::new(),
         wakes: Vec::new(),
+        retired_wake: None,
         events: Vec::new(),
         run: None,
         session: None,
