@@ -984,6 +984,30 @@ async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
     }
 }
 
+/// The stored message body is an opaque inline blob or content digest, while
+/// the published message is an ordered typed-part vector. The domain also has
+/// tool-call/result parts that the wire cannot represent, and the wire has a
+/// persisted-file part that the domain cannot represent. A referenced body is
+/// blocked again because this finite API owns no plaintext/decrypt capability.
+/// None of those gaps may be hidden behind a successful empty or partial page.
+#[tokio::test]
+async fn session_message_list_is_absent_until_every_body_has_an_exact_projection() {
+    let (router, mounted) = router(FakeCustody::default());
+    assert!(!mounted.contains(&RouteId::SessionMessagesList));
+
+    let session = sample::<SessionId>(32);
+    let (status, etag, body) = get(&router, &format!("/api/sessions/{session}/messages")).await;
+    assert!(
+        matches!(
+            status,
+            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+        ),
+        "an incomplete message projection became reachable: {status} {body}"
+    );
+    assert_eq!(etag, None, "an absent route must not mint an entity tag");
+    assert_eq!(body, serde_json::Value::Null);
+}
+
 // --- durable operations ----------------------------------------------------------
 
 #[tokio::test]

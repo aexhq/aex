@@ -1429,3 +1429,52 @@ for the complete point and collection models, followed by exact lifecycle and
 status semantics. The real-router served test names both routes explicitly and
 requires them to remain absent, return no body, and mint no ETag until that work
 lands.
+
+## Session message-list audit continuation (2026-08-02)
+
+`session_messages_list` remains absent after auditing the generated message/page
+model, both current message records, the session-table codec and keys, content
+storage, read-only API port, request cursor and production composition. The
+route has a usable bounded locator shape, but the durable records cannot be
+projected into the published model for every admitted message.
+
+The decisive blocker is the typed-part vocabulary, independent of body
+placement. The wire `Message.content` is an ordered vector whose closed
+`MessagePart` union contains `Text` and a persisted `File` reference. The
+authoritative session domain instead stores an ordered vector of `Text`,
+`ToolCall` and `ToolResult`. A wire file has no domain representation, and
+neither domain tool arm has a wire representation. The two models agree only
+on text. Dropping an unknown part, converting a content digest into text, or
+publishing an empty vector would all make a valid-looking response lose durable
+message meaning.
+
+The DynamoDB adapter has a second, older `wire_pending::Message` shape. It keeps
+the identities, role spelling, plaintext length and creation instant, but its
+entire body is either opaque inline bytes or a content digest. The codec only
+proves those two storage forms round-trip; it stores no part discriminants and
+has no decoder that establishes the inline bytes are a wire `MessagePart`
+vector. Therefore even an inline row does not provide a total projection.
+
+A digest-backed row adds a separate plaintext-authority gap. `ContentStore`
+can read descriptors and sealed placement, but `regional-session-api::Shared`
+does not expose that store or its S3 binding to handlers. More importantly, the
+deployable deliberately owns no content decrypt/plaintext capability. Although
+startup validates the content key ARN and builds metadata/object clients for
+other finite routes, composition does not pass them into the request handler
+and no message-body hydration port exists. A digest is identity evidence, not
+the published message content.
+
+The remaining query work is mechanical only after those representation gaps
+are closed. Messages use the session partition and `MSG#` sort-key range, so a
+future adapter can issue one strongly consistent, ascending, bounded
+`begins_with` query without a `FilterExpression`, preserve the complete base
+table last-evaluated key, and let the regional edge own the signed cursor. That
+cursor must bind route, credential, region, workspace, session, normalized
+query, ascending order and snapshot. `SessionQueries` currently exposes no
+message-page method, but adding that method alone would still return opaque or
+unrepresentable content and must not mount the route.
+
+The real-router served target now names the exact message-list path and requires
+it to remain unmounted, answer no successful empty/partial page, publish no
+body and mint no ETag. Message admission, domain/wire redesign and content
+cryptography are outside this focused audit.
