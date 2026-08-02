@@ -1242,6 +1242,11 @@ impl ObservationReader {
     }
 
     /// Reads the latest immutable revision of one gap by its authoritative key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadError`] when the authoritative lookup fails or returns a
+    /// malformed gap row.
     pub async fn latest_gap(
         &self,
         scope: &ScopeKey,
@@ -1280,6 +1285,11 @@ impl ObservationReader {
     /// Session reads are strongly consistent base-table queries. Workspace reads
     /// use the sparse index to discover keys, then strongly hydrate full base
     /// rows in bounded `BatchGetItem` calls before applying lifecycle semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadError`] when the lookup, hydration, or canonical decoding
+    /// of a durable gap revision fails.
     pub async fn gap_history(
         &self,
         scope: &ScopeKey,

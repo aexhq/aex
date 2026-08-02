@@ -216,7 +216,11 @@ fn operand(text: &str) -> aex_observation_domain::canonical::CanonicalValue {
 }
 
 /// Builds the public coverage of one answer.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns a public query error when more than 100 relevant bounded or
+/// unbounded gaps would have to be represented in one answer.
 pub fn coverage(
     snapshot: Snapshot,
     accepted: Timestamp,
@@ -356,6 +360,11 @@ pub fn gap_request_binding(
 }
 
 /// Completes a gap cursor binding at one settled ledger snapshot.
+///
+/// # Errors
+///
+/// Returns an internal wire error when the settled snapshot cannot form a
+/// canonical cursor token.
 pub fn gap_binding(
     request: &CursorRequestBinding,
     snapshot: Snapshot,
@@ -374,6 +383,11 @@ pub fn gap_binding(
 }
 
 /// Issues a gap-list continuation after one complete gap-id group.
+///
+/// # Errors
+///
+/// Returns an internal wire error when the sort tuple or signed cursor cannot
+/// be encoded.
 pub fn issue_gap(
     key: &CursorKey,
     binding: &CursorBinding,
@@ -388,6 +402,11 @@ pub fn issue_gap(
 }
 
 /// Authenticates a gap-list continuation and recovers its ledger snapshot.
+///
+/// # Errors
+///
+/// Returns an invalid-cursor error when the token, its binding, snapshot, or
+/// tuple cannot be authenticated and decoded.
 pub fn resume_gap(
     ring: &CursorKeyRing,
     token: &Cursor,

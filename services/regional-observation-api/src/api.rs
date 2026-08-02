@@ -551,6 +551,10 @@ impl ObservationRequest {
     }
 
     /// Reads one assembled trace.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "assembling a trace keeps its bounded hydration and wire projection in one request path"
+    )]
     async fn trace(&self, session: SessionId, trace_id: TraceId) -> WireResult<TraceDetail> {
         let scope = ScopeKey::Session(session);
         self.deletion_epoch(&scope).await?;
@@ -1089,25 +1093,22 @@ async fn produce(mut task: Produce) {
             };
             task.binding.snapshot = token;
         }
-        let gaps = match task
+        let Ok(gaps) = task
             .service
             .reader
             .gap_history(&task.scope, task.workspace, task.snapshot)
             .await
-        {
-            Ok(gaps) => gaps,
-            Err(_) => {
-                let cursor = task.sender.sent().cloned();
-                let _ = task
-                    .sender
-                    .send(&ndjson::rotate(
-                        cursor,
-                        RotateReason::UpstreamUnavailable,
-                        true,
-                    ))
-                    .await;
-                return;
-            }
+        else {
+            let cursor = task.sender.sent().cloned();
+            let _ = task
+                .sender
+                .send(&ndjson::rotate(
+                    cursor,
+                    RotateReason::UpstreamUnavailable,
+                    true,
+                ))
+                .await;
+            return;
         };
         let current_coverage = match query::coverage(
             task.snapshot,
@@ -2038,7 +2039,11 @@ mod tests {
     fn an_unbounded_gap_stays_unbounded_on_the_wire() {
         let wire = gap_to_wire(&gap());
         assert!(wire.time_range.is_none());
-        assert_eq!(wire.observation_count.map(|value| value.get()), Some(2));
+        assert_eq!(
+            wire.observation_count
+                .map(aex_wire::types::DecimalU128::get),
+            Some(2)
+        );
     }
 
     #[test]
@@ -2052,7 +2057,7 @@ mod tests {
         let mut seen = BTreeMap::new();
         assert_eq!(
             unseen_gaps(
-                &[open.clone()],
+                std::slice::from_ref(&open),
                 SignalSet::from_signal(Signal::Logs),
                 window,
                 &seen
@@ -2063,7 +2068,7 @@ mod tests {
         seen.insert(open.revision.gap_id, open.revision.revision);
         assert!(
             unseen_gaps(
-                &[open.clone()],
+                std::slice::from_ref(&open),
                 SignalSet::from_signal(Signal::Logs),
                 window,
                 &seen
