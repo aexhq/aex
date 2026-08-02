@@ -8,10 +8,10 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 43,
+    "awaiting_owner": 44,
     "capacity_gates": 19,
-    "live_targets": 34,
-    "packages": 141,
+    "live_targets": 35,
+    "packages": 143,
     "seams_claimed": 32,
     "seams_declared": 34,
     "workloads": 8
@@ -3668,6 +3668,43 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
+    "tests/live/aex-live-regional-control": {
+      "name": "aex-live-regional-control",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-control",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.lambda.microvm",
+          "aws.iam.denial"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "iam",
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {
+          "direct_invoke": "e2e"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "tests/live/aex-live-regional-observation-api": {
       "name": "aex-live-regional-observation-api",
       "kind": "cargo",
@@ -4549,6 +4586,7 @@
         "scenarios": [],
         "targets": {
           "composition": "unit",
+          "expiry": "unit",
           "lifecycle": "unit",
           "performance_contract": "e2e"
         },
@@ -4801,6 +4839,45 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
+    "workers/regional-control": {
+      "name": "regional-control",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "regional-control",
+        "live_suite": "aex-live-regional-control",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.lambda.microvm",
+          "aws.iam.denial"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "iam",
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
     "workers/regional-secret-key-admin": {
       "name": "regional-secret-key-admin",
       "kind": "cargo",
@@ -4913,7 +4990,8 @@
         "targets": {
           "composition": "unit",
           "continuations": "unit",
-          "performance_contract": "e2e"
+          "performance_contract": "e2e",
+          "reconciliation": "unit"
         },
         "not_applicable": {}
       },
@@ -5095,6 +5173,7 @@
     "aex-live-observation-export-task",
     "aex-live-observation-reconciler",
     "aex-live-provider-cost-reconciler",
+    "aex-live-regional-control",
     "aex-live-regional-observation-api",
     "aex-live-regional-otlp",
     "aex-live-regional-secret-api",
@@ -5130,6 +5209,7 @@
     "aws.dynamodb.condition": [
       "aex-live-brain-mux",
       "aex-live-content-lifecycle-worker",
+      "aex-live-regional-control",
       "aex-live-regional-observation-api",
       "aex-live-regional-secret-api",
       "aex-live-regional-secret-key-admin",
@@ -5191,6 +5271,7 @@
       "aex-live-observation-export-task",
       "aex-live-observation-reconciler",
       "aex-live-provider-cost-reconciler",
+      "aex-live-regional-control",
       "aex-live-regional-observation-api",
       "aex-live-regional-otlp",
       "aex-live-regional-secret-api",
@@ -5217,6 +5298,7 @@
     "aws.lambda.microvm": [
       "aex-live-brain-mux",
       "aex-live-hands-image",
+      "aex-live-regional-control",
       "aex-live-runtime-control-worker"
     ],
     "aws.rds_data.transaction": [

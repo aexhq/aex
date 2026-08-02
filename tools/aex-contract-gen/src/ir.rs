@@ -310,6 +310,12 @@ pub struct OperationIr {
     pub plane: String,
     /// Owning fragment stem.
     pub fragment: String,
+    /// Release artifact that serves this operation.
+    pub serving_artifact: String,
+    /// Release scenarios that exercise this operation.
+    ///
+    /// This is route-registry metadata, not part of the public wire bundle.
+    pub scenarios: Vec<String>,
     /// HTTP method.
     pub method: String,
     /// Path template, rooted at `/api`.

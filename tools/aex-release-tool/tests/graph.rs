@@ -8,11 +8,25 @@ mod common;
 
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::verify;
-use common::{CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta};
+use common::{CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta, write};
 
 fn verify_fixture(root: &std::path::Path) -> aex_release_tool::error::Result<verify::BuiltGraph> {
     let inputs = GraphInputs::load(root)?;
     verify::verify(&inputs)
+}
+
+fn classify_generated_api(root: &std::path::Path) {
+    let path = root.join("release/path-map.toml");
+    let mut policy = std::fs::read_to_string(&path).expect("fixture path map");
+    policy.push_str(
+        r#"
+[[rule]]
+id = "generated-api"
+prefix = "api/generated/"
+kind = "ignored"
+"#,
+    );
+    write(root, "release/path-map.toml", &policy);
 }
 
 #[test]
@@ -367,6 +381,104 @@ fn every_violation_is_reported_rather_than_only_the_first() {
         "expected at least four violations, got {:?}",
         err.rules()
     );
+}
+
+#[test]
+fn a_route_registry_without_routes_fails_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1"}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"route-registry-shape"));
+}
+
+#[test]
+fn duplicate_route_registry_members_fail_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[],"routes":[]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"route-registry-unparseable"));
+}
+
+#[test]
+fn duplicate_contract_bundle_members_fail_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[],"operations":[]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"contract-bundle-unparseable"));
+}
+
+#[test]
+fn a_route_scenario_must_observe_the_artifact_that_serves_it() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[{"operationId":"demo_get"}]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","servingArtifact":"demo-api","scenarios":["SC-GHOST"]}]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"aex-route-uncovered"));
+
+    let scenario_path = root.join("release/scenario-ownership.toml");
+    let mut scenarios = std::fs::read_to_string(&scenario_path).expect("scenario fixture");
+    scenarios.push_str(
+        r#"
+[[scenario]]
+id = "SC-OTHER"
+owner = "delivery"
+observes = ["cargo:aex-leaf"]
+"#,
+    );
+    write(&root, "release/scenario-ownership.toml", &scenarios);
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","servingArtifact":"demo-api","scenarios":["SC-OTHER"]}]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"aex-route-scenario-disagreement"));
+
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","servingArtifact":"demo-api","scenarios":["SC-DEMO"]}]}"#,
+    );
+    verify_fixture(&root).expect("the canonical scenario observes demo-api");
 }
 
 // ---------------------------------------------------------------------------

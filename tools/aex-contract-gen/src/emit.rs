@@ -281,7 +281,8 @@ fn registry_document(ir: &ContractIr, name: &str) -> Value {
             })).collect::<Vec<_>>(),
         }),
         "routes" => json!({
-            "routes": ir.operations().into_iter().map(route_document).collect::<Vec<_>>(),
+            "schema": "aex.route-registry.v1",
+            "routes": ir.operations().into_iter().map(route_registry_document).collect::<Vec<_>>(),
         }),
         "evolution" => json!({
             "openEnums": ir.evolution.open_enums,
@@ -293,6 +294,26 @@ fn registry_document(ir: &ContractIr, name: &str) -> Value {
         }),
         other => json!({ "error": format!("unknown registry `{other}`") }),
     }
+}
+
+/// One operation's release-selection registry row.
+///
+/// Scenario ownership is intentionally added here instead of to
+/// [`route_document`], which is also used by the public contract bundle.
+fn route_registry_document(operation: &OperationIr) -> Value {
+    let mut document = route_document(operation);
+    document
+        .as_object_mut()
+        .expect("route documents are objects")
+        .insert("scenarios".to_owned(), json!(operation.scenarios));
+    document
+        .as_object_mut()
+        .expect("route documents are objects")
+        .insert(
+            "servingArtifact".to_owned(),
+            json!(operation.serving_artifact),
+        );
+    document
 }
 
 /// One operation's registry row.
@@ -956,4 +977,36 @@ fn rust_limits(ir: &ContractIr, digest: &str) -> String {
     source.line("    }");
     source.line("}");
     source.finish()
+}
+
+#[cfg(test)]
+mod scenario_identity_tests {
+    use super::{bundle_document, registry_document};
+    use crate::{emit, jcs, load};
+
+    #[test]
+    fn delivery_selection_changes_no_wire_byte_or_contract_digest() {
+        let root = load::repo_root();
+        let original = load::load(&root).expect("load contract");
+        let mut changed = original.clone();
+        changed.planes[0].operations[0]
+            .scenarios
+            .push("SC-SELECTION-PROBE".to_owned());
+        changed.planes[0].operations[0].serving_artifact = "selection-probe".to_owned();
+
+        let original_bundle = bundle_document(&original);
+        let changed_bundle = bundle_document(&changed);
+        assert_eq!(
+            jcs::to_pretty(&original_bundle),
+            jcs::to_pretty(&changed_bundle)
+        );
+        assert_eq!(
+            emit::contract_digest(&original),
+            emit::contract_digest(&changed)
+        );
+        assert_ne!(
+            registry_document(&original, "routes"),
+            registry_document(&changed, "routes")
+        );
+    }
 }

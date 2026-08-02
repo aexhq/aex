@@ -547,7 +547,12 @@ fn every_generated_regional_route_has_exactly_one_owner() {
 
     for id in RouteId::ALL {
         if route(*id).plane == Plane::Regional {
-            assert!(route_owner(*id).is_some(), "{id}");
+            let owner = route_owner(*id).unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(
+                owner.deployable(),
+                route(*id).serving_artifact,
+                "runtime and generated delivery ownership disagree for {id}"
+            );
         } else {
             assert_eq!(route_owner(*id), None, "{id}");
         }

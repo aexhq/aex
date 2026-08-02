@@ -77,6 +77,12 @@ pub struct RouteDescriptor {
     pub plane: Plane,
     /// Which authoring fragment owns it.
     pub fragment: &'static str,
+    /// The immutable release unit that mounts this operation.
+    ///
+    /// This is generated delivery/runtime composition metadata. It is excluded
+    /// from the public contract bundle and therefore cannot change wire
+    /// identity.
+    pub serving_artifact: &'static str,
     /// HTTP method.
     pub method: HttpMethod,
     /// Path template, rooted at `/api`.

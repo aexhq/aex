@@ -7,7 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
+use serde::de::{MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::error::{Exit, Result, ToolError, Violation};
 
@@ -661,73 +662,425 @@ fn verify_migration_coverage(inputs: &GraphInputs) -> Vec<Violation> {
 fn verify_route_coverage(inputs: &GraphInputs, built: &BuiltGraph) -> Vec<Violation> {
     let mut violations = Vec::new();
     let routes = inputs.root.join("api/generated/registries/routes.json");
-    let Ok(text) = std::fs::read_to_string(&routes) else {
+    let bundle = inputs.root.join("api/generated/bundle.json");
+    if !routes.is_file() && !bundle.is_file() {
+        // A reusable delivery-graph fixture or repository with no public API
+        // has no route surface to cover. Once either generated authority
+        // exists, both are mandatory and cross-checked below.
+        return violations;
+    }
+    violations.extend(verify_generated_contract_freshness(inputs));
+    let document = match read_strict_route_registry(&routes) {
+        Ok(document) => document,
+        Err(violation) => {
+            violations.push(violation);
+            return violations;
+        }
+    };
+    if document.get("schema").and_then(serde_json::Value::as_str) != Some("aex.route-registry.v1") {
+        violations.push(Violation::new(
+            "route-registry-schema",
+            "route registry schema must be `aex.route-registry.v1`".to_owned(),
+        ));
+    }
+    let Some(registry_operations) = verify_route_entries(
+        &document,
+        &RouteCoverageContext::new(inputs, built),
+        &mut violations,
+    ) else {
         return violations;
     };
-    let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
-        violations.push(Violation::new(
+    match generated_contract_operations(&bundle) {
+        Ok(contract_operations) => compare_route_operation_sets(
+            &contract_operations,
+            &registry_operations,
+            &mut violations,
+        ),
+        Err(violation) => violations.push(violation),
+    }
+    violations
+}
+
+fn verify_generated_contract_freshness(inputs: &GraphInputs) -> Vec<Violation> {
+    if !inputs
+        .root
+        .join("api/schemas/registries/routes-meta.yaml")
+        .is_file()
+    {
+        return Vec::new();
+    }
+    match aex_contract_gen::check(&inputs.root) {
+        Ok(drift) if drift.is_empty() => Vec::new(),
+        Ok(drift) => vec![Violation::new(
+            "generated-contract-stale",
+            format!(
+                "generated contract output is stale: {}",
+                drift.into_iter().take(8).collect::<Vec<_>>().join(", ")
+            ),
+        )],
+        Err(error) => vec![Violation::new(
+            "generated-contract-unverifiable",
+            format!("generated contract freshness could not be verified: {error}"),
+        )],
+    }
+}
+
+fn read_strict_route_registry(
+    path: &std::path::Path,
+) -> std::result::Result<serde_json::Value, Violation> {
+    let text = std::fs::read_to_string(path).map_err(|_| {
+        Violation::new(
+            "route-registry-missing",
+            "api/generated/bundle.json exists but api/generated/registries/routes.json does not"
+                .to_owned(),
+        )
+    })?;
+    strict_json(&text).map_err(|_| {
+        Violation::new(
             "route-registry-unparseable",
             "api/generated/registries/routes.json does not parse".to_owned(),
+        )
+    })
+}
+
+struct RouteCoverageContext<'a> {
+    scenarios: BTreeMap<&'a str, &'a super::inputs::Scenario>,
+    artifacts: BTreeSet<&'a str>,
+}
+
+impl<'a> RouteCoverageContext<'a> {
+    fn new(inputs: &'a GraphInputs, built: &'a BuiltGraph) -> Self {
+        Self {
+            scenarios: inputs
+                .scenarios
+                .scenarios
+                .iter()
+                .map(|scenario| (scenario.id.as_str(), scenario))
+                .collect(),
+            artifacts: built
+                .graph
+                .nodes()
+                .iter()
+                .filter(|node| node.kind == NodeKind::Artifact)
+                .map(|node| node.id.local())
+                .collect(),
+        }
+    }
+}
+
+fn verify_route_entries(
+    document: &serde_json::Value,
+    context: &RouteCoverageContext<'_>,
+    violations: &mut Vec<Violation>,
+) -> Option<BTreeSet<String>> {
+    let Some(entries) = document.get("routes").and_then(serde_json::Value::as_array) else {
+        violations.push(Violation::new(
+            "route-registry-shape",
+            "route registry has no `routes` array".to_owned(),
+        ));
+        return None;
+    };
+    let mut operations = BTreeSet::new();
+    for entry in entries {
+        violations.extend(verify_route_entry(entry, context, &mut operations));
+    }
+    Some(operations)
+}
+
+fn verify_route_entry(
+    entry: &serde_json::Value,
+    context: &RouteCoverageContext<'_>,
+    operations: &mut BTreeSet<String>,
+) -> Vec<Violation> {
+    let Some(operation) = entry.get("operationId").and_then(serde_json::Value::as_str) else {
+        return vec![Violation::new(
+            "route-registry-shape",
+            "a route registry row has no string `operationId`".to_owned(),
+        )];
+    };
+    let mut violations = Vec::new();
+    if !operations.insert(operation.to_owned()) {
+        violations.push(Violation::new(
+            "route-registry-duplicate",
+            format!("operationId `{operation}` appears more than once"),
+        ));
+    }
+    let Some(serving_artifact) = entry
+        .get("servingArtifact")
+        .and_then(serde_json::Value::as_str)
+    else {
+        violations.push(Violation::new(
+            "aex-route-unserved",
+            format!("operationId `{operation}` has no serving artifact"),
         ));
         return violations;
     };
-    let declared_scenarios: BTreeSet<&str> = built
-        .graph
-        .nodes()
-        .iter()
-        .filter(|node| node.kind == NodeKind::Scenario)
-        .map(|node| node.id.local())
-        .collect();
-    let covered: BTreeSet<String> = inputs
-        .cargo
-        .iter()
-        .filter_map(|package| package.meta.as_ref())
-        .flat_map(|meta| meta.scenarios.iter().cloned())
-        .collect();
-    let Some(entries) = document.get("routes").and_then(serde_json::Value::as_array) else {
-        return violations;
+    if !context.artifacts.contains(serving_artifact) {
+        violations.push(Violation::new(
+            "aex-route-unserved",
+            format!(
+                "operationId `{operation}` names unknown serving artifact `{serving_artifact}`"
+            ),
+        ));
+    }
+    violations.extend(verify_route_scenarios(
+        entry,
+        operation,
+        serving_artifact,
+        context,
+    ));
+    violations
+}
+
+fn verify_route_scenarios(
+    entry: &serde_json::Value,
+    operation: &str,
+    serving_artifact: &str,
+    context: &RouteCoverageContext<'_>,
+) -> Vec<Violation> {
+    let Some(values) = entry.get("scenarios").and_then(serde_json::Value::as_array) else {
+        return vec![Violation::new(
+            "aex-route-uncovered",
+            format!("operationId `{operation}` has no scenario owner array"),
+        )];
     };
-    for entry in entries {
-        let Some(operation) = entry.get("operationId").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        let owners = entry
-            .get("scenarios")
-            .and_then(serde_json::Value::as_array)
-            .map(|list| {
-                list.iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if owners.is_empty() {
+    let mut violations = Vec::new();
+    let mut owners = BTreeSet::new();
+    for value in values {
+        let Some(owner) = value.as_str() else {
             violations.push(Violation::new(
-                "aex-route-uncovered",
-                format!("operationId `{operation}` has no scenario owner"),
+                "route-registry-shape",
+                format!("operationId `{operation}` has a non-string scenario owner"),
             ));
             continue;
+        };
+        if !owners.insert(owner) {
+            violations.push(Violation::new(
+                "route-registry-duplicate",
+                format!("operationId `{operation}` repeats scenario `{owner}`"),
+            ));
         }
-        for owner in owners {
-            if !declared_scenarios.contains(owner) {
-                violations.push(Violation::new(
-                    "aex-route-uncovered",
-                    format!(
-                        "operationId `{operation}` names scenario `{owner}`, which is not \
-                         declared in release/scenario-ownership.toml"
-                    ),
+    }
+    if owners.is_empty() {
+        violations.push(Violation::new(
+            "aex-route-uncovered",
+            format!("operationId `{operation}` has no scenario owner"),
+        ));
+        return violations;
+    }
+    for owner in owners {
+        violations.extend(verify_route_scenario(
+            operation,
+            serving_artifact,
+            owner,
+            context,
+        ));
+    }
+    violations
+}
+
+fn verify_route_scenario(
+    operation: &str,
+    serving_artifact: &str,
+    owner: &str,
+    context: &RouteCoverageContext<'_>,
+) -> Vec<Violation> {
+    let Some(scenario) = context.scenarios.get(owner) else {
+        return vec![Violation::new(
+            "aex-route-uncovered",
+            format!(
+                "operationId `{operation}` names scenario `{owner}`, which is not declared in \
+                 release/scenario-ownership.toml"
+            ),
+        )];
+    };
+    let observed = format!("artifact:{serving_artifact}");
+    if scenario.observes.contains(&observed) {
+        return Vec::new();
+    }
+    vec![Violation::new(
+        "aex-route-scenario-disagreement",
+        format!(
+            "operationId `{operation}` is served by `{serving_artifact}`, but scenario `{owner}` \
+             does not observe `artifact:{serving_artifact}` in release/scenario-ownership.toml"
+        ),
+    )]
+}
+
+fn compare_route_operation_sets(
+    contract: &BTreeSet<String>,
+    registry: &BTreeSet<String>,
+    violations: &mut Vec<Violation>,
+) {
+    for missing in contract.difference(registry) {
+        violations.push(Violation::new(
+            "route-registry-incomplete",
+            format!("contract operationId `{missing}` is absent from the route registry"),
+        ));
+    }
+    for extra in registry.difference(contract) {
+        violations.push(Violation::new(
+            "route-registry-extra",
+            format!("route registry operationId `{extra}` is absent from the contract bundle"),
+        ));
+    }
+}
+
+fn generated_contract_operations(
+    path: &std::path::Path,
+) -> std::result::Result<BTreeSet<String>, Violation> {
+    let text = std::fs::read_to_string(path).map_err(|_| {
+        Violation::new(
+            "contract-bundle-missing",
+            "route registry exists but api/generated/bundle.json does not".to_owned(),
+        )
+    })?;
+    let document = strict_json(&text).map_err(|_| {
+        Violation::new(
+            "contract-bundle-unparseable",
+            "api/generated/bundle.json does not parse".to_owned(),
+        )
+    })?;
+    let Some(planes) = document
+        .get("planes")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Err(Violation::new(
+            "contract-bundle-shape",
+            "contract bundle has no `planes` object".to_owned(),
+        ));
+    };
+    let mut operations = BTreeSet::new();
+    for (plane, value) in planes {
+        let Some(rows) = value
+            .get("operations")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Err(Violation::new(
+                "contract-bundle-shape",
+                format!("contract bundle plane `{plane}` has no operations array"),
+            ));
+        };
+        for row in rows {
+            let Some(operation) = row.get("operationId").and_then(serde_json::Value::as_str) else {
+                return Err(Violation::new(
+                    "contract-bundle-shape",
+                    format!("contract bundle plane `{plane}` has a row without operationId"),
                 ));
-            } else if !covered.contains(owner) {
-                violations.push(Violation::new(
-                    "aex-scenario-orphan",
-                    format!(
-                        "scenario `{owner}` covers operationId `{operation}` but no package \
-                         declares it"
-                    ),
+            };
+            if !operations.insert(operation.to_owned()) {
+                return Err(Violation::new(
+                    "contract-bundle-duplicate",
+                    format!("contract operationId `{operation}` appears more than once"),
                 ));
             }
         }
     }
-    violations
+    Ok(operations)
+}
+
+/// A JSON value whose deserializer rejects duplicate object members at every
+/// depth. `serde_json::Value` otherwise keeps the last member, which is not a
+/// safe interpretation for release authorities.
+struct StrictJson(serde_json::Value);
+
+impl<'de> Deserialize<'de> for StrictJson {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonVisitor)
+    }
+}
+
+struct StrictJsonVisitor;
+
+impl<'de> Visitor<'de> for StrictJsonVisitor {
+    type Value = StrictJson;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("JSON without duplicate object members")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Number(value.into())))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Number(value.into())))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .map(StrictJson)
+            .ok_or_else(|| E::custom("non-finite JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_string(value.to_owned())
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Null))
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        StrictJson::deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = sequence.next_element::<StrictJson>()? {
+            values.push(value.0);
+        }
+        Ok(StrictJson(serde_json::Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate JSON member `{key}`"
+                )));
+            }
+            let value = map.next_value::<StrictJson>()?;
+            values.insert(key, value.0);
+        }
+        Ok(StrictJson(serde_json::Value::Object(values)))
+    }
+}
+
+fn strict_json(text: &str) -> std::result::Result<serde_json::Value, serde_json::Error> {
+    serde_json::from_str::<StrictJson>(text).map(|value| value.0)
 }
 
 /// Summarize a built graph for `--json` output.

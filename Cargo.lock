@@ -1001,6 +1001,7 @@ dependencies = [
 name = "aex-release-tool"
 version = "0.1.0"
 dependencies = [
+ "aex-contract-gen",
  "aex-workspace-check",
  "anyhow",
  "clap",

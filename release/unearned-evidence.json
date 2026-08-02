@@ -274,6 +274,13 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "workers/runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
@@ -897,6 +904,20 @@
   },
   {
     "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-observation-api",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
@@ -1228,6 +1249,20 @@
     "reason_class": "requires_deployment",
     "subject": "workers/provider-cost-reconciler",
     "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -2731,6 +2766,27 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-observation-api",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
@@ -3330,6 +3386,27 @@
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

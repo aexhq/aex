@@ -7,7 +7,7 @@
 //! second list.
 
 use aex_wire::error::PrecedenceStage;
-use aex_wire::routes::{Plane, RouteId, TransportKind, route};
+use aex_wire::routes::{Plane, RouteId, route};
 use aex_wire::server::RouteGroup;
 use aex_wire::types::Region;
 
@@ -101,25 +101,14 @@ pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
     if descriptor.plane != Plane::Regional {
         return None;
     }
-    if descriptor.transport == TransportKind::Ndjson {
-        return Some(RouteOwner::Stream);
+    match descriptor.serving_artifact {
+        "regional-session-api" => Some(RouteOwner::SessionApi),
+        "regional-secret-api" => Some(RouteOwner::SecretApi),
+        "regional-stream" => Some(RouteOwner::Stream),
+        "regional-observation-api" => Some(RouteOwner::ObservationApi),
+        "regional-otlp" => Some(RouteOwner::Otlp),
+        _ => None,
     }
-    if descriptor.fragment == "otlp" {
-        return Some(RouteOwner::Otlp);
-    }
-    if matches!(descriptor.fragment, "observations" | "telemetry-lifecycle") {
-        return Some(RouteOwner::ObservationApi);
-    }
-    if matches!(
-        id,
-        RouteId::SecretPut
-            | RouteId::SecretDelete
-            | RouteId::SecretRevoke
-            | RouteId::ProviderCredentialRegister
-    ) {
-        return Some(RouteOwner::SecretApi);
-    }
-    Some(RouteOwner::SessionApi)
 }
 
 /// Shared edge services passed to each generated router.

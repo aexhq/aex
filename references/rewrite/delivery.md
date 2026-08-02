@@ -162,6 +162,18 @@ edges and the path map routes their directories to their real npm nodes.
 3. **`api/generated/registries/routes.json`** with a `scenarios` array per
    `operationId`. When that file exists, `graph verify` requires every public
    route to name a declared scenario.
+
+   **Closed 2026-08-02.** `routes-meta.yaml` now carries fragment defaults plus
+   explicit per-operation exceptions for split fragments and NDJSON. The
+   contract generator resolves one final `servingArtifact` and emits it into
+   both the delivery registry and the generated runtime `RouteDescriptor`;
+   `aex-regional-http` consumes that generated field rather than maintaining a
+   second routing policy. `graph verify` first runs the generator's in-memory
+   freshness check, rejects duplicate JSON members at every depth, proves the
+   registry and bundle operation sets are identical, and then proves every
+   route's canonical scenario observes its actual serving artifact. Delivery
+   ownership remains outside `bundle.json`, so changing it cannot mint a new
+   public wire identity.
 4. **`migrations/central/*.sql`** with an `-- aex-migration: tx= destructive= phase=`
    header on every file, `grants.toml` for privileges, and `bundle.lock.json`
    produced by `aex-release-tool migration bundle`. A `GRANT` inside a

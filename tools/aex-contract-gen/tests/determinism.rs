@@ -119,6 +119,41 @@ fn the_operation_arity_matches_the_pinned_totals() {
 }
 
 #[test]
+fn every_route_registry_row_has_a_scenario_owner_without_polluting_the_wire_bundle() {
+    let root = repo_root();
+    let tree = generate_to_memory(&root).expect("generation");
+    let routes: serde_json::Value = serde_json::from_slice(
+        tree.bytes("api/generated/registries/routes.json")
+            .expect("route registry"),
+    )
+    .expect("route registry json");
+    for route in routes["routes"].as_array().expect("route rows") {
+        assert!(
+            route["scenarios"]
+                .as_array()
+                .is_some_and(|owners| !owners.is_empty()),
+            "{} has no scenario owner",
+            route["operationId"]
+        );
+    }
+
+    let bundle: serde_json::Value =
+        serde_json::from_slice(tree.bytes("api/generated/bundle.json").expect("bundle"))
+            .expect("bundle json");
+    for plane in ["central", "regional"] {
+        for route in bundle["planes"][plane]["operations"]
+            .as_array()
+            .expect("bundle route rows")
+        {
+            assert!(
+                route.get("scenarios").is_none(),
+                "scenario selection leaked into the {plane} wire contract"
+            );
+        }
+    }
+}
+
+#[test]
 fn every_published_schema_is_reachable_and_self_describing() {
     let root = repo_root();
     let tree = generate_to_memory(&root).expect("generation");
