@@ -27,6 +27,7 @@ name = "aex-brain-domain"
 version = "0.1.0"
 dependencies = [
  "aex-brain-test-support",
+ "aex-wire",
  "blake3",
  "hex",
  "proptest",
@@ -40,6 +41,8 @@ dependencies = [
 name = "aex-brain-hands"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
+ "aex-brain-domain",
  "aex-hands-agent",
  "aex-hands-protocol",
  "aex-hands-tools",
@@ -47,8 +50,10 @@ dependencies = [
  "aex-wire",
  "blake3",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -144,6 +149,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
  "aex-test-harness",
+ "aex-wire",
  "proptest",
  "serde_json",
  "thiserror",
@@ -2634,12 +2640,14 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
+ "aex-brain-hands",
  "aex-brain-store-aws",
  "aex-brain-tool-catalog",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-usage-application",
  "aex-usage-domain",
+ "aex-wire",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",

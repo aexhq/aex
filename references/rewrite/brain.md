@@ -99,15 +99,15 @@ pub trait ToolPort: Send + Sync + 'static {
 }
 
 pub trait HandsPort: Send + Sync + 'static {
-    fn ensure_generation<'a>(&'a self, session: &'a SessionId, generation: HandsGeneration)
+    fn ensure_generation<'a>(&'a self, session: &'a SessionId, generation: GenerationId)
         -> BoxFuture<'a, Result<HandsEndpoint, HandsError>>;
-    fn start<'a>(&'a self, ticket: &'a DispatchTicket, generation: HandsGeneration,
+    fn start<'a>(&'a self, ticket: &'a DispatchTicket, generation: GenerationId,
         start: &'a HandsOperationStart) -> BoxFuture<'a, Result<HandsAccepted, HandsError>>;
-    fn status<'a>(&'a self, generation: HandsGeneration, operation: &'a HandsOperationId)
+    fn status<'a>(&'a self, generation: GenerationId, operation: &'a HandsOperationId)
         -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>>;
-    fn cancel<'a>(&'a self, generation: HandsGeneration, operation: &'a HandsOperationId,
+    fn cancel<'a>(&'a self, generation: GenerationId, operation: &'a HandsOperationId,
         fence: Fence) -> BoxFuture<'a, Result<(), HandsError>>;
-    fn result<'a>(&'a self, generation: HandsGeneration, operation: &'a HandsOperationId,
+    fn result<'a>(&'a self, generation: GenerationId, operation: &'a HandsOperationId,
         bounds: &'a ResultBounds) -> BoxFuture<'a, Result<HandsResult, HandsError>>;
 }
 
@@ -472,19 +472,46 @@ and none of it is attributed.
 | BR-30 | One bounded `regional-work/gsi_due` shard is swept before every queue receive; recovered rows carry `WakeOrigin::DueScan`, never a synthetic receipt | the stream and SQS are delivery hints, so a lost hint must not strand authority. Explicit provenance makes visibility, poison counting and ack no-ops for a scan result instead of issuing an invalid queue call. Sixty-four shards matches the strict-v1 table descriptor, and one shard plus one receive batch bounds every pass. |
 | BR-31 | Every successful or already-terminal agent activation ends with a retirement-only `DecisionCommit`: the session head and agent control are condition-checked under the live claim, while the exact pending source wake is moved to `done` and loses both due-index keys in the same transaction | a separate `UpdateItem` cleanup would have no agent fence, and acking first would lose the recovery path. The pure retirement does not manufacture a journal tail or advance the revision; terminal agents remain claimable solely so this transaction still has a live fence. |
 | BR-32 | A retirement-only transaction hashes agent, revision, tail and source work identity into its own 36-character client request token | it follows the final journal decision without advancing that decision's tail. Reusing the tail-only token with different transaction parameters would make DynamoDB reject the retirement as an idempotent-parameter mismatch. |
-| BR-33 | Hands effects must bind the canonical runtime `GenerationId` UUID read from session authority; the existing Brain-local `HandsGeneration(u64)` must never be converted or used to derive one | runtime idle recount and recovery have to select the exact generation that admitted an operation. A derived or parallel identifier can make one generation inherit another's open-effect count. This remains deferred with the unreachable Hands execution path rather than being smuggled into wake retirement. |
+| BR-33 | Hands effects bind the canonical runtime `aex_wire::ids::GenerationId` read from session authority; Brain has no local numeric generation or unbound-generation state | runtime idle recount and recovery select the exact generation that admitted an operation. `AgentControl`, child fanout, `AgentHead`, `HandsPort`, pinned agent config and Hands effect rows now carry the same typed UUID. |
 
 ### 14. Still deferred, with what unblocks each
 
 | Deferred | Unblocked by |
 | --- | --- |
-| `ProviderPort`, `CatalogPort` and `HandsPort` implementations | unchanged from §4 and §10: the gateway restates its own port over `aex_model_catalog::canonical` types, the catalog publishes no `ModelCapability`, and `aex-brain-hands` takes no dependency on `aex-brain-application` |
-| Canonical Hands generation binding and exact open-effect recount | type the existing session/agent-control `generationId` as `aex_wire::ids::GenerationId`, expose it through the Brain claim, replace the parallel `HandsGeneration(u64)` port/config types, and require the exact UUID on every prepared Hands effect row before the Hands path becomes reachable |
+| `ProviderPort` and `CatalogPort` implementations | the gateway still restates its own port over `aex_model_catalog::canonical` types and publishes no composed router; the catalog publishes `ModelEntry`/`QualifiedModel`, not Brain's `ModelCapability` |
+| Concrete Hands runtime backend | `aex-brain-hands::HandsAdapter` now implements `HandsPort` and enforces response generation equality, but no crate implements its `HandsBackend` over the runtime-activity store plus authenticated guest transport |
 | A `ToolExecutor` for any route | `aex-brain-managed-web` and `aex-brain-mcp` implement none, so the composed router is linked with zero executors and refuses by its own typed error |
 | The recovery controller's `RetrySameEffect` on a *dispatched* effect | nothing moves a dispatched effect back to `prepared`, so the arm is a named refusal. Unreachable for the classes this loop prepares, which a test asserts |
 | `ReconstructFromReceipt` | `aex-content-aws`'s placement API: the receipt is a digest, and the body it names lives in the content authority |
 | `OwedStep::SpawnChildren` | the `create_subagent` tool, which is the only thing that produces a fanout request for `subagent::plan_spawn`. The planner has no arm that reaches it today |
 | Concurrent activation of one batch | the loop drives a batch sequentially. The local slot already refuses a concurrent duplicate, and the composition root can spawn per delivery; nothing asserts the fan-out yet |
+
+### 14.1 BR-33 canonical generation and production injection
+
+The session authority writes `generationId` as a canonical `gen_…` identifier on every
+agent control row, including child fanout. Brain's claim decoder requires that attribute and
+returns it on `AgentHead`; it does not default, derive or convert it.
+
+Prepared effects carry `generation: Option<GenerationId>` in memory and `generationId` on
+the DynamoDB row. `DecisionCommit::validate` accepts the field only for
+`EffectKind::HandsOperation`, requires it for that kind, and rejects it for all others. The
+effect decoder applies the same rule and rejects missing, malformed or unexpected bindings.
+The physical recount contract is therefore closed:
+
+| Attribute | Exact value |
+| --- | --- |
+| `itemType` | `agent_effect` |
+| `kind` | `HandsOperation` |
+| `generationId` | canonical `aex_wire::ids::GenerationId` string |
+| open `state` | `prepared`, `dispatched`, `responding` |
+| terminal `state` | `settled`, `unknown` |
+
+`brain-mux` exposes `ProductionPeers`, whose constructor requires provider, tool, catalog and
+Hands backend peers together and wraps the Hands backend in
+`aex_brain_hands::HandsAdapter`. The current executable deliberately uses
+`unavailable_ports`; readiness names all four missing peer implementations and receives no
+work. It must not be switched to `production_ports` until the provider router, catalog
+projection, tool executors and concrete Hands backend exist.
 
 ### 15. Third-pass gate output
 
@@ -547,4 +574,24 @@ cargo run -p aex-workspace-check
     134 member(s) and 141 package(s) satisfy every structural and registry rule
 cargo run -p aex-workspace-check -- registry build      no change to either file
 git diff --check                                         clean
+```
+
+### 18. Canonical-generation-pass gate output
+
+```text
+cargo fmt -p aex-session-dynamodb -p aex-brain-domain \
+          -p aex-brain-application -p aex-brain-store-aws \
+          -p aex-brain-hands -p aex-brain-test-support -p brain-mux   clean
+cargo clippy -p aex-session-dynamodb -p aex-brain-domain \
+             -p aex-brain-application -p aex-brain-store-aws \
+             -p aex-brain-hands -p aex-brain-test-support \
+             -p brain-mux --all-targets -- -D warnings                clean
+cargo test -p aex-session-dynamodb -p aex-brain-domain \
+           -p aex-brain-application -p aex-brain-store-aws \
+           -p aex-brain-hands -p brain-mux
+    554 passed, 0 failed
+cargo check --workspace --all-targets                                  clean
+cargo run -p aex-workspace-check
+    134 member(s) and 141 package(s) satisfy every structural and registry rule
+git diff --check                                                        clean
 ```

@@ -16,6 +16,9 @@
 
 pub mod adapter;
 pub mod operation;
+pub mod port;
+
+pub use port::{HandsAdapter, HandsBackend};
 
 pub use adapter::{
     AdmitPlan, Alpn, CONNECTION_IDLE_MS, CONTEXT_TOOL_RESULT_BYTES, HandsError,

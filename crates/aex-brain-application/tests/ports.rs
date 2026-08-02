@@ -25,15 +25,20 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
-    EffectId, Fence, HandsGeneration, HandsOperationId, JournalSeq, ModelSlug, OwnerToken,
-    SessionId, Timestamp, ToolCallId, ToolName,
+    EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
+    ToolCallId, ToolName,
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::wire_pending::{
     CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig,
 };
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use std::sync::Mutex;
 use uuid::Uuid;
+
+fn generation(seed: u8) -> GenerationId {
+    GenerationId::from_uuid7(Uuid7::compose(1, [seed; 10]))
+}
 
 fn guard() -> FenceGuard {
     FenceGuard::new(
@@ -154,7 +159,7 @@ impl HandsPort for StubHands {
     fn ensure_generation<'a>(
         &'a self,
         _session: &'a SessionId,
-        generation: HandsGeneration,
+        generation: GenerationId,
     ) -> BoxFuture<'a, Result<HandsEndpoint, HandsError>> {
         Box::pin(async move {
             Ok(HandsEndpoint {
@@ -168,7 +173,7 @@ impl HandsPort for StubHands {
     fn start<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        generation: HandsGeneration,
+        generation: GenerationId,
         start: &'a HandsOperationStart,
     ) -> BoxFuture<'a, Result<HandsAccepted, HandsError>> {
         Box::pin(async move {
@@ -183,7 +188,7 @@ impl HandsPort for StubHands {
 
     fn status<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
     ) -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>> {
         Box::pin(async {
@@ -195,7 +200,7 @@ impl HandsPort for StubHands {
 
     fn cancel<'a>(
         &'a self,
-        _generation: HandsGeneration,
+        _generation: GenerationId,
         _operation: &'a HandsOperationId,
         _fence: Fence,
     ) -> BoxFuture<'a, Result<(), HandsError>> {
@@ -204,7 +209,7 @@ impl HandsPort for StubHands {
 
     fn result<'a>(
         &'a self,
-        generation: HandsGeneration,
+        _generation: GenerationId,
         operation: &'a HandsOperationId,
         _bounds: &'a ResultBounds,
     ) -> BoxFuture<'a, Result<HandsResult, HandsError>> {
@@ -213,7 +218,7 @@ impl HandsPort for StubHands {
             // The successor generation exists, and answering with it is exactly what this
             // fixture must never do.
             Err(HandsError::GenerationLost {
-                generation: HandsGeneration(generation.0 + 1),
+                generation: generation(4),
             })
         })
     }
@@ -292,10 +297,9 @@ fn every_port_is_dyn_compatible() {
         .expect_err("an unknown tool does not");
     assert!(matches!(unknown, ToolRoutingError::Unknown { .. }));
 
-    let endpoint =
-        block_on(hands.ensure_generation(&SessionId(Uuid::from_u128(1)), HandsGeneration(3)))
-            .expect("the fixture serves the exact generation");
-    assert_eq!(endpoint.generation, HandsGeneration(3));
+    let endpoint = block_on(hands.ensure_generation(&SessionId(Uuid::from_u128(1)), generation(3)))
+        .expect("the fixture serves the exact generation");
+    assert_eq!(endpoint.generation, generation(3));
 }
 
 /// A dispatch carries the ticket's fence and attempt, so a receipt can name the exact
@@ -323,6 +327,7 @@ fn an_unresolvable_effect_stays_unresolved() {
     let effect = DurableEffect {
         id: EffectId([1; 16]),
         kind: EffectKind::ModelCall,
+        generation: None,
         class: EffectClass::NonReplayable,
         request_hash: ContentHash::of(b"request"),
         state: aex_brain_domain::effect::EffectState::DispatchStarted { attempt: 1 },
@@ -363,7 +368,7 @@ fn a_detached_tool_returns_an_operation_rather_than_blocking() {
 fn a_lost_generation_never_answers_with_a_successor() {
     let hands = StubHands;
     let error = block_on(hands.result(
-        HandsGeneration(3),
+        generation(3),
         &HandsOperationId("op_1".to_owned()),
         &ResultBounds {
             max_bytes: 1_024,

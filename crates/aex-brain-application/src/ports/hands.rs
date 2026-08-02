@@ -1,6 +1,6 @@
 //! `HandsPort` — implemented by `aex-brain-hands`.
 //!
-//! Every method names an exact [`HandsGeneration`]. A generation is a specific `MicroVM`
+//! Every method names an exact [`GenerationId`]. A generation is a specific `MicroVM`
 //! incarnation, and an operation started against one must never be answered by another: a
 //! new generation has a different filesystem, so impersonating the old one's result would
 //! hand the model a fabricated answer.
@@ -9,10 +9,9 @@ use super::BoxFuture;
 use super::proof::DispatchTicket;
 use super::provider::RedactedDetail;
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
-use aex_brain_domain::ids::{
-    ContentHash, Fence, HandsGeneration, HandsOperationId, SessionId, Timestamp,
-};
+use aex_brain_domain::ids::{ContentHash, Fence, HandsOperationId, SessionId, Timestamp};
 use aex_brain_domain::wire_pending::ContentRef;
+use aex_wire::ids::GenerationId;
 
 /// Lifecycle and operations against one session's Hands `MicroVM`.
 pub trait HandsPort: Send + Sync + 'static {
@@ -23,7 +22,7 @@ pub trait HandsPort: Send + Sync + 'static {
     fn ensure_generation<'a>(
         &'a self,
         session: &'a SessionId,
-        generation: HandsGeneration,
+        generation: GenerationId,
     ) -> BoxFuture<'a, Result<HandsEndpoint, HandsError>>;
 
     /// Starts an operation.
@@ -33,21 +32,21 @@ pub trait HandsPort: Send + Sync + 'static {
     fn start<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
-        generation: HandsGeneration,
+        generation: GenerationId,
         start: &'a HandsOperationStart,
     ) -> BoxFuture<'a, Result<HandsAccepted, HandsError>>;
 
     /// Asks where an operation stands.
     fn status<'a>(
         &'a self,
-        generation: HandsGeneration,
+        generation: GenerationId,
         operation: &'a HandsOperationId,
     ) -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>>;
 
     /// Best-effort cancellation, fenced by the caller's ownership generation.
     fn cancel<'a>(
         &'a self,
-        generation: HandsGeneration,
+        generation: GenerationId,
         operation: &'a HandsOperationId,
         fence: Fence,
     ) -> BoxFuture<'a, Result<(), HandsError>>;
@@ -55,7 +54,7 @@ pub trait HandsPort: Send + Sync + 'static {
     /// Reads a completed operation's result within `bounds`.
     fn result<'a>(
         &'a self,
-        generation: HandsGeneration,
+        generation: GenerationId,
         operation: &'a HandsOperationId,
         bounds: &'a ResultBounds,
     ) -> BoxFuture<'a, Result<HandsResult, HandsError>>;
@@ -66,7 +65,7 @@ pub trait HandsPort: Send + Sync + 'static {
 pub struct HandsEndpoint {
     /// The generation this endpoint serves. Compared against the requested one before any
     /// operation is sent.
-    pub generation: HandsGeneration,
+    pub generation: GenerationId,
     /// An opaque address the adapter understands.
     pub address: String,
     /// When the endpoint's keepalive lease expires.
@@ -95,7 +94,7 @@ pub struct HandsAccepted {
     /// The operation the guest is running.
     pub operation: HandsOperationId,
     /// The generation that accepted it.
-    pub generation: HandsGeneration,
+    pub generation: GenerationId,
     /// Whether this call created the operation or found it already running. A repeated
     /// start reports `false`, which is how the caller knows its retry was idempotent
     /// rather than a second execution.
@@ -146,7 +145,7 @@ pub struct HandsResult {
     /// The operation.
     pub operation: HandsOperationId,
     /// The generation that produced it.
-    pub generation: HandsGeneration,
+    pub generation: GenerationId,
     /// The exit status.
     pub exit_code: i32,
     /// Inline output, when it fitted the bounds.
@@ -167,22 +166,30 @@ pub enum HandsError {
     #[error("expected generation {expected:?}, endpoint serves {found:?}")]
     GenerationMismatch {
         /// What the caller required.
-        expected: HandsGeneration,
+        expected: GenerationId,
         /// What the endpoint offered.
-        found: HandsGeneration,
+        found: GenerationId,
     },
     /// The exact generation no longer exists. An uncommitted operation interrupts; a new
     /// generation never impersonates the old result.
     #[error("generation {generation:?} is gone")]
     GenerationLost {
         /// The generation that is gone.
-        generation: HandsGeneration,
+        generation: GenerationId,
     },
     /// The same operation identity arrived carrying a different call.
     #[error("operation {operation:?} already exists under a different call hash")]
     CallHashConflict {
         /// The operation.
         operation: HandsOperationId,
+    },
+    /// The backend answered for a different operation than the one requested.
+    #[error("expected operation {expected:?}, backend returned {found:?}")]
+    OperationMismatch {
+        /// What the caller required.
+        expected: HandsOperationId,
+        /// What the backend returned.
+        found: HandsOperationId,
     },
     /// The result failed its checksum or exceeded its bounds, so no bytes enter the
     /// journal. The diagnostic pointer is retained; the corrupt payload is not.

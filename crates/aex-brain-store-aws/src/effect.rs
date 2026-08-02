@@ -13,6 +13,7 @@ use aex_brain_domain::ids::{
     ContentHash, DetachedOperationId, EffectId, ProviderRequestId, Timestamp,
 };
 use aex_session_dynamodb::attr::{CodecError, Item, Row};
+use aex_wire::ids::GenerationId;
 
 /// The `itemType` a durable effect row declares.
 pub const AGENT_EFFECT: &str = aex_session_dynamodb::codec::AGENT_EFFECT;
@@ -26,11 +27,29 @@ pub const AGENT_EFFECT: &str = aex_session_dynamodb::codec::AGENT_EFFECT;
 pub fn decode(item: &Item) -> Result<DurableEffect, CodecError> {
     let row = Row::bind(item, AGENT_EFFECT)?;
     let id = parse_id(row.string("effectId")?)?;
+    let kind = parse_kind(row.string("kind")?)?;
+    let generation = row.opt_id::<GenerationId>("generationId")?;
+    match (kind, generation) {
+        (EffectKind::HandsOperation, None) => {
+            return Err(CodecError::Missing {
+                item_type: AGENT_EFFECT,
+                attribute: "generationId",
+            });
+        }
+        (EffectKind::HandsOperation, Some(_)) | (_, None) => {}
+        (_, Some(_)) => {
+            return Err(malformed(
+                "generationId",
+                "only a HandsOperation may carry a runtime generation".to_owned(),
+            ));
+        }
+    }
     let attempt = u16::try_from(row.opt_u64("attempt")?.unwrap_or(0)).unwrap_or(u16::MAX);
     let evidence = decode_evidence(&row, attempt)?;
     Ok(DurableEffect {
         id,
-        kind: parse_kind(row.string("kind")?)?,
+        kind,
+        generation,
         class: parse_class(row.opt_string("effectClass")?.unwrap_or("NonReplayable"))?,
         request_hash: parse_hash(row.string("requestHash")?)?,
         state: parse_state(row.string("state")?, attempt, evidence.clone())?,
@@ -196,6 +215,11 @@ mod tests {
     use super::{AGENT_EFFECT, decode};
     use aex_brain_domain::effect::{EffectClass, EffectKind, EffectState};
     use aex_session_dynamodb::attr::{ItemBuilder, n, s};
+    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+
+    fn generation() -> GenerationId {
+        GenerationId::from_uuid7(Uuid7::compose(1, [7; 10]))
+    }
 
     fn row(state: &str) -> ItemBuilder {
         ItemBuilder::new(AGENT_EFFECT)
@@ -248,5 +272,22 @@ mod tests {
         assert!(decode(&item).is_err());
         let item = row("prepared").set("requestHash", s("zz")).build();
         assert!(decode(&item).is_err());
+    }
+
+    #[test]
+    fn a_hands_effect_requires_one_well_formed_canonical_generation() {
+        let hands = row("prepared").set("kind", s("HandsOperation"));
+        assert!(decode(&hands.clone().build()).is_err());
+        assert!(decode(&hands.clone().set("generationId", s("generation-7")).build()).is_err());
+        let decoded = decode(
+            &hands
+                .set("generationId", s(generation().to_string()))
+                .build(),
+        )
+        .expect("canonical generation");
+        assert_eq!(decoded.generation, Some(generation()));
+
+        let model = row("prepared").set("generationId", s(generation().to_string()));
+        assert!(decode(&model.build()).is_err());
     }
 }

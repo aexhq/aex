@@ -245,13 +245,6 @@ pub struct CatalogPin(pub ContentHash);
 #[serde(transparent)]
 pub struct DetachedOperationId(pub String);
 
-/// The exact Hands `MicroVM` generation a session's agents share.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
-)]
-#[serde(transparent)]
-pub struct HandsGeneration(pub u64);
-
 /// One Hands operation inside a generation.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
