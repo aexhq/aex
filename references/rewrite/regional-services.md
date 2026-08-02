@@ -50,8 +50,13 @@ the accepted work order:
 - `content-lifecycle-worker`: exact 24-hour staged grace; every owner/root/grant/
   operation pin recheck; deletion-denial recheck under a fence; exact
   unversioned object key, `If-Match`, and explicit expected bucket owner;
-  precondition-mismatch handling; and mode-specific delete capability
-  admission.
+  precondition-mismatch handling; mode-specific delete capability admission;
+  and a production `expiry` slice for download grants. Grant rows now carry a
+  sparse 64-shard due key, the scheduled role reads an explicitly bounded page
+  from each admitted shard, and a conditional two-delete transaction removes
+  the expired grant with its exact grant pin. The transaction checks the
+  authority `expiresAt` on both surviving rows, admits already-absent rows for
+  retry/TTL idempotency, and never scans or treats TTL timing as a fence.
 - `regional-stream`: closed wake modes and the two-task `ddb_streams` assertion;
   authoritative reads after wake hints; one origin for stream and none for
   listen; separate session/observation/telemetry quotas; dual telemetry charge;
@@ -82,9 +87,16 @@ These items remain and are not represented as complete:
   `release/unearned-evidence.json` continues to record it. The stream socket
   workload contract is authored, but its live `Driver` executor remains due in
   `aex-live-regional-stream` once a deployed descriptor exists.
-- `content-lifecycle-worker` has the conservative staged/delete kernel, but the
-  complete mark/sweep/inventory orchestration and actual DynamoDB/S3 adapters
-  are not wired.
+- `content-lifecycle-worker` has the conservative staged/delete kernel and the
+  concrete DynamoDB grant-expiry role, but complete mark/sweep/inventory and
+  fenced object-delete orchestration are not wired. Pending-upload expiry is
+  also intentionally not wired: the registry upload row does not persist S3's
+  provider multipart-upload id or an equivalent durable handle, so it cannot
+  issue the exact `AbortMultipartUpload`; and a `Completing` row can represent
+  an ambiguous completion, where `NoSuchUpload` may mean the final object
+  exists rather than that deletion is safe. Persisting that handle and durable
+  completion evidence at upload admission is prerequisite to a safe
+  S3-then-conditional-DynamoDB cleanup sequence.
 - `regional-stream` has the state machines and generated route partition, but
   not the ALB listener, live DynamoDB Streams reader, bounded network queue, or
   SIGTERM task-drain loop.
@@ -96,6 +108,32 @@ These items remain and are not represented as complete:
 
 These were deferred to preserve a tested, compiling depth-first kernel rather
 than introduce fake adapters or compatibility shims for missing peer APIs.
+
+### Grant-expiry vertical receipt and residuals
+
+The implemented expiry path is deliberately one complete authority slice, not
+a claim that all four lifecycle modes are complete:
+
+- `regional-content` owns the authored and generated `gsi_expiry` definition;
+  its 64 partitions prevent a literal due hot key, and the projection contains
+  only workspace, digest and expiry evidence (base keys supply the token
+  digest). Existing content-lifecycle IAM already limits this role to `Query`
+  and `TransactWriteItems` on this table and its indexes; expiry constructs no
+  S3 client.
+- `AEX_EXPIRY_SCAN_SHARDS` is admitted in `1..=64` and
+  `AEX_EXPIRY_PAGE_ITEMS` in `1..=100`. One tick reads at most that product and
+  runs at most 16 writes concurrently. A shard reporting another page is
+  observable in the response and progresses on the next five-minute tick
+  because committed rows immediately lose their sparse index keys.
+- A write failure is returned only after the selected in-flight page settles.
+  Lambda/EventBridge retry is safe because the two-row transaction admits
+  missing rows and rechecks explicit expiry. The delivery repository must still
+  attach the scheduled invocation retry policy, DLQ and age alarm; this public
+  repository contains the deployable and table/IAM contract, not that regional
+  schedule composition.
+- Live DynamoDB TTL lag, concurrent scheduled invocations, IAM allow/deny and
+  DLQ evidence remain in `aex-live-content-lifecycle-worker` and are still
+  unearned. No local test or handoff prose represents them as executed.
 
 ## Public types for peers
 
@@ -359,7 +397,11 @@ mistake that otherwise survive deployment are refused at start-up:
 - **`content-lifecycle-worker`** — one binary, four roles. The mode selects the
   required variable set, the S3 client is constructed only in `delete` mode, and
   the object-delete capability is refused in both directions: `delete` cannot
-  start without it and no other role may hold it.
+  start without it and no other role may hold it. `expiry` executes the bounded
+  sharded download-grant cleanup; it caps each shard page at 100 and holds at
+  most 16 grant+pin transactions in flight. It settles the selected page before
+  returning an invocation error, so the scheduler retry preserves successes
+  and idempotently re-evaluates only remaining authority rows.
 - **`regional-secret-key-admin`** — the three `clap` commands, the exit-code
   interface (`0` acted, `3` already current, `1` refused), and start-up denial of
   a table that is not the configured keystore, a cross-region key, an unattested
@@ -426,7 +468,7 @@ Every name below is required unless marked. There is no default for any of them.
 | `regional-secret-api` | `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_SECRET_KEYSTORE_TABLE`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_SECRET_BRANCH_KEY_CACHE_BYTES`, `AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS`, `AEX_ASSERTION_CACHE_BYTES`, `AEX_MAX_JSON_BODY_BYTES` |
 | `regional-stream` | `AEX_STREAM_PORT`, `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_OBSERVATION_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_STREAM_WAKE_MODE`, `AEX_STREAM_MAX_TASKS`, `AEX_STREAM_MAX_CONNECTIONS`, `AEX_STREAM_MAX_CONNECTIONS_SESSION`, `AEX_STREAM_MAX_CONNECTIONS_OBSERVATION`, `AEX_STREAM_MAX_CONNECTIONS_PER_WORKSPACE`, `AEX_STREAM_CONNECTION_BUFFER_BYTES`, `AEX_STREAM_WRITE_STALL_MS`, `AEX_STREAM_DRAIN_DEADLINE_MS`, `AEX_ASSERTION_CACHE_BYTES`; plus `AEX_SESSION_TABLE_STREAM_ARN` and `AEX_OBSERVATION_TABLE_STREAM_ARN` in `ddb_streams` mode only |
 | `session-operation-worker` | `AEX_OPERATION_QUEUE_URL`, `AEX_OPERATION_DLQ_URL`, `AEX_WORK_TABLE`, `AEX_SESSION_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_DUE_SCAN_SHARDS`, `AEX_LEASE_MS`, `AEX_STEP_DEADLINE_MS`, `AEX_MAX_ATTEMPTS` |
-| `content-lifecycle-worker` | `AEX_MODE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_GC_STAGE_GRACE_HOURS`, `AEX_UPLOAD_GRACE_HOURS`, `AEX_DECLARED_CAPABILITIES`; plus `AEX_CONTENT_QUEUE_URL` and `AEX_CONTENT_DLQ_URL` in `delete` mode, `AEX_MARK_PAGE_ITEMS` and `AEX_SWEEP_PAGE_ITEMS` in `marksweep` mode, and optional `AEX_INVENTORY_BUCKET` in `reconcile` mode |
+| `content-lifecycle-worker` | `AEX_MODE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_GC_STAGE_GRACE_HOURS`, `AEX_UPLOAD_GRACE_HOURS`, `AEX_DECLARED_CAPABILITIES`; plus `AEX_EXPIRY_SCAN_SHARDS` and `AEX_EXPIRY_PAGE_ITEMS` in `expiry` mode, `AEX_CONTENT_QUEUE_URL` and `AEX_CONTENT_DLQ_URL` in `delete` mode, `AEX_MARK_PAGE_ITEMS` and `AEX_SWEEP_PAGE_ITEMS` in `marksweep` mode, and optional `AEX_INVENTORY_BUCKET` in `reconcile` mode |
 | `regional-secret-key-admin` | `AEX_SECRET_KEYSTORE_TABLE`, `AEX_KEYSTORE_LOGICAL_NAME`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_ATTESTATION_OPERATION_ID` |
 
 Forbidden bindings, which refuse the process when present:

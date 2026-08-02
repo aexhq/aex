@@ -3228,6 +3228,7 @@ dependencies = [
  "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
+ "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
