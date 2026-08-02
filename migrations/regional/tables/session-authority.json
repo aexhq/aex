@@ -15,7 +15,9 @@
     { "name": "pk", "type": "S" },
     { "name": "sk", "type": "S" },
     { "name": "wsIndexPk", "type": "S" },
-    { "name": "wsIndexSk", "type": "S" }
+    { "name": "wsIndexSk", "type": "S" },
+    { "name": "evPk", "type": "S" },
+    { "name": "evSk", "type": "S" }
   ],
   "keySchema": { "partition": "pk", "sort": "sk" },
   "globalSecondaryIndexes": [
@@ -39,6 +41,30 @@
           "updatedAt",
           "revision",
           "sessionRefId"
+        ]
+      }
+    },
+    {
+      "name": "gsi_workspace_events",
+      "partition": "evPk",
+      "sort": "evSk",
+      "sparse": true,
+      "projectsRecordBody": true,
+      "rationale": "Only native events carry these attributes. Hour partitions prevent a hot unbounded workspace feed and the session and observation tie-breakers make cross-session ordering total.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": [
+          "workspaceId",
+          "sessionId",
+          "eventSeq",
+          "eventId",
+          "type",
+          "runId",
+          "agentId",
+          "bodyInline",
+          "bodyDigest",
+          "occurredAt",
+          "outboxState"
         ]
       }
     }
@@ -116,12 +142,14 @@
     {
       "role": "regional-stream",
       "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
         "dynamodb:GetRecords",
         "dynamodb:GetShardIterator",
         "dynamodb:DescribeStream",
         "dynamodb:ListStreams"
       ],
-      "resources": ["stream"]
+      "resources": ["table", "index/*", "stream"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "session", "aex:data-class": "authority" }

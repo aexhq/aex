@@ -19,8 +19,8 @@
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::OrganizationId;
 use aex_wire::ids::{
-    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, MessageId, OperationId, ResourceName,
-    RunId, SessionId, ToolCallId, WorkspaceId,
+    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, MessageId, ObservationId,
+    OperationId, ResourceName, RunId, SessionId, ToolCallId, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 
@@ -256,13 +256,15 @@ pub enum Body {
 /// One native event, which is also one outbox row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEvent {
+    /// The workspace that owns the session and workspace event index row.
+    pub workspace: WorkspaceId,
     /// The contiguous per-session sequence.
     pub event_seq: u64,
     /// The `obs_`-prefixed observation identity.
     ///
     /// The observation stream reads this table as the one authority for events
     /// rather than keeping a mirror, so the id it will publish is minted here.
-    pub event_id: String,
+    pub event_id: ObservationId,
     /// The event type.
     pub event_type: String,
     /// The run it belongs to.
