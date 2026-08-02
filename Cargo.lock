@@ -6862,19 +6862,20 @@ dependencies = [
 name = "session-operation-worker"
 version = "0.1.0"
 dependencies = [
- "aex-content-dynamodb",
  "aex-identity-domain",
+ "aex-operation-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
- "aex-registry-dynamodb",
+ "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
+ "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
- "aws-sdk-s3",
  "aws_lambda_events",
  "blake3",
+ "futures",
  "lambda_runtime",
  "serde",
  "serde_json",

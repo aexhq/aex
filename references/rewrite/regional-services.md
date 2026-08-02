@@ -1066,3 +1066,55 @@ provider-compatible keystore attribute vocabulary directly because the rejected
 Encryption SDK dependency is not present in this workspace. No ordinary
 application role gains this write adapter or the table/KMS combination it
 requires.
+
+## Session-operation worker continuation (2026-08-02)
+
+The inherited Lambda was still a transport skeleton: every SQS record was
+returned as failed, and the scheduled trigger counted configured shards without
+reading the due index. It now composes the real work and operation authorities.
+Both the EventBridge Pipe/SQS projection and each bounded scheduled shard page
+are treated only as hints; the worker strongly reloads the base work row and
+operation row, checks workspace/session/operation/version binding, claims or
+takes over under the work fence, and acknowledges only a durable outcome.
+
+Two complete step outcomes are served:
+
+- an already terminal operation retires its exact work row under the fence;
+- a running, cancellation-requested operation that has not crossed
+  `committedAt` is changed to `cancelled` in the same two-action DynamoDB
+  transaction that retires the exact fenced work row.
+
+The cancel transaction uses the stable `cancel:{operationId}` provider token
+(36 bytes for the canonical id) and conditions the operation on tenant,
+operation id, exact observed version, `running`, `cancelRequested = true`, and
+the absent commit latch. A transport-ambiguous response is resolved by strongly
+reading both transaction targets. Neither write is blindly retried. Queue
+records use Lambda partial-batch failure; a due scan reports any unserved or
+invalid operation step as an invocation failure rather than draining it.
+
+Scheduled recovery runs at most 16 shard pipelines concurrently. Each pipeline
+strongly loads the existing `work_cursor`, queries strictly after its full
+base-plus-index key, and conditionally advances the cursor only after every row
+in the page has been attempted. A full page advances; the last or empty page
+wraps to the shard start. Deferred rows therefore remain uncompleted and keep
+the invocation red, but they cannot pin terminal recovery behind the first 25
+index rows forever.
+
+This is not yet a claim that provider-backed continuations are implemented.
+Session purge, workspace regional purge, and paged persist/fork remain
+fail-closed because the following canonical authorities do not exist in the
+public tree:
+
+1. the `SessionTransaction::ContinueOperation` adapter/compiler, including a
+   step commit that writes operation/work state and a durable effect receipt
+   together;
+2. a producer that admits the canonical `operation.step` row and its queue
+   hint for these non-inline operation kinds;
+3. session/content ports for bounded owner-edge, active-run/approval/effect,
+   pin, custody, and persisted-root traversal/removal, plus the denial
+   projection guard required before a purge tombstone;
+4. poison-at-attempt-eight terminalization in the real adapter path.
+
+Those are authority-contract gaps, not calls the Lambda may replace with local
+best effort. Until they land, nonterminal provider effects are retried and the
+scheduled path fails loudly.

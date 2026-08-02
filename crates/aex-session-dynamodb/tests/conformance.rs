@@ -12,18 +12,99 @@ use std::collections::HashMap;
 
 use aex_session_dynamodb::attr::{n, s};
 use aex_session_dynamodb::error::StoreError;
-use aex_session_dynamodb::plan::{Participant, key};
+use aex_session_dynamodb::plan::{Participant, TransactionPlan, key};
+use aex_session_dynamodb::store::{OperationAuthority, OperationStore};
 use aex_session_dynamodb::transactions::{
-    ADMISSION_ORDER, AdmissionForeign, DECISION_ORDER, Foreign, ForeignAction, TERMINAL_ORDER,
-    TerminalForeign, compile_admission, compile_decision, compile_fanout_page, compile_lifecycle,
-    compile_terminal,
+    ADMISSION_ORDER, AdmissionForeign, DECISION_ORDER, Foreign, ForeignAction, OperationStepCancel,
+    TERMINAL_ORDER, TerminalForeign, compile_admission, compile_decision, compile_fanout_page,
+    compile_lifecycle, compile_terminal, operation_cancelled,
 };
 use aex_session_dynamodb::wire_pending::LifecycleTransition;
+use aex_wire::types::Timestamp;
 use serde_json::Value;
 
 use support::{
-    admission, captured_body, capturing_client, decision, fanout, lifecycle, tables, terminal,
+    admission, captured_body, capturing_client, decision, fanout, lifecycle, operation, tables,
+    terminal, workspace,
 };
+
+#[tokio::test]
+async fn an_operation_authority_read_is_strongly_consistent_and_targets_the_exact_key() {
+    let (client, receiver) = capturing_client();
+    let store = OperationStore::new(client, &tables().session_authority);
+    let _ignored = store.load(workspace(), operation()).await;
+
+    let body = captured_body(receiver);
+    let expected_operation = format!("OP#{}", operation());
+    assert_eq!(
+        body["TableName"].as_str(),
+        Some(tables().session_authority.as_str())
+    );
+    assert_eq!(body["ConsistentRead"].as_bool(), Some(true));
+    assert_eq!(
+        body["Key"]["pk"]["S"].as_str(),
+        Some(expected_operation.as_str())
+    );
+    assert_eq!(body["Key"]["sk"]["S"].as_str(), Some("STATE"));
+}
+
+#[test]
+fn a_cancelled_operation_step_fences_the_exact_running_uncommitted_version() {
+    let request = OperationStepCancel {
+        workspace: workspace(),
+        operation: operation(),
+        version: 4,
+        now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
+    };
+    let update = operation_cancelled(&tables().session_authority, &request)
+        .expect("the cancellation update builds")
+        .build()
+        .expect("the update is complete");
+
+    assert_eq!(
+        update.condition_expression(),
+        Some(
+            "attribute_exists(pk) AND workspaceId = :workspaceId AND operationId = :operationId \
+             AND version = :version AND #status = :running AND cancelRequested = :true \
+             AND attribute_not_exists(committedAt)"
+        )
+    );
+    assert_eq!(
+        update.update_expression(),
+        "SET #status = :cancelled, version = :nextVersion, updatedAt = :now, terminalAt = :now"
+    );
+    assert_eq!(
+        update
+            .expression_attribute_values()
+            .and_then(|values| values.get(":nextVersion"))
+            .and_then(|value| value.as_n().ok())
+            .map(String::as_str),
+        Some("5")
+    );
+}
+
+#[tokio::test]
+async fn the_operation_step_committer_refuses_any_participant_shape_but_operation_then_work() {
+    let (client, _receiver) = capturing_client();
+    let store = OperationStore::new(client, &tables().session_authority);
+    let request = OperationStepCancel {
+        workspace: workspace(),
+        operation: operation(),
+        version: 4,
+        now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
+    };
+    let mut plan = TransactionPlan::new("wrong-shape");
+    plan.update(
+        Participant::SESSION_OPERATION,
+        operation_cancelled(&tables().session_authority, &request).expect("update builds"),
+    )
+    .expect("one conditional participant");
+
+    assert!(matches!(
+        store.commit_cancelled_step(&plan).await,
+        Err(StoreError::Invalid { .. })
+    ));
+}
 
 fn foreign_put(participant: Participant, table: &str) -> Foreign {
     Foreign::new(

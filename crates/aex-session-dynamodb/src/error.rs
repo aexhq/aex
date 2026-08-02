@@ -273,10 +273,25 @@ pub fn decode_cancellation(
     error: &TransactWriteItemsError,
     participants: &[Participant],
 ) -> StoreError {
+    decode_cancellation_with_resolution(error, participants, Resolution::IdempotencyReceipt)
+}
+
+/// Decodes a transaction error while preserving the caller's durable
+/// resolution target for non-cancellation service failures.
+///
+/// A real `TransactionCanceledException` is still decoded positionally against
+/// `participants`; `resolution` is used only for service errors whose outcome
+/// may be ambiguous.
+#[must_use]
+pub fn decode_cancellation_with_resolution(
+    error: &TransactWriteItemsError,
+    participants: &[Participant],
+    resolution: Resolution,
+) -> StoreError {
     let TransactWriteItemsError::TransactionCanceledException(cancelled) = error else {
         return classify_code(
             error.code().unwrap_or("Unknown"),
-            Idempotence::Write(Resolution::IdempotencyReceipt),
+            Idempotence::Write(resolution),
         );
     };
     let reasons = cancelled.cancellation_reasons();

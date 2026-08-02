@@ -5,6 +5,16 @@ pub mod config;
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
+use aex_operation_domain::OperationStatus;
+use aex_session_dynamodb::StoreError;
+use aex_session_dynamodb::plan::{Participant, TransactionPlan};
+use aex_session_dynamodb::transactions::{OperationStepCancel, operation_cancelled};
+use aex_wire::ids::{OperationId, PrefixedId, SessionId, WorkspaceId};
+use aex_wire::types::Timestamp;
+use aex_work_dynamodb::WorkClaim;
+use aex_work_dynamodb::codec::ReconciliationCursor;
+use aex_work_dynamodb::store::{DuePage, WorkAuthority};
+
 pub use config::Config;
 
 /// Which of the worker's two triggers an invocation carries.
@@ -47,6 +57,633 @@ impl Trigger {
 
 /// The scheduled event this worker answers a due scan for.
 pub const DUE_SCAN_DETAIL_TYPE: &str = "aex.due_scan";
+
+/// Maximum scheduled shard pipelines allowed to hold AWS requests in flight.
+pub const DUE_SHARD_CONCURRENCY: usize = 16;
+
+/// Non-authoritative routing fields projected from a committed
+/// `regional-work` row onto SQS.
+///
+/// Every field is rechecked against a strongly consistent base-table read
+/// before the hint can authorize a state change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkHint {
+    /// Durable work identity.
+    pub work_id: String,
+    /// Tenant used for the authority read.
+    pub workspace: WorkspaceId,
+}
+
+impl WorkHint {
+    /// Decodes the `EventBridge` Pipe projection carried in an SQS body.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReconcileError::InvalidHint`] for malformed JSON or an empty
+    /// work identity.
+    pub fn decode(body: &str) -> Result<Self, ReconcileError> {
+        let hint: Self = serde_json::from_str(body).map_err(|_| ReconcileError::InvalidHint)?;
+        if hint.work_id.is_empty() {
+            return Err(ReconcileError::InvalidHint);
+        }
+        Ok(hint)
+    }
+}
+
+/// The work-table operations required by terminal reconciliation.
+#[async_trait::async_trait]
+pub trait WorkPort: Send + Sync + 'static {
+    /// Strongly reads a work row under an asserted tenant.
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        work_id: &str,
+    ) -> Result<Option<aex_work_dynamodb::codec::WorkRecord>, StoreError>;
+
+    /// Claims or takes over one due row.
+    async fn claim(
+        &self,
+        work_id: &str,
+        owner: &str,
+        now: Timestamp,
+        lease_until: Timestamp,
+    ) -> Result<WorkClaim, StoreError>;
+
+    /// Retires the exact claim.
+    async fn complete(&self, hold: &WorkClaim, now: Timestamp) -> Result<(), StoreError>;
+
+    /// Reads one bounded due-index page.
+    async fn scan_due(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: aex_session_dynamodb::paging::PageBudget,
+    ) -> Result<DuePage, StoreError>;
+
+    /// Strongly loads one shard's durable scan position.
+    async fn load_cursor(&self, shard: u16) -> Result<Option<ReconciliationCursor>, StoreError>;
+
+    /// Reads a bounded page strictly after a durable scan position.
+    async fn scan_due_after(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: aex_session_dynamodb::paging::PageBudget,
+        after: Option<&ReconciliationCursor>,
+    ) -> Result<DuePage, StoreError>;
+
+    /// Conditionally persists one wrapping scan position.
+    async fn advance_cursor(&self, cursor: &ReconciliationCursor) -> Result<(), StoreError>;
+}
+
+#[async_trait::async_trait]
+impl WorkPort for aex_work_dynamodb::store::WorkStore {
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        work_id: &str,
+    ) -> Result<Option<aex_work_dynamodb::codec::WorkRecord>, StoreError> {
+        WorkAuthority::load(self, workspace, work_id).await
+    }
+
+    async fn claim(
+        &self,
+        work_id: &str,
+        owner: &str,
+        now: Timestamp,
+        lease_until: Timestamp,
+    ) -> Result<WorkClaim, StoreError> {
+        WorkAuthority::claim_work(self, work_id, owner, now, lease_until).await
+    }
+
+    async fn complete(&self, hold: &WorkClaim, now: Timestamp) -> Result<(), StoreError> {
+        WorkAuthority::complete_work(self, hold, now).await
+    }
+
+    async fn scan_due(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: aex_session_dynamodb::paging::PageBudget,
+    ) -> Result<DuePage, StoreError> {
+        WorkAuthority::scan_due(self, shard, now, budget).await
+    }
+
+    async fn load_cursor(&self, shard: u16) -> Result<Option<ReconciliationCursor>, StoreError> {
+        WorkAuthority::load_cursor(self, shard).await
+    }
+
+    async fn scan_due_after(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: aex_session_dynamodb::paging::PageBudget,
+        after: Option<&ReconciliationCursor>,
+    ) -> Result<DuePage, StoreError> {
+        WorkAuthority::scan_due_after(self, shard, now, budget, after).await
+    }
+
+    async fn advance_cursor(&self, cursor: &ReconciliationCursor) -> Result<(), StoreError> {
+        WorkAuthority::advance_cursor(self, cursor).await
+    }
+}
+
+/// Plans the next durable position for one bounded due-shard page.
+///
+/// A full page advances past its last key. A page that reaches the end, or an
+/// empty page read after an existing position, wraps to the start by clearing
+/// `last_work_id`. That makes a permanently deferred row revisit-able without
+/// allowing it to pin every later row behind the first page.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] for a cross-shard cursor, a malformed page boundary,
+/// or a revision that cannot advance.
+pub fn next_due_cursor(
+    shard: u16,
+    current: Option<&ReconciliationCursor>,
+    page: &DuePage,
+    now: Timestamp,
+) -> Result<Option<ReconciliationCursor>, StoreError> {
+    if current.is_some_and(|position| position.shard != shard) {
+        return Err(StoreError::Invalid {
+            detail: "a due cursor belongs to another shard".to_owned(),
+        });
+    }
+    let last = page.items.last();
+    if page.scanned_through != last.map(|item| item.effective_due_at)
+        || (page.has_more && last.is_none())
+    {
+        return Err(StoreError::Invalid {
+            detail: "a due page carries an inconsistent continuation boundary".to_owned(),
+        });
+    }
+    let had_position = current.is_some_and(|position| position.last_work_id.is_some());
+    if last.is_none() && !had_position {
+        return Ok(None);
+    }
+    let revision = current.map_or(Ok(1), |position| position.revision.checked_add(1).ok_or(()));
+    let revision = revision.map_err(|()| StoreError::Invalid {
+        detail: "a due cursor revision cannot advance past u64::MAX".to_owned(),
+    })?;
+    let last_work_id = if page.has_more {
+        Some(
+            last.ok_or_else(|| StoreError::Invalid {
+                detail: "a continuing due page carries no last row".to_owned(),
+            })?
+            .work_id
+            .clone(),
+        )
+    } else {
+        None
+    };
+    Ok(Some(ReconciliationCursor {
+        shard,
+        scanned_through_effective_due_at: page.scanned_through.unwrap_or(now),
+        last_work_id,
+        revision,
+        updated_at: now,
+    }))
+}
+
+/// Operation fields that must agree with an `operation.step` row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationSnapshot {
+    /// Durable operation identity.
+    pub id: OperationId,
+    /// Owning workspace.
+    pub workspace: WorkspaceId,
+    /// Owning session for session-scoped continuations.
+    pub session: Option<SessionId>,
+    /// Current monotonic status.
+    pub status: OperationStatus,
+    /// Optimistic store version.
+    pub version: u64,
+    /// Whether the public cancel command was durably accepted.
+    pub cancel_requested: bool,
+    /// Destructive point-of-no-return latch, when already crossed.
+    pub committed_at: Option<Timestamp>,
+}
+
+/// The operation authority required before and during a continuation step.
+#[async_trait::async_trait]
+pub trait OperationPort: Send + Sync + 'static {
+    /// Strongly reloads the operation.
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<OperationSnapshot>, StoreError>;
+
+    /// Atomically terminalizes an observed cancel request and retires the
+    /// exact fenced work claim.
+    async fn cancel_step(
+        &self,
+        operation: &OperationSnapshot,
+        hold: &WorkClaim,
+        now: Timestamp,
+    ) -> Result<(), StoreError>;
+}
+
+/// Real cross-table operation-step authority.
+#[derive(Debug, Clone)]
+pub struct DynamoOperationPort {
+    operations: aex_session_dynamodb::store::OperationStore,
+    work_table: String,
+}
+
+impl DynamoOperationPort {
+    /// Binds the session and work tables used by one atomic step commit.
+    #[must_use]
+    pub fn new(
+        client: aws_sdk_dynamodb::Client,
+        session_table: impl Into<String>,
+        work_table: impl Into<String>,
+    ) -> Self {
+        Self {
+            operations: aex_session_dynamodb::store::OperationStore::new(client, session_table),
+            work_table: work_table.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl OperationPort for DynamoOperationPort {
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        operation: OperationId,
+    ) -> Result<Option<OperationSnapshot>, StoreError> {
+        Ok(aex_session_dynamodb::store::OperationAuthority::load(
+            &self.operations,
+            workspace,
+            operation,
+        )
+        .await?
+        .map(|stored| OperationSnapshot {
+            id: stored.record.id,
+            workspace: stored.record.workspace,
+            session: stored.record.session,
+            status: stored.record.status,
+            version: stored.version,
+            cancel_requested: stored.record.cancel_requested,
+            committed_at: stored.record.committed_at,
+        }))
+    }
+
+    async fn cancel_step(
+        &self,
+        operation: &OperationSnapshot,
+        hold: &WorkClaim,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        let plan = compile_cancelled_step(
+            self.operations.table(),
+            &self.work_table,
+            operation,
+            hold,
+            now,
+        )?;
+        self.operations.commit_cancelled_step(&plan).await
+    }
+}
+
+/// Compiles the two-row transaction for `StepOutcome::Cancelled`.
+///
+/// The `cancel:<operationId>` token is stable for the logical transition and
+/// exactly fits `DynamoDB`'s 36-byte client-token ceiling for the canonical
+/// operation identity. Durable correctness still comes from both conditions,
+/// not from the provider's short transport-deduplication window.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] when the snapshot is not the running,
+/// cancellation-requested, pre-commit state this transition owns, or when
+/// either conditional update cannot be built.
+pub fn compile_cancelled_step(
+    session_table: &str,
+    work_table: &str,
+    operation: &OperationSnapshot,
+    hold: &WorkClaim,
+    now: Timestamp,
+) -> Result<TransactionPlan, StoreError> {
+    if operation.status != OperationStatus::Running
+        || !operation.cancel_requested
+        || operation.committed_at.is_some()
+    {
+        return Err(StoreError::Invalid {
+            detail:
+                "a cancelled step requires a running, cancellation-requested, uncommitted operation"
+                    .to_owned(),
+        });
+    }
+    let mut plan = TransactionPlan::new(format!("cancel:{}", operation.id));
+    plan.update(
+        Participant::SESSION_OPERATION,
+        operation_cancelled(
+            session_table,
+            &OperationStepCancel {
+                workspace: operation.workspace,
+                operation: operation.id,
+                version: operation.version,
+                now,
+            },
+        )?,
+    )?;
+    plan.update(
+        Participant::WORK_WAKE_DONE,
+        aex_work_dynamodb::claim::complete(work_table, hold, now)?,
+    )?;
+    Ok(plan)
+}
+
+/// Result of reconciling one terminal-operation hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconcileDisposition {
+    /// This invocation retired the work row.
+    Retired,
+    /// A previous invocation already retired it.
+    AlreadyRetired,
+    /// The owning operation is still nonterminal and belongs to an effect lane.
+    Deferred,
+}
+
+/// Fenced reconciliation of terminal work and accepted cancellations.
+///
+/// This is a complete no-effect continuation: it strongly validates the hint,
+/// observes the monotonic terminal operation, takes the work fence, and retires
+/// the row. An ambiguous retirement is resolved by reading the target; the
+/// write is never issued blindly a second time.
+#[derive(Debug, Clone)]
+pub struct OperationReconciler<W, O> {
+    work: W,
+    operations: O,
+    owner: String,
+    lease_ms: i64,
+}
+
+impl<W, O> OperationReconciler<W, O>
+where
+    W: WorkPort,
+    O: OperationPort,
+{
+    /// Binds the two authorities and the claim identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReconcileError::InvalidSettings`] for an empty owner or a
+    /// non-positive lease.
+    pub fn new(
+        work: W,
+        operations: O,
+        owner: impl Into<String>,
+        lease_ms: i64,
+    ) -> Result<Self, ReconcileError> {
+        let owner = owner.into();
+        if owner.is_empty() || lease_ms <= 0 {
+            return Err(ReconcileError::InvalidSettings);
+        }
+        Ok(Self {
+            work,
+            operations,
+            owner,
+            lease_ms,
+        })
+    }
+
+    /// The bound work port, exposed for readiness and deterministic tests.
+    #[must_use]
+    pub const fn work(&self) -> &W {
+        &self.work
+    }
+
+    /// The bound operation port, exposed for readiness and deterministic tests.
+    #[must_use]
+    pub const fn operations(&self) -> &O {
+        &self.operations
+    }
+
+    /// Reconciles one hint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReconcileError`] when either authority is unavailable or the
+    /// work and operation identities do not agree exactly.
+    pub async fn reconcile(
+        &self,
+        hint: &WorkHint,
+        now: Timestamp,
+    ) -> Result<ReconcileDisposition, ReconcileError> {
+        let Some(work) = self.work.load(hint.workspace, &hint.work_id).await? else {
+            return Err(ReconcileError::MissingWork);
+        };
+        match work.state.as_str() {
+            "done" | "poisoned" => return Ok(ReconcileDisposition::AlreadyRetired),
+            "pending" | "claimed" => {}
+            _ => return Err(ReconcileError::InvalidWork),
+        }
+        let binding = OperationBinding::from_work(&work)?;
+        let operation = self
+            .operations
+            .load(hint.workspace, binding.operation)
+            .await?
+            .ok_or(ReconcileError::MissingOperation)?;
+        binding.verify(&operation)?;
+        let cancelling = operation.status == OperationStatus::Running
+            && operation.cancel_requested
+            && operation.committed_at.is_none();
+        if !operation.status.is_terminal() && !cancelling {
+            return Ok(ReconcileDisposition::Deferred);
+        }
+
+        if work.state == "claimed"
+            && work
+                .lease_expires_at
+                .is_some_and(|expires| expires.unix_millis() > now.unix_millis())
+        {
+            return Ok(ReconcileDisposition::Deferred);
+        }
+        let lease_until_ms = now
+            .unix_millis()
+            .checked_add(self.lease_ms)
+            .ok_or(ReconcileError::InvalidSettings)?;
+        let lease_until = Timestamp::from_unix_millis(lease_until_ms)
+            .map_err(|_| ReconcileError::InvalidSettings)?;
+        let hold = match self
+            .work
+            .claim(&hint.work_id, &self.owner, now, lease_until)
+            .await
+        {
+            Ok(hold) => hold,
+            Err(StoreError::PreconditionFailed { .. }) => {
+                return if cancelling {
+                    self.resolve_cancel_after_write(hint, binding).await
+                } else {
+                    self.resolve_after_write(hint).await
+                };
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let claimed = self
+            .work
+            .load(hint.workspace, &hint.work_id)
+            .await?
+            .ok_or(ReconcileError::MissingWork)?;
+        binding.verify_claimed(&claimed, &hold)?;
+        let committed = if cancelling {
+            self.operations.cancel_step(&operation, &hold, now).await
+        } else {
+            self.work.complete(&hold, now).await
+        };
+        match committed {
+            Ok(()) => Ok(ReconcileDisposition::Retired),
+            Err(StoreError::CommitAmbiguous { .. } | StoreError::PreconditionFailed { .. }) => {
+                if cancelling {
+                    self.resolve_cancel_after_write(hint, binding).await
+                } else {
+                    self.resolve_after_write(hint).await
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn resolve_after_write(
+        &self,
+        hint: &WorkHint,
+    ) -> Result<ReconcileDisposition, ReconcileError> {
+        match self.work.load(hint.workspace, &hint.work_id).await? {
+            None => Ok(ReconcileDisposition::AlreadyRetired),
+            Some(work) if matches!(work.state.as_str(), "done" | "poisoned") => {
+                Ok(ReconcileDisposition::AlreadyRetired)
+            }
+            Some(_) => Ok(ReconcileDisposition::Deferred),
+        }
+    }
+
+    async fn resolve_cancel_after_write(
+        &self,
+        hint: &WorkHint,
+        binding: OperationBinding,
+    ) -> Result<ReconcileDisposition, ReconcileError> {
+        let operation = self
+            .operations
+            .load(hint.workspace, binding.operation)
+            .await?
+            .ok_or(ReconcileError::MissingOperation)?;
+        binding.verify(&operation)?;
+        let work = self.work.load(hint.workspace, &hint.work_id).await?;
+        match (operation.status.is_terminal(), work) {
+            (true, None) => Ok(ReconcileDisposition::AlreadyRetired),
+            (true, Some(work)) if matches!(work.state.as_str(), "done" | "poisoned") => {
+                Ok(ReconcileDisposition::AlreadyRetired)
+            }
+            (false, None) => Err(ReconcileError::AuthorityMismatch),
+            (false, Some(work)) if matches!(work.state.as_str(), "done" | "poisoned") => {
+                Err(ReconcileError::AuthorityMismatch)
+            }
+            _ => Ok(ReconcileDisposition::Deferred),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OperationBinding {
+    workspace: WorkspaceId,
+    operation: OperationId,
+    session: SessionId,
+    version: u64,
+}
+
+impl OperationBinding {
+    fn from_work(work: &aex_work_dynamodb::codec::WorkRecord) -> Result<Self, ReconcileError> {
+        if work.kind != "operation.step" {
+            return Err(ReconcileError::UnownedKind);
+        }
+        let members = work.payload.members();
+        let operation = members
+            .get("operationId")
+            .and_then(|value| OperationId::parse(value).ok())
+            .ok_or(ReconcileError::InvalidWork)?;
+        let session = members
+            .get("sessionId")
+            .and_then(|value| SessionId::parse(value).ok())
+            .ok_or(ReconcileError::InvalidWork)?;
+        let version = members
+            .get("version")
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or(ReconcileError::InvalidWork)?;
+        if work.session != Some(session) {
+            return Err(ReconcileError::AuthorityMismatch);
+        }
+        Ok(Self {
+            workspace: work.workspace,
+            operation,
+            session,
+            version,
+        })
+    }
+
+    fn verify(self, operation: &OperationSnapshot) -> Result<(), ReconcileError> {
+        if operation.workspace != self.workspace
+            || operation.id != self.operation
+            || operation.session != Some(self.session)
+            || operation.version < self.version
+        {
+            return Err(ReconcileError::AuthorityMismatch);
+        }
+        Ok(())
+    }
+
+    fn verify_claimed(
+        self,
+        work: &aex_work_dynamodb::codec::WorkRecord,
+        hold: &WorkClaim,
+    ) -> Result<(), ReconcileError> {
+        let observed = Self::from_work(work)?;
+        if observed.operation != self.operation
+            || observed.session != self.session
+            || observed.version != self.version
+            || work.state != "claimed"
+            || work.fence != hold.fence
+            || work.claim_owner.as_deref() != Some(hold.owner.as_str())
+        {
+            return Err(ReconcileError::AuthorityMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// Terminal reconciliation failure.
+#[derive(Debug, thiserror::Error)]
+pub enum ReconcileError {
+    /// The SQS projection was malformed.
+    #[error("the work hint is invalid")]
+    InvalidHint,
+    /// Worker claim settings were unusable.
+    #[error("terminal reconciler settings are invalid")]
+    InvalidSettings,
+    /// No base row exists under the hint's asserted tenant.
+    #[error("the authoritative work row is missing")]
+    MissingWork,
+    /// The work row does not use the strict operation-step schema.
+    #[error("the authoritative work row is invalid")]
+    InvalidWork,
+    /// The row belongs to another worker domain.
+    #[error("the work kind is not owned by the session operation worker")]
+    UnownedKind,
+    /// The operation row named by the work no longer exists.
+    #[error("the authoritative operation row is missing")]
+    MissingOperation,
+    /// Work payload, tenant, session, version, claim, or operation disagreed.
+    #[error("the work and operation authorities do not agree")]
+    AuthorityMismatch,
+    /// A regional authority call failed.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
 
 /// Every deterministic shard the due scan sweeps, in order.
 ///
