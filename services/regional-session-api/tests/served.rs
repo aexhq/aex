@@ -1776,6 +1776,38 @@ const REGISTRY_POINTS: &[(RouteId, &str)] = &[
     (RouteId::RegistryToolsGet, "/api/workspace/tools/search"),
 ];
 
+/// Run reads whose public projection is wider than the durable run row.
+const RUN_READS: &[(RouteId, &str)] = &[
+    (
+        RouteId::SessionRunGet,
+        "/api/sessions/01jxt21q00e40r2081040g2081/runs/01jxt21q00e40r2081040g2082",
+    ),
+    (
+        RouteId::SessionRunsList,
+        "/api/sessions/01jxt21q00e40r2081040g2081/runs?limit=1",
+    ),
+];
+
+/// A stored run is not yet the complete public run resource.
+///
+/// In particular, the terminal transaction stores only a result digest and
+/// never records the output-message identities, typed public error, or the
+/// telemetry completeness/gap projection. Driving both paths through the real
+/// router prevents a partial stored row from becoming a structurally valid but
+/// incomplete customer response.
+#[tokio::test]
+async fn run_reads_stay_absent_until_the_terminal_projection_is_complete() {
+    for (id, path) in RUN_READS {
+        let (router, mounted) = router(FakeCustody::default());
+        assert!(!mounted.contains(id), "{id} has no complete run projection");
+
+        let (status, etag, body) = get(&router, path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        assert!(etag.is_none(), "{id} must not tag a partial run");
+        assert_eq!(body, serde_json::Value::Null, "{id}");
+    }
+}
+
 /// A point read must not be mounted until it can publish the complete value.
 ///
 /// The shared registry projection is intentionally a collection-row
