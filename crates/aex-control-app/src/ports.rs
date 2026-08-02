@@ -371,6 +371,8 @@ pub struct AccountProfile {
     pub revision: u64,
     /// When finance last changed the state.
     pub changed_at: OffsetDateTime,
+    /// The monotone account revocation epoch projected with the state.
+    pub epoch: u64,
 }
 
 /// A workspace together with the account state it inherits.
@@ -380,6 +382,8 @@ pub struct WorkspaceView {
     pub workspace: Workspace,
     /// The owning organization's current account profile.
     pub account: AccountProfile,
+    /// The workspace revocation epoch projected with its lifecycle.
+    pub workspace_epoch: u64,
 }
 
 /// A public operation together with facts needed for its typed result.
@@ -440,6 +444,14 @@ pub trait ControlViewStore: Send + Sync {
         &self,
         organization_id: Uuid,
     ) -> Result<Option<AccountProfile>, StoreError>;
+
+    /// Resolves the replay row attached to a durable operation. The direct
+    /// operation-recovery lane needs this to close a provision even if its
+    /// outbox message is unavailable.
+    async fn idempotency_id_for_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> Result<Option<Uuid>, StoreError>;
 }
 
 /// Claim due operations for a worker.

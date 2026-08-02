@@ -799,7 +799,7 @@ rotated-out anchor without a redeploy.
 | `TODO(cross-stream)` | Owner |
 | --- | --- |
 | The platform composition must attach this REQUEST authorizer to every credentialed central route while leaving both anonymous device-flow routes without an authorizer. An `Authorization` identity source on either anonymous route would make API Gateway return `401` before the Rust edge can admit it. | infrastructure |
-| Nothing writes the `regional-authz-projection`. `RegionalFloors` is fail-closed, so an absent or half-written table refuses every request rather than admitting one. The placement row must carry the workspace's organization, which `WorkspacePlacement` already declares. | central-control-worker |
+| Resolved in §11: `central-control-worker` writes profile before placement, publishes exact account/workspace epochs, and projects individual key revocations. Effective-limit publication remains blocked on the absent central limit authority described in §11.4. | central-control-worker |
 | No regional edge presents a browser session: `PresentedCredential` accepts a workspace key only. `ResolveSessionForWorkspace` is served and credential-bound, but which surface presents an `aex_ds_` token to a regional host — and how — is decided by no accepted record. | clients + regional services |
 | `AEX_CENTRAL_AUTHZ_PEPPER_SECRET_ID` and the signing secret are plain Secrets Manager values with no rotation ceremony. The pepper ring holds up to eight versions and refuses an unknown one as a fault, so a rotation is expressible; nothing performs one. | delivery |
 | `aex-identity-domain` now depends on `aex-internal-contracts` (audience vocabulary) and `aex-regional-http` on `aex-identity-domain` and `aex-control-domain` (the envelope and the epoch vocabulary). All are pure and link no AWS SDK, which the identity module's own doc comment anticipated. Confirm the edge is acceptable. | orchestration |
@@ -983,6 +983,10 @@ without the fix.
 
 ### 10.7 Still undone
 
+This was the handoff at the end of the third pass. Section 11 supersedes all
+three rows below; they remain here as the audit trail for how the next pass was
+scoped.
+
 `central-control-api` is unchanged and still refuses to start. Its four ports are
 now available; what remains is the wire adapter itself.
 
@@ -1031,15 +1035,40 @@ is never blindly reissued under a new workspace identity.
 
 `central-control-worker` now consumes SQS and scheduled Lambda events rather
 than serving an HTTP placeholder. SQS records are wakeups; Aurora operation and
-outbox claims remain truth across duplicate delivery. It advances operation
-fences, reconciles provisioning, dispatches deletion, sends invitation mail via
-SES, publishes monotone workspace/key rows to each regional authorization
-projection, confirms signing-key publication inside its configured secret
-prefix, marks committed outbox rows, releases failures with bounded backoff and
-runs replay/outbox GC on schedule. Its SQS response names only records whose
-durable drain failed.
+outbox claims remain truth across duplicate delivery. Its dedicated operation
+lane advances the durable fence and recovers provisioning or deletion directly,
+including the lost-response case in which no usable outbox wakeup remains. The
+outbox is an independent second path to the same fenced, idempotent effects. The
+worker also sends invitation mail via SES, publishes monotone workspace/key rows
+to each regional authorization projection, confirms signing-key publication
+inside its configured secret prefix, marks committed outbox rows, releases
+failures with bounded backoff and runs replay/outbox GC on schedule. Its SQS
+response names only records whose durable drain failed.
 
 API-key revocation now commits an `authorization.epoch.changed` outbox row in
 the same serializable transaction as the key epoch advance. The adapter inserts
 the returned epoch into the payload before commit, so the regional floor is the
 authority's epoch rather than a guessed revision.
+
+### 11.4 Projection completeness and remaining frontiers
+
+Provision and delete recovery read the exact workspace, account profile,
+account epoch and workspace epoch from Aurora. The writer publishes the
+`workspace_profile` row before making placement visible and then writes the
+placement with the authoritative account and workspace revocation floors. A
+profile row therefore cannot be missing behind an admitted placement.
+
+Account pause/resume is also a transactional producer now. The finance trigger
+increments the account revision, advances the account authorization epoch, and
+enqueues one deduplicated `account.state.changed` message for every non-deleted
+workspace in the same transaction. The worker rejects a payload ahead of the
+current account view and projects the current state and exact epoch. Account
+creation advances the initial epoch even when no workspace exists yet; the
+subsequent provision path reads and publishes that epoch directly.
+
+Two frontiers remain deliberately open:
+
+| Frontier | Exact blocker |
+| --- | --- |
+| Effective limits | The regional reader accepts a `workspace_limit` projection, but central has no authoritative default, override, or effective-limit table/port to publish. The reader explicitly forbids inferring registry defaults, so inventing a zero or guessed default would be an admission bug. Define the central limit authority before adding this producer. |
+| Signing-key rotation | The worker verifies that a referenced signing secret exists, but no accepted record defines key creation, overlap, trust-anchor publication, retirement, or rollback. The pepper ring can represent rotation; the operational ceremony and signing frontier remain delivery work. |

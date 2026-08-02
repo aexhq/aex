@@ -11,6 +11,7 @@ use aws_sdk_dynamodb::Client;
 use crate::attr::{Item, ItemBuilder, n, s, stamp};
 
 const WORKSPACE_PLACEMENT: &str = "workspace_placement";
+const WORKSPACE_PROFILE: &str = "workspace_profile";
 const KEY_REVOCATION: &str = "key_revocation";
 
 /// A complete workspace placement projection.
@@ -34,6 +35,19 @@ pub struct PlacementWrite {
     pub feed_sequence: u64,
     /// Projection timestamp.
     pub updated_at: Timestamp,
+}
+
+/// Descriptive workspace facts kept off the hot placement row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileWrite {
+    /// Workspace being described.
+    pub workspace: WorkspaceId,
+    /// Display name.
+    pub name: String,
+    /// Stable URL-safe slug.
+    pub slug: String,
+    /// Creation instant.
+    pub created_at: Timestamp,
 }
 
 /// A monotone API-key revocation projection.
@@ -111,6 +125,22 @@ impl ProjectionWriter {
         }
     }
 
+    /// Publishes the current descriptive profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport diagnostic when the write fails.
+    pub async fn put_profile(&self, write: &ProfileWrite) -> Result<(), String> {
+        self.client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(profile_item(write)))
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     /// Publishes a revocation if its epoch does not move the floor backwards.
     ///
     /// # Errors
@@ -167,6 +197,17 @@ fn placement_item(write: &PlacementWrite) -> Item {
         .build()
 }
 
+fn profile_item(write: &ProfileWrite) -> Item {
+    ItemBuilder::new(WORKSPACE_PROFILE)
+        .set("pk", s(format!("WS#{}", write.workspace)))
+        .set("sk", s("PROFILE"))
+        .set("workspaceId", s(write.workspace.to_string()))
+        .set("name", s(write.name.clone()))
+        .set("slug", s(write.slug.clone()))
+        .set("createdAt", stamp(write.created_at))
+        .build()
+}
+
 fn revocation_item(write: &RevocationWrite) -> Item {
     ItemBuilder::new(KEY_REVOCATION)
         .set("pk", s(format!("KEY#{}", write.api_key)))
@@ -179,8 +220,11 @@ fn revocation_item(write: &RevocationWrite) -> Item {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlacementWrite, RevocationWrite, placement_item, revocation_item};
-    use crate::projection::{decode_placement, decode_revocation};
+    use super::{
+        PlacementWrite, ProfileWrite, RevocationWrite, placement_item, profile_item,
+        revocation_item,
+    };
+    use crate::projection::{decode_placement, decode_profile, decode_revocation};
     use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::{Region, Timestamp};
 
@@ -203,6 +247,15 @@ mod tests {
         let decoded = decode_placement(&placement_item(&placement), workspace).expect("reader");
         assert_eq!(decoded.organization, organization);
         assert_eq!(decoded.feed_sequence, 6);
+
+        let profile = ProfileWrite {
+            workspace,
+            name: "Production".to_owned(),
+            slug: "production".to_owned(),
+            created_at: now,
+        };
+        let decoded = decode_profile(&profile_item(&profile), workspace).expect("profile reader");
+        assert_eq!(decoded.name, "Production");
 
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
         let revocation = RevocationWrite {

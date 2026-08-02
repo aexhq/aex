@@ -249,6 +249,8 @@ CREATE TABLE control.idempotency_record (
   CONSTRAINT idem_key_len_ck   CHECK (char_length(key_value) BETWEEN 1 AND 255));
 CREATE UNIQUE INDEX idem_identity_uk ON control.idempotency_record
   (key_kind, key_value, principal_kind, principal_id, scope_kind, scope_id, method, route);
+CREATE UNIQUE INDEX idem_operation_uk ON control.idempotency_record (operation_id)
+  WHERE operation_id IS NOT NULL;
 -- The expiry index is what makes the 24-hour sweep a range scan rather than a
 -- full table scan; the system this replaces had neither the column nor a reader.
 CREATE INDEX idem_expiry_ix ON control.idempotency_record (expires_at);
@@ -288,6 +290,7 @@ CREATE TABLE control.outbox_message (
   CONSTRAINT outbox_topic_ck CHECK (topic IN (
     'workspace.provision.requested',
     'workspace.delete.requested',
+    'account.state.changed',
     'invitation.email.requested',
     'authorization.epoch.changed',
     'authorization.signing_key.published')),

@@ -8,11 +8,13 @@ use aex_control_app::ports::{
     GcExpired, ProvisionWorkspaceRequest, RegionalControlPort, RequestId, StoreError, TxOutcome,
 };
 use aex_control_domain::{
-    ActorKind, AuditEvent, AuditOutcome, OperationStatus, OutboxMessage, ResourceKind, Topic,
-    WorkspaceStatus,
+    ActorKind, AuditEvent, AuditOutcome, Operation, OperationKind, OperationStatus, OutboxMessage,
+    ResourceKind, Topic, WorkspaceStatus,
 };
 use aex_identity_app::ports::Clock;
-use aex_session_dynamodb::projection_write::{PlacementWrite, ProjectionWriter, RevocationWrite};
+use aex_session_dynamodb::projection_write::{
+    PlacementWrite, ProfileWrite, ProjectionWriter, RevocationWrite,
+};
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
@@ -166,7 +168,8 @@ impl Worker {
         let now = self.clock.now();
         // Advancing operation fences before outbox dispatch makes every retry a
         // fresh fenced attempt while retaining the same workspace identity.
-        self.store
+        let operations = self
+            .store
             .claim_due_operations(&ClaimDueOperations {
                 owner: self.owner.clone(),
                 lease: self.lease,
@@ -175,6 +178,12 @@ impl Worker {
             })
             .await
             .map_err(redacted_store)?;
+        let mut operation_failed = false;
+        for operation in operations {
+            if self.recover_operation(&operation).await.is_err() {
+                operation_failed = true;
+            }
+        }
         let messages = self
             .store
             .claim_outbox(&ClaimOutbox {
@@ -205,7 +214,11 @@ impl Worker {
                 }
             }
         }
-        Ok(())
+        if operation_failed {
+            Err("operation_recovery_failed".to_owned())
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn scheduled(&self) -> Result<(), String> {
@@ -224,6 +237,7 @@ impl Worker {
         match message.topic {
             Topic::WorkspaceProvisionRequested => self.provision(message).await,
             Topic::WorkspaceDeleteRequested => self.delete(message).await,
+            Topic::AccountStateChanged => self.account_changed(message).await,
             Topic::InvitationEmailRequested => self.invitation(message).await,
             Topic::AuthorizationEpochChanged => self.revocation(message).await,
             Topic::AuthorizationSigningKeyPublished => self.signing(message).await,
@@ -287,7 +301,7 @@ impl Worker {
                     .map_err(redacted_store)?,
             )?;
         }
-        self.project_workspace(payload.workspace_id, message, "active", 0)
+        self.project_workspace(payload.workspace_id, sequence(message.created_at))
             .await
     }
 
@@ -312,7 +326,7 @@ impl Worker {
         {
             return Err("workspace_delete_payload_mismatch".to_owned());
         }
-        self.project_workspace(workspace.id, message, "deleting", operation.fence.get())
+        self.project_workspace(workspace.id, sequence(message.created_at))
             .await?;
         if workspace.status != WorkspaceStatus::Deleted
             && operation.status != OperationStatus::Succeeded
@@ -328,6 +342,25 @@ impl Worker {
             .map_err(|_| "regional_delete_unavailable".to_owned())?;
         }
         Ok(())
+    }
+
+    async fn account_changed(&self, message: &OutboxMessage) -> Result<(), String> {
+        let payload: AccountStatePayload = serde_json::from_value(message.payload.clone())
+            .map_err(|_| "invalid_account_state_payload".to_owned())?;
+        let view = self
+            .store
+            .get_workspace_view(payload.workspace_id)
+            .await
+            .map_err(redacted_store)?
+            .ok_or_else(|| "workspace_projection_not_found".to_owned())?;
+        if view.workspace.organization_id != payload.organization_id
+            || view.workspace.region != payload.region
+            || view.account.epoch < payload.account_epoch
+            || view.account.revision < payload.account_revision
+        {
+            return Err("account_state_payload_mismatch".to_owned());
+        }
+        self.project_view(&view, payload.changed_at_ms).await
     }
 
     async fn invitation(&self, message: &OutboxMessage) -> Result<(), String> {
@@ -367,12 +400,103 @@ impl Worker {
         self.signing.confirm_published(&payload.secret_ref).await
     }
 
+    async fn recover_operation(&self, operation: &Operation) -> Result<(), String> {
+        match operation.kind {
+            OperationKind::WorkspaceProvision => self.recover_provision(operation).await,
+            OperationKind::WorkspaceDelete => self.recover_delete(operation).await,
+        }
+    }
+
+    async fn recover_provision(&self, operation: &Operation) -> Result<(), String> {
+        let workspace_id = operation
+            .workspace_id
+            .ok_or_else(|| "provision_operation_has_no_workspace".to_owned())?;
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)
+            .await
+            .map_err(redacted_store)?
+            .ok_or_else(|| "workspace_not_found".to_owned())?;
+        if workspace.organization_id != operation.organization_id {
+            return Err("provision_operation_tenant_mismatch".to_owned());
+        }
+        if workspace.status == WorkspaceStatus::Provisioning {
+            let answer = self
+                .regional
+                .provision_workspace(&ProvisionWorkspaceRequest {
+                    workspace_id,
+                    organization_id: workspace.organization_id,
+                    region: workspace.region,
+                    fence: operation.fence,
+                    intent_hash: operation.intent_hash,
+                })
+                .await
+                .map_err(|_| "regional_provision_unavailable".to_owned())?;
+            if answer.workspace_id != workspace_id {
+                return Err("regional_answered_another_workspace".to_owned());
+            }
+            let idempotency_id = self
+                .store
+                .idempotency_id_for_operation(operation.id)
+                .await
+                .map_err(redacted_store)?
+                .ok_or_else(|| "operation_idempotency_not_found".to_owned())?;
+            known(
+                self.store
+                    .finish_workspace_provision(&FinishWorkspaceProvisionTx {
+                        workspace_id,
+                        operation_id: operation.id,
+                        fence: operation.fence,
+                        idempotency_id,
+                        response_body: serde_json::json!({ "resourceId": workspace_id }),
+                        audit: system_audit(
+                            &workspace,
+                            "workspace.provision.completed",
+                            self.clock.now(),
+                        ),
+                        now: self.clock.now(),
+                    })
+                    .await
+                    .map_err(redacted_store)?,
+            )?;
+        }
+        self.project_workspace(workspace_id, sequence(operation.updated_at))
+            .await
+    }
+
+    async fn recover_delete(&self, operation: &Operation) -> Result<(), String> {
+        let workspace_id = operation
+            .workspace_id
+            .ok_or_else(|| "delete_operation_has_no_workspace".to_owned())?;
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)
+            .await
+            .map_err(redacted_store)?
+            .ok_or_else(|| "workspace_not_found".to_owned())?;
+        if workspace.organization_id != operation.organization_id {
+            return Err("delete_operation_tenant_mismatch".to_owned());
+        }
+        self.project_workspace(workspace_id, sequence(operation.updated_at))
+            .await?;
+        if workspace.status != WorkspaceStatus::Deleted {
+            aex_control_app::use_cases::DeleteWorkspace::dispatch(
+                self.store.as_ref(),
+                self.regional.as_ref(),
+                &workspace,
+                operation,
+                self.clock.now(),
+            )
+            .await
+            .map_err(|_| "regional_delete_unavailable".to_owned())?;
+        }
+        Ok(())
+    }
+
     async fn project_workspace(
         &self,
         workspace_id: Uuid,
-        message: &OutboxMessage,
-        lifecycle: &str,
-        revocation_epoch: u64,
+        feed_sequence: u64,
     ) -> Result<(), String> {
         let view = self
             .store
@@ -380,17 +504,36 @@ impl Worker {
             .await
             .map_err(redacted_store)?
             .ok_or_else(|| "workspace_projection_not_found".to_owned())?;
-        let status = if lifecycle == "deleting" {
-            "deleting"
-        } else if view.account.state == aex_control_domain::AccountState::PausedTopUpRequired {
-            "paused"
-        } else {
-            "active"
+        self.project_view(&view, feed_sequence).await
+    }
+
+    async fn project_view(
+        &self,
+        view: &aex_control_app::ports::WorkspaceView,
+        feed_sequence: u64,
+    ) -> Result<(), String> {
+        let status = match view.workspace.status {
+            WorkspaceStatus::Provisioning => return Err("workspace_not_projectable_yet".to_owned()),
+            WorkspaceStatus::Deleting | WorkspaceStatus::Deleted => "deleting",
+            WorkspaceStatus::Active
+                if view.account.state == aex_control_domain::AccountState::PausedTopUpRequired =>
+            {
+                "paused"
+            }
+            WorkspaceStatus::Active => "active",
         };
         let writer = self
             .projections
             .get(&view.workspace.region)
             .ok_or_else(|| "regional_projection_not_configured".to_owned())?;
+        writer
+            .put_profile(&ProfileWrite {
+                workspace: workspace(view.workspace.id)?,
+                name: view.workspace.name.clone(),
+                slug: view.workspace.slug.as_str().to_owned(),
+                created_at: timestamp(view.workspace.created_at)?,
+            })
+            .await?;
         writer
             .put_placement(&PlacementWrite {
                 workspace: workspace(view.workspace.id)?,
@@ -398,9 +541,9 @@ impl Worker {
                 region: view.workspace.region,
                 status: status.to_owned(),
                 key_epoch: 0,
-                account_epoch: 0,
-                revocation_epoch,
-                feed_sequence: sequence(message.created_at),
+                account_epoch: view.account.epoch,
+                revocation_epoch: view.workspace_epoch,
+                feed_sequence,
                 updated_at: timestamp(self.clock.now())?,
             })
             .await
@@ -425,6 +568,17 @@ struct DeletePayload {
     organization_id: Uuid,
     region: Region,
     operation_id: Uuid,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AccountStatePayload {
+    workspace_id: Uuid,
+    organization_id: Uuid,
+    region: Region,
+    account_epoch: u64,
+    account_revision: u64,
+    changed_at_ms: u64,
 }
 
 #[derive(serde::Deserialize)]

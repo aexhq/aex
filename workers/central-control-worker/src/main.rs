@@ -370,6 +370,8 @@ pub enum Handler {
     WorkspaceProvisionReconcile,
     /// Ask a region to remove a workspace's regional half.
     WorkspaceDeleteDispatch,
+    /// Project a finance account state and epoch to one workspace.
+    AccountStateProject,
     /// Send one invitation notification.
     InvitationEmailDeliver,
     /// Project an advanced revocation epoch to every region.
@@ -388,9 +390,10 @@ pub enum Handler {
 
 impl Handler {
     /// Every duty.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::WorkspaceProvisionReconcile,
         Self::WorkspaceDeleteDispatch,
+        Self::AccountStateProject,
         Self::InvitationEmailDeliver,
         Self::AuthorizationEpochProject,
         Self::AuthorizationSigningKeyRotate,
@@ -406,6 +409,7 @@ impl Handler {
         match self {
             Self::WorkspaceProvisionReconcile => "workspace.provision.reconcile",
             Self::WorkspaceDeleteDispatch => "workspace.delete.dispatch",
+            Self::AccountStateProject => "account.state.project",
             Self::InvitationEmailDeliver => "invitation.email.deliver",
             Self::AuthorizationEpochProject => "authorization.epoch.project",
             Self::AuthorizationSigningKeyRotate => "authorization.signing_key.rotate",
@@ -425,6 +429,7 @@ impl Handler {
         match topic {
             Topic::WorkspaceProvisionRequested => Self::WorkspaceProvisionReconcile,
             Topic::WorkspaceDeleteRequested => Self::WorkspaceDeleteDispatch,
+            Topic::AccountStateChanged => Self::AccountStateProject,
             Topic::InvitationEmailRequested => Self::InvitationEmailDeliver,
             Topic::AuthorizationEpochChanged => Self::AuthorizationEpochProject,
             Topic::AuthorizationSigningKeyPublished => Self::AuthorizationSigningKeyRotate,

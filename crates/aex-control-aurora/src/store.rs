@@ -22,9 +22,9 @@ use aex_rds_data::{DataApiClient, Isolation, SqlValue, Statement, Transaction};
 
 use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
-    AccountProfileRow, AccountStateRow, ApiKeyRow, IdempotencyRow, InvitationRow, MembershipRow,
-    OperationRow, OptionalInstantRow, OrgRoleRow, OrganizationRow, OutboxRow, TextRow, UuidRow,
-    WorkspaceRow,
+    AccountProfileRow, AccountStateRow, ApiKeyRow, EpochRow, IdempotencyRow, InvitationRow,
+    MembershipRow, OperationRow, OptionalInstantRow, OrgRoleRow, OrganizationRow, OutboxRow,
+    TextRow, UuidRow, WorkspaceRow,
 };
 use crate::sql;
 
@@ -74,6 +74,17 @@ impl AuroraControlStore {
     #[must_use]
     pub const fn new(client: DataApiClient) -> Self {
         Self { client }
+    }
+
+    async fn workspace_epoch(&self, workspace_id: Uuid) -> Result<u64, StoreError> {
+        self.client
+            .query_one::<EpochRow>(
+                Statement::new(sql::GET_WORKSPACE_EPOCH)
+                    .bind("workspace_id", SqlValue::Uuid(workspace_id)),
+            )
+            .await
+            .map(|row| row.0)
+            .map_err(map_store_error)
     }
 
     fn millis(instant: OffsetDateTime) -> i64 {
@@ -1931,7 +1942,12 @@ impl ControlViewStore for AuroraControlStore {
                 .account_profile(workspace.organization_id)
                 .await?
                 .ok_or(StoreError::Unavailable)?;
-            items.push(WorkspaceView { workspace, account });
+            let workspace_epoch = self.workspace_epoch(workspace.id).await?;
+            items.push(WorkspaceView {
+                workspace,
+                account,
+                workspace_epoch,
+            });
         }
         Ok(Page {
             items,
@@ -1946,7 +1962,12 @@ impl ControlViewStore for AuroraControlStore {
         let Some(account) = self.account_profile(workspace.organization_id).await? else {
             return Err(StoreError::Unavailable);
         };
-        Ok(Some(WorkspaceView { workspace, account }))
+        let workspace_epoch = self.workspace_epoch(workspace.id).await?;
+        Ok(Some(WorkspaceView {
+            workspace,
+            account,
+            workspace_epoch,
+        }))
     }
 
     async fn get_operation_view(&self, id: Uuid) -> Result<Option<OperationView>, StoreError> {
@@ -2019,6 +2040,20 @@ impl ControlViewStore for AuroraControlStore {
             .query_opt::<AccountProfileRow>(
                 Statement::new(sql::GET_ACCOUNT_PROFILE)
                     .bind("organization_id", SqlValue::Uuid(organization_id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
+    }
+
+    async fn idempotency_id_for_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> Result<Option<Uuid>, StoreError> {
+        self.client
+            .query_opt::<UuidRow>(
+                Statement::new(sql::GET_OPERATION_IDEMPOTENCY_ID)
+                    .bind("operation_id", SqlValue::Uuid(operation_id)),
             )
             .await
             .map(|row| row.map(|row| row.0))

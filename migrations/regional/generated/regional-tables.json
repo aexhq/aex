@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:f68a1a246710b579b4340a7a1c81d8a24d58417343bae18c56a7ebc3360cda70",
+  "digest": "blake3:245f647f2cd197ba85079599a175d2170b0633a7ecbdb2ce767e2136577afb76",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -388,7 +388,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-authz-projection",
       "owner": "regional-stores",
-      "purpose": "Read-only regional projection of workspace placement, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
+      "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -429,6 +429,8 @@
       },
       "itemTypes": [
         "workspace_placement",
+        "workspace_profile",
+        "workspace_limit",
         "key_revocation",
         "feed_frontier"
       ],

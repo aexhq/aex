@@ -182,8 +182,22 @@ SELECT COALESCE(a.status,'unavailable') AS account_status \
 /// Reads the lossless public account-state projection for a control response.
 pub const GET_ACCOUNT_PROFILE: &str = "\
 SELECT a.status, a.reason, a.revision, \
-       (EXTRACT(EPOCH FROM a.changed_at)*1000)::bigint AS changed_at_ms \
-  FROM finance.account_state_v1 a WHERE a.organization_id = :organization_id";
+       (EXTRACT(EPOCH FROM a.changed_at)*1000)::bigint AS changed_at_ms, \
+       COALESCE(e.epoch, 0) AS account_epoch \
+  FROM finance.account_state_v1 a \
+  LEFT JOIN control.authorization_epoch e \
+    ON e.subject_kind = 'account' AND e.subject_id = a.organization_id \
+ WHERE a.organization_id = :organization_id";
+
+/// Reads one workspace's current revocation epoch.
+pub const GET_WORKSPACE_EPOCH: &str = "\
+SELECT COALESCE((SELECT e.epoch FROM control.authorization_epoch e \
+                  WHERE e.subject_kind = 'workspace' AND e.subject_id = :workspace_id), 0)";
+
+/// Resolves the in-flight replay row attached to one durable operation.
+pub const GET_OPERATION_IDEMPOTENCY_ID: &str = "\
+SELECT i.id FROM control.idempotency_record i \
+ WHERE i.operation_id = :operation_id";
 
 /// Reads one active caller role without trusting a requested organization id.
 pub const GET_CALLER_ROLE: &str = "\
@@ -596,6 +610,8 @@ pub const ALL: &[(&str, &str)] = &[
     ("ACTIVE_CONTROL_PEPPER", ACTIVE_CONTROL_PEPPER),
     ("GET_ACCOUNT_STATE", GET_ACCOUNT_STATE),
     ("GET_ACCOUNT_PROFILE", GET_ACCOUNT_PROFILE),
+    ("GET_WORKSPACE_EPOCH", GET_WORKSPACE_EPOCH),
+    ("GET_OPERATION_IDEMPOTENCY_ID", GET_OPERATION_IDEMPOTENCY_ID),
     ("GET_CALLER_ROLE", GET_CALLER_ROLE),
     ("GET_USER_EMAIL", GET_USER_EMAIL),
     ("GET_WORKSPACE_DELETED_AT", GET_WORKSPACE_DELETED_AT),

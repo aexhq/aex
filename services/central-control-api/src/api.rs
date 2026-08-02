@@ -615,6 +615,7 @@ impl WorkspacesApi for ControlService {
             &aex_control_app::ports::WorkspaceView {
                 workspace: created.workspace,
                 account,
+                workspace_epoch: 0,
             },
         )?))
     }

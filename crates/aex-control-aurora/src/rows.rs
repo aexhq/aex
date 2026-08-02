@@ -319,7 +319,7 @@ pub struct AccountProfileRow(pub AccountProfile);
 
 impl Row for AccountProfileRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(4)?;
+        record.expect_arity(5)?;
         let state = AccountState::parse(record.text(0)?).ok_or(DecodeError::TypeMismatch {
             index: 0,
             expected: "an account state",
@@ -336,6 +336,7 @@ impl Row for AccountProfileRow {
             revision: u64::try_from(record.i64(2)?)
                 .map_err(|_| DecodeError::Overflow { index: 2 })?,
             changed_at: instant(record, 3)?,
+            epoch: u64::try_from(record.i64(4)?).map_err(|_| DecodeError::Overflow { index: 4 })?,
         }))
     }
 }
