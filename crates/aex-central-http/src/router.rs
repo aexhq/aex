@@ -299,6 +299,29 @@ fn fallback_request_id() -> RequestId {
     RequestId::parse("unattributed").expect("a valid request id literal")
 }
 
+/// Extracts the typed authorizer context from a test request or a real Lambda
+/// HTTP event.
+fn request_authorizer_context(
+    request: &Request,
+) -> Result<Option<CentralAuthorizerContext>, ContextError> {
+    if let Some(context) = request.extensions().get::<CentralAuthorizerContext>() {
+        return Ok(Some(context.clone()));
+    }
+    let Some(request_context) = request
+        .extensions()
+        .get::<lambda_http::request::RequestContext>()
+    else {
+        return Ok(None);
+    };
+    let Some(authorizer) = request_context.authorizer() else {
+        return Ok(None);
+    };
+    if authorizer.fields.is_empty() {
+        return Ok(None);
+    }
+    CentralAuthorizerContext::parse_values(&authorizer.fields).map(Some)
+}
+
 /// The replay identity's view of the principal.
 fn principal_scope(
     context: &CentralAuthorizerContext,
@@ -428,10 +451,12 @@ macro_rules! mount_group {
             let method = request.method().clone();
             let uri = request.uri().clone();
             let headers = request.headers().clone();
-            let context = request
-                .extensions()
-                .get::<CentralAuthorizerContext>()
-                .cloned();
+            let context = match request_authorizer_context(&request) {
+                Ok(context) => context,
+                Err(error) => {
+                    return render_edge(&fallback_request_id(), EdgeError::Context(error));
+                }
+            };
             let Some(parsed) = HttpMethod::parse(method.as_str()) else {
                 return render_edge(&fallback_request_id(), EdgeError::NoRoute);
             };
@@ -552,3 +577,87 @@ mount_group!(
     RouteGroup::Workspaces,
     "Mounts `central:workspaces`: four routes."
 );
+
+#[cfg(test)]
+mod tests {
+    use super::request_authorizer_context;
+    use crate::authorizer::{CentralAuthorizerContext, ContextError, ContextPrincipalKind};
+    use aex_control_domain::{AccountState, ScopeSet};
+    use aex_wire::types::{Region, RequestId};
+    use axum::body::Body;
+    use axum::extract::Request;
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    fn context() -> CentralAuthorizerContext {
+        CentralAuthorizerContext {
+            request_id: RequestId::parse("req-gateway").expect("a request id"),
+            kind: ContextPrincipalKind::WorkspaceKey,
+            principal_id: Uuid::from_u128(1),
+            credential_id: Some(Uuid::from_u128(2)),
+            workspace_id: Some(Uuid::from_u128(3)),
+            organization_id: Some(Uuid::from_u128(4)),
+            region: Some(Region::EuWest1),
+            memberships: Vec::new(),
+            scopes: ScopeSet::ALL,
+            account_state: AccountState::Unavailable,
+            issued_at_ms: 1_000,
+            expires_at_ms: 31_000,
+        }
+    }
+
+    fn gateway_request(authorizer: &Value) -> Request {
+        let event = json!({
+            "version": "2.0",
+            "routeKey": "GET /api/workspaces",
+            "rawPath": "/api/workspaces",
+            "rawQueryString": "",
+            "headers": {},
+            "requestContext": {
+                "accountId": "123456789012",
+                "apiId": "api",
+                "authorizer": { "lambda": authorizer },
+                "domainName": "api.execute-api.eu-west-1.amazonaws.com",
+                "domainPrefix": "api",
+                "http": {
+                    "method": "GET",
+                    "path": "/api/workspaces",
+                    "protocol": "HTTP/1.1",
+                    "sourceIp": "127.0.0.1",
+                    "userAgent": "test"
+                },
+                "requestId": "gateway-request",
+                "routeKey": "GET /api/workspaces",
+                "stage": "$default",
+                "time": "02/Aug/2026:00:00:00 +0000",
+                "timeEpoch": 1_785_628_800_000_i64
+            },
+            "isBase64Encoded": false
+        });
+        let lambda = lambda_http::request::from_str(&event.to_string())
+            .expect("API Gateway's HTTP event parses");
+        let (parts, _) = lambda.into_parts();
+        Request::from_parts(parts, Body::empty())
+    }
+
+    #[test]
+    fn a_real_api_gateway_v2_event_carries_the_typed_authorizer_context() {
+        let expected = context();
+        let request = gateway_request(&json!(expected.to_fields()));
+        assert_eq!(
+            request_authorizer_context(&request).expect("the context parses"),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn a_non_string_gateway_context_value_fails_closed() {
+        let mut fields = json!(context().to_fields());
+        fields["aex.scopes"] = json!(["workspace:read"]);
+        let request = gateway_request(&fields);
+        assert_eq!(
+            request_authorizer_context(&request),
+            Err(ContextError::NonString("aex.scopes".to_owned()))
+        );
+    }
+}

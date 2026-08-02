@@ -22,14 +22,12 @@
 //!
 //! # The authorizer half
 //!
-//! An earlier revision of this file described an API Gateway REQUEST authorizer
-//! living in the same binary. No authorizer request or response shape has landed
-//! in the contract tree, and `aex-central-http` (D-42) consumes an authorizer
-//! context nothing yet produces. Rather than invent that contract here,
-//! [`issue::Invocation::classify`] refuses an unrecognised payload by name, so
-//! the gap fails loudly at the first authorizer invocation instead of being
-//! answered with a plausible-looking assertion.
+//! The same read-only authority also serves API Gateway REQUEST-authorizer
+//! events. It accepts HTTP API payload v2 and the IAM-policy v1 shape, verifies
+//! the bearer credential against the cold-start pepper ring, and emits the
+//! closed flat context `aex-central-http` re-parses at every central edge.
 
+mod authorizer;
 mod issue;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -594,10 +592,12 @@ pub async fn run(
     }
 
     let authority = Arc::new(authority);
+    let config = Arc::new(config.clone());
     lambda_runtime::run(lambda_runtime::service_fn(
         move |event: lambda_runtime::LambdaEvent<serde_json::Value>| {
             let authority = Arc::clone(&authority);
-            async move { handle(authority.as_ref(), event.payload).await }
+            let config = Arc::clone(&config);
+            async move { handle(authority.as_ref(), config.as_ref(), event.payload).await }
         },
     ))
     .await
@@ -725,8 +725,26 @@ async fn read_secret(
 /// because a caller renders the first to a customer and retries the second.
 async fn handle<R: AuthorizationReader, S: AssertionSigner>(
     authority: &AssertionAuthority<R, S>,
+    config: &Config,
     payload: serde_json::Value,
 ) -> Result<serde_json::Value, lambda_runtime::Error> {
+    if authorizer::RequestInvocation::matches(&payload) {
+        let Some(request) = authorizer::RequestInvocation::parse(&payload, config)? else {
+            return Err(lambda_runtime::Error::from("Unauthorized"));
+        };
+        return match authorizer::answer(
+            authority.reader(),
+            authority.peppers(),
+            config,
+            &request,
+            time::OffsetDateTime::now_utc(),
+        )
+        .await?
+        {
+            Some(response) => Ok(response),
+            None => Err(lambda_runtime::Error::from("Unauthorized")),
+        };
+    }
     let invocation = Invocation::classify(&payload).map_err(IssueFault::from)?;
     let response = authority
         .answer(&invocation, time::OffsetDateTime::now_utc())

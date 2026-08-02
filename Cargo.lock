@@ -2779,6 +2779,8 @@ dependencies = [
  "aws-config",
  "aws-sdk-rdsdata",
  "aws-sdk-secretsmanager",
+ "aws_lambda_events",
+ "http 1.5.0",
  "lambda_runtime",
  "serde",
  "serde_json",

@@ -49,6 +49,10 @@ aws-config.workspace = true
 aws-sdk-rdsdata.workspace = true
 # The pepper ring and the assertion private key, both read once at cold start.
 aws-sdk-secretsmanager.workspace = true
+# The same binary is the API Gateway HTTP API REQUEST authorizer and the
+# IAM-invoked regional assertion authority.
+aws_lambda_events = { workspace = true, features = ["apigw"] }
+http.workspace = true
 # This function is invoked, never routed: `lambda_http` would parse an API
 # Gateway proxy event that never arrives.
 lambda_runtime.workspace = true

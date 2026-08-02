@@ -1,11 +1,10 @@
 //! `central-authz` invocation and probe conformance evidence.
 
-/// This binary is invoked, never routed.
+/// This binary is invoked, never routed as an HTTP proxy integration.
 ///
-/// It has no HTTP integration, so no HTTP request ever reaches it and a mounted
-/// path would be a route it can never serve. The evidence is structural: the
-/// source must not build a router or run an HTTP adapter, and it must enter the
-/// direct-invoke runtime instead.
+/// Regional assertion requests and API Gateway REQUEST-authorizer events both
+/// reach the direct-invoke runtime. A mounted path would still be a route it can
+/// never serve, so the source must not build a router or run an HTTP adapter.
 #[test]
 fn this_binary_mounts_no_route_because_it_can_serve_none() {
     let source = include_str!("../src/main.rs");
@@ -21,6 +20,25 @@ fn this_binary_mounts_no_route_because_it_can_serve_none() {
         source.contains("lambda_runtime::run"),
         "the invoke handler is the surface this binary serves"
     );
+}
+
+/// The central edge's context now has one concrete producer.
+#[test]
+fn the_api_gateway_request_authorizer_is_composed_before_the_assertion_classifier() {
+    let source = include_str!("../src/main.rs");
+    let authorizer = include_str!("../src/authorizer.rs");
+    let request = source
+        .find("RequestInvocation::matches")
+        .expect("the REQUEST-authorizer classifier is mounted");
+    let assertion = source
+        .find("Invocation::classify")
+        .expect("the regional assertion classifier is mounted");
+    assert!(request < assertion, "REQUEST events must not fall through");
+    assert!(authorizer.contains("ApiGatewayV2CustomAuthorizerV2Request"));
+    assert!(authorizer.contains("ApiGatewayCustomAuthorizerRequestTypeRequest"));
+    assert!(authorizer.contains("CentralAuthorizerContext"));
+    assert!(authorizer.contains("\"isAuthorized\": true"));
+    assert!(authorizer.contains("\"policyDocument\""));
 }
 
 /// Readiness is a start-up gate rather than an endpoint.
