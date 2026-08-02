@@ -984,6 +984,47 @@ The point read and listing are mounted. The response route remains absent until
 the write-side decision adapter can revalidate all eleven fields and commit the
 winner atomically.
 
+### Approval response authority audit (2026-08-02)
+
+The response route remains absent after tracing the complete authority path. A
+conditional update of the approval row would not be a safe intermediate step:
+it could leave an approval durably resolved while the agent still has no
+durable continuation, and a retry after an ambiguous response could then have
+no authoritative way to determine whether the tool result, wake or dispatch
+authorization exists.
+
+The facts that have landed are deliberately narrower:
+
+- `aex-session-domain::approval::respond` revalidates all eleven fields. Binding
+  drift and deadline expiry return terminal commits that the application must
+  persist, exact replay returns the stored winner, and the opposite decision is
+  refused.
+- `aex-session-dynamodb` persists and strongly reads the complete binding, but
+  `SessionQueries` is read-only. It exposes neither a current bound-call view nor
+  a decision transaction/replay resolver.
+- `aex-session-app` has no `respond_approval` use case. Its reader cannot load an
+  approval or reconstruct the current eleven-field binding, and its plan has no
+  pending-approval compare-and-set condition.
+- The existing `DECISION_ORDER` is Brain's claimed-agent journal decision. It is
+  not an approval-row transaction: Brain owns its agent-control, journal,
+  effect and durable-work participants, and its wake queue intentionally has no
+  enqueue operation because a queue delivery is never authority.
+
+A complete denial must atomically persist the terminal approval, exactly one
+canonical denial result, the matching approval-resolved journal fact, the agent
+and session transition, and the recoverable work wake. A complete approval must
+atomically persist the terminal approval and a durable authorization for exactly
+the bound call that Brain can consume without a second-dispatch window. Binding
+drift and expiry need the same atomic terminal handoff without either effect.
+Exact replay after an ambiguous commit must recover that whole winner, while two
+opposing concurrent decisions must create only one handoff.
+
+No current crate owns that combined plan or the read model needed to build it.
+`Hint::WakeAgent` is post-commit notification only and cannot fill the gap. The
+served-route test therefore pins `session_approval_respond` as absent until an
+owned application/Brain transaction and ambiguity resolver land together; a
+standalone decision-row compare-and-set is intentionally not added.
+
 ### The blocker table, corrected
 
 The previous pass attributed the remaining families to the stores. Four of them
