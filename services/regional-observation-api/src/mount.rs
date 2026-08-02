@@ -1,8 +1,9 @@
 //! The `axum` mount of the generated observation server traits.
 //!
-//! The mount is a loop over each group's route constant, never a hand-written
-//! list of templates. A route that is authored and not mounted is therefore a
-//! composition-test failure rather than a runtime `404`.
+//! The mount is a loop over each group's route constant, narrowed by one
+//! explicit served predicate. A route can leave the router only through that
+//! reviewed fail-closed predicate, and tests drive every such route through the
+//! production router to prove it answers a bare `404`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -21,7 +22,9 @@ use axum::routing::{MethodFilter, on};
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
-use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
+use aex_regional_http::mount::AdmissionRequest;
+#[cfg(not(test))]
+use aex_regional_http::mount::EdgeAdmission as _;
 use aex_regional_http::router::{RouteOwner, route_owner};
 
 use regional_observation_api::api::{ObservationRequest, ObservationService};
@@ -49,10 +52,20 @@ pub type Edge = RegionalEdge<
     SystemClock,
 >;
 
+/// The admission edge stored in production application state.
+///
+/// Production keeps the concrete edge so request admission remains statically
+/// dispatched. Unit tests substitute the same owned trait only to prove an
+/// unmounted path never reaches admission.
+#[cfg(not(test))]
+pub type AppEdge = Edge;
+#[cfg(test)]
+pub type AppEdge = dyn aex_regional_http::mount::EdgeAdmission;
+
 /// Everything one request needs, resolved once at start-up.
 pub struct AppState {
     /// The authenticated edge.
-    pub edge: Arc<Edge>,
+    pub edge: Arc<AppEdge>,
     /// The query and lifecycle service.
     pub service: Arc<ObservationService>,
     /// The body bounds every dispatch enforces.
@@ -63,7 +76,8 @@ pub struct AppState {
     pub release_digest: String,
 }
 
-/// Every route this deployable must serve.
+/// Every generated route this deployable owns, including temporarily unserved
+/// routes whose authority is incomplete.
 #[must_use]
 pub fn owned_routes() -> Vec<RouteId> {
     GROUPS
@@ -73,21 +87,48 @@ pub fn owned_routes() -> Vec<RouteId> {
         .collect()
 }
 
+/// Whether this deployable can answer an owned route completely.
+///
+/// Export admission is deliberately absent. Its current handler writes only
+/// the observation export row while returning a generic operation that the
+/// session operation authority cannot read, list or cancel. Mounting it would
+/// publish a durable identity with no total lifecycle API, and retrying the
+/// caller-minted operation id can currently create a second export. The read,
+/// download and revoke routes remain served for export rows produced after the
+/// authorities are reconciled.
+#[must_use]
+pub const fn is_served(id: RouteId) -> bool {
+    !matches!(
+        id,
+        RouteId::TelemetryExportCreate | RouteId::SessionTelemetryExportCreate
+    )
+}
+
+/// Every owned route this deployable can answer completely today.
+#[must_use]
+pub fn served_routes() -> Vec<RouteId> {
+    owned_routes()
+        .into_iter()
+        .filter(|id| is_served(*id))
+        .collect()
+}
+
 /// The templates this deployable mounts, derived from the route table.
 #[must_use]
 pub fn mounted_templates() -> BTreeSet<&'static str> {
-    owned_routes()
+    served_routes()
         .into_iter()
         .map(|id| route(id).template)
         .collect()
 }
 
-/// Builds the router: every route of both groups, plus the health endpoints.
+/// Builds the router: every completely served route of both groups, plus the
+/// health endpoints.
 pub fn router(state: Arc<AppState>) -> axum::Router {
     let mut router = axum::Router::new();
     let declared = mounted_templates();
     let mut mounted: BTreeSet<&'static str> = BTreeSet::new();
-    for id in owned_routes() {
+    for id in served_routes() {
         let descriptor = route(id);
         debug_assert!(declared.contains(descriptor.template));
         if !mounted.insert(descriptor.template) {
@@ -166,7 +207,10 @@ async fn handle(
         return StatusCode::NOT_FOUND.into_response();
     };
     let group = id.group();
-    if !GROUPS.contains(&group) || route_owner(id) != Some(RouteOwner::ObservationApi) {
+    if !GROUPS.contains(&group)
+        || route_owner(id) != Some(RouteOwner::ObservationApi)
+        || !is_served(id)
+    {
         return StatusCode::NOT_FOUND.into_response();
     }
     let request_id = diagnostic_id(&headers);
@@ -300,15 +344,112 @@ fn render_error(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use aex_observation_domain::keys::ScopeKey;
+    use aex_observation_query::plan::Budget;
+    use aex_regional_http::context::RequestContext as EdgeContext;
+    use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
+    use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission};
+    use aex_wire::error::{ErrorCode, WireError, WireResult};
     use aex_wire::routes::{Plane, RouteId, route};
     use aex_wire::server::RouteGroup;
+    use aex_wire::types::Region;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode, header};
+    use regional_observation_api::api::{ObservationService, StreamPolicy, StreamRevalidator};
+    use regional_observation_api::reader::ObservationReader;
+    use tower::ServiceExt as _;
 
-    use super::{GROUPS, mounted_templates, owned_routes};
+    use super::{
+        AppState, GROUPS, is_served, mounted_templates, owned_routes, router, served_routes,
+    };
+
+    #[derive(Debug)]
+    struct RefusingEdge;
+
+    #[async_trait::async_trait]
+    impl EdgeAdmission for RefusingEdge {
+        async fn admit(&self, _request: &AdmissionRequest<'_>) -> Result<EdgeContext, WireError> {
+            Err(WireError::new(ErrorCode::Unauthenticated))
+        }
+    }
+
+    #[derive(Debug)]
+    struct RefusingRevalidator;
+
+    #[async_trait::async_trait]
+    impl StreamRevalidator for RefusingRevalidator {
+        async fn revalidate(
+            &self,
+            _authorization: &aex_regional_http::context::RegionalAuthorization,
+            _scope: &ScopeKey,
+        ) -> WireResult<()> {
+            Err(WireError::new(ErrorCode::Unauthenticated))
+        }
+    }
+
+    fn test_state() -> Arc<AppState> {
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .build(),
+        );
+        let reader = ObservationReader::new(
+            dynamodb,
+            s3,
+            "observation-authority",
+            "session-authority",
+            "observations",
+            2_000,
+        );
+        let ring = CursorKeyRing::new(
+            CursorKey::new("test", vec![7; 32]).expect("a strong test key"),
+            Vec::new(),
+        )
+        .expect("one unique cursor key");
+        let service = ObservationService::new(
+            reader,
+            Budget::default(),
+            1,
+            ring,
+            Region::EuWest1,
+            StreamPolicy::new(Arc::new(RefusingRevalidator)),
+        );
+        Arc::new(AppState {
+            edge: Arc::new(RefusingEdge),
+            service: Arc::new(service),
+            limits: aex_wire::dispatch::RequestLimits::DEFAULT,
+            ready: true,
+            release_digest: "test".to_owned(),
+        })
+    }
 
     #[test]
-    fn every_route_of_both_groups_is_mounted() {
+    fn every_served_route_of_both_groups_is_mounted() {
         let mounted = mounted_templates();
-        for id in owned_routes() {
+        for id in served_routes() {
             assert!(
                 mounted.contains(route(id).template),
                 "`{}` is authored and not mounted",
@@ -318,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn this_deployable_owns_the_twenty_seven_finite_observation_routes() {
+    fn this_deployable_owns_twenty_seven_routes_and_serves_twenty_five() {
         // The observations authoring group has 39 operations, but its 24
         // NDJSON operations belong exclusively to `regional-stream`. This
         // Lambda owns the 15 finite observation operations plus 12 lifecycle
@@ -326,6 +467,7 @@ mod tests {
         assert_eq!(RouteGroup::Observations.routes().len(), 39);
         assert_eq!(RouteGroup::TelemetryLifecycle.routes().len(), 12);
         assert_eq!(owned_routes().len(), 27);
+        assert_eq!(served_routes().len(), 25);
     }
 
     #[test]
@@ -348,6 +490,46 @@ mod tests {
     fn every_owned_route_is_regional() {
         for id in owned_routes() {
             assert_eq!(route(id).plane, Plane::Regional);
+        }
+    }
+
+    #[test]
+    fn telemetry_export_admission_is_owned_but_unserved() {
+        for id in [
+            RouteId::TelemetryExportCreate,
+            RouteId::SessionTelemetryExportCreate,
+        ] {
+            assert!(owned_routes().contains(&id));
+            assert!(!is_served(id));
+            assert!(!served_routes().contains(&id));
+            assert!(!mounted_templates().contains(route(id).template));
+        }
+    }
+
+    #[tokio::test]
+    async fn telemetry_export_admission_is_absent_from_the_real_router() {
+        for path in [
+            "/api/telemetry/exports",
+            "/api/sessions/ses_0000000001e40r2081040g2081/telemetry/exports",
+        ] {
+            let response = router(test_state())
+                .oneshot(
+                    Request::post(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from("{}"))
+                        .expect("a request"),
+                )
+                .await
+                .expect("the router answers");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            assert!(
+                response.headers().get(header::LOCATION).is_none(),
+                "{path} must not advertise an unreadable operation"
+            );
+            let body = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("the fallback body is readable");
+            assert!(body.is_empty(), "{path} must publish no partial body");
         }
     }
 }

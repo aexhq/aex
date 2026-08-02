@@ -1,7 +1,8 @@
-//! Contract evidence for the mounted route surface.
+//! Contract evidence for the generated route ownership surface.
 //!
-//! The mounted set is derived from the generated route table, so a route that is
-//! authored and never mounted is a failure here rather than a runtime `404`.
+//! Runtime mounting is deliberately narrower while telemetry-export admission
+//! lacks one total operation authority; the production-router regression lives
+//! beside the mount implementation.
 
 use aex_regional_http::router::{RouteOwner, route_owner};
 use aex_wire::idempotency::IdempotencyKind;
@@ -70,7 +71,7 @@ fn every_ndjson_route_belongs_exclusively_to_regional_stream() {
 }
 
 #[test]
-fn the_export_admission_routes_require_a_durable_operation_identity() {
+fn the_dormant_export_admission_contract_still_names_the_inconsistent_operation_shape() {
     for id in [
         RouteId::TelemetryExportCreate,
         RouteId::SessionTelemetryExportCreate,
@@ -80,7 +81,7 @@ fn the_export_admission_routes_require_a_durable_operation_identity() {
         assert_eq!(
             descriptor.idempotency,
             IdempotencyKind::OperationId,
-            "an export is a durable operation"
+            "the dormant contract still carries the operation identity that the authority redesign must reconcile"
         );
     }
 }
