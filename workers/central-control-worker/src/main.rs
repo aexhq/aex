@@ -23,6 +23,8 @@ use aex_central_http::health::{Dependency, Readiness};
 use aex_control_domain::Topic;
 use aex_wire::types::Region;
 
+mod runtime;
+
 /// The deployable this binary is.
 const DEPLOYABLE: CentralServiceId = CentralServiceId::ControlWorker;
 
@@ -41,6 +43,8 @@ mod keys {
     pub const BATCH_SIZE: &str = "AEX_CENTRAL_CONTROL_WORKER_BATCH_SIZE";
     /// The control FIFO queue.
     pub const CONTROL_QUEUE_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_CONTROL_QUEUE_ARN";
+    /// Queue URL used only for the startup reachability probe.
+    pub const CONTROL_QUEUE_URL: &str = "AEX_CENTRAL_CONTROL_WORKER_CONTROL_QUEUE_URL";
     /// The database name.
     pub const DATABASE: &str = "AEX_CENTRAL_CONTROL_WORKER_DATABASE";
     /// How long a claim lease lasts.
@@ -49,12 +53,16 @@ mod keys {
     pub const PLANE: &str = "AEX_CENTRAL_CONTROL_WORKER_PLANE";
     /// The bound region.
     pub const REGION: &str = "AEX_CENTRAL_CONTROL_WORKER_REGION";
-    /// The regional control authority endpoints, `region=url` comma-separated.
-    pub const REGIONAL_ENDPOINTS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_ENDPOINTS";
+    /// Direct regional control Lambda ARNs, `region=arn` comma-separated.
+    pub const REGIONAL_FUNCTIONS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_FUNCTION_ARNS";
+    /// Regional authz projection tables, `region=table` comma-separated.
+    pub const REGIONAL_PROJECTIONS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_PROJECTION_TABLES";
     /// The login role. Must be `aex_control_worker`.
     pub const ROLE: &str = "AEX_CENTRAL_CONTROL_WORKER_ROLE";
     /// The verified sender identity.
     pub const SES_IDENTITY_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_SES_IDENTITY_ARN";
+    /// The verified RFC 5322 sender address.
+    pub const MAIL_FROM: &str = "AEX_CENTRAL_CONTROL_WORKER_MAIL_FROM";
     /// The signing-key secret prefix this worker rotates.
     pub const SIGNING_SECRET_PREFIX: &str = "AEX_CENTRAL_CONTROL_WORKER_SIGNING_SECRET_PREFIX";
 
@@ -69,13 +77,16 @@ mod keys {
         AURORA_SECRET_ARN,
         BATCH_SIZE,
         CONTROL_QUEUE_ARN,
+        CONTROL_QUEUE_URL,
         DATABASE,
         LEASE_MS,
         PLANE,
         REGION,
-        REGIONAL_ENDPOINTS,
+        REGIONAL_FUNCTIONS,
+        REGIONAL_PROJECTIONS,
         ROLE,
         SES_IDENTITY_ARN,
+        MAIL_FROM,
         SIGNING_SECRET_PREFIX,
     ];
 }
@@ -116,8 +127,12 @@ pub struct Config {
     pub aurora_secret_arn: String,
     /// The control FIFO queue.
     pub control_queue_arn: String,
+    /// The control queue URL for startup probing.
+    pub control_queue_url: String,
     /// The verified sender identity.
     pub ses_identity_arn: String,
+    /// Verified sender address.
+    pub mail_from: String,
     /// The signing-key secret prefix.
     pub signing_secret_prefix: String,
     /// The database name.
@@ -129,7 +144,9 @@ pub struct Config {
     /// How long a claim lease lasts.
     pub lease_ms: u64,
     /// Every region this worker may dispatch to.
-    pub regional_endpoints: BTreeMap<Region, String>,
+    pub regional_functions: BTreeMap<Region, String>,
+    /// Regional authorization projection tables.
+    pub regional_projections: BTreeMap<Region, String>,
 }
 
 impl Config {
@@ -173,7 +190,8 @@ impl Config {
         }
         let batch_size = bounded(&lookup, keys::BATCH_SIZE, 1, MAX_BATCH)?;
         let lease_ms = bounded(&lookup, keys::LEASE_MS, 1, MAX_LEASE_MS)?;
-        let regional_endpoints = endpoints(&required(&lookup, keys::REGIONAL_ENDPOINTS)?)?;
+        let regional_functions = functions(&required(&lookup, keys::REGIONAL_FUNCTIONS)?)?;
+        let regional_projections = projections(&required(&lookup, keys::REGIONAL_PROJECTIONS)?)?;
         Ok(Self {
             plane,
             region,
@@ -181,13 +199,16 @@ impl Config {
             aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
             aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
             control_queue_arn: required(&lookup, keys::CONTROL_QUEUE_ARN)?,
+            control_queue_url: required(&lookup, keys::CONTROL_QUEUE_URL)?,
             ses_identity_arn: required(&lookup, keys::SES_IDENTITY_ARN)?,
+            mail_from: mail_from(&required(&lookup, keys::MAIL_FROM)?)?,
             signing_secret_prefix: required(&lookup, keys::SIGNING_SECRET_PREFIX)?,
             database: required(&lookup, keys::DATABASE)?,
             role,
             batch_size: u32::try_from(batch_size).unwrap_or(1),
             lease_ms,
-            regional_endpoints,
+            regional_functions,
+            regional_projections,
         })
     }
 
@@ -217,10 +238,18 @@ impl Config {
                     self.signing_secret_prefix.clone(),
                 ),
                 (
-                    keys::REGIONAL_ENDPOINTS.to_owned(),
-                    self.regional_endpoints
+                    keys::REGIONAL_FUNCTIONS.to_owned(),
+                    self.regional_functions
                         .iter()
-                        .map(|(region, url)| format!("{}={url}", region.as_str()))
+                        .map(|(region, function)| format!("{}={function}", region.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                (
+                    keys::REGIONAL_PROJECTIONS.to_owned(),
+                    self.regional_projections
+                        .iter()
+                        .map(|(region, table)| format!("{}={table}", region.as_str()))
                         .collect::<Vec<_>>()
                         .join(","),
                 ),
@@ -257,35 +286,81 @@ where
     Ok(value)
 }
 
-/// Parses the `region=url` endpoint map.
+/// Parses the `region=lambda-arn` direct-invoke map.
 ///
 /// Every launch region must be present. A worker that can dispatch to four of
 /// five regions is one that silently strands every workspace in the fifth.
-fn endpoints(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
+fn functions(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, url) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
-            name: keys::REGIONAL_ENDPOINTS,
-            reason: "expected `region=url` entries".to_owned(),
+        let (region, function) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGIONAL_FUNCTIONS,
+            reason: "expected `region=lambda-arn` entries".to_owned(),
         })?;
         let parsed = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
-            name: keys::REGIONAL_ENDPOINTS,
+            name: keys::REGIONAL_FUNCTIONS,
             reason: format!("`{region}` is not a launch region"),
         })?;
-        if url.trim().is_empty() || map.insert(parsed, url.trim().to_owned()).is_some() {
+        let function = function.trim();
+        let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
+        if !function.starts_with(&expected)
+            || !function.contains(":function:")
+            || map.insert(parsed, function.to_owned()).is_some()
+        {
             return Err(ConfigError::Invalid {
-                name: keys::REGIONAL_ENDPOINTS,
-                reason: format!("`{}` is empty or repeated", parsed.as_str()),
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!(
+                    "`{}` is not a unique Lambda ARN in its region",
+                    parsed.as_str()
+                ),
             });
         }
     }
     if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
         return Err(ConfigError::Invalid {
-            name: keys::REGIONAL_ENDPOINTS,
-            reason: format!("no endpoint for `{}`", missing.as_str()),
+            name: keys::REGIONAL_FUNCTIONS,
+            reason: format!("no function for `{}`", missing.as_str()),
         });
     }
     Ok(map)
+}
+
+fn projections(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
+    let mut map = BTreeMap::new();
+    for entry in raw.split(',').filter(|entry| !entry.trim().is_empty()) {
+        let (region, table) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGIONAL_PROJECTIONS,
+            reason: "expected `region=table` entries".to_owned(),
+        })?;
+        let region = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
+            name: keys::REGIONAL_PROJECTIONS,
+            reason: format!("`{region}` is not a launch region"),
+        })?;
+        if table.trim().is_empty() || map.insert(region, table.trim().to_owned()).is_some() {
+            return Err(ConfigError::Invalid {
+                name: keys::REGIONAL_PROJECTIONS,
+                reason: format!("`{}` is empty or repeated", region.as_str()),
+            });
+        }
+    }
+    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+        return Err(ConfigError::Invalid {
+            name: keys::REGIONAL_PROJECTIONS,
+            reason: format!("no projection table for `{}`", missing.as_str()),
+        });
+    }
+    Ok(map)
+}
+
+fn mail_from(raw: &str) -> Result<String, ConfigError> {
+    if raw.contains('@') && !raw.contains(char::is_whitespace) {
+        Ok(raw.to_owned())
+    } else {
+        Err(ConfigError::Invalid {
+            name: keys::MAIL_FROM,
+            reason: "expected one verified sender address".to_owned(),
+        })
+    }
 }
 
 /// Every scheduled or queue-driven duty this worker performs.
@@ -295,6 +370,8 @@ pub enum Handler {
     WorkspaceProvisionReconcile,
     /// Ask a region to remove a workspace's regional half.
     WorkspaceDeleteDispatch,
+    /// Project a finance account state and epoch to one workspace.
+    AccountStateProject,
     /// Send one invitation notification.
     InvitationEmailDeliver,
     /// Project an advanced revocation epoch to every region.
@@ -313,9 +390,10 @@ pub enum Handler {
 
 impl Handler {
     /// Every duty.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::WorkspaceProvisionReconcile,
         Self::WorkspaceDeleteDispatch,
+        Self::AccountStateProject,
         Self::InvitationEmailDeliver,
         Self::AuthorizationEpochProject,
         Self::AuthorizationSigningKeyRotate,
@@ -331,6 +409,7 @@ impl Handler {
         match self {
             Self::WorkspaceProvisionReconcile => "workspace.provision.reconcile",
             Self::WorkspaceDeleteDispatch => "workspace.delete.dispatch",
+            Self::AccountStateProject => "account.state.project",
             Self::InvitationEmailDeliver => "invitation.email.deliver",
             Self::AuthorizationEpochProject => "authorization.epoch.project",
             Self::AuthorizationSigningKeyRotate => "authorization.signing_key.rotate",
@@ -350,6 +429,7 @@ impl Handler {
         match topic {
             Topic::WorkspaceProvisionRequested => Self::WorkspaceProvisionReconcile,
             Topic::WorkspaceDeleteRequested => Self::WorkspaceDeleteDispatch,
+            Topic::AccountStateChanged => Self::AccountStateProject,
             Topic::InvitationEmailRequested => Self::InvitationEmailDeliver,
             Topic::AuthorizationEpochChanged => Self::AuthorizationEpochProject,
             Topic::AuthorizationSigningKeyPublished => Self::AuthorizationSigningKeyRotate,
@@ -387,7 +467,8 @@ pub fn manifest() -> CompositionManifest {
             CapabilityBinding::arn(keys::CONTROL_QUEUE_ARN, ControlQueueConsume::ID),
             CapabilityBinding::arn(keys::SES_IDENTITY_ARN, MailSend::ID),
             CapabilityBinding::resource(keys::SIGNING_SECRET_PREFIX, SigningKeyAdminister::ID),
-            CapabilityBinding::resource(keys::REGIONAL_ENDPOINTS, RegionalControlInvoke::ID),
+            CapabilityBinding::resource(keys::REGIONAL_FUNCTIONS, RegionalControlInvoke::ID),
+            CapabilityBinding::resource(keys::REGIONAL_PROJECTIONS, ControlWrite::ID),
         ],
     }
 }
@@ -401,9 +482,12 @@ pub const PERMISSIONS: &[&str] = &[
     "rds-data:CommitTransaction",
     "rds-data:ExecuteStatement",
     "rds-data:RollbackTransaction",
+    "dynamodb:GetItem",
+    "dynamodb:PutItem",
     "sqs:ChangeMessageVisibility",
     "sqs:DeleteMessage",
     "sqs:ReceiveMessage",
+    "sqs:GetQueueAttributes",
     "secretsmanager:CreateSecret",
     "secretsmanager:DeleteSecret",
     "secretsmanager:GetSecretValue",
@@ -411,6 +495,7 @@ pub const PERMISSIONS: &[&str] = &[
     "kms:Decrypt",
     "kms:GenerateDataKey",
     "ses:SendEmail",
+    "ses:GetEmailIdentity",
     "lambda:InvokeFunction",
 ];
 
@@ -425,10 +510,14 @@ pub struct Probes {
     pub aurora: bool,
     /// The control queue is reachable.
     pub queue: bool,
-    /// The endpoint map covers every launch region.
-    pub endpoints: bool,
+    /// Every direct regional function is configured.
+    pub functions: bool,
+    /// Every regional authorization projection answered.
+    pub projections: bool,
     /// The sender identity resolved.
     pub mail_identity: bool,
+    /// The signing secret prefix is listable.
+    pub signing: bool,
 }
 
 impl Probes {
@@ -436,8 +525,10 @@ impl Probes {
     pub const NONE: Self = Self {
         aurora: false,
         queue: false,
-        endpoints: false,
+        functions: false,
+        projections: false,
         mail_identity: false,
+        signing: false,
     };
 }
 
@@ -456,12 +547,20 @@ pub fn readiness(probes: Probes) -> Readiness {
                 resolved: probes.queue,
             },
             Dependency {
-                name: "regional-endpoint-map",
-                resolved: probes.endpoints,
+                name: "regional-function-map",
+                resolved: probes.functions,
+            },
+            Dependency {
+                name: "regional-authz-projections",
+                resolved: probes.projections,
             },
             Dependency {
                 name: "ses-identity",
                 resolved: probes.mail_identity,
+            },
+            Dependency {
+                name: "signing-secret-prefix",
+                resolved: probes.signing,
             },
         ],
     )
@@ -499,6 +598,9 @@ pub enum RunError {
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] CompositionError),
+    /// A required authority refused its real startup probe.
+    #[error("dependency `{0}` refused startup: {1}")]
+    Dependency(&'static str, String),
     /// The runtime stopped.
     #[error("the runtime stopped: {0}")]
     Runtime(String),
@@ -536,9 +638,147 @@ pub async fn run(
             config.region.as_str().to_owned(),
         ),
     );
-    lambda_http::run(app(readiness(Probes::NONE)))
+    let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let data_config = aex_rds_data::DataApiConfig::new(
+        aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::DatabaseName::parse(&config.database)
+            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+    );
+    let data = aex_rds_data::DataApiClient::new(
+        std::sync::Arc::new(aex_rds_data::AwsTransport::new(
+            aws_sdk_rdsdata::Client::new(&aws),
+            &data_config,
+        )),
+        data_config,
+    );
+    data.query::<Ok1>(aex_rds_data::Statement::new(
+        aex_control_aurora::sql::READINESS_PROBE,
+    ))
+    .await
+    .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
+
+    aws_sdk_sqs::Client::new(&aws)
+        .get_queue_attributes()
+        .queue_url(&config.control_queue_url)
+        .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
+        .send()
         .await
-        .map_err(|error| RunError::Runtime(error.to_string()))
+        .map_err(|error| RunError::Dependency("control-queue", error.to_string()))?;
+    let identity = config
+        .ses_identity_arn
+        .rsplit_once("identity/")
+        .map(|(_, identity)| identity)
+        .ok_or_else(|| {
+            RunError::Dependency("ses-identity", "ARN has no identity resource".to_owned())
+        })?;
+    let ses = aws_sdk_sesv2::Client::new(&aws);
+    ses.get_email_identity()
+        .email_identity(identity)
+        .send()
+        .await
+        .map_err(|error| RunError::Dependency("ses-identity", error.to_string()))?;
+
+    let signing = std::sync::Arc::new(runtime::SecretsSigningAdmin::new(
+        aws_sdk_secretsmanager::Client::new(&aws),
+        config.signing_secret_prefix.clone(),
+    ));
+    signing
+        .probe()
+        .await
+        .map_err(|error| RunError::Dependency("signing-secret-prefix", error))?;
+
+    let mut projections = BTreeMap::new();
+    for (region, table) in &config.regional_projections {
+        let regional_aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(region.as_str()))
+            .load()
+            .await;
+        let writer = aex_session_dynamodb::projection_write::ProjectionWriter::new(
+            aws_sdk_dynamodb::Client::new(&regional_aws),
+            table.clone(),
+        );
+        writer
+            .probe()
+            .await
+            .map_err(|error| RunError::Dependency("regional-authz-projection", error))?;
+        projections.insert(*region, writer);
+    }
+    let concrete_store = std::sync::Arc::new(aex_control_aurora::AuroraControlStore::new(data));
+    let store: std::sync::Arc<dyn runtime::Store> = concrete_store;
+    let regional: std::sync::Arc<dyn aex_control_app::ports::RegionalControlPort> =
+        std::sync::Arc::new(aex_central_runtime::LambdaRegionalControl::new(
+            aws_sdk_lambda::Client::new(&aws),
+            config.regional_functions.clone(),
+        ));
+    let worker = std::sync::Arc::new(runtime::Worker::new(
+        store,
+        regional,
+        projections,
+        std::sync::Arc::new(runtime::SesMail::new(ses, config.mail_from.clone())),
+        signing,
+        std::sync::Arc::new(aex_central_runtime::SystemClock),
+        format!("{}:{}", DEPLOYABLE.as_str(), config.region.as_str()),
+        config.batch_size,
+        time::Duration::milliseconds(i64::try_from(config.lease_ms).unwrap_or(i64::MAX)),
+    ));
+
+    run_lambda(worker).await
+}
+
+async fn run_lambda(worker: std::sync::Arc<runtime::Worker>) -> Result<(), RunError> {
+    lambda_runtime::run(lambda_runtime::service_fn(
+        move |event: lambda_runtime::LambdaEvent<serde_json::Value>| {
+            let worker = std::sync::Arc::clone(&worker);
+            async move { handle_event(worker.as_ref(), event.payload).await }
+        },
+    ))
+    .await
+    .map_err(|error| RunError::Runtime(error.to_string()))
+}
+
+async fn handle_event(
+    worker: &runtime::Worker,
+    value: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
+
+    if value.get("Records").is_some() {
+        let Ok(event) = serde_json::from_value::<SqsEvent>(value) else {
+            return Ok(serde_json::json!({
+                "batchItemFailures": [{ "itemIdentifier": "malformed-sqs-event" }]
+            }));
+        };
+        let mut response = SqsBatchResponse::default();
+        for record in event.records {
+            if worker.tick().await.is_err() {
+                let mut failure = BatchItemFailure::default();
+                failure.item_identifier = record
+                    .message_id
+                    .unwrap_or_else(|| "missing-message-id".to_owned());
+                response.batch_item_failures.push(failure);
+            }
+        }
+        return Ok(serde_json::to_value(response).unwrap_or_else(|_| {
+            serde_json::json!({
+                "batchItemFailures": [{ "itemIdentifier": "response-encode-failed" }]
+            })
+        }));
+    }
+    worker.scheduled().await?;
+    Ok(serde_json::json!({}))
+}
+
+struct Ok1;
+
+impl aex_rds_data::Row for Ok1 {
+    fn from_record(record: &aex_rds_data::Record<'_>) -> Result<Self, aex_rds_data::DecodeError> {
+        record.expect_arity(1)?;
+        record.i64(0)?;
+        Ok(Self)
+    }
 }
 
 #[tokio::main]
@@ -584,16 +824,24 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use tower::ServiceExt as _;
 
-    fn every_region() -> String {
+    fn every_function() -> String {
         Region::ALL
             .iter()
             .map(|region| {
                 format!(
-                    "{}=https://control.{}.aex.dev",
+                    "{}=arn:aws:lambda:{}:000000000000:function:aex-regional-control",
                     region.as_str(),
                     region.as_str()
                 )
             })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn every_projection() -> String {
+        Region::ALL
+            .iter()
+            .map(|region| format!("{}=aex-prd-authz-projection", region.as_str()))
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -616,9 +864,14 @@ mod tests {
                 "arn:aws:sqs:eu-west-1:000000000000:aex-control.fifo".to_owned(),
             ),
             (
+                keys::CONTROL_QUEUE_URL,
+                "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-control.fifo".to_owned(),
+            ),
+            (
                 keys::SES_IDENTITY_ARN,
                 "arn:aws:ses:eu-west-1:000000000000:identity/aex.dev".to_owned(),
             ),
+            (keys::MAIL_FROM, "no-reply@aex.dev".to_owned()),
             (
                 keys::SIGNING_SECRET_PREFIX,
                 "aex/prd/authz-signing/".to_owned(),
@@ -627,7 +880,8 @@ mod tests {
             (keys::ROLE, "aex_control_worker".to_owned()),
             (keys::BATCH_SIZE, "10".to_owned()),
             (keys::LEASE_MS, "60000".to_owned()),
-            (keys::REGIONAL_ENDPOINTS, every_region()),
+            (keys::REGIONAL_FUNCTIONS, every_function()),
+            (keys::REGIONAL_PROJECTIONS, every_projection()),
         ])
     }
 
@@ -639,7 +893,8 @@ mod tests {
     fn a_complete_environment_is_accepted() {
         let config = read(&complete()).expect("a complete environment");
         assert_eq!(config.batch_size, 10);
-        assert_eq!(config.regional_endpoints.len(), Region::ALL.len());
+        assert_eq!(config.regional_functions.len(), Region::ALL.len());
+        assert_eq!(config.regional_projections.len(), Region::ALL.len());
     }
 
     #[test]
@@ -656,27 +911,28 @@ mod tests {
     }
 
     #[test]
-    fn an_endpoint_map_missing_a_region_is_refused() {
+    fn a_function_map_missing_a_region_is_refused() {
         let mut vars = complete();
         vars.insert(
-            keys::REGIONAL_ENDPOINTS,
-            "eu-west-1=https://control.eu-west-1.aex.dev".to_owned(),
+            keys::REGIONAL_FUNCTIONS,
+            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
+                .to_owned(),
         );
         let error = read(&vars).expect_err("an incomplete map strands a region");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == keys::REGIONAL_ENDPOINTS)
+            matches!(error, ConfigError::Invalid { name, .. } if name == keys::REGIONAL_FUNCTIONS)
         );
     }
 
     #[test]
     fn a_repeated_or_unknown_region_is_refused() {
         for raw in [
-            "mars-central-1=https://x",
-            "eu-west-1=https://a,eu-west-1=https://b",
+            "mars-central-1=arn:aws:lambda:mars-central-1:0:function:x",
+            "eu-west-1=arn:aws:lambda:eu-west-1:0:function:a,eu-west-1=arn:aws:lambda:eu-west-1:0:function:b",
             "eu-west-1",
         ] {
             let mut vars = complete();
-            vars.insert(keys::REGIONAL_ENDPOINTS, raw.to_owned());
+            vars.insert(keys::REGIONAL_FUNCTIONS, raw.to_owned());
             assert!(read(&vars).is_err(), "{raw}");
         }
     }
@@ -787,13 +1043,15 @@ mod tests {
     }
 
     #[test]
-    fn a_worker_with_an_incomplete_endpoint_map_is_never_ready() {
+    fn a_worker_with_an_incomplete_projection_map_is_never_ready() {
         assert!(
             !readiness(Probes {
                 aurora: true,
                 queue: true,
-                endpoints: false,
-                mail_identity: true
+                functions: true,
+                projections: false,
+                mail_identity: true,
+                signing: true,
             })
             .is_ready()
         );

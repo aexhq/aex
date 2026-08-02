@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
+//! `sha256:17cc35493241db0815502eb31a2e2f691aa2e1f1f06e1f489c3fa362ff783369`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -43,10 +43,18 @@ pub enum ErrorCode {
     Gone,
     /// `idempotency_conflict` — the idempotency key was reused with a different intent
     IdempotencyConflict,
+    /// `idempotency_in_flight` — an identical idempotent request is still in flight
+    IdempotencyInFlight,
+    /// `api_key_secret_unavailable` — the API key was already created and its one-time secret
+    /// cannot be replayed
+    ApiKeySecretUnavailable,
     /// `operation_idempotency_conflict` — the operation id was reused with a different intent
     OperationIdempotencyConflict,
     /// `invalid_request` — the request body failed strict validation
     InvalidRequest,
+    /// `invalid_scope` — the requested scope set is empty, duplicated, unknown, or exceeds the
+    /// credential ceiling
+    InvalidScope,
     /// `invalid_cursor` — the cursor is malformed, expired, or bound to a different query
     InvalidCursor,
     /// `invalid_file_selection` — the include or exclude selection is not a valid file selection
@@ -69,6 +77,10 @@ pub enum ErrorCode {
     SessionDeleted,
     /// `deletion_in_progress` — a deletion of this resource is already running
     DeletionInProgress,
+    /// `resource_conflict` — the requested resource conflicts with an existing resource or state
+    ResourceConflict,
+    /// `last_owner_required` — an organization must retain at least one active owner
+    LastOwnerRequired,
     /// `operation_not_cancelable` — the operation has passed its cancellation point
     OperationNotCancelable,
     /// `approval_not_found` — no such approval
@@ -146,6 +158,10 @@ pub enum ErrorCode {
     RateLimited,
     /// `upstream_error` — a dependency failed
     UpstreamError,
+    /// `workspace_provision_pending` — workspace provisioning may still be completing
+    WorkspaceProvisionPending,
+    /// `commit_outcome_unknown` — the commit outcome is unknown
+    CommitOutcomeUnknown,
     /// `internal_error` — an unexpected condition occurred
     InternalError,
 }
@@ -165,8 +181,11 @@ impl ErrorCode {
         ErrorCode::NotFound,
         ErrorCode::Gone,
         ErrorCode::IdempotencyConflict,
+        ErrorCode::IdempotencyInFlight,
+        ErrorCode::ApiKeySecretUnavailable,
         ErrorCode::OperationIdempotencyConflict,
         ErrorCode::InvalidRequest,
+        ErrorCode::InvalidScope,
         ErrorCode::InvalidCursor,
         ErrorCode::InvalidFileSelection,
         ErrorCode::InvalidRange,
@@ -178,6 +197,8 @@ impl ErrorCode {
         ErrorCode::SessionDeleting,
         ErrorCode::SessionDeleted,
         ErrorCode::DeletionInProgress,
+        ErrorCode::ResourceConflict,
+        ErrorCode::LastOwnerRequired,
         ErrorCode::OperationNotCancelable,
         ErrorCode::ApprovalNotFound,
         ErrorCode::ApprovalAlreadyResolved,
@@ -216,6 +237,8 @@ impl ErrorCode {
         ErrorCode::ObservabilityUnavailable,
         ErrorCode::RateLimited,
         ErrorCode::UpstreamError,
+        ErrorCode::WorkspaceProvisionPending,
+        ErrorCode::CommitOutcomeUnknown,
         ErrorCode::InternalError,
     ];
 
@@ -235,8 +258,11 @@ impl ErrorCode {
             Self::NotFound => "not_found",
             Self::Gone => "gone",
             Self::IdempotencyConflict => "idempotency_conflict",
+            Self::IdempotencyInFlight => "idempotency_in_flight",
+            Self::ApiKeySecretUnavailable => "api_key_secret_unavailable",
             Self::OperationIdempotencyConflict => "operation_idempotency_conflict",
             Self::InvalidRequest => "invalid_request",
+            Self::InvalidScope => "invalid_scope",
             Self::InvalidCursor => "invalid_cursor",
             Self::InvalidFileSelection => "invalid_file_selection",
             Self::InvalidRange => "invalid_range",
@@ -248,6 +274,8 @@ impl ErrorCode {
             Self::SessionDeleting => "session_deleting",
             Self::SessionDeleted => "session_deleted",
             Self::DeletionInProgress => "deletion_in_progress",
+            Self::ResourceConflict => "resource_conflict",
+            Self::LastOwnerRequired => "last_owner_required",
             Self::OperationNotCancelable => "operation_not_cancelable",
             Self::ApprovalNotFound => "approval_not_found",
             Self::ApprovalAlreadyResolved => "approval_already_resolved",
@@ -286,6 +314,8 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => "observability_unavailable",
             Self::RateLimited => "rate_limited",
             Self::UpstreamError => "upstream_error",
+            Self::WorkspaceProvisionPending => "workspace_provision_pending",
+            Self::CommitOutcomeUnknown => "commit_outcome_unknown",
             Self::InternalError => "internal_error",
         }
     }
@@ -306,8 +336,11 @@ impl ErrorCode {
             Self::NotFound => 404,
             Self::Gone => 410,
             Self::IdempotencyConflict => 409,
+            Self::IdempotencyInFlight => 409,
+            Self::ApiKeySecretUnavailable => 409,
             Self::OperationIdempotencyConflict => 409,
             Self::InvalidRequest => 400,
+            Self::InvalidScope => 400,
             Self::InvalidCursor => 400,
             Self::InvalidFileSelection => 400,
             Self::InvalidRange => 400,
@@ -319,6 +352,8 @@ impl ErrorCode {
             Self::SessionDeleting => 409,
             Self::SessionDeleted => 410,
             Self::DeletionInProgress => 409,
+            Self::ResourceConflict => 409,
+            Self::LastOwnerRequired => 409,
             Self::OperationNotCancelable => 409,
             Self::ApprovalNotFound => 404,
             Self::ApprovalAlreadyResolved => 409,
@@ -357,6 +392,8 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => 503,
             Self::RateLimited => 429,
             Self::UpstreamError => 502,
+            Self::WorkspaceProvisionPending => 503,
+            Self::CommitOutcomeUnknown => 503,
             Self::InternalError => 500,
         }
     }
@@ -377,8 +414,11 @@ impl ErrorCode {
             Self::NotFound => false,
             Self::Gone => false,
             Self::IdempotencyConflict => false,
+            Self::IdempotencyInFlight => true,
+            Self::ApiKeySecretUnavailable => false,
             Self::OperationIdempotencyConflict => false,
             Self::InvalidRequest => false,
+            Self::InvalidScope => false,
             Self::InvalidCursor => false,
             Self::InvalidFileSelection => false,
             Self::InvalidRange => false,
@@ -390,6 +430,8 @@ impl ErrorCode {
             Self::SessionDeleting => false,
             Self::SessionDeleted => false,
             Self::DeletionInProgress => false,
+            Self::ResourceConflict => false,
+            Self::LastOwnerRequired => false,
             Self::OperationNotCancelable => false,
             Self::ApprovalNotFound => false,
             Self::ApprovalAlreadyResolved => false,
@@ -428,6 +470,8 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => true,
             Self::RateLimited => true,
             Self::UpstreamError => true,
+            Self::WorkspaceProvisionPending => true,
+            Self::CommitOutcomeUnknown => true,
             Self::InternalError => false,
         }
     }
@@ -448,8 +492,11 @@ impl ErrorCode {
             Self::NotFound => ErrorClass::NotFound,
             Self::Gone => ErrorClass::NotFound,
             Self::IdempotencyConflict => ErrorClass::Conflict,
+            Self::IdempotencyInFlight => ErrorClass::Conflict,
+            Self::ApiKeySecretUnavailable => ErrorClass::Conflict,
             Self::OperationIdempotencyConflict => ErrorClass::Conflict,
             Self::InvalidRequest => ErrorClass::Validation,
+            Self::InvalidScope => ErrorClass::Validation,
             Self::InvalidCursor => ErrorClass::Validation,
             Self::InvalidFileSelection => ErrorClass::Validation,
             Self::InvalidRange => ErrorClass::Validation,
@@ -461,6 +508,8 @@ impl ErrorCode {
             Self::SessionDeleting => ErrorClass::State,
             Self::SessionDeleted => ErrorClass::NotFound,
             Self::DeletionInProgress => ErrorClass::Conflict,
+            Self::ResourceConflict => ErrorClass::Conflict,
+            Self::LastOwnerRequired => ErrorClass::State,
             Self::OperationNotCancelable => ErrorClass::State,
             Self::ApprovalNotFound => ErrorClass::NotFound,
             Self::ApprovalAlreadyResolved => ErrorClass::Conflict,
@@ -499,6 +548,8 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => ErrorClass::Unavailable,
             Self::RateLimited => ErrorClass::Quota,
             Self::UpstreamError => ErrorClass::Unavailable,
+            Self::WorkspaceProvisionPending => ErrorClass::Unavailable,
+            Self::CommitOutcomeUnknown => ErrorClass::Unavailable,
             Self::InternalError => ErrorClass::Internal,
         }
     }
@@ -519,8 +570,11 @@ impl ErrorCode {
             Self::NotFound => PrecedenceStage::TombstoneAndParent,
             Self::Gone => PrecedenceStage::TombstoneAndParent,
             Self::IdempotencyConflict => PrecedenceStage::IdempotencyIdentity,
+            Self::IdempotencyInFlight => PrecedenceStage::IdempotencyIdentity,
+            Self::ApiKeySecretUnavailable => PrecedenceStage::IdempotencyIdentity,
             Self::OperationIdempotencyConflict => PrecedenceStage::OperationIdentity,
             Self::InvalidRequest => PrecedenceStage::BodyLimitAndParse,
+            Self::InvalidScope => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidCursor => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidFileSelection => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidRange => PrecedenceStage::BodyLimitAndParse,
@@ -532,6 +586,8 @@ impl ErrorCode {
             Self::SessionDeleting => PrecedenceStage::TombstoneAndParent,
             Self::SessionDeleted => PrecedenceStage::TombstoneAndParent,
             Self::DeletionInProgress => PrecedenceStage::TombstoneAndParent,
+            Self::ResourceConflict => PrecedenceStage::DomainState,
+            Self::LastOwnerRequired => PrecedenceStage::DomainState,
             Self::OperationNotCancelable => PrecedenceStage::DomainState,
             Self::ApprovalNotFound => PrecedenceStage::TombstoneAndParent,
             Self::ApprovalAlreadyResolved => PrecedenceStage::DomainState,
@@ -570,6 +626,8 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => PrecedenceStage::DomainState,
             Self::RateLimited => PrecedenceStage::DomainState,
             Self::UpstreamError => PrecedenceStage::Commit,
+            Self::WorkspaceProvisionPending => PrecedenceStage::Commit,
+            Self::CommitOutcomeUnknown => PrecedenceStage::Commit,
             Self::InternalError => PrecedenceStage::Commit,
         }
     }
@@ -590,10 +648,17 @@ impl ErrorCode {
             Self::NotFound => "no such resource",
             Self::Gone => "the resource was deleted",
             Self::IdempotencyConflict => "the idempotency key was reused with a different intent",
+            Self::IdempotencyInFlight => "an identical idempotent request is still in flight",
+            Self::ApiKeySecretUnavailable => {
+                "the API key was already created and its one-time secret cannot be replayed"
+            }
             Self::OperationIdempotencyConflict => {
                 "the operation id was reused with a different intent"
             }
             Self::InvalidRequest => "the request body failed strict validation",
+            Self::InvalidScope => {
+                "the requested scope set is empty, duplicated, unknown, or exceeds the credential ceiling"
+            }
             Self::InvalidCursor => {
                 "the cursor is malformed, expired, or bound to a different query"
             }
@@ -611,6 +676,10 @@ impl ErrorCode {
             Self::SessionDeleting => "the session is being deleted",
             Self::SessionDeleted => "the session was deleted",
             Self::DeletionInProgress => "a deletion of this resource is already running",
+            Self::ResourceConflict => {
+                "the requested resource conflicts with an existing resource or state"
+            }
+            Self::LastOwnerRequired => "an organization must retain at least one active owner",
             Self::OperationNotCancelable => "the operation has passed its cancellation point",
             Self::ApprovalNotFound => "no such approval",
             Self::ApprovalAlreadyResolved => "the approval already has a decision",
@@ -659,6 +728,8 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => "the observation authority could not be reached",
             Self::RateLimited => "too many requests",
             Self::UpstreamError => "a dependency failed",
+            Self::WorkspaceProvisionPending => "workspace provisioning may still be completing",
+            Self::CommitOutcomeUnknown => "the commit outcome is unknown",
             Self::InternalError => "an unexpected condition occurred",
         }
     }
@@ -679,8 +750,13 @@ impl ErrorCode {
             Self::NotFound => None,
             Self::Gone => None,
             Self::IdempotencyConflict => None,
+            Self::IdempotencyInFlight => None,
+            Self::ApiKeySecretUnavailable => {
+                Some("use the originally returned secret or mint a replacement key")
+            }
             Self::OperationIdempotencyConflict => None,
             Self::InvalidRequest => None,
+            Self::InvalidScope => None,
             Self::InvalidCursor => None,
             Self::InvalidFileSelection => None,
             Self::InvalidRange => None,
@@ -692,6 +768,8 @@ impl ErrorCode {
             Self::SessionDeleting => None,
             Self::SessionDeleted => None,
             Self::DeletionInProgress => None,
+            Self::ResourceConflict => None,
+            Self::LastOwnerRequired => None,
             Self::OperationNotCancelable => None,
             Self::ApprovalNotFound => None,
             Self::ApprovalAlreadyResolved => None,
@@ -734,6 +812,12 @@ impl ErrorCode {
             Self::ObservabilityUnavailable => None,
             Self::RateLimited => None,
             Self::UpstreamError => None,
+            Self::WorkspaceProvisionPending => {
+                Some("retry the identical request with the same Idempotency-Key")
+            }
+            Self::CommitOutcomeUnknown => {
+                Some("retry the identical request with the same replay identity")
+            }
             Self::InternalError => None,
         }
     }

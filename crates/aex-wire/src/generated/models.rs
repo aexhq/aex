@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
+//! `sha256:17cc35493241db0815502eb31a2e2f691aa2e1f1f06e1f489c3fa362ff783369`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -240,8 +240,8 @@ impl Currency {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardBootstrap {
-    /// Their account operational state.
-    pub account: AccountOperationalState,
+    /// Current operational state for each organization in this snapshot.
+    pub accounts: Vec<OrganizationAccount>,
     /// Their email address.
     pub email: String,
     /// When this snapshot was taken.
@@ -501,6 +501,16 @@ pub struct Organization {
     pub name: String,
     /// URL-safe name.
     pub slug: String,
+}
+
+/// One organization's operational state in a multi-organization dashboard snapshot.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct OrganizationAccount {
+    /// The organization this state governs.
+    pub organization_id: OrganizationId,
+    /// The organization's current operational state.
+    pub state: AccountOperationalState,
 }
 
 /// Create an organization.
@@ -4309,6 +4319,8 @@ pub struct CentralOperationsListQuery {
     /// Page size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// The organization whose operations are listed.
+    pub organization_id: OrganizationId,
     /// Restrict to one status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<OperationStatus>,

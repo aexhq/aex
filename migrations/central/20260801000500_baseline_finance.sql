@@ -300,6 +300,58 @@ CREATE TABLE finance.billing_account (
   CHECK ((state = 'active') = (state_reason IS NULL))
 );
 
+-- Account admission state is a cross-region revocation fact. The state row,
+-- account epoch and one durable projection message per live workspace move in
+-- the same database transaction, so a pause can never commit without a path to
+-- every affected regional placement.
+CREATE FUNCTION finance.prepare_billing_account_state_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE'
+     AND (NEW.state, NEW.state_reason) IS DISTINCT FROM (OLD.state, OLD.state_reason) THEN
+    NEW.revision := OLD.revision + 1;
+    NEW.updated_at := now();
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER billing_account_prepare_state_change
+BEFORE UPDATE OF state, state_reason ON finance.billing_account
+FOR EACH ROW EXECUTE FUNCTION finance.prepare_billing_account_state_change();
+
+CREATE FUNCTION finance.enqueue_billing_account_state_change() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = finance, control, pg_temp AS $$
+DECLARE account_epoch bigint;
+BEGIN
+  IF TG_OP = 'INSERT'
+     OR (NEW.state, NEW.state_reason) IS DISTINCT FROM (OLD.state, OLD.state_reason) THEN
+    account_epoch := control.bump_account_epoch(NEW.org_id);
+    INSERT INTO control.outbox_message
+      (id, topic, dedupe_key, group_key, payload, attempts, available_at, created_at)
+    SELECT gen_random_uuid(), 'account.state.changed',
+           w.id::text || ':' || account_epoch::text, NEW.org_id::text,
+           jsonb_build_object(
+             'workspaceId', w.id,
+             'organizationId', NEW.org_id,
+             'region', w.region,
+             'accountEpoch', account_epoch,
+             'accountRevision', NEW.revision,
+             'changedAtMs', floor(extract(epoch FROM NEW.updated_at) * 1000)::bigint
+           ),
+           0, NEW.updated_at, NEW.updated_at
+      FROM control.workspace w
+     WHERE w.organization_id = NEW.org_id AND w.status <> 'deleted'
+    ON CONFLICT (topic, dedupe_key) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER billing_account_enqueue_state_change
+AFTER INSERT OR UPDATE OF state, state_reason ON finance.billing_account
+FOR EACH ROW EXECUTE FUNCTION finance.enqueue_billing_account_state_change();
+
 CREATE TABLE finance.statement (
   statement_id uuid PRIMARY KEY,
   org_id uuid NOT NULL REFERENCES control.organization (id),

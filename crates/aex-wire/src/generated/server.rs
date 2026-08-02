@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
+//! `sha256:17cc35493241db0815502eb31a2e2f691aa2e1f1f06e1f489c3fa362ff783369`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1253,7 +1253,7 @@ pub trait CentralOperationsApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<Operation>> + Send;
 
     /// `GET /api/operations`
-    /// List central durable operations.
+    /// List central durable operations for one organization.
     fn central_operations_list(
         &self,
         cx: &RequestContext,
@@ -1294,6 +1294,7 @@ pub async fn dispatch_central_operations<A: CentralOperationsApi + ?Sized>(
                 cursor: reader.optional("cursor")?,
                 kind: reader.optional("kind")?,
                 limit: reader.optional_bounded("limit", 1, 1000)?,
+                organization_id: reader.required("organizationId")?,
                 status: reader.optional("status")?,
             };
             expect_no_body(&raw)?;

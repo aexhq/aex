@@ -22,10 +22,10 @@ pub mod ports;
 pub mod use_cases;
 
 pub use ports::{
-    AuthorizationReader, ControlStore, EffectError, MailerPort, Page, RegionalControlPort,
-    RequestContext, StoreError, TxOutcome, UnknownCommit,
+    AuthorizationReader, ControlStore, ControlViewStore, EffectError, MailerPort, Page,
+    RegionalControlPort, RequestContext, StoreError, TxOutcome, UnknownCommit,
 };
 pub use use_cases::{
     AcceptInvitations, CancelOperation, ControlError, CreateApiKey, CreateInvitation,
-    CreateOrganization, CreateWorkspace, DeleteWorkspace, RevokeApiKey,
+    CreateOrganization, CreateWorkspace, CreatedApiKey, DeleteWorkspace, RevokeApiKey,
 };

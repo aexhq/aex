@@ -4,9 +4,13 @@
   "additionalProperties": false,
   "description": "The one bounded read that fills the dashboard shell.",
   "properties": {
-    "account": {
-      "$ref": "aex:schema:AccountOperationalState",
-      "description": "Their account operational state."
+    "accounts": {
+      "description": "Current operational state for each organization in this snapshot.",
+      "items": {
+        "$ref": "aex:schema:OrganizationAccount"
+      },
+      "maxItems": 100,
+      "type": "array"
     },
     "email": {
       "description": "Their email address.",
@@ -44,7 +48,7 @@
     }
   },
   "required": [
-    "account",
+    "accounts",
     "email",
     "generatedAt",
     "organizations",

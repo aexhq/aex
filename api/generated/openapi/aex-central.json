@@ -503,9 +503,13 @@
       "DashboardBootstrap": {
         "additionalProperties": false,
         "properties": {
-          "account": {
-            "$ref": "aex:schema:AccountOperationalState",
-            "description": "Their account operational state."
+          "accounts": {
+            "description": "Current operational state for each organization in this snapshot.",
+            "items": {
+              "$ref": "aex:schema:OrganizationAccount"
+            },
+            "maxItems": 100,
+            "type": "array"
           },
           "email": {
             "description": "Their email address.",
@@ -543,7 +547,7 @@
           }
         },
         "required": [
-          "account",
+          "accounts",
           "email",
           "generatedAt",
           "organizations",
@@ -1491,6 +1495,26 @@
           "id",
           "name",
           "slug"
+        ],
+        "type": "object"
+      },
+      "OrganizationAccount": {
+        "additionalProperties": false,
+        "properties": {
+          "organizationId": {
+            "description": "The organization this state governs.",
+            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "organization"
+          },
+          "state": {
+            "$ref": "aex:schema:AccountOperationalState",
+            "description": "The organization's current operational state."
+          }
+        },
+        "required": [
+          "organizationId",
+          "state"
         ],
         "type": "object"
       },
@@ -2910,6 +2934,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Mint a workspace API key whose value is returned once.",
@@ -2924,8 +2958,13 @@
           "insufficient_scope",
           "not_found",
           "idempotency_conflict",
+          "idempotency_in_flight",
+          "api_key_secret_unavailable",
           "invalid_request",
-          "limit_exceeded"
+          "invalid_scope",
+          "limit_exceeded",
+          "resource_conflict",
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -2986,7 +3025,27 @@
             },
             "description": "Error."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3008,7 +3067,9 @@
           "forbidden",
           "insufficient_scope",
           "not_found",
-          "precondition_failed"
+          "resource_conflict",
+          "precondition_failed",
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "optional_if_match",
         "x-aex-idempotency": "none",
@@ -3374,6 +3435,17 @@
             }
           },
           {
+            "description": "The organization whose operations are listed.",
+            "in": "query",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+              "type": "string",
+              "x-aex-id": "organization"
+            }
+          },
+          {
             "description": "Restrict to one status.",
             "in": "query",
             "name": "status",
@@ -3415,7 +3487,27 @@
             },
             "description": "Error."
           },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3426,7 +3518,7 @@
             "description": "Error."
           }
         },
-        "summary": "List central durable operations.",
+        "summary": "List central durable operations for one organization.",
         "tags": [
           "operations"
         ],
@@ -3434,13 +3526,16 @@
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
+          "forbidden",
           "insufficient_scope",
           "invalid_request",
-          "invalid_cursor"
+          "invalid_cursor",
+          "account_paused",
+          "account_state_unavailable"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
+        "x-aex-pause-exempt": false,
         "x-aex-safe-retry": true,
         "x-aex-scope": "operations:read",
         "x-aex-transport": "unary"
@@ -3785,6 +3880,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Create an organization whose creator becomes owner.",
@@ -3797,8 +3902,11 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
+          "idempotency_in_flight",
           "invalid_request",
-          "limit_exceeded"
+          "limit_exceeded",
+          "resource_conflict",
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -4747,6 +4855,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Invite a person to the organization.",
@@ -4761,8 +4879,11 @@
           "insufficient_scope",
           "not_found",
           "idempotency_conflict",
+          "idempotency_in_flight",
           "invalid_request",
-          "limit_exceeded"
+          "limit_exceeded",
+          "resource_conflict",
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -5066,6 +5187,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Create a region-pinned workspace.",
@@ -5079,9 +5210,13 @@
           "forbidden",
           "insufficient_scope",
           "idempotency_conflict",
+          "idempotency_in_flight",
           "invalid_request",
           "limit_exceeded",
-          "upstream_error"
+          "resource_conflict",
+          "upstream_error",
+          "workspace_provision_pending",
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -5277,6 +5412,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Admit the global workspace-deletion operation.",
@@ -5291,9 +5436,12 @@
           "insufficient_scope",
           "not_found",
           "gone",
+          "idempotency_in_flight",
           "operation_idempotency_conflict",
           "invalid_request",
-          "deletion_in_progress"
+          "deletion_in_progress",
+          "resource_conflict",
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",

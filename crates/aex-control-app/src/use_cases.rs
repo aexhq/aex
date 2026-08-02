@@ -321,7 +321,11 @@ impl DeleteWorkspace {
             fence: operation.fence,
         };
         match regional.delete_workspace(&request).await {
-            Ok(response) if response.removed => {
+            // `removed = false` is still the authoritative postcondition: the
+            // regional half is absent. This is the expected answer when a
+            // response was lost after the first delete and the worker repeats
+            // the exact fenced request.
+            Ok(_) => {
                 let complete = crate::ports::CompleteWorkspaceDeletionTx {
                     workspace_id: workspace.id,
                     operation_id: operation.id,
@@ -332,7 +336,6 @@ impl DeleteWorkspace {
                 let outcome = store.complete_workspace_deletion(&complete).await?;
                 settle(outcome).map(|(_, _)| ())
             }
-            Ok(_) => Err(ControlError::WorkspaceProvisionPending),
             Err(
                 EffectError::Unknown
                 | EffectError::Unavailable
@@ -367,6 +370,15 @@ fn audit_placeholder(workspace: &Workspace, now: OffsetDateTime) -> aex_control_
 /// Mint a workspace API key.
 pub struct CreateApiKey;
 
+/// The API-key metadata and whether this call performed the one plaintext-bearing mint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedApiKey {
+    /// The durable metadata.
+    pub key: aex_control_domain::ApiKey,
+    /// `true` only for the transaction that first committed the verifier.
+    pub first: bool,
+}
+
 impl CreateApiKey {
     /// Runs the command.
     ///
@@ -376,9 +388,9 @@ impl CreateApiKey {
     pub async fn run(
         store: &dyn ControlStore,
         command: &CreateApiKeyTx,
-    ) -> Result<aex_control_domain::ApiKey, ControlError> {
+    ) -> Result<CreatedApiKey, ControlError> {
         let outcome = store.create_api_key(command).await?;
-        settle(outcome).map(|(key, _)| key)
+        settle(outcome).map(|(key, first)| CreatedApiKey { key, first })
     }
 }
 

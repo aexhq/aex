@@ -632,6 +632,85 @@ async fn every_held_account_reads_as_paused_and_never_as_active() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_account_state_change_advances_its_epoch_and_enqueues_every_live_workspace() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+    let user = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0040);
+    let organization = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0041);
+    let workspace = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0042);
+    let operation = uuid::Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0043);
+    sqlx::query(
+        "INSERT INTO identity.user (id, email, status, created_at, updated_at) \
+         VALUES ($1, 'account-feed@b.test', 'active', now(), now())",
+    )
+    .bind(user)
+    .execute(&mut connection)
+    .await
+    .expect("person inserts");
+    sqlx::query(
+        "INSERT INTO control.organization \
+           (id, name, slug, created_at, updated_at, created_by_user_id) \
+         VALUES ($1, 'Account Feed', 'account-feed', now(), now(), $2)",
+    )
+    .bind(organization)
+    .bind(user)
+    .execute(&mut connection)
+    .await
+    .expect("organization inserts");
+    sqlx::query("SELECT finance.ensure_account($1)")
+        .bind(organization)
+        .execute(&mut connection)
+        .await
+        .expect("account inserts and initializes its epoch");
+    sqlx::query(
+        "INSERT INTO control.workspace \
+           (id, organization_id, name, slug, region, status, provision_operation_id, \
+            provision_fence, created_at, updated_at, activated_at, created_by_user_id) \
+         VALUES ($1, $2, 'Production', 'production', 'eu-west-1', 'active', $3, 1, \
+                 now(), now(), now(), $4)",
+    )
+    .bind(workspace)
+    .bind(organization)
+    .bind(operation)
+    .bind(user)
+    .execute(&mut connection)
+    .await
+    .expect("workspace inserts");
+
+    sqlx::query(
+        "UPDATE finance.billing_account \
+            SET state = 'payment_hold', state_reason = 'top_up_required' \
+          WHERE org_id = $1",
+    )
+    .bind(organization)
+    .execute(&mut connection)
+    .await
+    .expect("pause commits");
+
+    let epoch: i64 = sqlx::query_scalar(
+        "SELECT epoch FROM control.authorization_epoch \
+          WHERE subject_kind = 'account' AND subject_id = $1",
+    )
+    .bind(organization)
+    .fetch_one(&mut connection)
+    .await
+    .expect("account epoch exists");
+    assert_eq!(epoch, 2, "insert initialized one and pause advanced it");
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM control.outbox_message \
+          WHERE topic = 'account.state.changed' AND payload->>'workspaceId' = $1",
+    )
+    .bind(workspace.to_string())
+    .fetch_one(&mut connection)
+    .await
+    .expect("the workspace projection message exists");
+    assert_eq!(payload["organizationId"], organization.to_string());
+    assert_eq!(payload["accountEpoch"], 2);
+    assert_eq!(payload["accountRevision"], 1);
+    assert!(payload["changedAtMs"].as_i64().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_epoch_advances_only_through_its_security_definer_wrapper() {
     let fixture = Fixture::start().await;
 

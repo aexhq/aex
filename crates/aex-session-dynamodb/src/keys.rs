@@ -346,6 +346,7 @@ pub const ITEM_TYPES: &[&str] = &[
     "spend_reservation",
     "operation",
     "idempotency_receipt",
+    "regional_workspace_control",
 ];
 
 #[cfg(test)]

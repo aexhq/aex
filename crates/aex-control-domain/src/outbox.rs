@@ -19,6 +19,8 @@ pub enum Topic {
     WorkspaceProvisionRequested,
     /// A workspace's regional half must be removed.
     WorkspaceDeleteRequested,
+    /// A finance account state or epoch must be projected to one workspace.
+    AccountStateChanged,
     /// An invitation notification must be sent.
     InvitationEmailRequested,
     /// A revocation epoch advanced and every region must learn it.
@@ -29,9 +31,10 @@ pub enum Topic {
 
 impl Topic {
     /// Every topic.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::WorkspaceProvisionRequested,
         Self::WorkspaceDeleteRequested,
+        Self::AccountStateChanged,
         Self::InvitationEmailRequested,
         Self::AuthorizationEpochChanged,
         Self::AuthorizationSigningKeyPublished,
@@ -43,6 +46,7 @@ impl Topic {
         match self {
             Self::WorkspaceProvisionRequested => "workspace.provision.requested",
             Self::WorkspaceDeleteRequested => "workspace.delete.requested",
+            Self::AccountStateChanged => "account.state.changed",
             Self::InvitationEmailRequested => "invitation.email.requested",
             Self::AuthorizationEpochChanged => "authorization.epoch.changed",
             Self::AuthorizationSigningKeyPublished => "authorization.signing_key.published",
@@ -280,6 +284,6 @@ mod tests {
             assert_eq!(Topic::parse(topic.as_str()), Some(topic));
         }
         assert_eq!(Topic::parse("workspace.provision.done"), None);
-        assert_eq!(Topic::ALL.len(), 5);
+        assert_eq!(Topic::ALL.len(), 6);
     }
 }

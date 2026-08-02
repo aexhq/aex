@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
+//! `sha256:17cc35493241db0815502eb31a2e2f691aa2e1f1f06e1f489c3fa362ff783369`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -594,7 +594,7 @@ pub fn central_operation_get_request(
 }
 
 /// `GET /api/operations`
-/// List central durable operations.
+/// List central durable operations for one organization.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -610,6 +610,7 @@ pub fn central_operations_list_request(
     writer.put_option("cursor", query.cursor.as_ref());
     writer.put_option("kind", query.kind.as_ref());
     writer.put_option("limit", query.limit.as_ref());
+    writer.put("organizationId", &query.organization_id);
     writer.put_option("status", query.status.as_ref());
     Ok(WireRequest {
         route,
@@ -4118,7 +4119,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/operations`
-    /// List central durable operations.
+    /// List central durable operations for one organization.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
