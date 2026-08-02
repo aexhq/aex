@@ -309,7 +309,7 @@ pub const RUN_STATUSES: &[&str] = &[
 ];
 
 /// Every approval status value.
-pub const APPROVAL_STATUSES: &[&str] = &["pending", "approved", "denied", "cancelled"];
+pub const APPROVAL_STATUSES: &[&str] = &["pending", "approved", "denied", "cancelled", "expired"];
 
 /// Every reason a pending approval is withdrawn.
 pub const APPROVAL_CANCEL_CAUSES: &[&str] = &[

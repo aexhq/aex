@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:59e34898162c64c1db62bddd64160849b2d637a95288fba02d3694ca98accc7d`.
+//! `sha256:114b6fe24dbcbc2e2a694fe6097b9d5b570c5ce456aed0f8c756055fb2163f52`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -925,7 +925,7 @@ pub struct Operation {
     pub created_at: Timestamp,
     /// The terminal failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<ApiErrorBody>,
+    pub error: Option<OperationFailure>,
     /// The operation identity minted by the caller.
     pub id: OperationId,
     /// What the operation does.
@@ -951,6 +951,19 @@ pub struct Operation {
     pub updated_at: Timestamp,
     /// The owning workspace.
     pub workspace_id: WorkspaceId,
+}
+
+/// A durable operation failure. It carries no synthetic request identity.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct OperationFailure {
+    /// The stable public failure code.
+    pub code: ObservedErrorCode,
+    /// Customer-safe detail, when the domain produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<CanonicalJson>,
+    /// Whether the same operation step may be retried.
+    pub retryable: bool,
 }
 
 /// Every durable operation the platform admits.
@@ -2092,10 +2105,16 @@ pub struct ApprovalBoundCall {
     pub agent_id: AgentId,
     /// Canonical digest of the arguments.
     pub arguments_digest: ContentHash,
+    /// Digest of the resolved tool configuration.
+    pub config_digest: ContentHash,
+    /// The configuration revision the call expects.
+    pub expected_config_revision: u64,
+    /// The credential-custody revision the call expects.
+    pub expected_custody_revision: u64,
     /// The generation the call must run in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_generation_id: Option<GenerationId>,
-    /// Digest of the tool implementation and config.
+    /// Digest of the tool implementation.
     pub implementation_digest: ContentHash,
     /// The run.
     pub run_id: RunId,
@@ -2182,7 +2201,10 @@ pub enum ApprovalStatus {
     Approved,
     /// Denied; the bound call will not run.
     Denied,
-    /// The bound call is no longer runnable.
+    /// Withdrawn by a stop, cancellation, deletion, pause, continuity loss, tool-call cancellation,
+    /// or binding drift.
+    Cancelled,
+    /// Its explicit decision deadline elapsed.
     Expired,
 }
 
@@ -2192,6 +2214,7 @@ impl ApprovalStatus {
         ApprovalStatus::Pending,
         ApprovalStatus::Approved,
         ApprovalStatus::Denied,
+        ApprovalStatus::Cancelled,
         ApprovalStatus::Expired,
     ];
 
@@ -2202,6 +2225,7 @@ impl ApprovalStatus {
             Self::Pending => "pending",
             Self::Approved => "approved",
             Self::Denied => "denied",
+            Self::Cancelled => "cancelled",
             Self::Expired => "expired",
         }
     }
@@ -4014,7 +4038,7 @@ pub struct WorkspaceDiscardResult {
 
 // --- usage -------------------------------------------------------
 
-/// One rated aggregate, discriminated by priced category.
+/// One resource aggregate, discriminated by category.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "category", rename_all = "snake_case")]
 pub enum UsageAggregate {
@@ -4028,15 +4052,13 @@ pub enum UsageAggregate {
     DataTransfer(UsageDataTransferAggregate),
 }
 
-/// What a rated aggregate is attributed to.
+/// What a regional aggregate is attributed to.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsageAttribution {
     /// The operation, when attributable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<OperationId>,
-    /// The rated amount.
-    pub rated_cents: Cents,
     /// Where the usage happened.
     pub region: Region,
     /// The run, when attributable.
@@ -4114,16 +4136,17 @@ pub struct UsageDataTransferAggregate {
 pub struct UsageFrontier {
     /// Facts accepted by the authority.
     pub accepted_sequence: DecimalU128,
-    /// Facts folded into the projection.
-    pub aggregated_sequence: DecimalU128,
     /// The priced category.
     pub category: UsageCategory,
-    /// Facts priced.
-    pub rated_sequence: DecimalU128,
+    /// Facts folded into the query projection.
+    pub projected_sequence: DecimalU128,
+    /// Facts delivered to central settlement.
+    pub published_sequence: DecimalU128,
     /// The region.
     pub region: Region,
-    /// Service time the frontiers are complete through.
-    pub service_through: Timestamp,
+    /// Service time the authority has observed through, when any fact has been admitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_through: Option<Timestamp>,
     /// Facts settled centrally.
     pub settled_sequence: DecimalU128,
     /// The workspace.
@@ -4183,7 +4206,8 @@ pub struct UsageMemoryAggregate {
     pub byte_milliseconds: DecimalU128,
 }
 
-/// One page of rated usage plus the frontiers that bound its completeness.
+/// One page of usage quantities plus the frontiers that bound its completeness. Monetary statements
+/// remain a central finance read.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsagePage {
@@ -4196,7 +4220,7 @@ pub struct UsagePage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// A bounded query over rated usage.
+/// A bounded query over authoritative regional usage quantities.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsageQuery {

@@ -9,17 +9,17 @@
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
     },
-    "aggregatedSequence": {
-      "description": "Facts folded into the projection.",
-      "pattern": "^(0|[1-9]\\d*)$",
-      "type": "string"
-    },
     "category": {
       "$ref": "aex:schema:UsageCategory",
       "description": "The priced category."
     },
-    "ratedSequence": {
-      "description": "Facts priced.",
+    "projectedSequence": {
+      "description": "Facts folded into the query projection.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "publishedSequence": {
+      "description": "Facts delivered to central settlement.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
     },
@@ -35,7 +35,7 @@
       "type": "string"
     },
     "serviceThrough": {
-      "description": "Service time the frontiers are complete through.",
+      "description": "Service time the authority has observed through, when any fact has been admitted.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
@@ -54,11 +54,10 @@
   },
   "required": [
     "acceptedSequence",
-    "aggregatedSequence",
     "category",
-    "ratedSequence",
+    "projectedSequence",
+    "publishedSequence",
     "region",
-    "serviceThrough",
     "settledSequence",
     "workspaceId"
   ],

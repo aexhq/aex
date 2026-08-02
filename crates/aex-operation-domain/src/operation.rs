@@ -12,6 +12,7 @@ use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{MeasurementId, OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
+use aex_wire::{ObservedErrorCode, models};
 
 use crate::cursor::ContinuationCursor;
 
@@ -35,7 +36,7 @@ pub enum OperationKind {
     /// Destroy the session.
     SessionPurge,
     /// Destroy a whole workspace.
-    WorkspacePurge,
+    WorkspaceDelete,
     /// Export telemetry.
     TelemetryExport,
     /// Collect unreferenced content.
@@ -62,7 +63,7 @@ impl OperationKind {
         Self::SessionTrash,
         Self::SessionRestore,
         Self::SessionPurge,
-        Self::WorkspacePurge,
+        Self::WorkspaceDelete,
         Self::TelemetryExport,
         Self::ContentGc,
     ];
@@ -79,10 +80,16 @@ impl OperationKind {
             Self::SessionTrash => "session_trash",
             Self::SessionRestore => "session_restore",
             Self::SessionPurge => "session_purge",
-            Self::WorkspacePurge => "workspace_purge",
+            Self::WorkspaceDelete => "workspace_delete",
             Self::TelemetryExport => "telemetry_export",
             Self::ContentGc => "content_gc",
         }
+    }
+
+    /// Parses the stable stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == text)
     }
 
     /// How the kind runs by default. A `SessionPersist` may still escalate; see
@@ -97,9 +104,10 @@ impl OperationKind {
             | Self::CredentialRebind
             | Self::SessionTrash
             | Self::SessionRestore => Execution::Inline,
-            Self::SessionPurge | Self::WorkspacePurge | Self::TelemetryExport | Self::ContentGc => {
-                Execution::Continued
-            }
+            Self::SessionPurge
+            | Self::WorkspaceDelete
+            | Self::TelemetryExport
+            | Self::ContentGc => Execution::Continued,
         }
     }
 
@@ -109,8 +117,36 @@ impl OperationKind {
     pub const fn cancelable_on_accept(self) -> bool {
         !matches!(
             self,
-            Self::SessionStop | Self::SessionTrash | Self::SessionPurge | Self::WorkspacePurge
+            Self::SessionStop | Self::SessionTrash | Self::SessionPurge | Self::WorkspaceDelete
         )
+    }
+
+    /// Whether this kind belongs on the customer operation surface.
+    ///
+    /// Content GC is an internal maintenance continuation. Keeping that fact
+    /// here, beside the kind vocabulary, lets point reads and indexes exclude it
+    /// before a public decoder ever sees a value it cannot represent.
+    #[must_use]
+    pub const fn is_public(self) -> bool {
+        !matches!(self, Self::ContentGc)
+    }
+
+    /// The generated customer vocabulary, or `None` for internal maintenance.
+    #[must_use]
+    pub const fn public(self) -> Option<models::OperationKind> {
+        Some(match self {
+            Self::SessionStop => models::OperationKind::SessionStop,
+            Self::SessionPersist => models::OperationKind::SessionPersist,
+            Self::SessionClone => models::OperationKind::SessionClone,
+            Self::WorkspaceDiscard => models::OperationKind::WorkspaceDiscard,
+            Self::CredentialRebind => models::OperationKind::CredentialRebind,
+            Self::SessionTrash => models::OperationKind::SessionTrash,
+            Self::SessionRestore => models::OperationKind::SessionRestore,
+            Self::SessionPurge => models::OperationKind::SessionPurge,
+            Self::WorkspaceDelete => models::OperationKind::WorkspaceDelete,
+            Self::TelemetryExport => models::OperationKind::TelemetryExport,
+            Self::ContentGc => return None,
+        })
     }
 
     /// Whether the kind claims the session's deletion guard.
@@ -208,6 +244,36 @@ impl OperationStatus {
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
     }
+
+    /// The stable stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parses the stable stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|status| status.as_str() == text)
+    }
+
+    /// The generated customer vocabulary.
+    #[must_use]
+    pub const fn public(self) -> models::OperationStatus {
+        match self {
+            Self::Queued => models::OperationStatus::Queued,
+            Self::Running => models::OperationStatus::Running,
+            Self::Succeeded => models::OperationStatus::Succeeded,
+            Self::Failed => models::OperationStatus::Failed,
+            Self::Cancelled => models::OperationStatus::Cancelled,
+        }
+    }
 }
 
 /// How a failure should be treated.
@@ -221,9 +287,34 @@ pub enum FailureClass {
     PoisonManualReview,
 }
 
+impl FailureClass {
+    /// The stable stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Retryable => "retryable",
+            Self::Terminal => "terminal",
+            Self::PoisonManualReview => "poison_manual_review",
+        }
+    }
+
+    /// Parses the stable stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "retryable" => Some(Self::Retryable),
+            "terminal" => Some(Self::Terminal),
+            "poison_manual_review" => Some(Self::PoisonManualReview),
+            _ => None,
+        }
+    }
+}
+
 /// How far a continued operation has got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Progress {
+    /// The bounded customer-visible phase name.
+    pub phase: String,
     /// How many units are done.
     pub processed: u64,
     /// How many units are expected, when that is known.
@@ -231,19 +322,14 @@ pub struct Progress {
 }
 
 impl Progress {
-    /// The progress a fresh operation reports.
-    pub const START: Self = Self {
-        processed: 0,
-        total_hint: None,
-    };
-
     /// Whether `next` is a legal successor of `self`.
     ///
     /// # Errors
     ///
     /// Returns [`ProgressError`] when `processed` regresses or exceeds a
     /// declared total.
-    pub const fn check_successor(self, next: Self) -> Result<(), ProgressError> {
+    pub fn check_successor(&self, next: &Self) -> Result<(), ProgressError> {
+        next.validate()?;
         if next.processed < self.processed {
             return Err(ProgressError::Regressed {
                 from: self.processed,
@@ -260,11 +346,39 @@ impl Progress {
         }
         Ok(())
     }
+
+    /// Checks the invariant the public progress object requires.
+    ///
+    /// # Errors
+    ///
+    /// [`ProgressError::InvalidPhase`] for an empty or overlong UTF-8 phase,
+    /// and [`ProgressError::AboveTotal`] when completion exceeds the total.
+    pub fn validate(&self) -> Result<(), ProgressError> {
+        let bytes = self.phase.len();
+        if bytes == 0 || bytes > 64 {
+            return Err(ProgressError::InvalidPhase { bytes });
+        }
+        if let Some(total) = self.total_hint
+            && self.processed > total
+        {
+            return Err(ProgressError::AboveTotal {
+                processed: self.processed,
+                total,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Why a progress report was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProgressError {
+    /// The customer-visible phase is empty or exceeds the wire bound.
+    #[error("operation progress phase is {bytes} bytes; expected 1..=64")]
+    InvalidPhase {
+        /// Encoded UTF-8 byte length.
+        bytes: usize,
+    },
     /// `processed` went backwards.
     #[error("progress regressed from {from} to {to}")]
     Regressed {
@@ -310,6 +424,65 @@ impl OperationResult {
     pub const fn is_content_bearing(&self) -> bool {
         self.content.is_some()
     }
+
+    /// Decodes the stored canonical payload under the operation's own kind.
+    ///
+    /// The payload is stored without a second discriminant, so the envelope kind
+    /// is the authority. A payload for another result shape is corruption, not
+    /// an untyped value that can poison a whole public page.
+    ///
+    /// # Errors
+    ///
+    /// [`PublicProjectionError::Result`] when the canonical body does not match
+    /// the exact generated result type for `kind`.
+    pub fn public(
+        &self,
+        kind: OperationKind,
+    ) -> Result<Option<models::OperationResult>, PublicProjectionError> {
+        let Some(content) = self.content.as_ref() else {
+            return Ok(None);
+        };
+        if !kind.is_public() {
+            return Ok(None);
+        }
+        let value = content.to_value();
+        macro_rules! payload {
+            ($type:ty, $variant:ident) => {
+                serde_json::from_value::<$type>(value)
+                    .map(models::OperationResult::$variant)
+                    .map_err(|error| PublicProjectionError::Result {
+                        kind,
+                        reason: error.to_string(),
+                    })
+                    .map(Some)
+            };
+        }
+        match kind {
+            OperationKind::SessionStop => payload!(models::SessionStopResult, SessionStop),
+            OperationKind::SessionPersist => {
+                payload!(models::SessionPersistResult, SessionPersist)
+            }
+            OperationKind::SessionClone => payload!(models::SessionCloneResult, SessionClone),
+            OperationKind::WorkspaceDiscard => {
+                payload!(models::WorkspaceDiscardResult, WorkspaceDiscard)
+            }
+            OperationKind::CredentialRebind => {
+                payload!(models::CredentialRebindResult, CredentialRebind)
+            }
+            OperationKind::SessionTrash => payload!(models::SessionTrashResult, SessionTrash),
+            OperationKind::SessionRestore => {
+                payload!(models::SessionRestoreResult, SessionRestore)
+            }
+            OperationKind::SessionPurge => payload!(models::SessionTombstone, SessionPurge),
+            OperationKind::WorkspaceDelete => {
+                payload!(models::WorkspaceTombstone, WorkspaceDelete)
+            }
+            OperationKind::TelemetryExport => {
+                payload!(models::TelemetryExportResult, TelemetryExport)
+            }
+            OperationKind::ContentGc => Ok(None),
+        }
+    }
 }
 
 /// Why an operation failed.
@@ -333,6 +506,29 @@ impl OperationFailure {
             detail: None,
         }
     }
+
+    /// The durable public failure, without inventing a request identity.
+    #[must_use]
+    pub fn public(&self) -> models::OperationFailure {
+        models::OperationFailure {
+            code: ObservedErrorCode::Known(self.code),
+            retryable: self.class == FailureClass::Retryable,
+            detail: self.detail.clone(),
+        }
+    }
+}
+
+/// Why a durable operation could not be projected to the generated wire.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PublicProjectionError {
+    /// A canonical result body did not match the envelope kind.
+    #[error("operation result for {kind:?} is malformed: {reason}")]
+    Result {
+        /// The authoritative envelope kind.
+        kind: OperationKind,
+        /// The bounded serde diagnostic.
+        reason: String,
+    },
 }
 
 /// The scope an operation acts in.
@@ -393,6 +589,55 @@ impl Operation {
         self.kind.cancelable_on_accept()
             && self.committed_at.is_none()
             && !self.status.is_terminal()
+    }
+
+    /// Projects one customer-visible operation through generated types.
+    ///
+    /// `ContentGc` returns `Ok(None)`: it is an internal continuation and must
+    /// be excluded by the sparse public index as well as by point reads.
+    ///
+    /// # Errors
+    ///
+    /// [`PublicProjectionError`] when a persisted result body disagrees with
+    /// the authoritative operation kind.
+    pub fn public(&self) -> Result<Option<models::Operation>, PublicProjectionError> {
+        let Some(kind) = self.kind.public() else {
+            return Ok(None);
+        };
+        let result = self
+            .result
+            .as_ref()
+            .map(|value| value.public(self.kind))
+            .transpose()?
+            .flatten();
+        let progress = self
+            .progress
+            .as_ref()
+            .map(|value| models::OperationProgress {
+                phase: value.phase.clone(),
+                completed: Some(aex_wire::types::DecimalU128::new(u128::from(
+                    value.processed,
+                ))),
+                total: value
+                    .total_hint
+                    .map(|total| aex_wire::types::DecimalU128::new(u128::from(total))),
+            });
+        Ok(Some(models::Operation {
+            cancelable: self.cancelable(),
+            committed_at: self.committed_at,
+            created_at: self.created_at,
+            error: self.error.as_ref().map(OperationFailure::public),
+            id: self.id,
+            kind,
+            progress,
+            result,
+            session_id: self.session,
+            started_at: self.started_at,
+            status: self.status.public(),
+            terminal_at: self.terminal_at,
+            updated_at: self.updated_at,
+            workspace_id: self.workspace,
+        }))
     }
 }
 
@@ -488,10 +733,11 @@ pub fn progress(
             to: OperationStatus::Running,
         });
     }
-    operation
-        .progress
-        .unwrap_or(Progress::START)
-        .check_successor(reported)?;
+    if let Some(current) = operation.progress.as_ref() {
+        current.check_successor(&reported)?;
+    } else {
+        reported.validate()?;
+    }
     let mut next = operation.clone();
     next.progress = Some(reported);
     next.updated_at = now;
@@ -629,9 +875,11 @@ pub fn cancel(operation: &Operation, now: Timestamp) -> Result<OperationCommit, 
 
 #[cfg(test)]
 mod tests {
+    use aex_wire::CanonicalJson;
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::IntentDigest;
-    use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::ids::{OperationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::models;
     use aex_wire::types::Timestamp;
 
     use super::{
@@ -672,6 +920,9 @@ mod tests {
         for kind in OperationKind::ALL {
             let _ = kind.execution();
         }
+        assert_eq!(OperationKind::WorkspaceDelete.as_str(), "workspace_delete");
+        assert!(OperationKind::WorkspaceDelete.is_public());
+        assert!(!OperationKind::ContentGc.is_public());
         let small = PersistShape {
             changed_leaves: 1,
             changed_pages: 1,
@@ -752,7 +1003,7 @@ mod tests {
             OperationKind::SessionStop,
             OperationKind::SessionTrash,
             OperationKind::SessionPurge,
-            OperationKind::WorkspacePurge,
+            OperationKind::WorkspaceDelete,
         ] {
             assert_eq!(
                 cancel(&operation(kind), moment(1)),
@@ -772,6 +1023,7 @@ mod tests {
         let advanced = super::progress(
             &running,
             Progress {
+                phase: "copying".to_owned(),
                 processed: 10,
                 total_hint: Some(100),
             },
@@ -783,6 +1035,7 @@ mod tests {
             super::progress(
                 &advanced,
                 Progress {
+                    phase: "copying".to_owned(),
                     processed: 9,
                     total_hint: Some(100)
                 },
@@ -790,5 +1043,56 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn public_projection_uses_the_envelope_kind_and_keeps_the_phase() {
+        let session = SessionId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        let payload = models::SessionStopResult {
+            changed: true,
+            session_id: session,
+            session_revision: 9,
+        };
+        let mut stored = operation(OperationKind::SessionStop);
+        stored.session = Some(session);
+        stored.scope = OperationScope::Session(session);
+        stored.status = OperationStatus::Succeeded;
+        stored.progress = Some(Progress {
+            phase: "stopping".to_owned(),
+            processed: 1,
+            total_hint: Some(1),
+        });
+        stored.result = Some(OperationResult {
+            measurement: None,
+            content: Some(
+                CanonicalJson::from_value(&serde_json::to_value(payload).expect("json"))
+                    .expect("canonical"),
+            ),
+        });
+
+        let public = stored.public().expect("projects").expect("public kind");
+        assert_eq!(public.progress.expect("progress").phase, "stopping");
+        assert!(matches!(
+            public.result,
+            Some(models::OperationResult::SessionStop(result))
+                if result.session_id == session && result.session_revision == 9
+        ));
+    }
+
+    #[test]
+    fn internal_or_malformed_results_cannot_poison_the_public_surface() {
+        assert!(
+            operation(OperationKind::ContentGc)
+                .public()
+                .expect("internal exclusion is not an error")
+                .is_none()
+        );
+
+        let mut malformed = operation(OperationKind::SessionStop);
+        malformed.result = Some(OperationResult {
+            measurement: None,
+            content: Some(CanonicalJson::parse(r#"{"wrong":true}"#).expect("canonical")),
+        });
+        assert!(malformed.public().is_err());
     }
 }

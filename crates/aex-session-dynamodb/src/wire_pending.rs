@@ -6,14 +6,10 @@
 //!
 //! # State of the peers
 //!
-//! All five peers have landed, and **not one** of the concepts below can be
-//! deleted in favour of a peer import. Some exist there under a different shape,
-//! one exists in a **different crate** from the one its marker named, and the rest
-//! were never published at all. Every marker now names either a path that resolves
-//! — saying what diverged — or the owning crate in its dashed spelling, which is
-//! deliberately not a Rust path and so cannot be mistaken for something importable.
-//! This adapter is not blocked on a delete; it is blocked on a reconciliation per
-//! concept.
+//! All five peers have landed. The operation record now embeds its authoritative
+//! domain envelope; the remaining local concepts either diverge from their peer
+//! shape or were never published there. Every marker names the concrete mismatch
+//! so reconciliation does not silently become a second authority.
 //!
 //! The non-negotiable property, whoever ends up owning these types, is that a
 //! plan names a [`Participant`](crate::plan::Participant) per action. Without
@@ -27,6 +23,36 @@ use aex_wire::ids::{
     RunId, SessionId, ToolCallId, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
+
+/// Descriptive workspace facts kept off the per-request placement row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceProfile {
+    /// The workspace.
+    pub workspace: WorkspaceId,
+    /// Display name.
+    pub name: String,
+    /// URL-safe name.
+    pub slug: String,
+    /// When the workspace was created.
+    pub created_at: Timestamp,
+}
+
+/// One durable effective limit from the central control feed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectedWorkspaceLimit {
+    /// The workspace.
+    pub workspace: WorkspaceId,
+    /// Which registered limit.
+    pub id: aex_wire::limits::LimitId,
+    /// The effective typed value, never an inferred default.
+    pub effective_value: aex_wire::models::LimitValue,
+    /// Whether central control selected the shared default or an override.
+    pub source: aex_wire::models::LimitSource,
+    /// Monotonic concurrency token.
+    pub revision: u64,
+    /// When this effective record changed.
+    pub changed_at: Timestamp,
+}
 
 // TODO(cross-stream): `aex-session-domain` publishes no separate lifecycle enum. It
 // folds the deletion path into `aex_session_domain::session::SessionStatus` as the
@@ -311,32 +337,18 @@ pub struct JournalEntry {
     pub occurred_at: Timestamp,
 }
 
-// TODO(cross-stream): `aex-operation-domain` publishes no `StoredOperation`. Its record is
-// `aex_operation_domain::operation::Operation`, with transitions returning
-// `operation::OperationCommit`; the stored projection below is this adapter's shape.
-/// One durable operation record.
+/// One durable operation record plus its optimistic store version.
+///
+/// The domain envelope is stored whole. Keeping a second, stringly operation
+/// shape here previously discarded progress, typed results, failures and
+/// lifecycle timestamps before a public reader could project them.
+#[cfg(feature = "session-authority")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredOperation {
-    /// Which operation.
-    pub operation: OperationId,
-    /// Its workspace.
-    pub workspace: WorkspaceId,
-    /// The session it acts on, when it acts on one.
-    pub session: Option<SessionId>,
-    /// Its kind.
-    pub kind: String,
-    /// Its status.
-    pub status: String,
-    /// The canonical intent it was admitted with.
-    pub intent: IntentDigest,
+    /// The authoritative domain envelope.
+    pub record: aex_operation_domain::Operation,
     /// Its optimistic version.
     pub version: u64,
-    /// Whether it claims the session's deletion path.
-    pub claims_session_deletion: bool,
-    /// When it was admitted.
-    pub created_at: Timestamp,
-    /// When it last advanced.
-    pub updated_at: Timestamp,
 }
 
 // TODO(cross-stream): `aex-session-app` publishes no admission plan in its ports. Its
@@ -725,7 +737,7 @@ pub struct FeedFrontier {
 // link.
 /// The exact call one approval authorizes.
 ///
-/// All eleven bound fields are persisted, not the seven the wire publishes.
+/// All eleven bound fields are persisted and published.
 /// `respond` revalidates the whole binding at decision time, so a row that stored
 /// only the public subset could not tell an approver's binding from the current
 /// one — and failing closed on drift is the entire point of the record.
@@ -766,6 +778,8 @@ pub enum ApprovalStatus {
     Denied,
     /// Withdrawn without a decision.
     Cancelled,
+    /// Its explicit decision deadline elapsed.
+    Expired,
 }
 
 impl ApprovalStatus {
@@ -777,6 +791,7 @@ impl ApprovalStatus {
             Self::Approved => "approved",
             Self::Denied => "denied",
             Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
         }
     }
 
@@ -788,6 +803,7 @@ impl ApprovalStatus {
             "approved" => Some(Self::Approved),
             "denied" => Some(Self::Denied),
             "cancelled" => Some(Self::Cancelled),
+            "expired" => Some(Self::Expired),
             _ => None,
         }
     }

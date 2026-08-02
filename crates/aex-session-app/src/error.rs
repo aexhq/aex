@@ -152,6 +152,7 @@ mod tests {
             binding,
             status: ApprovalStatus::Cancelled,
             requested_at: aex_session_domain::testing::moment(0),
+            expires_at: aex_session_domain::testing::moment(10),
             resolved_at: Some(aex_session_domain::testing::moment(1)),
             decision: None,
             cancel_cause: Some(ApprovalCancelCause::BindingDrift),

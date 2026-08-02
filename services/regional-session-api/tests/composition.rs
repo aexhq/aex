@@ -12,6 +12,10 @@ fn complete() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
         (config::PLANE, "dev".to_owned()),
         (config::REGION, "eu-west-1".to_owned()),
+        (
+            config::REGIONAL_API_URL,
+            "https://eu-west-1.api.aex.test".to_owned(),
+        ),
         (config::RELEASE_DIGEST, "sha256:deadbeef".to_owned()),
         (
             config::AUTHZ_FUNCTION_ARN,
@@ -76,8 +80,22 @@ fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
 fn a_complete_environment_is_accepted() {
     let config = read(&complete()).expect("the complete environment is accepted");
     assert_eq!(config.region.as_str(), "eu-west-1");
+    assert_eq!(
+        config.regional_api_url.as_str(),
+        "https://eu-west-1.api.aex.test"
+    );
     assert_eq!(config.limits().json_body_bytes, 65_536);
     assert_eq!(config.limits().query_page_items, 100);
+}
+
+#[test]
+fn a_non_https_regional_api_url_is_refused() {
+    let mut vars = complete();
+    vars.insert(config::REGIONAL_API_URL, "http://localhost".to_owned());
+    assert!(matches!(
+        read(&vars),
+        Err(ConfigError::Invalid { name, .. }) if name == config::REGIONAL_API_URL
+    ));
 }
 
 #[test]

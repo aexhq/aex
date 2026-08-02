@@ -394,7 +394,11 @@ proptest! {
         for processed in reports {
             let attempt = aex_operation_domain::progress(
                 &current,
-                Progress { processed, total_hint: None },
+                Progress {
+                    phase: "working".to_owned(),
+                    processed,
+                    total_hint: None,
+                },
                 moment(2),
             );
             if processed >= highest {
@@ -404,7 +408,7 @@ proptest! {
                 prop_assert!(attempt.is_err(), "a regression must be rejected");
             }
             prop_assert_eq!(
-                current.progress.map_or(0, |value| value.processed),
+                current.progress.as_ref().map_or(0, |value| value.processed),
                 highest
             );
         }

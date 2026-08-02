@@ -165,6 +165,14 @@ schemas:
       completed: { type: decimal, optional: true, doc: "Units done." }
       total: { type: decimal, optional: true, doc: "Units expected." }
 
+  OperationFailure:
+    doc: A durable operation failure. It carries no synthetic request identity.
+    type: object
+    fields:
+      code: { type: error_code, doc: "The stable public failure code." }
+      retryable: { type: boolean, doc: "Whether the same operation step may be retried." }
+      detail: { type: canonical_json, optional: true, doc: "Customer-safe detail, when the domain produced it." }
+
   Operation:
     doc: A durable operation record.
     type: object
@@ -177,7 +185,7 @@ schemas:
       progress: { type: ref, to: OperationProgress, optional: true, doc: "Coarse progress." }
       cancelable: { type: boolean, doc: "Whether cancellation is still possible." }
       result: { type: ref, to: OperationResult, optional: true, doc: "The typed successful result." }
-      error: { type: ref, to: ApiErrorBody, optional: true, doc: "The terminal failure." }
+      error: { type: ref, to: OperationFailure, optional: true, doc: "The terminal failure." }
       createdAt: { type: timestamp, doc: "When the operation was admitted." }
       startedAt: { type: timestamp, optional: true, doc: "When work began." }
       updatedAt: { type: timestamp, doc: "Last change to this record." }

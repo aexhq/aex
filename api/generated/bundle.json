@@ -5963,6 +5963,23 @@
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
+        "configDigest": {
+          "description": "Digest of the resolved tool configuration.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "expectedConfigRevision": {
+          "description": "The configuration revision the call expects.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expectedCustodyRevision": {
+          "description": "The credential-custody revision the call expects.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "expectedGenerationId": {
           "description": "The generation the call must run in.",
           "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
@@ -5970,7 +5987,7 @@
           "x-aex-id": "generation"
         },
         "implementationDigest": {
-          "description": "Digest of the tool implementation and config.",
+          "description": "Digest of the tool implementation.",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
@@ -5995,6 +6012,9 @@
       "required": [
         "agentId",
         "argumentsDigest",
+        "configDigest",
+        "expectedConfigRevision",
+        "expectedCustodyRevision",
         "implementationDigest",
         "runId",
         "toolCallId",
@@ -6087,6 +6107,7 @@
         "pending",
         "approved",
         "denied",
+        "cancelled",
         "expired"
       ],
       "type": "string"
@@ -8584,7 +8605,7 @@
           "x-aex-time": "rfc3339-ms"
         },
         "error": {
-          "$ref": "aex:schema:ApiErrorBody",
+          "$ref": "aex:schema:OperationFailure",
           "description": "The terminal failure."
         },
         "id": {
@@ -8648,6 +8669,29 @@
         "status",
         "updatedAt",
         "workspaceId"
+      ],
+      "type": "object"
+    },
+    "OperationFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "The stable public failure code.",
+          "type": "string",
+          "x-aex-registry": "errors"
+        },
+        "detail": {
+          "description": "Customer-safe detail, when the domain produced it.",
+          "x-aex-canonical-json": true
+        },
+        "retryable": {
+          "description": "Whether the same operation step may be retried.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "retryable"
       ],
       "type": "object"
     },
@@ -11525,12 +11569,6 @@
           "type": "string",
           "x-aex-id": "operation"
         },
-        "ratedCents": {
-          "description": "The rated amount.",
-          "pattern": "^(0|[1-9]\\d*)$",
-          "type": "string",
-          "x-aex-money": "cents"
-        },
         "region": {
           "description": "Where the usage happened.",
           "enum": [
@@ -11572,7 +11610,6 @@
         }
       },
       "required": [
-        "ratedCents",
         "region",
         "serviceTime",
         "source",
@@ -11635,17 +11672,17 @@
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
-        "aggregatedSequence": {
-          "description": "Facts folded into the projection.",
-          "pattern": "^(0|[1-9]\\d*)$",
-          "type": "string"
-        },
         "category": {
           "$ref": "aex:schema:UsageCategory",
           "description": "The priced category."
         },
-        "ratedSequence": {
-          "description": "Facts priced.",
+        "projectedSequence": {
+          "description": "Facts folded into the query projection.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "publishedSequence": {
+          "description": "Facts delivered to central settlement.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -11661,7 +11698,7 @@
           "type": "string"
         },
         "serviceThrough": {
-          "description": "Service time the frontiers are complete through.",
+          "description": "Service time the authority has observed through, when any fact has been admitted.",
           "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
           "type": "string",
           "x-aex-time": "rfc3339-ms"
@@ -11680,11 +11717,10 @@
       },
       "required": [
         "acceptedSequence",
-        "aggregatedSequence",
         "category",
-        "ratedSequence",
+        "projectedSequence",
+        "publishedSequence",
         "region",
-        "serviceThrough",
         "settledSequence",
         "workspaceId"
       ],

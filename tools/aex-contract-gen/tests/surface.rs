@@ -25,6 +25,50 @@ fn generated() -> BTreeMap<String, String> {
         .collect()
 }
 
+fn schema_refs(value: &serde_json::Value, refs: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+                && let Some(schema) = reference.strip_prefix("aex:schema:")
+            {
+                refs.insert(schema.to_owned());
+            }
+            for value in object.values() {
+                schema_refs(value, refs);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                schema_refs(value, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn every_openapi_schema_reference_resolves_inside_its_plane_document() {
+    let tree = generated();
+    for plane in ["central", "regional"] {
+        let path = format!("api/generated/openapi/aex-{plane}.json");
+        let document: serde_json::Value =
+            serde_json::from_str(tree.get(&path).expect("OpenAPI document")).expect("JSON");
+        let schemas = document["components"]["schemas"]
+            .as_object()
+            .expect("component schemas");
+        let mut refs = BTreeSet::new();
+        schema_refs(&document, &mut refs);
+        let missing: Vec<_> = refs
+            .into_iter()
+            .filter(|schema| !schemas.contains_key(schema))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{plane} has unresolved refs: {missing:?}"
+        );
+    }
+}
+
 #[test]
 fn every_operation_has_a_server_trait_method() {
     let tree = generated();

@@ -92,6 +92,7 @@ fn session_status_reachability() {
         &binding,
         None,
         moment(3),
+        moment(100),
     )
     .expect("raises");
     observed.insert(SessionStatus::AwaitingApproval);
@@ -513,6 +514,7 @@ fn approval_single_unresolved() {
         &binding,
         None,
         moment(0),
+        moment(100),
     )
     .expect("raises")
     .approval;
@@ -523,7 +525,8 @@ fn approval_single_unresolved() {
                 binding.clone(),
                 &binding,
                 Some(&first),
-                moment(1)
+                moment(1),
+                moment(100)
             ),
             Err(ApprovalRejection::Pending(_))
         ));
@@ -539,7 +542,8 @@ fn approval_single_unresolved() {
             binding.clone(),
             &binding,
             Some(&resolved),
-            moment(3)
+            moment(3),
+            moment(100)
         )
         .is_ok()
     );
@@ -556,6 +560,7 @@ fn approval_binding_drift_fails_closed_for_every_field() {
             &binding,
             None,
             moment(0),
+            moment(100),
         )
         .expect("raises")
         .approval;
@@ -585,6 +590,7 @@ fn approval_deny_does_not_cancel_the_run() {
         &binding,
         None,
         moment(0),
+        moment(100),
     )
     .expect("raises")
     .approval;
@@ -608,6 +614,7 @@ fn approval_cancel_scope_is_exact() {
         &binding,
         None,
         moment(0),
+        moment(100),
     )
     .expect("raises")
     .approval;

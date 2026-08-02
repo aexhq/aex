@@ -924,7 +924,7 @@ decoded one and no store method read one**. The placeholder row carried five
 loose strings, no session, no workspace and no expiry.
 
 `wire_pending::Approval` now mirrors `aex_session_domain::approval::Approval`:
-one `ApprovalBinding` of all eleven bound fields, a four-arm `ApprovalStatus`, a
+one `ApprovalBinding` of all eleven bound fields, a five-arm `ApprovalStatus`, a
 seven-arm `ApprovalCancelCause`, the workspace the tenancy check compares, and
 `expires_at`. All eleven bound fields are persisted rather than the seven the
 wire publishes, because `respond` revalidates the whole binding and an approval
@@ -936,7 +936,9 @@ because it mints no token and no transaction compiler because it commits nothing
 them, listed by a `begins_with` range inside the session partition so an approval
 of another session is unreachable rather than filtered out.
 
-The routes are **not** mounted. See below.
+The point read and listing are mounted. The response route remains absent until
+the write-side decision adapter can revalidate all eleven fields and commit the
+winner atomically.
 
 ### The blocker table, corrected
 
@@ -946,10 +948,10 @@ generated models rather than in the adapters.
 
 | Route(s) | Precise next blocker | Owner |
 | --- | --- | --- |
-| the 1 `usage` | **`UsageAttribution.rated_cents` has no producer anywhere.** A search for `rated_cents` and `ratedCents` over the whole workspace returns exactly one hit: the generated model. The fold in `aex_usage_application::projection` writes `quantity` and `factCount` and no money at all, and `aex-usage-rating` needs a pinned rate book the regional API neither holds nor is configured with. Two smaller gaps ride along: `UsageFrontier.rated_sequence` names a pipeline stage `aex_usage_domain::frontier` does not have (its four are accepted/projected/published/settled, and `published` has no wire arm), and `UsageFrontier.service_through` is required on the wire while the coverage row's is optional. The store type is no longer the blocker. | usage metering + contracts |
-| the 3 `approvals` | **`models::ApprovalStatus` has no arm for a withdrawn approval.** Its four are pending/approved/denied/**expired**; the domain's four are pending/approved/denied/**cancelled**, and `aex_session_domain::approval` makes `Cancelled` reachable from seven causes including a stop, a run cancellation and binding drift. `expired` is not a synonym: it pairs with `expiresAt` ("when it stops being decidable"), so publishing `expired` for a drift-cancelled approval would contradict an `expiresAt` still in the future. Second gap: nothing in the workspace defines an approval expiry — no field in the domain record, no entry in the generated limit registry, no accepted record — so the value `expiresAt` publishes has no producer even though the row now has somewhere to put it. The codec and the reads exist; the vocabulary does not. | contracts + regional domains |
-| the 3 `operations` | The listing is the smallest part and it is **not** in `aex-work-dynamodb`: a durable operation is an `operation` item in `session-authority`, and `gsi_workspace_index` already carries the `WS#{workspace}#OP` partition with an `INCLUDE` projection. What blocks the family is `models::Operation`. `result` is a ten-arm typed union over concrete result structs — `SessionCloneResult` names the cloned session and nothing stores it — while `aex_operation_domain::operation::OperationResult` is `{measurement, content}`; neither direction is total. `error` needs an `ApiErrorBody`; the domain has `OperationFailure {code, class, detail}` and the stored row has neither. `OperationProgress.phase` is required inside the optional progress and the domain `Progress` has no phase. `kind` mismatches in both directions: the domain publishes `WorkspacePurge` and `ContentGc`, the wire publishes `WorkspaceDelete` and no `ContentGc`, so one internal GC operation would make a customer's whole listing undecodable. `cancelable`, `committed_at`, `started_at` and `terminal_at` are the only genuinely adapter-shaped gaps. | contracts + regional domains, then regional stores |
-| the 3 `workspace` | `models::Workspace` needs `apiUrl`, `name`, `slug`, `createdAt` and `operationalState`. Two of those are already reachable regionally and three are not — see the decision below. `EffectiveWorkspaceLimit.effectiveValue` has no source at all: `aex_wire::generated::limits` publishes each limit's identity and shape and **no default value**, and an override is a central fact, so a regional read that answered `source: default` for a workspace holding an override would be publishing a lie. | central identity/control |
+| the 1 `usage` | The public regional model now reports the quantities the fold actually produces. Monetary rating remains on central finance surfaces backed by private rate books; `publishedSequence` / `projectedSequence` match the domain frontier and `serviceThrough` is optional. The remaining blocker is a query planner that implements the full multi-category, time-range, grouping and continuation contract rather than exposing the store's one-row primitive. | usage application + regional services |
+| the 3 `approvals` | `cancelled` and `expired` are distinct reachable states and every approval carries a caller-supplied future deadline. `GET` and list are served through strongly consistent reads and a session-bound cursor. Only response remains blocked on the atomic write/revalidation adapter. | regional services write path |
+| the 3 `operations` | The domain and row codec now preserve phase, exact typed result payload, durable failure, lifecycle timestamps and `WorkspaceDelete`; public projection parses payload under the authoritative envelope kind. `ContentGc` is excluded from both point projection and the sparse public index. The remaining blocker is a `SessionQueries` point/list adapter with complete filter and pagination semantics; no operation route is mounted yet. | regional stores + regional services |
+| the 3 `workspace` | `AEX_REGIONAL_API_URL` is validated configuration. Profile and effective-limit records have separate, typed cold projection rows and a read-only port, keeping placement narrow. Routes remain absent because `central-control-worker` does not yet write those rows and the verified assertion still lacks the complete `AccountOperationalState` payload (`changedAt`, revision and paused details). No reader invents defaults or pause facts. | central identity/control producer |
 | the 10 registry `*_get`/`*_put`, 6 `files`, 4 `uploads` | Unchanged: the content decrypt path, the session's persisted root, and presigning. | as recorded above |
 
 ### Where the missing `Workspace` fields belong
@@ -976,10 +978,9 @@ The recommended split, for `central-control-worker` to confirm:
   region, so it belongs in the deployable's configuration
   (`AEX_REGIONAL_API_URL`) beside `AEX_REGION`, not repeated on every workspace
   row where it could disagree with the host that served the request.
-- `operationalState` needs no new storage: `WorkspaceOperationalState` is
-  `{inheritedFrom: account, organizationId, state}`, and all three are already on
-  the verified request — the assertion carries the account state and the
-  organization, and `inheritedFrom` is a constant.
+- `operationalState` needs a richer signed source. The current assertion carries
+  only active/paused plus epochs; it cannot produce the wire state's
+  `changedAt`, revision, pause reason or optional restoration/deletion facts.
 - `status`, `region`, `id` and `organizationId` are already on the placement row.
 
 ### Decisions taken beyond the sections above
@@ -990,4 +991,8 @@ The recommended split, for `central-control-worker` to confirm:
 | RD-02 | `aex-usage-query-aws` keeps its own row reader and error vocabulary rather than linking `aex-session-dynamodb` | The three usage authority adapters already do, and the write-incapability proof is a scan of this crate's own sources plus its own manifest. Borrowing another stream's reader would make "read-only" a claim about a dependency instead of a fact about the crate. |
 | RD-03 | The approval row persists all eleven bound fields, not the seven the wire publishes | `respond` revalidates the whole binding and commits `Cancelled { BindingDrift }` when any of the eleven moved. A row holding the public subset could not perform that comparison, so the bound call would have to be dispatched on trust. |
 | RD-04 | The workspace profile fields land on a second projection item rather than on the placement row | The placement row is read on every request and never cached. Descriptive data belongs beside the hot row, not inside it. |
-| RD-05 | This pass mounted one route rather than four families, and says so | Three of the four families it was scoped to are blocked in the contract or the domain, and closing them here would have meant inventing an expiry policy, a rated amount and two enum arms. An honest count beats a padded one (RS-18). |
+| RD-05 | This continuation mounts exactly the two fully served approval reads | The response route still needs an atomic writer; usage needs the full query planner; operations need point/list reads; workspace needs central producers and a richer signed account-state fact. RS-18 keeps all four absent. |
+| RD-06 | Regional resource usage contains no monetary amount | Real rate books remain private in central finance. Publishing quantities from the regional fold is authoritative; copying private rates or guessing money at the edge is not. |
+| RD-07 | Approval expiry is explicit input, not a hidden default | The policy owner supplies a future deadline. The domain refuses an absent window and turns a response racing the deadline into an `Expired` commit. |
+| RD-08 | Public operation payloads are decoded under the envelope kind | Stored content has no second discriminant. A mismatch is typed corruption, while internal `ContentGc` never enters the public index or point result. |
+| RD-09 | Workspace profile and limits use cold rows and a separate port | Placement stays the narrow per-request authorization item. Effective values are durable feed records, including their source; generated registry metadata is never treated as a value. |

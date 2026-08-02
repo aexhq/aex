@@ -32,10 +32,13 @@ use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::replay::Receipt;
+use aex_session_dynamodb::store::{PositionPage, SessionQueries};
+use aex_session_dynamodb::wire_pending::{Approval, ApprovalBinding, ApprovalStatus, SessionHead};
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{
-    ApiKeyId, PrefixedId, ProviderCredentialId, ResourceName, SessionId, Uuid7, WorkspaceId,
+    AgentId, ApiKeyId, ApprovalId, GenerationId, PrefixedId, ProviderCredentialId, ResourceName,
+    RunId, SessionId, ToolCallId, Uuid7, WorkspaceId,
 };
 use aex_wire::ids::{ContentHash, UploadId};
 use aex_wire::models;
@@ -98,6 +101,84 @@ fn stored_credential() -> StoredCredential {
         created_at: moment("2026-08-01T12:34:56.789Z"),
         updated_at: moment("2026-08-01T12:34:56.789Z"),
         revoked_at: None,
+    }
+}
+
+fn stored_approval(status: ApprovalStatus) -> Approval {
+    Approval {
+        approval: sample::<ApprovalId>(20),
+        workspace: workspace(),
+        binding: ApprovalBinding {
+            session: sample::<SessionId>(21),
+            run: sample::<RunId>(22),
+            agent: sample::<AgentId>(23),
+            tool_call: sample::<ToolCallId>(24),
+            tool: ResourceName::parse("deploy").expect("a resource name"),
+            argument_digest: ContentHash::of(b"arguments"),
+            implementation_digest: ContentHash::of(b"implementation"),
+            config_digest: ContentHash::of(b"config"),
+            expected_generation: Some(sample::<GenerationId>(25)),
+            expected_custody: 7,
+            expected_config_revision: 8,
+        },
+        status,
+        cancel_cause: None,
+        created_at: moment("2026-08-01T12:34:56.789Z"),
+        expires_at: moment("2026-08-01T12:44:56.789Z"),
+        resolved_at: (status != ApprovalStatus::Pending)
+            .then(|| moment("2026-08-01T12:35:56.789Z")),
+    }
+}
+
+#[derive(Debug, Default)]
+struct FakeSessions {
+    approvals: Vec<Approval>,
+    next: Option<PagePosition>,
+}
+
+#[async_trait::async_trait]
+impl SessionQueries for FakeSessions {
+    async fn read_head(
+        &self,
+        _workspace: WorkspaceId,
+        _session: SessionId,
+    ) -> Result<Option<SessionHead>, StoreError> {
+        Ok(None)
+    }
+
+    async fn load_approval(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        approval: ApprovalId,
+    ) -> Result<Option<Approval>, StoreError> {
+        Ok(self
+            .approvals
+            .iter()
+            .find(|row| {
+                row.workspace == workspace
+                    && row.binding.session == session
+                    && row.approval == approval
+            })
+            .cloned())
+    }
+
+    async fn page_approvals(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<PositionPage<Approval>, StoreError> {
+        Ok(PositionPage {
+            items: self
+                .approvals
+                .iter()
+                .filter(|row| row.workspace == workspace && row.binding.session == session)
+                .cloned()
+                .collect(),
+            next: self.next.clone(),
+        })
     }
 }
 
@@ -485,10 +566,19 @@ fn build(
     custody: Arc<FakeCustody>,
     registry: Arc<FakeRegistry>,
 ) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
+    build_with_sessions(custody, registry, Arc::new(FakeSessions::default()))
+}
+
+fn build_with_sessions(
+    custody: Arc<FakeCustody>,
+    registry: Arc<FakeRegistry>,
+    sessions: Arc<FakeSessions>,
+) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
     let shared = Arc::new(Shared {
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: registry as Arc<dyn RegistryStore>,
+        sessions: sessions as Arc<dyn SessionQueries>,
         cursor_keys: Arc::new(cursor_keys()),
     });
     let mounted = mount_unary(
@@ -658,6 +748,73 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
         "`{unserved}` answered {}",
         response.status()
     );
+}
+
+#[tokio::test]
+async fn approval_get_projects_the_complete_bound_call_and_decision() {
+    let row = stored_approval(ApprovalStatus::Approved);
+    let session = row.binding.session;
+    let approval = row.approval;
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            next: None,
+        }),
+    );
+    assert!(mounted.contains(&RouteId::SessionApprovalGet));
+
+    let (status, _, body) = get(
+        &router,
+        &format!("/api/sessions/{session}/approvals/{approval}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "approved");
+    assert_eq!(body["decision"], "approve");
+    assert_eq!(body["sessionId"], session.to_string());
+    assert_eq!(body["boundCall"]["expectedCustodyRevision"], 7);
+    assert_eq!(body["boundCall"]["expectedConfigRevision"], 8);
+    assert_eq!(
+        body["boundCall"]["configDigest"],
+        ContentHash::of(b"config").to_wire()
+    );
+}
+
+#[tokio::test]
+async fn approval_list_publishes_expired_and_binds_continuation_to_the_session() {
+    let row = stored_approval(ApprovalStatus::Expired);
+    let session = row.binding.session;
+    let next = PagePosition {
+        pk: format!("SES#{session}"),
+        sk: format!("APR#{}", row.approval),
+        index_pk: None,
+        index_sk: None,
+    };
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            next: Some(next),
+        }),
+    );
+    assert!(mounted.contains(&RouteId::SessionApprovalsList));
+
+    let (status, _, body) = get(&router, &format!("/api/sessions/{session}/approvals")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["status"], "expired");
+    assert!(body["items"][0].get("decision").is_none());
+    let cursor = body["nextCursor"].as_str().expect("a continuation");
+
+    let other_session = sample::<SessionId>(30);
+    let (status, _, body) = get(
+        &router,
+        &format!("/api/sessions/{other_session}/approvals?cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
 // --- secret reads ----------------------------------------------------------------

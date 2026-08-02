@@ -330,6 +330,15 @@ fn openapi_document(ir: &ContractIr, plane_id: &str) -> Value {
         .expect("planes are loaded before emission");
     let mut paths: BTreeMap<&str, Map<String, Value>> = BTreeMap::new();
     let mut reachable: BTreeSet<String> = BTreeSet::new();
+    if plane
+        .operations
+        .iter()
+        .any(|operation| !operation.errors.is_empty())
+    {
+        // Every declared failure response references this envelope even though
+        // it is not an authored request or success schema.
+        collect_reachable(ir, "ApiError", &mut reachable);
+    }
     for operation in &plane.operations {
         for schema in operation.request.iter().chain(operation.success.iter()) {
             collect_reachable(ir, schema, &mut reachable);
@@ -438,12 +447,7 @@ fn collect_reachable(ir: &ContractIr, id: &str, into: &mut BTreeSet<String>) {
     match &schema.body {
         SchemaBody::Object { fields } => {
             for field in fields {
-                if let Some(target) = field.ty.referenced_schema() {
-                    collect_reachable(ir, target, into);
-                }
-                if matches!(field.ty, FieldType::ByteRange) {
-                    collect_reachable(ir, "ByteRange", into);
-                }
+                collect_type_reachable(ir, &field.ty, into);
             }
         }
         SchemaBody::Union { variants, .. } => {
@@ -452,6 +456,18 @@ fn collect_reachable(ir: &ContractIr, id: &str, into: &mut BTreeSet<String>) {
             }
         }
         SchemaBody::Enum { .. } => {}
+    }
+}
+
+fn collect_type_reachable(ir: &ContractIr, ty: &FieldType, into: &mut BTreeSet<String>) {
+    match ty {
+        FieldType::Ref(target) => collect_reachable(ir, target, into),
+        FieldType::Array(inner, _) | FieldType::Map(inner) => {
+            collect_type_reachable(ir, inner, into);
+        }
+        FieldType::ByteRange => collect_reachable(ir, "ByteRange", into),
+        FieldType::ProviderId => collect_reachable(ir, "ProviderId", into),
+        _ => {}
     }
 }
 

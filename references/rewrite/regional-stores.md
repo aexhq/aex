@@ -441,6 +441,27 @@ The secret-custody review in §8 now reaches DynamoDB Local through the shared
 harness. That closes local transaction and rollback evidence for the reviewed
 set/replay path; it does not reduce any of the real-AWS gaps above.
 
+## 15. Regional contract reconciliation continuation (2026-08-02)
+
+`session-authority` no longer stores a lossy, stringly operation adapter row.
+`StoredOperation` contains the authoritative operation-domain envelope plus the
+optimistic version; the codec round-trips phase, cursor, typed-result content,
+measurement, durable failure, cancel request and every lifecycle timestamp.
+The workspace operation index is sparse by construction: `ContentGc` rows omit
+both index keys, and point projection also returns no public value.
+
+Approval reads additionally verify that the decoded `sessionId` agrees with the
+partition queried. A corrupt row cannot be projected under a different session
+path even inside the same workspace.
+
+The authorization projection now exposes a separate `WorkspaceProjection`
+port. `workspace_profile` (`PROFILE`) and durable effective-limit
+(`LIMIT#{limitId}`) items share the workspace partition but not the placement
+row. Limit decoding uses generated `LimitId` and `LimitValue`, checks the value
+shape against the registry, and preserves the central feed's explicit
+`default`/`workspace_override` source. This defines the regional read contract;
+it does not claim the central producer has landed, so the routes stay unmounted.
+
 ## 8. Secret-custody review continuation
 
 Branch `rw/regional-stores-review` was created from `4cf88eca`, merged with

@@ -52,6 +52,7 @@ aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
+    "session-authority",
 ] }
 async-trait.workspace = true
 aex-wire = { path = "../../crates/aex-wire" }

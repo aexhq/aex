@@ -5,9 +5,15 @@
 //! it either produces the value or a [`CodecError`], and there is no arm that
 //! substitutes a default for something the authority is supposed to know.
 
+use aex_operation_domain::{
+    ContinuationCursor, FailureClass, Operation, OperationFailure, OperationKind, OperationResult,
+    OperationScope, OperationStatus, Progress,
+};
+use aex_wire::CanonicalJson;
+use aex_wire::error::ErrorCode;
 use aex_wire::ids::{
-    AgentId, ApprovalId, ContentHash, GenerationId, MessageId, OperationId, OrganizationId,
-    ResourceName, RunId, SessionId, ToolCallId, WorkspaceId,
+    AgentId, ApprovalId, ContentHash, GenerationId, MeasurementId, MessageId, OperationId,
+    OrganizationId, ResourceName, RunId, SessionId, ToolCallId, WorkspaceId,
 };
 
 use crate::attr::{CodecError, Item, ItemBuilder, Row, b, boolean, n, s, stamp};
@@ -534,43 +540,126 @@ pub fn decode_approval(item: &Item, asserted: WorkspaceId) -> Result<Approval, C
     })
 }
 
-/// Encodes one durable operation record.
-#[must_use]
-pub fn encode_operation(operation: &StoredOperation) -> Item {
-    let key = keys::operation(operation.operation);
-    ItemBuilder::new(OPERATION)
+/// Encodes one durable operation record without discarding domain fields.
+///
+/// # Errors
+///
+/// [`CodecError::Malformed`] if a caller mutated a continuation cursor after
+/// construction so its canonical encoding is no longer valid.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear row encoder keeps every persisted operation field visible together"
+)]
+pub fn encode_operation(operation: &StoredOperation) -> Result<Item, CodecError> {
+    let record = &operation.record;
+    let key = keys::operation(record.id);
+    let (scope_kind, scope_id) = match record.scope {
+        OperationScope::Session(session) => ("session", session.to_string()),
+        OperationScope::Workspace(workspace) => ("workspace", workspace.to_string()),
+    };
+    let cursor = record
+        .cursor
+        .as_ref()
+        .map(ContinuationCursor::encode)
+        .transpose()
+        .map_err(|error| CodecError::Malformed {
+            item_type: OPERATION,
+            attribute: "continuationCursor",
+            reason: error.to_string(),
+        })?;
+    let mut item = ItemBuilder::new(OPERATION)
         .set(crate::attr::PK, s(key.pk))
         .set(crate::attr::SK, s(key.sk))
-        .set("operationId", s(operation.operation.to_string()))
-        .set("workspaceId", s(operation.workspace.to_string()))
+        .set("operationId", s(record.id.to_string()))
+        .set("workspaceId", s(record.workspace.to_string()))
         .set_opt(
             "sessionId",
-            operation.session.map(|session| s(session.to_string())),
+            record.session.map(|session| s(session.to_string())),
         )
-        .set("kind", s(operation.kind.clone()))
-        .set("status", s(operation.status.clone()))
-        .set("intentHash", s(operation.intent.to_string()))
+        .set("kind", s(record.kind.as_str()))
+        .set("status", s(record.status.as_str()))
+        .set("intentHash", s(record.intent.to_string()))
+        .set("scopeKind", s(scope_kind))
+        .set("scopeId", s(scope_id))
         .set("version", n(operation.version))
         .set(
             "claimsSessionDeletion",
-            boolean(operation.claims_session_deletion),
+            boolean(record.kind.claims_session_deletion()),
         )
-        .set("createdAt", stamp(operation.created_at))
-        .set("updatedAt", stamp(operation.updated_at))
-        .set(
-            keys::workspace_index::PK,
-            s(keys::workspace_index::operation_partition(
-                operation.workspace,
-            )),
+        .set("cancelRequested", boolean(record.cancel_requested))
+        .set_opt(
+            "progressPhase",
+            record.progress.as_ref().map(|progress| s(&progress.phase)),
         )
-        .set(
-            keys::workspace_index::SK,
-            s(keys::workspace_index::operation_sort(
-                operation.created_at,
-                operation.operation,
-            )),
+        .set_opt(
+            "progressProcessed",
+            record
+                .progress
+                .as_ref()
+                .map(|progress| n(progress.processed)),
         )
-        .build()
+        .set_opt(
+            "progressTotal",
+            record
+                .progress
+                .as_ref()
+                .and_then(|progress| progress.total_hint)
+                .map(n),
+        )
+        .set_opt("continuationCursor", cursor.map(b))
+        .set("resultPresent", boolean(record.result.is_some()))
+        .set_opt(
+            "resultMeasurementId",
+            record
+                .result
+                .as_ref()
+                .and_then(|result| result.measurement)
+                .map(|measurement| s(measurement.to_string())),
+        )
+        .set_opt(
+            "resultJson",
+            record
+                .result
+                .as_ref()
+                .and_then(|result| result.content.as_ref())
+                .map(|content| s(content.as_str())),
+        )
+        .set_opt(
+            "errorCode",
+            record.error.as_ref().map(|error| s(error.code.as_str())),
+        )
+        .set_opt(
+            "errorClass",
+            record.error.as_ref().map(|error| s(error.class.as_str())),
+        )
+        .set_opt(
+            "errorDetailJson",
+            record
+                .error
+                .as_ref()
+                .and_then(|error| error.detail.as_ref())
+                .map(|detail| s(detail.as_str())),
+        )
+        .set("createdAt", stamp(record.created_at))
+        .set_opt("startedAt", record.started_at.map(stamp))
+        .set("updatedAt", stamp(record.updated_at))
+        .set_opt("committedAt", record.committed_at.map(stamp))
+        .set_opt("terminalAt", record.terminal_at.map(stamp));
+    if record.kind.is_public() {
+        item = item
+            .set(
+                keys::workspace_index::PK,
+                s(keys::workspace_index::operation_partition(record.workspace)),
+            )
+            .set(
+                keys::workspace_index::SK,
+                s(keys::workspace_index::operation_sort(
+                    record.created_at,
+                    record.id,
+                )),
+            );
+    }
+    Ok(item.build())
 }
 
 /// Decodes one durable operation record.
@@ -578,6 +667,10 @@ pub fn encode_operation(operation: &StoredOperation) -> Item {
 /// # Errors
 ///
 /// [`CodecError`] as for every decode here.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one strict row decoder keeps every operation invariant in a single audit surface"
+)]
 pub fn decode_operation(item: &Item, asserted: WorkspaceId) -> Result<StoredOperation, CodecError> {
     let row = Row::bind(item, OPERATION)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
@@ -587,17 +680,126 @@ pub fn decode_operation(item: &Item, asserted: WorkspaceId) -> Result<StoredOper
         attribute: "intentHash",
         reason: "an intent hash is 64 lowercase hex characters".to_owned(),
     })?;
+    let operation = row.id::<OperationId>("operationId")?;
+    let session = row.opt_id::<SessionId>("sessionId")?;
+    let kind = OperationKind::parse(row.string("kind")?).ok_or_else(|| CodecError::Malformed {
+        item_type: OPERATION,
+        attribute: "kind",
+        reason: "outside the closed operation-kind vocabulary".to_owned(),
+    })?;
+    let status =
+        OperationStatus::parse(row.string("status")?).ok_or_else(|| CodecError::Malformed {
+            item_type: OPERATION,
+            attribute: "status",
+            reason: "outside the closed operation-status vocabulary".to_owned(),
+        })?;
+    let scope = match row.string("scopeKind")? {
+        "session" => OperationScope::Session(row.id::<SessionId>("scopeId")?),
+        "workspace" => OperationScope::Workspace(row.id::<WorkspaceId>("scopeId")?),
+        _ => {
+            return Err(CodecError::Malformed {
+                item_type: OPERATION,
+                attribute: "scopeKind",
+                reason: "expected `session` or `workspace`".to_owned(),
+            });
+        }
+    };
+    let progress = match row.opt_string("progressPhase")? {
+        None => None,
+        Some(phase) => {
+            let progress = Progress {
+                phase: phase.to_owned(),
+                processed: row.u64("progressProcessed")?,
+                total_hint: row.opt_u64("progressTotal")?,
+            };
+            progress.validate().map_err(|error| CodecError::Malformed {
+                item_type: OPERATION,
+                attribute: "progressPhase",
+                reason: error.to_string(),
+            })?;
+            Some(progress)
+        }
+    };
+    let cursor = row
+        .opt_bytes("continuationCursor")?
+        .map(ContinuationCursor::decode)
+        .transpose()
+        .map_err(|error| CodecError::Malformed {
+            item_type: OPERATION,
+            attribute: "continuationCursor",
+            reason: error.to_string(),
+        })?;
+    let result = if row.boolean("resultPresent")? {
+        Some(OperationResult {
+            measurement: row.opt_id::<MeasurementId>("resultMeasurementId")?,
+            content: row
+                .opt_string("resultJson")?
+                .map(CanonicalJson::parse)
+                .transpose()
+                .map_err(|error| CodecError::Malformed {
+                    item_type: OPERATION,
+                    attribute: "resultJson",
+                    reason: error.to_string(),
+                })?,
+        })
+    } else {
+        None
+    };
+    let error = match row.opt_string("errorCode")? {
+        None => None,
+        Some(code) => Some(OperationFailure {
+            code: ErrorCode::parse(code).ok_or_else(|| CodecError::Malformed {
+                item_type: OPERATION,
+                attribute: "errorCode",
+                reason: "outside the closed public error-code vocabulary".to_owned(),
+            })?,
+            class: FailureClass::parse(row.string("errorClass")?).ok_or_else(|| {
+                CodecError::Malformed {
+                    item_type: OPERATION,
+                    attribute: "errorClass",
+                    reason: "outside the closed failure-class vocabulary".to_owned(),
+                }
+            })?,
+            detail: row
+                .opt_string("errorDetailJson")?
+                .map(CanonicalJson::parse)
+                .transpose()
+                .map_err(|error| CodecError::Malformed {
+                    item_type: OPERATION,
+                    attribute: "errorDetailJson",
+                    reason: error.to_string(),
+                })?,
+        }),
+    };
+    let stored_claim = row.boolean("claimsSessionDeletion")?;
+    if stored_claim != kind.claims_session_deletion() {
+        return Err(CodecError::Malformed {
+            item_type: OPERATION,
+            attribute: "claimsSessionDeletion",
+            reason: "does not match the operation kind".to_owned(),
+        });
+    }
     Ok(StoredOperation {
-        operation: row.id::<OperationId>("operationId")?,
-        workspace: asserted,
-        session: row.opt_id::<SessionId>("sessionId")?,
-        kind: row.string("kind")?.to_owned(),
-        status: row.string("status")?.to_owned(),
-        intent,
+        record: Operation {
+            id: operation,
+            workspace: asserted,
+            session,
+            kind,
+            status,
+            intent,
+            scope,
+            progress,
+            cursor,
+            cancel_requested: row.boolean("cancelRequested")?,
+            result,
+            error,
+            created_at: row.timestamp("createdAt")?,
+            started_at: row.opt_timestamp("startedAt")?,
+            updated_at: row.timestamp("updatedAt")?,
+            committed_at: row.opt_timestamp("committedAt")?,
+            terminal_at: row.opt_timestamp("terminalAt")?,
+        },
         version: row.u64("version")?,
-        claims_session_deletion: row.boolean("claimsSessionDeletion")?,
-        created_at: row.timestamp("createdAt")?,
-        updated_at: row.timestamp("updatedAt")?,
     })
 }
 
@@ -632,20 +834,29 @@ pub use crate::replay::receipt_is_live;
 
 #[cfg(test)]
 mod tests {
+    use aex_operation_domain::{
+        FailureClass, Operation, OperationFailure, OperationKind, OperationResult, OperationScope,
+        OperationStatus, Progress,
+    };
+    use aex_wire::CanonicalJson;
+    use aex_wire::error::ErrorCode;
+    use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{
-        AgentId, MessageId, OrganizationId, PrefixedId, RunId, SessionId, Uuid7, WorkspaceId,
+        AgentId, MessageId, OperationId, OrganizationId, PrefixedId, RunId, SessionId, Uuid7,
+        WorkspaceId,
     };
     use aex_wire::types::Timestamp;
 
     use super::{
-        SESSION_HEAD, decode_approval, decode_event, decode_head, decode_message, decode_run,
-        encode_approval, encode_event, encode_head, encode_message, encode_run,
+        SESSION_HEAD, decode_approval, decode_event, decode_head, decode_message, decode_operation,
+        decode_run, encode_approval, encode_event, encode_head, encode_message, encode_operation,
+        encode_run,
     };
     use crate::attr::CodecError;
     use crate::keys;
     use crate::wire_pending::{
         Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body, Message, Run,
-        SessionEvent, SessionHead, SessionLifecycle, SessionStatus,
+        SessionEvent, SessionHead, SessionLifecycle, SessionStatus, StoredOperation,
     };
 
     fn stamp(millis: i64) -> Timestamp {
@@ -678,6 +889,76 @@ mod tests {
             purged_at: None,
             deletion_operation: None,
         }
+    }
+
+    fn stored_operation(kind: OperationKind) -> StoredOperation {
+        let workspace = workspace(1);
+        StoredOperation {
+            record: Operation {
+                id: OperationId::from_uuid7(Uuid7::compose(1_000, [8; 10])),
+                workspace,
+                session: None,
+                kind,
+                status: OperationStatus::Succeeded,
+                intent: IntentDigest::from_bytes([9; 32]),
+                scope: OperationScope::Workspace(workspace),
+                progress: Some(Progress {
+                    phase: "finalizing".to_owned(),
+                    processed: 3,
+                    total_hint: Some(3),
+                }),
+                cursor: None,
+                cancel_requested: false,
+                result: Some(OperationResult {
+                    measurement: None,
+                    content: Some(
+                        CanonicalJson::parse(r#"{"changed":true}"#).expect("canonical json"),
+                    ),
+                }),
+                error: None,
+                created_at: stamp(1_000),
+                started_at: Some(stamp(1_100)),
+                updated_at: stamp(2_000),
+                committed_at: Some(stamp(1_900)),
+                terminal_at: Some(stamp(2_000)),
+            },
+            version: 4,
+        }
+    }
+
+    #[test]
+    fn an_operation_round_trips_without_losing_public_projection_fields() {
+        let original = stored_operation(OperationKind::SessionStop);
+        let item = encode_operation(&original).expect("encodes");
+        let decoded = decode_operation(&item, original.record.workspace).expect("decodes");
+        assert_eq!(decoded, original);
+
+        let mut failed = stored_operation(OperationKind::TelemetryExport);
+        failed.record.status = OperationStatus::Failed;
+        failed.record.result = None;
+        failed.record.error = Some(OperationFailure {
+            code: ErrorCode::UpstreamError,
+            class: FailureClass::Retryable,
+            detail: Some(CanonicalJson::parse(r#"{"provider":"fixture"}"#).expect("json")),
+        });
+        let item = encode_operation(&failed).expect("encodes");
+        assert_eq!(
+            decode_operation(&item, failed.record.workspace).expect("decodes"),
+            failed
+        );
+    }
+
+    #[test]
+    fn content_gc_never_enters_the_public_workspace_operation_index() {
+        let internal = stored_operation(OperationKind::ContentGc);
+        let item = encode_operation(&internal).expect("encodes");
+        assert!(!item.contains_key(keys::workspace_index::PK));
+        assert!(!item.contains_key(keys::workspace_index::SK));
+
+        let public = stored_operation(OperationKind::WorkspaceDelete);
+        let item = encode_operation(&public).expect("encodes");
+        assert!(item.contains_key(keys::workspace_index::PK));
+        assert!(item.contains_key(keys::workspace_index::SK));
     }
 
     #[test]
@@ -866,6 +1147,20 @@ mod tests {
         assert_eq!(
             decode_approval(&encode_approval(&withdrawn), withdrawn.workspace).expect("decodes"),
             withdrawn
+        );
+    }
+
+    #[test]
+    fn an_expired_approval_round_trips_without_a_cancel_cause() {
+        let expired = Approval {
+            status: ApprovalStatus::Expired,
+            cancel_cause: None,
+            resolved_at: Some(stamp(61_000)),
+            ..approval()
+        };
+        assert_eq!(
+            decode_approval(&encode_approval(&expired), expired.workspace).expect("decodes"),
+            expired
         );
     }
 

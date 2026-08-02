@@ -15,6 +15,23 @@
       "pattern": "^sha256:[0-9a-f]{64}$",
       "type": "string"
     },
+    "configDigest": {
+      "description": "Digest of the resolved tool configuration.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "expectedConfigRevision": {
+      "description": "The configuration revision the call expects.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "expectedCustodyRevision": {
+      "description": "The credential-custody revision the call expects.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
     "expectedGenerationId": {
       "description": "The generation the call must run in.",
       "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
@@ -22,7 +39,7 @@
       "x-aex-id": "generation"
     },
     "implementationDigest": {
-      "description": "Digest of the tool implementation and config.",
+      "description": "Digest of the tool implementation.",
       "pattern": "^sha256:[0-9a-f]{64}$",
       "type": "string"
     },
@@ -47,6 +64,9 @@
   "required": [
     "agentId",
     "argumentsDigest",
+    "configDigest",
+    "expectedConfigRevision",
+    "expectedCustodyRevision",
     "implementationDigest",
     "runId",
     "toolCallId",

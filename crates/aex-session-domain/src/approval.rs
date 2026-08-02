@@ -28,11 +28,19 @@ pub enum ApprovalStatus {
     Denied,
     /// Withdrawn without a decision.
     Cancelled,
+    /// The explicit decision deadline elapsed.
+    Expired,
 }
 
 impl ApprovalStatus {
     /// Every status, in canonical order.
-    pub const ALL: [Self; 4] = [Self::Pending, Self::Approved, Self::Denied, Self::Cancelled];
+    pub const ALL: [Self; 5] = [
+        Self::Pending,
+        Self::Approved,
+        Self::Denied,
+        Self::Cancelled,
+        Self::Expired,
+    ];
 
     /// Whether no transition leaves this status.
     #[must_use]
@@ -224,6 +232,8 @@ pub struct Approval {
     pub status: ApprovalStatus,
     /// When it was raised.
     pub requested_at: Timestamp,
+    /// The explicit deadline after which it cannot be decided.
+    pub expires_at: Timestamp,
     /// When it settled.
     pub resolved_at: Option<Timestamp>,
     /// What was decided.
@@ -255,6 +265,20 @@ pub enum ApprovalRejection {
     /// The approval already settled.
     #[error("approval is already {0:?}")]
     AlreadyResolved(ApprovalStatus),
+    /// The caller supplied no future decision window.
+    #[error("approval expiry {expires_at:?} is not after request time {requested_at:?}")]
+    InvalidExpiry {
+        /// When the approval was raised.
+        requested_at: Timestamp,
+        /// The rejected deadline.
+        expires_at: Timestamp,
+    },
+    /// The deadline elapsed while a response was being admitted.
+    #[error("approval expired before the decision committed")]
+    ExpiryReached {
+        /// The terminal expiry commit the caller must persist.
+        commit: Box<ApprovalCommit>,
+    },
     /// The binding drifted between request and decision.
     #[error("approval binding changed in {} field(s)", fields.len())]
     BindingChanged {
@@ -270,16 +294,24 @@ pub enum ApprovalRejection {
 ///
 /// # Errors
 ///
-/// Returns [`ApprovalRejection::Pending`] when the session already has an
-/// unresolved approval and [`ApprovalRejection::BindingChanged`] when the
-/// requested binding already disagrees with the current one.
+/// Returns [`ApprovalRejection::InvalidExpiry`] when the supplied deadline is
+/// not in the future, [`ApprovalRejection::Pending`] when the session already
+/// has an unresolved approval, and [`ApprovalRejection::BindingChanged`] when
+/// the requested binding already disagrees with the current one.
 pub fn request_approval(
     id: ApprovalId,
     binding: ApprovalBinding,
     current: &ApprovalBinding,
     unresolved: Option<&Approval>,
     now: Timestamp,
+    expires_at: Timestamp,
 ) -> Result<ApprovalCommit, ApprovalRejection> {
+    if expires_at <= now {
+        return Err(ApprovalRejection::InvalidExpiry {
+            requested_at: now,
+            expires_at,
+        });
+    }
     if let Some(open) = unresolved
         && !open.status.is_resolved()
     {
@@ -294,6 +326,7 @@ pub fn request_approval(
                 binding,
                 ApprovalCancelCause::BindingDrift,
                 now,
+                expires_at,
                 now,
             )),
         });
@@ -304,6 +337,7 @@ pub fn request_approval(
             binding,
             status: ApprovalStatus::Pending,
             requested_at: now,
+            expires_at,
             resolved_at: None,
             decision: None,
             cancel_cause: None,
@@ -318,6 +352,7 @@ fn cancelled(
     binding: ApprovalBinding,
     cause: ApprovalCancelCause,
     requested_at: Timestamp,
+    expires_at: Timestamp,
     now: Timestamp,
 ) -> ApprovalCommit {
     ApprovalCommit {
@@ -326,6 +361,7 @@ fn cancelled(
             binding,
             status: ApprovalStatus::Cancelled,
             requested_at,
+            expires_at,
             resolved_at: Some(now),
             decision: None,
             cancel_cause: Some(cause),
@@ -343,14 +379,20 @@ fn cancelled(
 /// # Errors
 ///
 /// Returns [`ApprovalRejection::AlreadyResolved`] for the opposite decision on a
-/// settled approval and [`ApprovalRejection::BindingChanged`] on drift. An exact
-/// replay of the winning decision returns the stored commit.
+/// settled approval, [`ApprovalRejection::ExpiryReached`] when the deadline won
+/// the race, and [`ApprovalRejection::BindingChanged`] on drift. An exact replay
+/// of the winning decision returns the stored commit.
 pub fn respond(
     approval: &Approval,
     current: &ApprovalBinding,
     decision: ApprovalDecision,
     now: Timestamp,
 ) -> Result<ApprovalCommit, ApprovalRejection> {
+    if let Some(commit) = expire_pending(approval, now) {
+        return Err(ApprovalRejection::ExpiryReached {
+            commit: Box::new(commit),
+        });
+    }
     if approval.status.is_resolved() {
         if approval.decision == Some(decision) {
             return Ok(ApprovalCommit {
@@ -372,6 +414,7 @@ pub fn respond(
                 approval.binding.clone(),
                 ApprovalCancelCause::BindingDrift,
                 approval.requested_at,
+                approval.expires_at,
                 now,
             )),
         });
@@ -391,6 +434,28 @@ pub fn respond(
         // cancel the run: the model sees the denial and continues.
         denial_result: (decision == ApprovalDecision::Deny)
             .then_some(ErrorCode::PreconditionFailed),
+    })
+}
+
+/// Terminalizes a pending approval once its explicit deadline is reached.
+///
+/// Expiry is deliberately not a cancellation cause: a stop, binding drift and
+/// elapsed time are different customer-visible facts even though all three
+/// prevent dispatch.
+#[must_use]
+pub fn expire_pending(approval: &Approval, now: Timestamp) -> Option<ApprovalCommit> {
+    if approval.status != ApprovalStatus::Pending || now < approval.expires_at {
+        return None;
+    }
+    let mut expired = approval.clone();
+    expired.status = ApprovalStatus::Expired;
+    expired.resolved_at = Some(now);
+    expired.decision = None;
+    expired.cancel_cause = None;
+    Some(ApprovalCommit {
+        approval: expired,
+        dispatch: false,
+        denial_result: None,
     })
 }
 
@@ -437,6 +502,7 @@ pub fn cancel_pending(
         approval.binding.clone(),
         cause,
         approval.requested_at,
+        approval.expires_at,
         now,
     ))
 }
@@ -448,7 +514,7 @@ mod tests {
 
     use super::{
         ApprovalCancelCause, ApprovalDecision, ApprovalRejection, ApprovalStatus, BindingField,
-        CancelScope, binding_drift, cancel_pending, request_approval, respond,
+        CancelScope, binding_drift, cancel_pending, expire_pending, request_approval, respond,
     };
     use crate::testing::{approval_binding, drift_field};
 
@@ -478,16 +544,24 @@ mod tests {
     #[test]
     fn a_second_pending_approval_is_refused() {
         let binding = approval_binding();
-        let open = request_approval(approval_id(1), binding.clone(), &binding, None, moment(0))
-            .expect("raises")
-            .approval;
+        let open = request_approval(
+            approval_id(1),
+            binding.clone(),
+            &binding,
+            None,
+            moment(0),
+            moment(100),
+        )
+        .expect("raises")
+        .approval;
         assert_eq!(
             request_approval(
                 approval_id(2),
                 binding.clone(),
                 &binding,
                 Some(&open),
-                moment(1)
+                moment(1),
+                moment(100)
             ),
             Err(ApprovalRejection::Pending(approval_id(1)))
         );
@@ -496,9 +570,16 @@ mod tests {
     #[test]
     fn drift_fails_closed_and_dispatches_nothing() {
         let binding = approval_binding();
-        let pending = request_approval(approval_id(1), binding.clone(), &binding, None, moment(0))
-            .expect("raises")
-            .approval;
+        let pending = request_approval(
+            approval_id(1),
+            binding.clone(),
+            &binding,
+            None,
+            moment(0),
+            moment(100),
+        )
+        .expect("raises")
+        .approval;
         let drifted = drift_field(&binding, BindingField::ArgumentDigest);
         let Err(ApprovalRejection::BindingChanged { fields, commit }) =
             respond(&pending, &drifted, ApprovalDecision::Approve, moment(1))
@@ -517,9 +598,16 @@ mod tests {
     #[test]
     fn deny_records_one_result_and_leaves_the_run_live() {
         let binding = approval_binding();
-        let pending = request_approval(approval_id(1), binding.clone(), &binding, None, moment(0))
-            .expect("raises")
-            .approval;
+        let pending = request_approval(
+            approval_id(1),
+            binding.clone(),
+            &binding,
+            None,
+            moment(0),
+            moment(100),
+        )
+        .expect("raises")
+        .approval;
         let denied =
             respond(&pending, &binding, ApprovalDecision::Deny, moment(1)).expect("decides");
         assert_eq!(denied.approval.status, ApprovalStatus::Denied);
@@ -552,9 +640,16 @@ mod tests {
     #[test]
     fn cancellation_fires_exactly_when_the_cause_matches_its_scope() {
         let binding = approval_binding();
-        let pending = request_approval(approval_id(1), binding.clone(), &binding, None, moment(0))
-            .expect("raises")
-            .approval;
+        let pending = request_approval(
+            approval_id(1),
+            binding.clone(),
+            &binding,
+            None,
+            moment(0),
+            moment(100),
+        )
+        .expect("raises")
+        .approval;
 
         // Unconditional causes always apply.
         for cause in [
@@ -618,5 +713,27 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn expiry_is_a_distinct_terminal_fact_and_never_a_cancel_synonym() {
+        let binding = approval_binding();
+        let pending = request_approval(
+            approval_id(1),
+            binding.clone(),
+            &binding,
+            None,
+            moment(1),
+            moment(10),
+        )
+        .expect("requests")
+        .approval;
+
+        assert_eq!(pending.status, ApprovalStatus::Pending);
+        assert!(expire_pending(&pending, moment(9)).is_none());
+        let expired = expire_pending(&pending, moment(10)).expect("deadline reached");
+        assert_eq!(expired.approval.status, ApprovalStatus::Expired);
+        assert_eq!(expired.approval.resolved_at, Some(moment(10)));
+        assert_eq!(expired.approval.cancel_cause, None);
     }
 }

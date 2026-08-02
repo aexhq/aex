@@ -1,0 +1,27 @@
+{
+  "$id": "https://schemas.aex.dev/v1/OperationFailure.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A durable operation failure. It carries no synthetic request identity.",
+  "properties": {
+    "code": {
+      "description": "The stable public failure code.",
+      "type": "string",
+      "x-aex-registry": "errors"
+    },
+    "detail": {
+      "description": "Customer-safe detail, when the domain produced it.",
+      "x-aex-canonical-json": true
+    },
+    "retryable": {
+      "description": "Whether the same operation step may be retried.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "retryable"
+  ],
+  "title": "OperationFailure",
+  "type": "object"
+}

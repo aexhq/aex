@@ -30,16 +30,18 @@ use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
+use aex_session_dynamodb::store::SessionQueries;
+use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus};
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::ids::{ProviderCredentialId, ResourceName, WorkspaceId};
+use aex_wire::ids::{ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, Created, NoContent, ProviderCredentialsApi, RegistryApi,
-    RequestContext as WireContext, RouteGroup, SecretsApi, WithETag, dispatch_provider_credentials,
-    dispatch_registry, dispatch_secrets,
+    AcceptKind, ApprovalsApi, Created, NoContent, ProviderCredentialsApi, RegistryApi,
+    RequestContext as WireContext, RouteGroup, SecretsApi, WithETag, dispatch_approvals,
+    dispatch_provider_credentials, dispatch_registry, dispatch_secrets,
 };
 use aex_wire::types::Timestamp;
 
@@ -62,6 +64,8 @@ pub struct Shared {
     pub custody_table: String,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
+    /// The strongly consistent, read-only session-authority surface.
+    pub sessions: Arc<dyn SessionQueries>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
 }
@@ -119,6 +123,8 @@ const SERVED: &[RouteId] = &[
     RouteId::RegistryToolsList,
     RouteId::SecretGet,
     RouteId::SecretsList,
+    RouteId::SessionApprovalGet,
+    RouteId::SessionApprovalsList,
 ];
 
 impl std::fmt::Debug for Routes {
@@ -142,12 +148,21 @@ fn budget(limit: Option<u32>) -> WireResult<PageBudget> {
 
 impl Routes {
     fn cursor_binding(&self, route: RouteId, snapshot: &str) -> WireResult<CursorBinding> {
+        self.cursor_binding_for_session(route, snapshot, None)
+    }
+
+    fn cursor_binding_for_session(
+        &self,
+        route: RouteId,
+        snapshot: &str,
+        session_id: Option<SessionId>,
+    ) -> WireResult<CursorBinding> {
         Ok(CursorBinding {
             route,
             principal_scope: self.cx.auth.credential_binding,
             region: self.cx.auth.placement,
             workspace_id: self.cx.auth.workspace_id,
-            session_id: None,
+            session_id,
             // The listings served here take no filter, so the normalized query
             // is empty and its digest is a constant for the route. A route that
             // grows a filter must digest it here or a cursor would replay across
@@ -200,6 +215,101 @@ impl Routes {
         self.cx
             .now()
             .map_err(|_| WireError::new(ErrorCode::InternalError))
+    }
+}
+
+fn approval(stored: &Approval) -> models::Approval {
+    let (status, decision) = match stored.status {
+        ApprovalStatus::Pending => (models::ApprovalStatus::Pending, None),
+        ApprovalStatus::Approved => (
+            models::ApprovalStatus::Approved,
+            Some(models::ApprovalDecision::Approve),
+        ),
+        ApprovalStatus::Denied => (
+            models::ApprovalStatus::Denied,
+            Some(models::ApprovalDecision::Deny),
+        ),
+        ApprovalStatus::Cancelled => (models::ApprovalStatus::Cancelled, None),
+        ApprovalStatus::Expired => (models::ApprovalStatus::Expired, None),
+    };
+    models::Approval {
+        bound_call: models::ApprovalBoundCall {
+            agent_id: stored.binding.agent,
+            arguments_digest: stored.binding.argument_digest,
+            config_digest: stored.binding.config_digest,
+            expected_config_revision: stored.binding.expected_config_revision,
+            expected_custody_revision: stored.binding.expected_custody,
+            expected_generation_id: stored.binding.expected_generation,
+            implementation_digest: stored.binding.implementation_digest,
+            run_id: stored.binding.run,
+            tool_call_id: stored.binding.tool_call,
+            tool_name: stored.binding.tool.clone(),
+        },
+        created_at: stored.created_at,
+        decision,
+        expires_at: stored.expires_at,
+        id: stored.approval,
+        resolved_at: stored.resolved_at,
+        session_id: stored.binding.session,
+        status,
+    }
+}
+
+impl ApprovalsApi for Routes {
+    async fn session_approval_get(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        approval_id: aex_wire::ids::ApprovalId,
+    ) -> WireResult<models::Approval> {
+        self.shared
+            .sessions
+            .load_approval(self.cx.auth.workspace_id, session_id, approval_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+            .as_ref()
+            .map(approval)
+            .ok_or_else(|| WireError::new(ErrorCode::NotFound))
+    }
+
+    async fn session_approval_respond(
+        &self,
+        _cx: &WireContext,
+        _session_id: SessionId,
+        _approval_id: aex_wire::ids::ApprovalId,
+        _body: models::ApprovalRespondRequest,
+    ) -> WireResult<models::Approval> {
+        Err(not_served(RouteId::SessionApprovalRespond))
+    }
+
+    async fn session_approvals_list(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        query: models::SessionApprovalsListQuery,
+    ) -> WireResult<models::ApprovalPage> {
+        let snapshot = format!("session.approvals:{session_id}");
+        let binding = self.cursor_binding_for_session(
+            RouteId::SessionApprovalsList,
+            &snapshot,
+            Some(session_id),
+        )?;
+        let after = self.resume(query.cursor.as_ref(), &binding)?;
+        let page = self
+            .shared
+            .sessions
+            .page_approvals(
+                self.cx.auth.workspace_id,
+                session_id,
+                budget(query.limit)?,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?;
+        Ok(models::ApprovalPage {
+            items: page.items.iter().map(approval).collect(),
+            next_cursor: self.continuation(page.next.as_ref(), &binding)?,
+        })
     }
 }
 
@@ -719,6 +829,7 @@ impl UnaryDispatch for Routes {
                 dispatch_provider_credentials(self, &wire, raw, limits).await?
             }
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
+            "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };
         match outcome {

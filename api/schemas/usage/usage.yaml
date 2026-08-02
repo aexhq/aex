@@ -1,7 +1,8 @@
-# Rated usage.
+# Customer-safe regional usage quantities.
 #
-# Four priced categories, never added into one raw quantity. Model tokens are a
-# separate zero-dollar observability fact and never appear here.
+# Four metered resource categories, never added into one raw quantity. Model
+# tokens are a separate observability fact and never appear here. Monetary
+# rating is a central finance concern backed by private rate books.
 module: usage
 schemas:
   UsageCategory:
@@ -25,7 +26,7 @@ schemas:
       - { value: operation, doc: "Durable operation." }
 
   UsageQuery:
-    doc: A bounded query over rated usage.
+    doc: A bounded query over authoritative regional usage quantities.
     type: object
     fields:
       categories: { type: array, max: 4, optional: true, items: { type: ref, to: UsageCategory }, doc: "Restrict to these categories." }
@@ -35,7 +36,7 @@ schemas:
       limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
 
   UsageAttribution:
-    doc: What a rated aggregate is attributed to.
+    doc: What a regional aggregate is attributed to.
     type: object
     fields:
       region: { type: region, doc: "Where the usage happened." }
@@ -44,7 +45,6 @@ schemas:
       runId: { type: id, of: run, optional: true, doc: "The run, when attributable." }
       operationId: { type: id, of: operation, optional: true, doc: "The operation, when attributable." }
       source: { type: string, min: 1, max: 128, doc: "Which authority produced the facts." }
-      ratedCents: { type: cents, doc: "The rated amount." }
       serviceTime: { type: ref, to: TimeRange, doc: "The service-time interval." }
 
   UsageStorageAggregate:
@@ -76,7 +76,7 @@ schemas:
       egressBytes: { type: decimal, doc: "Measured egress bytes." }
 
   UsageAggregate:
-    doc: One rated aggregate, discriminated by priced category.
+    doc: One resource aggregate, discriminated by category.
     type: union
     tag: category
     variants:
@@ -93,13 +93,13 @@ schemas:
       workspaceId: { type: id, of: workspace, doc: "The workspace." }
       category: { type: ref, to: UsageCategory, doc: "The priced category." }
       acceptedSequence: { type: decimal, doc: "Facts accepted by the authority." }
-      ratedSequence: { type: decimal, doc: "Facts priced." }
-      aggregatedSequence: { type: decimal, doc: "Facts folded into the projection." }
+      projectedSequence: { type: decimal, doc: "Facts folded into the query projection." }
+      publishedSequence: { type: decimal, doc: "Facts delivered to central settlement." }
       settledSequence: { type: decimal, doc: "Facts settled centrally." }
-      serviceThrough: { type: timestamp, doc: "Service time the frontiers are complete through." }
+      serviceThrough: { type: timestamp, optional: true, doc: "Service time the authority has observed through, when any fact has been admitted." }
 
   UsagePage:
-    doc: One page of rated usage plus the frontiers that bound its completeness.
+    doc: One page of usage quantities plus the frontiers that bound its completeness. Monetary statements remain a central finance read.
     type: object
     fields:
       items: { type: array, max: 1000, items: { type: ref, to: UsageAggregate }, doc: "The page." }

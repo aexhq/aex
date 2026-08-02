@@ -2,19 +2,13 @@
   "$id": "https://schemas.aex.dev/v1/UsageAttribution.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "What a rated aggregate is attributed to.",
+  "description": "What a regional aggregate is attributed to.",
   "properties": {
     "operationId": {
       "description": "The operation, when attributable.",
       "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "operation"
-    },
-    "ratedCents": {
-      "description": "The rated amount.",
-      "pattern": "^(0|[1-9]\\d*)$",
-      "type": "string",
-      "x-aex-money": "cents"
     },
     "region": {
       "description": "Where the usage happened.",
@@ -57,7 +51,6 @@
     }
   },
   "required": [
-    "ratedCents",
     "region",
     "serviceTime",
     "source",
