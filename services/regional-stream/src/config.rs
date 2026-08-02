@@ -40,6 +40,14 @@ pub const OBSERVATION_TABLE_STREAM_ARN: &str = "AEX_OBSERVATION_TABLE_STREAM_ARN
 pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
 /// The storage reference of the cursor signing key.
 pub const CURSOR_SIGNING_KEY_REF: &str = "AEX_CURSOR_SIGNING_KEY_REF";
+/// Secondary-index settle window used to pin an honest observation snapshot.
+pub const OBS_INDEX_SETTLE_MS: &str = "AEX_OBS_INDEX_SETTLE_MS";
+/// Maximum authority items scanned for one emitted page.
+pub const OBS_QUERY_SCANNED_ITEMS: &str = "AEX_OBS_QUERY_SCANNED_ITEMS";
+/// Maximum authority segments visited for one emitted page.
+pub const OBS_QUERY_SEGMENTS: &str = "AEX_OBS_QUERY_SEGMENTS";
+/// Maximum authority bytes read for one emitted page.
+pub const OBS_QUERY_READ_BYTES: &str = "AEX_OBS_QUERY_READ_BYTES";
 /// How the tail phase is woken: `ddb_streams` or `poll`.
 pub const STREAM_WAKE_MODE: &str = "AEX_STREAM_WAKE_MODE";
 /// How many tasks this service runs, which bounds shard readers.
@@ -62,7 +70,7 @@ pub const STREAM_DRAIN_DEADLINE_MS: &str = "AEX_STREAM_DRAIN_DEADLINE_MS";
 pub const ASSERTION_CACHE_BYTES: &str = "AEX_ASSERTION_CACHE_BYTES";
 
 /// Every variable a healthy `regional-stream` requires in `poll` mode.
-pub const REQUIRED: [&str; 21] = [
+pub const REQUIRED: [&str; 25] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -74,6 +82,10 @@ pub const REQUIRED: [&str; 21] = [
     OBSERVATION_TABLE,
     CONTENT_BUCKET,
     CURSOR_SIGNING_KEY_REF,
+    OBS_INDEX_SETTLE_MS,
+    OBS_QUERY_SCANNED_ITEMS,
+    OBS_QUERY_SEGMENTS,
+    OBS_QUERY_READ_BYTES,
     STREAM_WAKE_MODE,
     STREAM_MAX_TASKS,
     STREAM_MAX_CONNECTIONS,
@@ -161,6 +173,10 @@ pub struct Config {
     pub content_bucket: String,
     /// Cursor signing key reference.
     pub cursor_signing_key_ref: String,
+    /// Conservative GSI settle window used by snapshot pinning.
+    pub observation_index_settle_ms: i64,
+    /// Per-page authority read budget.
+    pub observation_budget: aex_observation_query::plan::Budget,
     /// How the tail phase is woken.
     pub wake_mode: WakeMode,
     /// How many tasks this service runs.
@@ -267,6 +283,42 @@ impl Config {
             });
         }
 
+        let observation_index_settle_ms = bounded_u64(
+            lookup,
+            OBS_INDEX_SETTLE_MS,
+            u64::try_from(aex_observation_domain::limits::OBS_CLOCK_SKEW_MAX_MS + 1).unwrap_or(1),
+            60_000,
+        )?;
+        let observation_budget = aex_observation_query::plan::Budget {
+            max_returned: aex_observation_domain::limits::QUERY_MAX_LIMIT,
+            max_items_scanned: u32::try_from(bounded_u64(
+                lookup,
+                OBS_QUERY_SCANNED_ITEMS,
+                1,
+                u64::from(aex_observation_domain::limits::QUERY_MAX_ITEMS_SCANNED),
+            )?)
+            .map_err(|_| ConfigError::Invalid {
+                name: OBS_QUERY_SCANNED_ITEMS,
+                reason: "the admitted scan budget does not fit `u32`".to_owned(),
+            })?,
+            max_segments: u16::try_from(bounded_u64(
+                lookup,
+                OBS_QUERY_SEGMENTS,
+                1,
+                u64::from(aex_observation_domain::limits::QUERY_MAX_SEGMENTS),
+            )?)
+            .map_err(|_| ConfigError::Invalid {
+                name: OBS_QUERY_SEGMENTS,
+                reason: "the admitted segment budget does not fit `u16`".to_owned(),
+            })?,
+            max_bytes_read: bounded_u64(
+                lookup,
+                OBS_QUERY_READ_BYTES,
+                1,
+                aex_observation_domain::limits::QUERY_MAX_BYTES_READ,
+            )?,
+        };
+
         Ok(Self {
             plane,
             region,
@@ -281,6 +333,13 @@ impl Config {
             observation_stream,
             content_bucket: required(lookup, CONTENT_BUCKET)?,
             cursor_signing_key_ref: required(lookup, CURSOR_SIGNING_KEY_REF)?,
+            observation_index_settle_ms: i64::try_from(observation_index_settle_ms).map_err(
+                |_| ConfigError::Invalid {
+                    name: OBS_INDEX_SETTLE_MS,
+                    reason: "the settle window does not fit `i64`".to_owned(),
+                },
+            )?,
+            observation_budget,
             wake_mode,
             max_tasks,
             max_connections,

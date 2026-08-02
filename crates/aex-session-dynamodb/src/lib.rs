@@ -43,9 +43,12 @@ pub mod measure;
 pub mod paging;
 pub mod plan;
 pub mod replay;
+pub mod stream_keys;
 
 #[cfg(feature = "session-authority")]
 pub mod codec;
+#[cfg(any(feature = "session-authority", feature = "authz-projection"))]
+pub mod event;
 #[cfg(feature = "session-authority")]
 pub mod keys;
 #[cfg(feature = "session-authority")]

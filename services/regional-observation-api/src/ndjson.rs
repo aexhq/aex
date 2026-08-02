@@ -14,13 +14,15 @@
 //!   flushed there is no status left to change, so a failure is a `rotate`
 //!   carrying its reason, its retryability and a typed error.
 
-use aex_regional_http::stream::{Frame, RotateReason};
+use aex_wire::cursor::Cursor;
+use aex_wire::models::{ApiErrorBody, ObservationFrame, ObservationFrameRotate, RotateReason};
 use bytes::Bytes;
 use futures::stream::BoxStream;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// How many frames may be buffered before the producer is back-pressured.
-pub const CHANNEL_FRAMES: usize = 8;
+pub const DEFAULT_CHANNEL_FRAMES: usize = 8;
 
 /// Why a frame could not be produced.
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +42,8 @@ pub type FrameStream = BoxStream<'static, Result<Bytes, FrameError>>;
 #[derive(Debug)]
 pub struct FrameSender {
     sender: mpsc::Sender<Result<Bytes, FrameError>>,
-    sent: Option<String>,
+    sent: Option<Cursor>,
+    write_stall: Duration,
 }
 
 impl FrameSender {
@@ -48,7 +51,7 @@ impl FrameSender {
     ///
     /// Returns `false` once the reader has gone away, which is the producer's
     /// signal to stop rather than an error to report.
-    pub async fn send(&mut self, frame: &Frame) -> bool {
+    pub async fn send(&mut self, frame: &ObservationFrame) -> bool {
         let cursor = frame_cursor(frame);
         let encoded = match serde_json::to_vec(frame) {
             Ok(mut bytes) => {
@@ -59,27 +62,38 @@ impl FrameSender {
                 reason: error.to_string(),
             }),
         };
-        let ok = self.sender.send(encoded).await.is_ok();
+        let ok = tokio::time::timeout(self.write_stall, self.sender.send(encoded))
+            .await
+            .is_ok_and(|result| result.is_ok());
         if ok {
             // The cursor is adopted only after the whole frame was accepted.
-            self.sent = Some(cursor);
+            if let Some(cursor) = cursor {
+                self.sent = Some(cursor);
+            }
         }
         ok
     }
 
     /// The cursor of the last fully written frame.
     #[must_use]
-    pub fn sent(&self) -> Option<&str> {
-        self.sent.as_deref()
+    pub fn sent(&self) -> Option<&Cursor> {
+        self.sent.as_ref()
     }
 }
 
 /// Opens one frame stream and its producer.
 #[must_use]
-pub fn channel() -> (FrameSender, FrameStream) {
-    let (sender, receiver) = mpsc::channel(CHANNEL_FRAMES);
+pub fn channel(capacity: usize, write_stall: Duration) -> (FrameSender, FrameStream) {
+    let (sender, receiver) = mpsc::channel(capacity.max(1));
     let stream = futures::StreamExt::boxed(tokio_stream_of(receiver));
-    (FrameSender { sender, sent: None }, stream)
+    (
+        FrameSender {
+            sender,
+            sent: None,
+            write_stall,
+        },
+        stream,
+    )
 }
 
 /// Adapts the bounded channel into a stream without a second dependency.
@@ -91,39 +105,59 @@ fn tokio_stream_of(
 
 /// The terminal frame every stream ends with.
 #[must_use]
-pub fn rotate(cursor: String, reason: RotateReason, retryable: bool) -> Frame {
-    Frame::Rotate {
+pub fn rotate(cursor: Option<Cursor>, reason: RotateReason, retryable: bool) -> ObservationFrame {
+    ObservationFrame::Rotate(ObservationFrameRotate {
         cursor,
         reason,
         retryable,
         error: None,
-    }
+    })
+}
+
+/// A typed terminal failure after response headers were sent.
+#[must_use]
+pub fn failed(cursor: Option<Cursor>, error: ApiErrorBody) -> ObservationFrame {
+    let retryable = error.retryable;
+    ObservationFrame::Rotate(ObservationFrameRotate {
+        cursor,
+        reason: RotateReason::Failed,
+        retryable,
+        error: Some(error),
+    })
 }
 
 /// The resume token one frame carries.
-fn frame_cursor(frame: &Frame) -> String {
+fn frame_cursor(frame: &ObservationFrame) -> Option<Cursor> {
     match frame {
-        Frame::Records { cursor, .. }
-        | Frame::Gap { cursor, .. }
-        | Frame::Cursor { cursor, .. }
-        | Frame::Rotate { cursor, .. } => cursor.clone(),
+        ObservationFrame::Cursor(frame) => Some(frame.cursor.clone()),
+        ObservationFrame::Rotate(frame) => frame.cursor.clone(),
+        ObservationFrame::Records(_) | ObservationFrame::Gap(_) => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use aex_regional_http::stream::{Frame, RotateReason};
+    use aex_wire::cursor::Cursor;
+    use aex_wire::models::{
+        ObservationCoverage, ObservationFrame, ObservationFrameCursor, RotateReason,
+    };
+    use aex_wire::types::DecimalU128;
     use futures::StreamExt as _;
 
     use super::{channel, rotate};
 
+    fn test_channel() -> (super::FrameSender, super::FrameStream) {
+        channel(8, std::time::Duration::from_secs(1))
+    }
+
     #[tokio::test]
     async fn a_frame_is_newline_terminated_and_whole() {
-        let (mut sender, mut stream) = channel();
-        let frame = Frame::Cursor {
-            cursor: "cur_one".to_owned(),
-            at: aex_wire::types::Timestamp::from_unix_millis(1).expect("bounded"),
-        };
+        let (mut sender, mut stream) = test_channel();
+        let cursor = Cursor::parse("cur_one").expect("cursor");
+        let frame = ObservationFrame::Cursor(ObservationFrameCursor {
+            cursor,
+            coverage: coverage(),
+        });
         assert!(sender.send(&frame).await);
         let bytes = stream
             .next()
@@ -138,19 +172,20 @@ mod tests {
 
     #[tokio::test]
     async fn the_sent_cursor_advances_only_after_the_frame_is_accepted() {
-        let (mut sender, mut stream) = channel();
+        let (mut sender, mut stream) = test_channel();
         assert_eq!(sender.sent(), None, "nothing is claimed before a write");
-        let frame = rotate("cur_two".to_owned(), RotateReason::Rotation, true);
+        let cursor = Cursor::parse("cur_two").expect("cursor");
+        let frame = rotate(Some(cursor.clone()), RotateReason::BudgetExhausted, true);
         assert!(sender.send(&frame).await);
-        assert_eq!(sender.sent(), Some("cur_two"));
+        assert_eq!(sender.sent(), Some(&cursor));
         let _ = stream.next().await;
     }
 
     #[tokio::test]
     async fn a_dropped_reader_stops_the_producer_rather_than_failing_it() {
-        let (mut sender, stream) = channel();
+        let (mut sender, stream) = test_channel();
         drop(stream);
-        let frame = rotate("cur_three".to_owned(), RotateReason::Draining, false);
+        let frame = rotate(None, RotateReason::ServerRotating, false);
         assert!(
             !sender.send(&frame).await,
             "a gone reader is a stop signal, not an error"
@@ -159,15 +194,26 @@ mod tests {
 
     #[test]
     fn rotate_is_the_only_terminal_frame_and_carries_its_reason() {
-        let frame = rotate("cur_four".to_owned(), RotateReason::SlowReader, false);
+        let frame = rotate(None, RotateReason::ClientIdle, false);
         match frame {
-            Frame::Rotate {
-                reason, retryable, ..
-            } => {
-                assert_eq!(reason, RotateReason::SlowReader);
-                assert!(!retryable);
+            ObservationFrame::Rotate(frame) => {
+                assert_eq!(frame.reason, RotateReason::ClientIdle);
+                assert!(!frame.retryable);
             }
             other => panic!("expected a rotate frame, got {other:?}"),
+        }
+    }
+
+    fn coverage() -> ObservationCoverage {
+        ObservationCoverage {
+            accepted: DecimalU128::new(1),
+            caught_up: true,
+            complete: true,
+            earliest_replay: DecimalU128::new(0),
+            indexed: DecimalU128::new(1),
+            missing_intervals: Vec::new(),
+            snapshot: DecimalU128::new(1),
+            unbounded_gaps: Vec::new(),
         }
     }
 }

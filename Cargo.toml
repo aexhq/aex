@@ -214,6 +214,7 @@ aws_lambda_events = { version = "1.2.0", default-features = false, features = ["
 # --- AWS service SDKs --------------------------------------------------------
 aws-config = { version = "1.10.1", features = ["behavior-version-latest", "rt-tokio"] }
 aws-sdk-dynamodb = { version = "1.119.0", features = ["behavior-version-latest"] }
+aws-sdk-dynamodbstreams = { version = "1.107.0", features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.140.0", features = ["behavior-version-latest"] }
 aws-sdk-sqs = { version = "1.105.0", features = ["behavior-version-latest"] }
 aws-sdk-kms = { version = "1.114.0", features = ["behavior-version-latest"] }

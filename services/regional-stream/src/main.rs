@@ -9,15 +9,81 @@
 //! on `SIGTERM` flips readiness to `503` first so the load balancer deregisters
 //! before the drain deadline runs.
 
+use std::future::IntoFuture as _;
 use std::net::{Ipv6Addr, SocketAddr};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use aex_internal_contracts::assertion::AssertionAudience;
+use aex_observation_domain::keys::ScopeKey;
+use aex_regional_http::assertion::AuthFailure;
+use aex_regional_http::authz::{
+    LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
+};
 use aex_regional_http::config::ConfigError;
-use aex_regional_http::health::Readiness;
+use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
+use aex_session_dynamodb::stream_keys::SessionReadState;
+use aex_wire::dispatch::RequestLimits;
+use aex_wire::error::{ErrorCode, WireError};
+use regional_observation_api::api::{ObservationService, StreamPolicy, StreamRevalidator};
+use regional_observation_api::reader::ObservationReader;
+use regional_observation_api::wake::WakeHub;
 use regional_stream::config::{Config, WakeMode};
+use regional_stream::mount::{AppState, Edge};
+use regional_stream::wakes::{AuthorityStream, StreamSpec};
+use regional_stream::{QuotaLimits, QuotaManager};
+
+const AUDIENCE: AssertionAudience = AssertionAudience::RegionalStream;
+
+#[derive(Clone)]
+struct EdgeRevalidator {
+    edge: Arc<Edge>,
+    dynamodb: aws_sdk_dynamodb::Client,
+    session_table: String,
+}
+
+#[async_trait::async_trait]
+impl StreamRevalidator for EdgeRevalidator {
+    async fn revalidate(
+        &self,
+        authorization: &aex_regional_http::context::RegionalAuthorization,
+        scope: &ScopeKey,
+    ) -> Result<(), aex_wire::error::WireError> {
+        self.edge.revalidate(authorization).await?;
+        let ScopeKey::Session(session) = scope else {
+            return Ok(());
+        };
+        let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);
+        let response = self
+            .dynamodb
+            .get_item()
+            .table_name(&self.session_table)
+            .key("pk", aws_sdk_dynamodb::types::AttributeValue::S(pk))
+            .key(
+                "sk",
+                aws_sdk_dynamodb::types::AttributeValue::S(sk.to_owned()),
+            )
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|_| WireError::new(ErrorCode::ObservabilityUnavailable))?;
+        let item = response
+            .item
+            .ok_or_else(|| WireError::new(ErrorCode::SessionDeleted))?;
+        match aex_session_dynamodb::stream_keys::session_read_state(
+            &item,
+            authorization.workspace_id,
+        ) {
+            Ok(SessionReadState::Active) => Ok(()),
+            Ok(SessionReadState::Deleting) => Err(WireError::new(ErrorCode::SessionDeleting)),
+            Ok(SessionReadState::Deleted) => Err(WireError::new(ErrorCode::SessionDeleted)),
+            Err(attribute) => Err(WireError::new(ErrorCode::ObservabilityUnavailable)
+                .with_message(format!("session head has invalid `{attribute}`"))),
+        }
+    }
+}
 
 /// Why `regional-stream` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -25,6 +91,15 @@ enum RunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// Cold-start trust material was unreadable or malformed.
+    #[error(transparent)]
+    Trust(#[from] TrustError),
+    /// The authenticated regional edge could not be composed.
+    #[error("the request edge could not be composed: {0}")]
+    Edge(AuthFailure),
+    /// A required authority could not be proven before bind.
+    #[error("a start-up probe failed: {0}")]
+    Probe(String),
     /// The listener could not be bound or served.
     #[error("the stream listener stopped: {0}")]
     Listener(String),
@@ -57,6 +132,10 @@ async fn main() -> ExitCode {
 }
 
 /// Builds the authoritative readers, binds the listener and serves until drain.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the composition root deliberately keeps every probed authority, wake reader, quota and drain binding visible in one audit surface"
+)]
 async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
@@ -73,21 +152,107 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     );
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-    // Read-only clients only. There is no SQS client and no work-table adapter
-    // in this link graph, which is what makes "the stream owns no mutation"
-    // structural rather than reviewed.
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let objects = aws_sdk_s3::Client::new(&aws);
-    let readers = Readers {
-        dynamodb,
+    let parameters = ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
+
+    let reader = ObservationReader::new(
+        dynamodb.clone(),
         objects,
-        session_table: config.session_table.clone(),
-        observation_table: config.observation_table.clone(),
-        content_bucket: config.content_bucket.clone(),
-    };
+        config.observation_table.clone(),
+        config.session_table.clone(),
+        config.content_bucket.clone(),
+        config.observation_index_settle_ms,
+    );
+    reader
+        .probe()
+        .await
+        .map_err(|error| RunError::Probe(error.to_string()))?;
+    dynamodb
+        .describe_table()
+        .table_name(&config.session_table)
+        .send()
+        .await
+        .map_err(|error| {
+            RunError::Probe(format!("`session-authority` is not readable: {error}"))
+        })?;
+
+    let anchors = parameters
+        .trust_anchors(&config.authz_verify_keys_param)
+        .await?;
+    let cursor_ring = parameters
+        .cursor_key_ring(&config.cursor_signing_key_ref)
+        .await?;
 
     let draining = Arc::new(AtomicBool::new(false));
-    let router = aex_regional_http::health::router(readiness(config, &readers, false));
+    let wake_hub = WakeHub::default();
+    let _wake_readers = if config.wake_mode == WakeMode::DdbStreams {
+        let session = config.session_stream.as_ref().ok_or_else(|| {
+            RunError::Probe("ddb_streams mode omitted the session stream ARN".to_owned())
+        })?;
+        let observation = config.observation_stream.as_ref().ok_or_else(|| {
+            RunError::Probe("ddb_streams mode omitted the observation stream ARN".to_owned())
+        })?;
+        Some(
+            regional_stream::wakes::start(
+                aws_sdk_dynamodbstreams::Client::new(&aws),
+                dynamodb.clone(),
+                config.session_table.clone(),
+                vec![
+                    StreamSpec {
+                        arn: session.value.clone(),
+                        authority: AuthorityStream::Session,
+                    },
+                    StreamSpec {
+                        arn: observation.value.clone(),
+                        authority: AuthorityStream::Observation,
+                    },
+                ],
+                wake_hub.clone(),
+            )
+            .await
+            .map_err(|error| RunError::Probe(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let edge = Arc::new(build_edge(config, &aws, &dynamodb, anchors)?);
+    let frames =
+        (config.connection_buffer_bytes / aex_regional_http::stream::MAX_FRAME_BYTES).max(1);
+    let service = ObservationService::new(
+        reader,
+        config.observation_budget,
+        aex_observation_domain::limits::METRIC_AGGREGATE_SCAN,
+        cursor_ring,
+        config.region,
+    )
+    .with_stream_policy(StreamPolicy {
+        buffered_frames: frames,
+        write_stall: Duration::from_millis(config.write_stall_ms),
+        draining: Arc::clone(&draining),
+        wakes: (config.wake_mode == WakeMode::DdbStreams).then_some(wake_hub),
+        revalidator: Some(Arc::new(EdgeRevalidator {
+            edge: Arc::clone(&edge),
+            dynamodb: dynamodb.clone(),
+            session_table: config.session_table.clone(),
+        })),
+        ..StreamPolicy::default()
+    });
+    let quotas = QuotaManager::new(QuotaLimits {
+        total: quota(config.max_connections)?,
+        session: quota(config.max_connections_session)?,
+        observation: quota(config.max_connections_observation)?,
+        per_workspace: quota(config.max_connections_per_workspace)?,
+    })
+    .map_err(|error| RunError::Probe(error.to_string()))?;
+    let router = regional_stream::mount::router(Arc::new(AppState {
+        edge,
+        service: Arc::new(service),
+        limits: RequestLimits::DEFAULT,
+        quotas,
+        draining: Arc::clone(&draining),
+        release_digest: config.release_digest.clone(),
+    }));
 
     let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
     let listener = tokio::net::TcpListener::bind(address)
@@ -99,67 +264,75 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         config.max_tasks
     );
 
-    let drain = Arc::clone(&draining);
     let deadline = Duration::from_millis(config.drain_deadline_ms);
-    axum::serve(listener, router)
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let server = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
-            wait_for_termination().await;
-            // Readiness flips first so the ALB deregisters this target before
-            // the socket drain runs; the deregistration delay is what turns a
-            // task replacement into a reconnect rather than a dropped frame.
-            drain.store(true, Ordering::SeqCst);
-            eprintln!(
-                "regional-stream: draining, deadline {} ms",
-                deadline.as_millis()
-            );
+            while !*shutdown_rx.borrow() && shutdown_rx.changed().await.is_ok() {}
         })
-        .await
-        .map_err(|error| RunError::Listener(error.to_string()))
-}
-
-/// The read-only authorities this service is bound to.
-#[derive(Debug, Clone)]
-struct Readers {
-    dynamodb: aws_sdk_dynamodb::Client,
-    objects: aws_sdk_s3::Client,
-    session_table: String,
-    observation_table: String,
-    content_bucket: String,
-}
-
-impl Readers {
-    /// Dependency names that are not yet resolved.
-    fn unresolved(&self) -> Vec<String> {
-        let mut unresolved = Vec::new();
-        for (name, bound) in [
-            ("session-authority", !self.session_table.is_empty()),
-            ("observation-authority", !self.observation_table.is_empty()),
-            ("content-bucket", !self.content_bucket.is_empty()),
-        ] {
-            if !bound {
-                unresolved.push(name.to_owned());
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        outcome = &mut server => outcome.map_err(|error| RunError::Listener(error.to_string())),
+        () = wait_for_termination() => {
+            // Readiness and producer drain flip before the listener is asked to
+            // stop. Existing streams emit `rotate` with their last sent cursor;
+            // new connections receive 503 while the ALB deregisters the task.
+            draining.store(true, Ordering::Release);
+            let _ = shutdown_tx.send(true);
+            eprintln!("regional-stream: draining, deadline {} ms", deadline.as_millis());
+            match tokio::time::timeout(deadline, &mut server).await {
+                Ok(outcome) => outcome.map_err(|error| RunError::Listener(error.to_string())),
+                Err(_) => Err(RunError::Listener(format!(
+                    "drain deadline of {} ms expired",
+                    deadline.as_millis()
+                ))),
             }
         }
-        unresolved
     }
 }
 
-/// Fail-closed readiness: draining is never ready, and neither is a process
-/// whose authoritative readers are unbound.
-fn readiness(config: &Config, readers: &Readers, draining: bool) -> Readiness {
-    let mut unavailable = readers.unresolved();
-    if draining {
-        unavailable.push("draining".to_owned());
-    }
-    if config.wake_mode == WakeMode::DdbStreams && config.session_stream.is_none() {
-        unavailable.push("session-authority-stream".to_owned());
-    }
-    if unavailable.is_empty() {
-        Readiness::ready(config.release_digest.clone())
-    } else {
-        Readiness::not_ready(config.release_digest.clone(), unavailable)
-            .unwrap_or_else(|_| Readiness::ready(config.release_digest.clone()))
-    }
+fn quota(value: u64) -> Result<u32, RunError> {
+    u32::try_from(value)
+        .map_err(|_| RunError::Probe(format!("connection quota `{value}` exceeds `u32`")))
+}
+
+fn build_edge(
+    config: &Config,
+    aws: &aws_config::SdkConfig,
+    dynamodb: &aws_sdk_dynamodb::Client,
+    anchors: aex_identity_domain::assertion::VerificationKeySet,
+) -> Result<Edge, RunError> {
+    RegionalEdge::new(
+        LambdaAssertionSource::new(
+            aws_sdk_lambda::Client::new(aws),
+            config.authz_function.value.clone(),
+            AUDIENCE,
+            config.region,
+        ),
+        anchors,
+        RegionalProjection::new(
+            aex_session_dynamodb::projection::ProjectionReader::new(
+                dynamodb.clone(),
+                config.authz_projection_table.clone(),
+            ),
+            config.region,
+        ),
+        SystemClock,
+        EdgeBinding {
+            plane: config.plane,
+            audience: AUDIENCE,
+            region: config.region,
+            cache_budget_bytes: config.assertion_cache_bytes,
+            limits: aex_regional_http::context::EffectiveLimits {
+                json_body_bytes: RequestLimits::DEFAULT_JSON_BODY_BYTES,
+                query_page_items: usize::from(config.observation_budget.max_returned),
+                query_page_bytes: usize::try_from(config.observation_budget.max_bytes_read)
+                    .unwrap_or(usize::MAX),
+            },
+        },
+    )
+    .map_err(RunError::Edge)
 }
 
 /// Waits for the container runtime's stop signal.
@@ -181,7 +354,3 @@ async fn wait_for_termination() {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
-
-/// Keeps the read-only clients reachable from the composition.
-const _: fn(&Readers) -> (&aws_sdk_dynamodb::Client, &aws_sdk_s3::Client) =
-    |readers| (&readers.dynamodb, &readers.objects);

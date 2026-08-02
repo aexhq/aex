@@ -31,8 +31,7 @@ pub const SESSION_HEAD: &str = "session_head";
 pub const MESSAGE: &str = "message";
 /// The `itemType` of a run.
 pub const RUN: &str = "run";
-/// The `itemType` of a native event.
-pub const SESSION_EVENT: &str = "session_event";
+pub use crate::event::{BODY_DIGEST, BODY_INLINE, SESSION_EVENT};
 /// The `itemType` of an agent control item.
 pub const AGENT_CONTROL: &str = "agent_control";
 /// The `itemType` of a journal entry.
@@ -52,10 +51,6 @@ pub const FANOUT_PAGE: &str = "fanout_page";
 /// The `itemType` of an agent effect.
 pub const AGENT_EFFECT: &str = "agent_effect";
 
-/// The attribute a body's inline bytes live under.
-pub const BODY_INLINE: &str = "bodyInline";
-/// The attribute a body's content reference lives under.
-pub const BODY_DIGEST: &str = "bodyDigest";
 /// The attribute a message's inline bytes live under.
 pub const CONTENT_INLINE: &str = "contentInline";
 /// The attribute a message's content reference lives under.
@@ -290,7 +285,24 @@ pub fn encode_event(session: SessionId, event: &SessionEvent) -> Item {
             .set(crate::attr::PK, s(key.pk))
             .set(crate::attr::SK, s(key.sk))
             .set("eventSeq", n(event.event_seq))
-            .set("eventId", s(event.event_id.clone()))
+            .set("eventId", s(event.event_id.to_string()))
+            .set("workspaceId", s(event.workspace.to_string()))
+            .set("sessionId", s(session.to_string()))
+            .set(
+                crate::stream_keys::WORKSPACE_EVENT_PK,
+                s(crate::stream_keys::workspace_event_partition(
+                    event.workspace,
+                    event.occurred_at,
+                )),
+            )
+            .set(
+                crate::stream_keys::WORKSPACE_EVENT_SK,
+                s(crate::stream_keys::workspace_event_sort(
+                    session,
+                    event.event_id,
+                    event.occurred_at,
+                )),
+            )
             .set("type", s(event.event_type.clone()))
             .set_opt("runId", event.run.map(|run| s(run.to_string())))
             .set_opt("agentId", event.agent.map(|agent| s(agent.to_string())))
@@ -311,25 +323,7 @@ pub fn encode_event(session: SessionId, event: &SessionEvent) -> Item {
 /// that is not `obs_`-prefixed — the observation stream reads this row as the
 /// one authority for events, so the identity it will publish is checked here.
 pub fn decode_event(item: &Item) -> Result<SessionEvent, CodecError> {
-    let row = Row::bind(item, SESSION_EVENT)?;
-    let event_id = row.string("eventId")?;
-    if !event_id.starts_with("obs_") {
-        return Err(CodecError::Malformed {
-            item_type: SESSION_EVENT,
-            attribute: "eventId",
-            reason: "a session event identity is an `obs_`-prefixed observation id".to_owned(),
-        });
-    }
-    Ok(SessionEvent {
-        event_seq: row.u64("eventSeq")?,
-        event_id: event_id.to_owned(),
-        event_type: row.string("type")?.to_owned(),
-        run: row.opt_id::<RunId>("runId")?,
-        agent: row.opt_id::<AgentId>("agentId")?,
-        body: read_body(&row, BODY_INLINE, BODY_DIGEST)?,
-        occurred_at: row.timestamp("occurredAt")?,
-        outbox_state: row.enumerated("outboxState", keys::OUTBOX_STATES)?,
-    })
+    crate::event::decode(item)
 }
 
 /// Encodes one agent control item.
@@ -842,8 +836,8 @@ mod tests {
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{
-        AgentId, GenerationId, MessageId, OperationId, OrganizationId, PrefixedId, RunId,
-        SessionId, Uuid7, WorkspaceId,
+        AgentId, GenerationId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId,
+        RunId, SessionId, Uuid7, WorkspaceId,
     };
     use aex_wire::types::Timestamp;
 
@@ -1256,8 +1250,9 @@ mod tests {
     #[test]
     fn an_event_identity_must_be_an_observation_id() {
         let event = SessionEvent {
+            workspace: workspace(1),
             event_seq: 1,
-            event_id: "obs_01j0000000000000000000000".to_owned(),
+            event_id: ObservationId::from_uuid7(Uuid7::compose(1, [5; 10])),
             event_type: "run.admitted".to_owned(),
             run: None,
             agent: None,
@@ -1268,6 +1263,18 @@ mod tests {
         let session = SessionId::from_uuid7(Uuid7::compose(1, [1; 10]));
         let mut encoded = encode_event(session, &event);
         assert_eq!(decode_event(&encoded).expect("decodes"), event);
+        assert!(
+            encoded[crate::stream_keys::WORKSPACE_EVENT_PK]
+                .as_s()
+                .expect("workspace event partition")
+                .starts_with(&format!("EVTW#{}#", event.workspace))
+        );
+        assert!(
+            encoded[crate::stream_keys::WORKSPACE_EVENT_SK]
+                .as_s()
+                .expect("workspace event sort")
+                .ends_with(&format!("#{session}#{}", event.event_id))
+        );
 
         encoded.insert("eventId".to_owned(), crate::attr::s("evt_1"));
         let error = decode_event(&encoded).expect_err("not an observation id");

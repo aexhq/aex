@@ -85,6 +85,12 @@ pub struct Page {
     pub last: Option<OrderTuple>,
 }
 
+/// One fully paged, budget-bounded index segment.
+struct SegmentBatch {
+    items: Vec<HashMap<String, AttributeValue>>,
+    exhausted: bool,
+}
+
 /// The accepted frontier of one scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Frontier {
@@ -100,6 +106,7 @@ pub struct ObservationReader {
     dynamodb: aws_sdk_dynamodb::Client,
     s3: aws_sdk_s3::Client,
     table: String,
+    session_table: String,
     bucket: String,
     settle_ms: i64,
 }
@@ -111,6 +118,7 @@ impl ObservationReader {
         dynamodb: aws_sdk_dynamodb::Client,
         s3: aws_sdk_s3::Client,
         table: impl Into<String>,
+        session_table: impl Into<String>,
         bucket: impl Into<String>,
         settle_ms: i64,
     ) -> Self {
@@ -118,6 +126,7 @@ impl ObservationReader {
             dynamodb,
             s3,
             table: table.into(),
+            session_table: session_table.into(),
             bucket: bucket.into(),
             settle_ms,
         }
@@ -148,6 +157,12 @@ impl ObservationReader {
             .send()
             .await
             .map_err(|error| ReadError::provider("DescribeTable", error))?;
+        self.dynamodb
+            .describe_table()
+            .table_name(&self.session_table)
+            .send()
+            .await
+            .map_err(|error| ReadError::provider("DescribeSessionTable", error))?;
         self.s3
             .head_bucket()
             .bucket(&self.bucket)
@@ -208,7 +223,7 @@ impl ObservationReader {
         let pinned = frontier.accepted_at.unix_millis().min(floor);
         Timestamp::from_unix_millis(pinned.max(0))
             .ok()
-            .and_then(|at| Snapshot::pin(at, at))
+            .map(Snapshot::at)
     }
 
     /// Reads one bounded page.
@@ -223,28 +238,69 @@ impl ObservationReader {
     /// Returns [`ReadError::BudgetExhausted`] only when the first segment alone
     /// exceeds the scan budget before yielding a single item, and
     /// [`ReadError::Provider`] when the authority is unreachable.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the bounded multi-index merge keeps budget accounting, snapshot filtering and total ordering in one audit surface"
+    )]
     pub async fn read_page(
         &self,
         scope: &ScopeKey,
         workspace: WorkspaceId,
         query: &NormalizedQuery,
         plan: &aex_observation_query::plan::Plan,
+        snapshot: Snapshot,
         after: Option<&OrderTuple>,
     ) -> Result<Page, ReadError> {
         let mut rows: Vec<(OrderTuple, Observation, MapRow)> = Vec::new();
         let mut spend = Spend::default();
         let mut exhausted_range = true;
 
-        for walk in &plan.walks {
-            let buckets = Self::buckets(query);
+        'walks: for walk in &plan.walks {
+            let buckets = if walk.access == Access::SessionAuthority
+                && matches!(scope, ScopeKey::Session(_))
+            {
+                vec![BucketHour::from_timestamp(query.time_gte)]
+            } else {
+                Self::buckets(query)
+            };
             for bucket in buckets {
-                if spend.segments >= plan.budget.max_segments {
+                if spend.segments >= plan.budget.max_segments
+                    || spend.items_scanned >= plan.budget.max_items_scanned
+                    || spend.bytes_read >= plan.budget.max_bytes_read
+                {
                     exhausted_range = false;
-                    break;
+                    break 'walks;
                 }
-                for shard in 0..BUCKET_SHARDS {
+                let shard_count = if walk.access == Access::SessionAuthority {
+                    1
+                } else {
+                    BUCKET_SHARDS
+                };
+                for shard in 0..shard_count {
+                    let remaining_items = plan
+                        .budget
+                        .max_items_scanned
+                        .saturating_sub(spend.items_scanned);
+                    let remaining_segments =
+                        plan.budget.max_segments.saturating_sub(spend.segments);
+                    if remaining_items == 0 || remaining_segments == 0 {
+                        exhausted_range = false;
+                        break 'walks;
+                    }
+                    let fair_share = if walk.access == Access::SessionAuthority
+                        && matches!(scope, ScopeKey::Session(_))
+                    {
+                        remaining_items
+                    } else {
+                        remaining_items
+                            .div_ceil(u32::from(remaining_segments))
+                            .max(u32::from(query.limit))
+                            .min(remaining_items)
+                    };
+                    let remaining_bytes =
+                        plan.budget.max_bytes_read.saturating_sub(spend.bytes_read);
                     spend.segments = spend.segments.saturating_add(1);
-                    let items = self
+                    let segment = self
                         .query_segment(
                             scope,
                             workspace,
@@ -253,19 +309,30 @@ impl ObservationReader {
                             walk.signal,
                             bucket,
                             shard,
+                            fair_share,
+                            remaining_bytes,
                         )
                         .await?;
+                    exhausted_range &= segment.exhausted;
                     spend.items_scanned = spend
                         .items_scanned
-                        .saturating_add(u32::try_from(items.len()).unwrap_or(u32::MAX));
-                    for item in items {
+                        .saturating_add(u32::try_from(segment.items.len()).unwrap_or(u32::MAX));
+                    for item in segment.items {
                         spend.bytes_read = spend.bytes_read.saturating_add(
                             aex_observation_store_aws::store::item_size(&item) as u64,
                         );
-                        let Some((tuple, observation, row)) = Self::decode(&item, walk.signal)?
+                        let Some((tuple, observation, row)) =
+                            (if walk.access == Access::SessionAuthority {
+                                Self::decode_event(&item, scope, workspace, query.order_by)?
+                            } else {
+                                Self::decode(&item, walk.signal, query.order_by)?
+                            })
                         else {
                             continue;
                         };
+                        if observation.accepted_at > snapshot.accepted_at() {
+                            continue;
+                        }
                         if !inside(&tuple, query, after) {
                             continue;
                         }
@@ -275,6 +342,12 @@ impl ObservationReader {
                             continue;
                         }
                         rows.push((tuple, observation, row));
+                    }
+                    if spend.items_scanned >= plan.budget.max_items_scanned
+                        || spend.bytes_read >= plan.budget.max_bytes_read
+                    {
+                        exhausted_range = false;
+                        break 'walks;
                     }
                 }
             }
@@ -288,6 +361,13 @@ impl ObservationReader {
         let more = rows.len() > limit || !exhausted_range;
         rows.truncate(limit);
         spend.returned = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+
+        if rows.is_empty() && !exhausted_range {
+            return Err(ReadError::BudgetExhausted {
+                dimension: "scanned_items",
+                scanned: spend.items_scanned,
+            });
+        }
 
         match classify(&plan.budget, &spend, exhausted_range) {
             PageOutcome::NoProgress { dimension, .. } => Err(ReadError::BudgetExhausted {
@@ -338,12 +418,22 @@ impl ObservationReader {
         signal: Signal,
         bucket: BucketHour,
         shard: u8,
-    ) -> Result<Vec<HashMap<String, AttributeValue>>, ReadError> {
+        max_items: u32,
+        max_bytes: u64,
+    ) -> Result<SegmentBatch, ReadError> {
+        if access == Access::SessionAuthority {
+            return self
+                .query_event_segment(scope, workspace, query, bucket, max_items, max_bytes)
+                .await;
+        }
         let Some((partition, sort)) = segment_key(scope, workspace, access, signal, bucket, shard)
         else {
             // `events` are read through the semantic port over
             // `session-authority`; they never live in this table.
-            return Ok(Vec::new());
+            return Ok(SegmentBatch {
+                items: Vec::new(),
+                exhausted: true,
+            });
         };
         let mut builder = ExpressionBuilder::new();
         let pk_name = builder.name(&partition.attribute);
@@ -353,32 +443,169 @@ impl ObservationReader {
         let hi = builder.string(sort.hi);
         let condition = format!("{pk_name} = {pk_value} AND {sk_name} BETWEEN {lo} AND {hi}");
 
-        let mut request = self
-            .dynamodb
-            .query()
-            .table_name(&self.table)
-            .key_condition_expression(condition)
-            .set_expression_attribute_names(Some(builder.names()))
-            .set_expression_attribute_values(Some(builder.values()))
-            .limit(i32::from(query.limit))
-            .scan_index_forward(matches!(query.direction, Direction::Ascending));
-        if let Some(index) = access.index_name() {
-            request = request.index_name(index);
-        } else {
-            // The base table is the strongly consistent accepted-order read.
-            request = request.consistent_read(true);
+        let names = builder.names();
+        let values = builder.values();
+        let mut items = Vec::new();
+        let mut bytes = 0_u64;
+        let mut start = None;
+        loop {
+            let remaining =
+                max_items.saturating_sub(u32::try_from(items.len()).unwrap_or(u32::MAX));
+            if remaining == 0 {
+                return Ok(SegmentBatch {
+                    items,
+                    exhausted: false,
+                });
+            }
+            let mut request = self
+                .dynamodb
+                .query()
+                .table_name(&self.table)
+                .key_condition_expression(condition.clone())
+                .set_expression_attribute_names(Some(names.clone()))
+                .set_expression_attribute_values(Some(values.clone()))
+                .set_exclusive_start_key(start.take())
+                .limit(i32::try_from(remaining).unwrap_or(i32::MAX))
+                .scan_index_forward(matches!(query.direction, Direction::Ascending));
+            if let Some(index) = access.index_name() {
+                request = request.index_name(index);
+            } else {
+                // The base table is the strongly consistent accepted-order read.
+                request = request.consistent_read(true);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("Query", error))?;
+            let next = response.last_evaluated_key;
+            let page = response.items.unwrap_or_default();
+            bytes = bytes.saturating_add(
+                page.iter()
+                    .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
+                    .sum::<u64>(),
+            );
+            items.extend(page);
+            if next.is_none() {
+                return Ok(SegmentBatch {
+                    items,
+                    exhausted: true,
+                });
+            }
+            if bytes >= max_bytes {
+                return Ok(SegmentBatch {
+                    items,
+                    exhausted: false,
+                });
+            }
+            start = next;
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| ReadError::provider("Query", error))?;
-        Ok(response.items.unwrap_or_default())
+    }
+
+    /// One bounded native-event query against the semantic session authority.
+    async fn query_event_segment(
+        &self,
+        scope: &ScopeKey,
+        workspace: WorkspaceId,
+        query: &NormalizedQuery,
+        bucket: BucketHour,
+        max_items: u32,
+        max_bytes: u64,
+    ) -> Result<SegmentBatch, ReadError> {
+        let (index, partition_attribute, sort_attribute, partition, lo, hi, consistent) =
+            match scope {
+                ScopeKey::Session(session) => (
+                    None,
+                    PK,
+                    SK,
+                    format!("SESSION#{session}"),
+                    "EVT#".to_owned(),
+                    "EVT#\u{fffe}".to_owned(),
+                    true,
+                ),
+                ScopeKey::Workspace(_) => (
+                    Some(aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_INDEX),
+                    aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_PK,
+                    aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_SK,
+                    aex_session_dynamodb::stream_keys::workspace_event_partition_hour(
+                        workspace,
+                        bucket.as_str(),
+                    ),
+                    query.time_gte.to_wire(),
+                    query.time_lt.to_wire(),
+                    false,
+                ),
+            };
+        let mut builder = ExpressionBuilder::new();
+        let pk_name = builder.name(partition_attribute);
+        let pk_value = builder.string(partition);
+        let sk_name = builder.name(sort_attribute);
+        let lo = builder.string(lo);
+        let hi = builder.string(hi);
+        let condition =
+            format!("{pk_name} = {pk_value} AND {sk_name} >= {lo} AND {sk_name} < {hi}");
+        let names = builder.names();
+        let values = builder.values();
+        let mut items = Vec::new();
+        let mut bytes = 0_u64;
+        let mut start = None;
+        loop {
+            let remaining =
+                max_items.saturating_sub(u32::try_from(items.len()).unwrap_or(u32::MAX));
+            if remaining == 0 {
+                return Ok(SegmentBatch {
+                    items,
+                    exhausted: false,
+                });
+            }
+            let mut request = self
+                .dynamodb
+                .query()
+                .table_name(&self.session_table)
+                .key_condition_expression(condition.clone())
+                .set_expression_attribute_names(Some(names.clone()))
+                .set_expression_attribute_values(Some(values.clone()))
+                .set_exclusive_start_key(start.take())
+                .limit(i32::try_from(remaining).unwrap_or(i32::MAX))
+                .scan_index_forward(matches!(query.direction, Direction::Ascending));
+            if let Some(index) = index {
+                request = request.index_name(index);
+            }
+            if consistent {
+                request = request.consistent_read(true);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("QuerySessionEvents", error))?;
+            let next = response.last_evaluated_key;
+            let page = response.items.unwrap_or_default();
+            bytes = bytes.saturating_add(
+                page.iter()
+                    .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
+                    .sum::<u64>(),
+            );
+            items.extend(page);
+            if next.is_none() {
+                return Ok(SegmentBatch {
+                    items,
+                    exhausted: true,
+                });
+            }
+            if bytes >= max_bytes {
+                return Ok(SegmentBatch {
+                    items,
+                    exhausted: false,
+                });
+            }
+            start = next;
+        }
     }
 
     /// Decodes one stored item into the wire shape and its filter row.
     fn decode(
         item: &HashMap<String, AttributeValue>,
         signal: Signal,
+        order_by: aex_observation_domain::order::OrderBy,
     ) -> Result<Option<(OrderTuple, Observation, MapRow)>, ReadError> {
         let Some(id) =
             string(item, "observationId").and_then(|text| text.parse::<ObservationId>().ok())
@@ -410,8 +637,94 @@ impl ObservationReader {
             trace_id: string(item, "traceId").and_then(|text| TraceId::parse(&text).ok()),
             workspace_id: workspace,
         };
-        let tuple = OrderTuple::new(time, signal, id, revision);
+        let tuple = OrderTuple::new(
+            match order_by {
+                aex_observation_domain::order::OrderBy::Time => time,
+                aex_observation_domain::order::OrderBy::Accepted => accepted_at,
+            },
+            signal,
+            id,
+            revision,
+        );
         Ok(Some((tuple, observation, filter_row(item))))
+    }
+
+    /// Decodes one native session event into the shared observation wire shape.
+    fn decode_event(
+        item: &HashMap<String, AttributeValue>,
+        scope: &ScopeKey,
+        asserted_workspace: WorkspaceId,
+        order_by: aex_observation_domain::order::OrderBy,
+    ) -> Result<Option<(OrderTuple, Observation, MapRow)>, ReadError> {
+        use aex_session_dynamodb::wire_pending::Body;
+
+        let event =
+            aex_session_dynamodb::event::decode(item).map_err(|_| ReadError::Malformed {
+                attribute: "session_event",
+            })?;
+        if event.workspace != asserted_workspace {
+            return Err(ReadError::Malformed {
+                attribute: "workspaceId",
+            });
+        }
+        let session = string(item, "sessionId")
+            .and_then(|text| text.parse::<SessionId>().ok())
+            .ok_or(ReadError::Malformed {
+                attribute: "sessionId",
+            })?;
+        if let ScopeKey::Session(asserted_session) = scope
+            && session != *asserted_session
+        {
+            return Err(ReadError::Malformed {
+                attribute: "sessionId",
+            });
+        }
+        let body = match event.body {
+            Body::Inline(bytes) => std::str::from_utf8(&bytes)
+                .ok()
+                .and_then(|text| aex_wire::canonical::CanonicalJson::parse(text).ok())
+                .ok_or(ReadError::Malformed {
+                    attribute: "bodyInline",
+                })?,
+            Body::Digest(digest) => aex_wire::canonical::CanonicalJson::from_value(
+                &serde_json::json!({ "bodySha256": digest }),
+            )
+            .map_err(|_| ReadError::Malformed {
+                attribute: "bodyDigest",
+            })?,
+        };
+        let tuple = OrderTuple::new(
+            match order_by {
+                aex_observation_domain::order::OrderBy::Time
+                | aex_observation_domain::order::OrderBy::Accepted => event.occurred_at,
+            },
+            Signal::Events,
+            event.event_id,
+            1,
+        );
+        let observation = Observation {
+            accepted_at: event.occurred_at,
+            body,
+            id: event.event_id,
+            observed_at: event.occurred_at,
+            run_id: event.run,
+            sequence: DecimalU128::new(u128::from(event.event_seq)),
+            session_id: Some(session),
+            signal: ObservationSignal::Events,
+            span_id: None,
+            trace_id: None,
+            workspace_id: event.workspace,
+        };
+        let mut row_item = item.clone();
+        row_item.insert(
+            "time".to_owned(),
+            AttributeValue::S(event.occurred_at.to_wire()),
+        );
+        row_item.insert(
+            "acceptedAt".to_owned(),
+            AttributeValue::S(event.occurred_at.to_wire()),
+        );
+        Ok(Some((tuple, observation, filter_row(&row_item))))
     }
 
     /// A single `GetItem` on the bound table.
@@ -702,6 +1015,7 @@ fn filter_row(item: &HashMap<String, AttributeValue>) -> MapRow {
     for name in [
         "time",
         "acceptedAt",
+        "type",
         "sessionId",
         "runId",
         "traceId",
@@ -776,13 +1090,19 @@ pub(crate) fn stored_signal(item: &HashMap<String, AttributeValue>) -> Option<Ob
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use aex_observation_domain::keys::{BucketHour, ScopeKey};
+    use aex_observation_domain::order::OrderBy;
     use aex_observation_domain::signal::Signal;
     use aex_observation_query::plan::Access;
-    use aex_wire::ids::{PrefixedId as _, WorkspaceId};
+    use aex_wire::ids::{ObservationId, PrefixedId as _, SessionId, WorkspaceId};
+    use aex_wire::models::ObservationSignal;
     use aex_wire::types::Timestamp;
+    use aws_sdk_dynamodb::primitives::Blob;
+    use aws_sdk_dynamodb::types::AttributeValue;
 
-    use super::{BUCKET_SHARDS, ReadError, segment_key};
+    use super::{BUCKET_SHARDS, ObservationReader, ReadError, segment_key};
 
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
@@ -790,6 +1110,10 @@ mod tests {
 
     fn bucket() -> BucketHour {
         BucketHour::from_timestamp(Timestamp::from_unix_millis(1_754_051_696_789).expect("bounded"))
+    }
+
+    fn session() -> SessionId {
+        SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]))
     }
 
     #[test]
@@ -827,6 +1151,60 @@ mod tests {
             .is_none(),
             "events live in session-authority and are read through the port"
         );
+    }
+
+    #[test]
+    fn a_native_event_decodes_to_the_shared_observation_shape() {
+        let occurred = Timestamp::from_unix_millis(1_754_051_696_789).expect("bounded");
+        let item = HashMap::from([
+            (
+                "itemType".to_owned(),
+                AttributeValue::S("session_event".to_owned()),
+            ),
+            (
+                "workspaceId".to_owned(),
+                AttributeValue::S(workspace().to_string()),
+            ),
+            (
+                "sessionId".to_owned(),
+                AttributeValue::S(session().to_string()),
+            ),
+            ("eventSeq".to_owned(), AttributeValue::N("7".to_owned())),
+            (
+                "eventId".to_owned(),
+                AttributeValue::S(
+                    ObservationId::from_uuid7(aex_wire::Uuid7::compose(1, [5; 10])).to_string(),
+                ),
+            ),
+            (
+                "type".to_owned(),
+                AttributeValue::S("run.admitted".to_owned()),
+            ),
+            (
+                "bodyInline".to_owned(),
+                AttributeValue::B(Blob::new(br#"{"ok":true}"#)),
+            ),
+            (
+                "occurredAt".to_owned(),
+                AttributeValue::S(occurred.to_wire()),
+            ),
+            (
+                "outboxState".to_owned(),
+                AttributeValue::S("pending".to_owned()),
+            ),
+        ]);
+        let (_, observation, _) = ObservationReader::decode_event(
+            &item,
+            &ScopeKey::Session(session()),
+            workspace(),
+            OrderBy::Accepted,
+        )
+        .expect("valid native event")
+        .expect("event is observable");
+        assert_eq!(observation.signal, ObservationSignal::Events);
+        assert_eq!(observation.session_id, Some(session()));
+        assert_eq!(observation.sequence.get(), 7);
+        assert_eq!(observation.observed_at, occurred);
     }
 
     #[test]

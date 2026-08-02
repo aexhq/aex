@@ -23,6 +23,16 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Constructs an already-settled accepted-time position.
+    ///
+    /// Adapters with a deployment-measured settle window use this after taking
+    /// `min(frontier, now - configured_settle)`. Calling [`Snapshot::pin`]
+    /// again would subtract the canonical window twice.
+    #[must_use]
+    pub const fn at(accepted_at: Timestamp) -> Self {
+        Self { accepted_at }
+    }
+
     /// Pins a snapshot from the frontier and the current clock.
     ///
     /// Returns `None` when `now` minus the settle window is not representable,
@@ -161,6 +171,12 @@ mod tests {
             snapshot.accepted_at(),
             instant(1_000_000 - limits::OBS_INDEX_SETTLE_MS)
         );
+    }
+
+    #[test]
+    fn an_adapter_supplied_settled_position_is_not_shifted_twice() {
+        let settled = instant(998_000);
+        assert_eq!(Snapshot::at(settled).accepted_at(), settled);
     }
 
     #[test]

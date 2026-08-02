@@ -13,7 +13,7 @@ use aex_observation_query::ast::{self, CmpOp, Predicate, QueryError, TextOp};
 use aex_observation_query::coverage::{Coverage, Snapshot};
 use aex_observation_query::plan::{Budget, NormalizedQuery};
 use aex_regional_http::cursor::{
-    CursorBinding, CursorKey, CursorKeyRing, Order, SnapshotToken, SortTuple,
+    CursorBinding, CursorKey, CursorKeyRing, CursorRequestBinding, Order, SnapshotToken, SortTuple,
 };
 use aex_wire::canonical::to_jcs_bytes;
 use aex_wire::cursor::Cursor;
@@ -249,6 +249,25 @@ pub fn query_digest(query: &NormalizedQuery, scope: &ScopeKey) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Digest of the stable selection a stream cursor resumes.
+///
+/// The original time/earliest origin is replaced by the delivered ordering
+/// tuple, so it is intentionally absent. Signal, filter, direction and scope
+/// remain bound; changing any of them refuses the cursor.
+#[must_use]
+pub fn stream_query_digest(query: &NormalizedQuery, scope: &ScopeKey) -> [u8; 32] {
+    use sha2::Digest as _;
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(scope.to_key().as_bytes());
+    hasher.update([u8::from(query.direction == Direction::Descending)]);
+    hasher.update(query.signals.bits().to_be_bytes());
+    if let Some(predicate) = &query.predicate {
+        hasher.update(format!("{predicate:?}").as_bytes());
+    }
+    hasher.finalize().into()
+}
+
 /// The digest of the effective principal scope a cursor is bound to.
 #[must_use]
 pub fn principal_digest(cx: &RequestContext) -> [u8; 32] {
@@ -290,6 +309,91 @@ pub fn binding(
     })
 }
 
+/// Builds the stable request half of an NDJSON reconnect binding.
+#[must_use]
+pub fn stream_request_binding(
+    cx: &RequestContext,
+    route: RouteId,
+    region: Region,
+    scope: &ScopeKey,
+    workspace: aex_wire::ids::WorkspaceId,
+    query: &NormalizedQuery,
+) -> CursorRequestBinding {
+    CursorRequestBinding {
+        route: canonical_stream_route(route),
+        principal_scope: principal_digest(cx),
+        region,
+        workspace_id: workspace,
+        session_id: scope.session(),
+        query_hash: stream_query_digest(query, scope),
+        order: match query.direction {
+            Direction::Ascending => Order::Ascending,
+            Direction::Descending => Order::Descending,
+        },
+    }
+}
+
+/// Builds a complete NDJSON cursor binding at one settled snapshot.
+///
+/// # Errors
+///
+/// Returns `internal_error` if the bounded snapshot cannot be represented.
+pub fn stream_binding(
+    request: &CursorRequestBinding,
+    snapshot: Snapshot,
+) -> WireResult<CursorBinding> {
+    Ok(CursorBinding {
+        route: request.route,
+        principal_scope: request.principal_scope,
+        region: request.region,
+        workspace_id: request.workspace_id,
+        session_id: request.session_id,
+        query_hash: request.query_hash,
+        order: request.order,
+        snapshot: SnapshotToken::new(snapshot.to_wire().to_string())
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+    })
+}
+
+/// Authenticates an NDJSON reconnect and recovers its snapshot and last tuple.
+///
+/// # Errors
+///
+/// Returns `invalid_cursor` for any signature, binding, lifetime or snapshot
+/// representation failure.
+pub fn resume_stream(
+    ring: &CursorKeyRing,
+    token: &Cursor,
+    binding: &CursorRequestBinding,
+    now: Timestamp,
+) -> WireResult<(Snapshot, OrderTuple)> {
+    let resumed = aex_regional_http::cursor::decode_resume(ring, token, binding, now)
+        .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
+    let millis = resumed
+        .snapshot
+        .as_str()
+        .parse::<u128>()
+        .ok()
+        .and_then(|value| i64::try_from(value).ok())
+        .and_then(|value| Timestamp::from_unix_millis(value).ok())
+        .ok_or_else(|| WireError::new(ErrorCode::InvalidCursor))?;
+    let tuple = tuple_from_parts(resumed.tuple.parts())?;
+    Ok((Snapshot::at(millis), tuple))
+}
+
+fn canonical_stream_route(route: RouteId) -> RouteId {
+    let operation = aex_wire::routes::route(route).operation_id;
+    let Some(prefix) = operation.strip_suffix("_listen") else {
+        return route;
+    };
+    let stream = format!("{prefix}_stream");
+    RouteId::ALL
+        .iter()
+        .copied()
+        .find(|candidate| aex_wire::routes::route(*candidate).operation_id == stream)
+        .unwrap_or(route)
+}
+
 /// Mints the continuation for one page.
 ///
 /// # Errors
@@ -326,7 +430,10 @@ pub fn resume(
 ) -> WireResult<OrderTuple> {
     let tuple = aex_regional_http::cursor::decode(ring, token, binding, now)
         .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
-    let parts = tuple.parts();
+    tuple_from_parts(tuple.parts())
+}
+
+fn tuple_from_parts(parts: &[String]) -> WireResult<OrderTuple> {
     let [primary, rank, id, revision] = parts else {
         return Err(WireError::new(ErrorCode::InvalidCursor));
     };

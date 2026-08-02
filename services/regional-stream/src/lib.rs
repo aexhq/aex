@@ -1,6 +1,8 @@
 //! Read-only regional stream admission, quotas, authoritative wakes and drain.
 
 pub mod config;
+pub mod mount;
+pub mod wakes;
 
 pub use config::Config;
 

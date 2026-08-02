@@ -17,8 +17,8 @@ use aex_session_dynamodb::wire_pending::{
 };
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::{
-    AgentId, GenerationId, MessageId, OperationId, OrganizationId, PrefixedId, RunId, SessionId,
-    Uuid7, WorkspaceId,
+    AgentId, GenerationId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId,
+    RunId, SessionId, Uuid7, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
@@ -170,8 +170,9 @@ pub fn control() -> AgentControl {
 #[must_use]
 pub fn event(seq: u64, kind: &str) -> SessionEvent {
     SessionEvent {
+        workspace: workspace(),
         event_seq: seq,
-        event_id: "obs_01j0000000000000000000000".to_owned(),
+        event_id: ObservationId::from_uuid7(Uuid7::compose(1, [5; 10])),
         event_type: kind.to_owned(),
         run: Some(run_id()),
         agent: None,

@@ -53,6 +53,12 @@ impl SnapshotToken {
         }
         Ok(Self(value))
     }
+
+    /// Borrow the authenticated snapshot spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Every fact that prevents a cursor from being replayed in another context.
@@ -74,6 +80,49 @@ pub struct CursorBinding {
     pub order: Order,
     /// Captured authority snapshot.
     pub snapshot: SnapshotToken,
+}
+
+/// Stable request facts required to resume a cursor whose snapshot is carried
+/// inside the authenticated token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorRequestBinding {
+    /// Generated route identity (or a canonical route shared by a stream/listen pair).
+    pub route: RouteId,
+    /// Digest of the effective principal scope.
+    pub principal_scope: [u8; 32],
+    /// Immutable workspace region.
+    pub region: Region,
+    /// Workspace authority.
+    pub workspace_id: WorkspaceId,
+    /// Optional session authority.
+    pub session_id: Option<SessionId>,
+    /// Digest of the stable request filter and signal selection.
+    pub query_hash: [u8; 32],
+    /// Stable sort direction.
+    pub order: Order,
+}
+
+impl From<&CursorBinding> for CursorRequestBinding {
+    fn from(binding: &CursorBinding) -> Self {
+        Self {
+            route: binding.route,
+            principal_scope: binding.principal_scope,
+            region: binding.region,
+            workspace_id: binding.workspace_id,
+            session_id: binding.session_id,
+            query_hash: binding.query_hash,
+            order: binding.order,
+        }
+    }
+}
+
+/// Authenticated resume state recovered from a cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorResume {
+    /// The original settled snapshot.
+    pub snapshot: SnapshotToken,
+    /// The last fully delivered ordering tuple.
+    pub tuple: SortTuple,
 }
 
 /// The ordered authority fields needed to resume a read.
@@ -279,6 +328,28 @@ pub fn decode(
     binding: &CursorBinding,
     now: Timestamp,
 ) -> Result<SortTuple, CursorError> {
+    let resumed = decode_resume(ring, token, &CursorRequestBinding::from(binding), now)?;
+    if resumed.snapshot != binding.snapshot {
+        return Err(CursorError::NotBound);
+    }
+    Ok(resumed.tuple)
+}
+
+/// Verifies a cursor and returns its authenticated snapshot and tuple.
+///
+/// This is used by long-lived stream reconnects: the reconnect request carries
+/// a cursor rather than restating the old snapshot. Every other request fact is
+/// still compared before the snapshot is exposed.
+///
+/// # Errors
+///
+/// Returns [`CursorError`] for malformed, unbound or expired tokens.
+pub fn decode_resume(
+    ring: &CursorKeyRing,
+    token: &Cursor,
+    binding: &CursorRequestBinding,
+    now: Timestamp,
+) -> Result<CursorResume, CursorError> {
     let encoded = token
         .as_str()
         .strip_prefix(Cursor::PREFIX)
@@ -305,7 +376,6 @@ pub fn decode(
         || payload.session != binding.session_id.map(|id| id.to_string())
         || payload.query != binding.query_hash
         || payload.order != binding.order
-        || payload.snapshot != binding.snapshot
     {
         return Err(CursorError::NotBound);
     }
@@ -316,7 +386,10 @@ pub fn decode(
     if age > SNAPSHOT_MILLIS {
         return Err(CursorError::Expired);
     }
-    Ok(payload.tuple)
+    Ok(CursorResume {
+        snapshot: payload.snapshot,
+        tuple: payload.tuple,
+    })
 }
 
 fn sign(key: &CursorKey, body: &[u8]) -> [u8; TAG_BYTES] {

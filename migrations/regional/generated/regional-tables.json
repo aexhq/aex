@@ -1,6 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:89c82f9e3bfeb2991d635494b7c0f21c45a6fe7f97d93e8e4b51d05d04968516",
+  "digest": "blake3:dbf615111f8ee350315942143f89a7b182e29dd5563c7d47d8ece84f8f606ca7",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1296,6 +1296,14 @@
         {
           "name": "wsIndexSk",
           "type": "S"
+        },
+        {
+          "name": "evPk",
+          "type": "S"
+        },
+        {
+          "name": "evSk",
+          "type": "S"
         }
       ],
       "keySchema": {
@@ -1323,6 +1331,30 @@
               "updatedAt",
               "revision",
               "sessionRefId"
+            ]
+          }
+        },
+        {
+          "name": "gsi_workspace_events",
+          "partition": "evPk",
+          "sort": "evSk",
+          "sparse": true,
+          "projectsRecordBody": true,
+          "rationale": "Only native events carry these attributes. Hour partitions prevent a hot unbounded workspace feed and the session and observation tie-breakers make cross-session ordering total.",
+          "projection": {
+            "type": "INCLUDE",
+            "attributes": [
+              "workspaceId",
+              "sessionId",
+              "eventSeq",
+              "eventId",
+              "type",
+              "runId",
+              "agentId",
+              "bodyInline",
+              "bodyDigest",
+              "occurredAt",
+              "outboxState"
             ]
           }
         }
@@ -1418,12 +1450,16 @@
         {
           "role": "regional-stream",
           "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
             "dynamodb:GetRecords",
             "dynamodb:GetShardIterator",
             "dynamodb:DescribeStream",
             "dynamodb:ListStreams"
           ],
           "resources": [
+            "table",
+            "index/*",
             "stream"
           ]
         }
