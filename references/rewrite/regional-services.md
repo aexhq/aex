@@ -1165,3 +1165,42 @@ public tree:
 Those are authority-contract gaps, not calls the Lambda may replace with local
 best effort. Until they land, nonterminal provider effects are retried and the
 scheduled path fails loudly.
+
+## Content expiry performance review continuation (2026-08-02)
+
+The scheduled download-grant path no longer waits for all writes from one shard
+before querying the next. One invocation now has two independently bounded
+stages: it attempts every admitted shard query with at most 16 reads in flight,
+then attempts every grant returned by the successful pages with at most 16
+grant-and-pin transactions in flight. A scan failure does not cancel the other
+shards or the writes selected by their valid pages. Any scan, write or task
+failure still fails the invocation, but only after all possible work settles;
+the failure carries exact attempted/scanned/more/selected/expired and failure
+counts, so partial success is explicit rather than inferred.
+
+The fairness audit found one precise residual that this continuation does not
+pretend to fix. `gsi_expiry` is ordered by `expiresAt#token` inside each of its
+64 shards, every query starts at the oldest due row, and `GrantExpiryPage`
+publishes only `more`. If permanent condition/corruption failures occupy the
+whole admitted page for one shard, later grants in that shard remain beyond the
+page and can starve; other shards continue independently. A transient failure,
+or fewer permanent failures than the page budget, still leaves capacity for
+progress.
+
+There is no safe cursor to persist in the authored contract: `regional-content`
+defines no expiry-cursor item type, key, fence or concurrent-invocation owner,
+and the scheduled invocation's response is not the next invocation's input.
+Keeping `LastEvaluatedKey` only in one warm Lambda would lose progress on a cold
+start and split ownership across concurrent invocations. Reversing the index
+order would merely move starvation to older rows. A durable fairness fix must
+first add an owned, fenced per-shard cursor with wrap/recovery semantics to the
+regional-content authority; inventing that authority inside this worker would
+be unsafe.
+
+Verification on `rw/continue-content-expiry-performance`: package formatting
+and clippy with warnings denied are clean; the worker package runs 16 tests with
+16 passed and none skipped; and the diff whitespace check is clean. The broader
+workspace structural check reaches one inherited violation outside this change:
+`session-operation-worker` already declares a `reconciliation` test without a
+layer mapping at this branch's base. This continuation does not edit that
+package or represent the workspace-wide structural check as green.
