@@ -988,14 +988,7 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             composition,
             unearned,
             out,
-        } => run_manifest_new(
-            cli,
-            root,
-            envelopes,
-            composition,
-            unearned.as_deref(),
-            out,
-        ),
+        } => run_manifest_new(cli, root, envelopes, composition, unearned.as_deref(), out),
         ManifestCommand::Diff { from, to } => {
             let from: CompositionManifest = read_json(from)?;
             let to: CompositionManifest = read_json(to)?;

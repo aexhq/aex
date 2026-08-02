@@ -585,12 +585,7 @@ pub fn new_receipt(context: RunContext, junit: &JunitSummary) -> Result<Receipt>
 /// # Errors
 /// Returns [`Exit::Usage`] when the file cannot be read, and propagates
 /// canonicalization failure from resealing.
-pub fn attach(
-    receipt: Receipt,
-    kind: &str,
-    file: &std::path::Path,
-    uri: &str,
-) -> Result<Receipt> {
+pub fn attach(receipt: Receipt, kind: &str, file: &std::path::Path, uri: &str) -> Result<Receipt> {
     let bytes =
         std::fs::read(file).map_err(|err| crate::error::io(&file.display().to_string(), &err))?;
     let mut receipt = receipt;
@@ -1048,7 +1043,9 @@ mod tests {
         assert_eq!(built.inventory.declared, 3);
         assert_eq!(built.inventory.collected, 3);
         assert_eq!(built.inventory.passed, 3);
-        built.verify().expect("a clean run produces a sound receipt");
+        built
+            .verify()
+            .expect("a clean run produces a sound receipt");
     }
 
     #[test]
@@ -1108,7 +1105,9 @@ mod tests {
             attached.receipt_digest, before,
             "a receipt that gained an attachment is different bytes"
         );
-        attached.verify().expect("attaching keeps the receipt sound");
+        attached
+            .verify()
+            .expect("attaching keeps the receipt sound");
     }
 
     #[test]

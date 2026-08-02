@@ -172,8 +172,10 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
     assert!(row.reason.contains("cargo zigbuild"));
 }
 
-fn local_build_of(unit_id: &str, artifact: &std::path::Path) -> aex_release_tool::error::Result<()>
-{
+fn local_build_of(
+    unit_id: &str,
+    artifact: &std::path::Path,
+) -> aex_release_tool::error::Result<()> {
     let (envelope, unearned) = described(unit_id, artifact, None);
     let bytes = std::fs::read(artifact).unwrap();
     assert_eq!(envelope.output.digest, canon::digest_bytes(&bytes));

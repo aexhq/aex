@@ -300,8 +300,7 @@ fn build_envelope(
                 protocol_compatible: true,
                 rollback_eligible: false,
                 rationale: Some(
-                    "nothing is deployed, so no adjacent version exists to roll back to"
-                        .to_owned(),
+                    "nothing is deployed, so no adjacent version exists to roll back to".to_owned(),
                 ),
             },
         },
