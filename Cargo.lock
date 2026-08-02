@@ -1018,6 +1018,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-smithy-http-client",
  "aws-smithy-types",
+ "blake3",
  "proptest",
  "serde_json",
  "thiserror",

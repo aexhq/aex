@@ -49,7 +49,13 @@ pub const STATES: &[&str] = &[
 pub const ACTIONS: &[&str] = &["launch", "suspend", "resume", "terminate", "snapshot"];
 
 /// Every lifecycle intent state.
-pub const INTENT_STATES: &[&str] = &["prepared", "dispatched", "settled", "unknown"];
+pub const INTENT_STATES: &[&str] = &[
+    "prepared",
+    "dispatched",
+    "settled",
+    "unknown",
+    "quarantined",
+];
 
 /// Every lifecycle receipt outcome.
 pub const OUTCOMES: &[&str] = &["succeeded", "failed", "unknown"];
@@ -74,6 +80,7 @@ pub const DUE_PROJECTION: &[&str] = &[
     "generationId",
     "state",
     "fence",
+    "revision",
     "idleSince",
     "providerLifetimeExpiresAt",
     "keepaliveLeaseUntil",
@@ -84,8 +91,14 @@ pub const PROBE_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 /// The partition every row of one generation shares.
 #[must_use]
-pub fn generation_partition(session: SessionId, generation: GenerationId) -> String {
-    format!("GEN#{session}#{generation}")
+pub fn generation_partition(_session: SessionId, generation: GenerationId) -> String {
+    generation_partition_for_id(generation)
+}
+
+/// The globally addressable partition for one generation.
+#[must_use]
+pub fn generation_partition_for_id(generation: GenerationId) -> String {
+    format!("GEN#{generation}")
 }
 
 /// The generation head.
@@ -93,6 +106,15 @@ pub fn generation_partition(session: SessionId, generation: GenerationId) -> Str
 pub fn head(session: SessionId, generation: GenerationId) -> Key {
     Key {
         pk: generation_partition(session, generation),
+        sk: "HEAD".to_owned(),
+    }
+}
+
+/// A generation head addressed without first knowing its session.
+#[must_use]
+pub fn head_for_generation(generation: GenerationId) -> Key {
+    Key {
+        pk: generation_partition_for_id(generation),
         sk: "HEAD".to_owned(),
     }
 }

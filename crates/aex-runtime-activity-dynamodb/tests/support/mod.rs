@@ -8,7 +8,7 @@ use aex_runtime_activity_dynamodb::codec::{
     GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt,
 };
 use aex_runtime_control::generation::{GenerationState, Revision};
-use aex_wire::ids::{GenerationId, PrefixedId, SessionId, Uuid7, WorkspaceId};
+use aex_wire::ids::{GenerationId, OrganizationId, PrefixedId, SessionId, Uuid7, WorkspaceId};
 use aex_wire::types::{ComputeSize, Timestamp};
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -68,6 +68,11 @@ pub fn workspace() -> WorkspaceId {
 }
 
 #[must_use]
+pub fn organization() -> OrganizationId {
+    OrganizationId::from_uuid7(Uuid7::compose(1_754_051_696_789, [2; 10]))
+}
+
+#[must_use]
 pub fn other_workspace() -> WorkspaceId {
     WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [9; 10]))
 }
@@ -87,6 +92,7 @@ pub fn head(state: GenerationState) -> GenerationRow {
     GenerationRow {
         session: session(),
         workspace: workspace(),
+        organization: organization(),
         generation: generation(4),
         size: ComputeSize::ALL[0],
         state,
@@ -99,6 +105,18 @@ pub fn head(state: GenerationState) -> GenerationRow {
         idle_since: Some(now()),
         keepalive_lease_until: None,
         provider_lifetime_expires_at: Some(later(28_800_000)),
+        microvm: Some(aex_runtime_control::lifecycle::MicrovmId(
+            "vm-0001".to_owned(),
+        )),
+        lifetime: Some(aex_runtime_control::lifecycle::Lifetime { launched_at: now() }),
+        accounted_from: now(),
+        open_intent: None,
+        suspended_at: None,
+        snapshot_ordinal: 0,
+        snapshot_bytes: 445_000_000,
+        suspend_lock_expires_at: None,
+        keepalive_lease: None,
+        transport_mode: None,
         next_evaluate_at: later(180_000),
         updated_at: now(),
     }
