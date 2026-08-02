@@ -7,8 +7,8 @@
 //! to observe.
 
 use aex_brain_application::ports::{
-    AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, EffectStore, FenceGuard,
-    JournalStore, LeaseStore, ReadBudget, ReleaseDisposition, StoreError,
+    AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, EffectStore,
+    FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition, StoreError,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq,
@@ -198,6 +198,93 @@ async fn the_pre_send_write_conditions_on_both_the_effect_state_and_the_fence() 
     assert!(condition.contains("#state = :prepared"), "{condition}");
     assert!(condition.contains("agentFence = :fence"), "{condition}");
     assert_eq!(body["ExpressionAttributeValues"][":fence"]["N"], "7");
+}
+
+/// Every attribute the decoder reads back is written. The operation id in particular is the
+/// whole `DurableDetached` arm of the recovery matrix: without it a detached effect decodes
+/// with no operation, and `recover` interrupts a run the upstream is still working on.
+#[tokio::test]
+async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
+    use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage};
+    use aex_brain_domain::ids::{ContentHash, DetachedOperationId, ProviderRequestId};
+
+    let (store, receiver) = capturing();
+    let guard = FenceGuard::new(
+        key(),
+        OwnerToken(uuid::Uuid::from_u128(5)),
+        Fence(7),
+        AgentRevision(2),
+        Some(JournalSeq(4)),
+        CancelEpoch(0),
+        CancelToken::new(),
+    );
+    let ticket = DispatchTicket::mint(
+        &guard,
+        EffectId([9; 16]),
+        1,
+        Timestamp::from_millis(1_767_225_600_000),
+    );
+    let receipt = ContentHash::of(b"response");
+    let _ = store
+        .mark_response_started(
+            &ticket,
+            &DispatchEvidence {
+                stage: DispatchStage::Streaming,
+                proof: DispatchProof::ResponseStarted,
+                attempt: 1,
+                provider_request_id: Some(ProviderRequestId("req-1".to_owned())),
+                operation: Some(DetachedOperationId("op-1".to_owned())),
+                receipt: Some(receipt),
+                detail: None,
+            },
+        )
+        .await;
+    let body = captured(receiver);
+    let update = body["UpdateExpression"].as_str().expect("an update");
+    assert!(update.contains("operationId = :operation"), "{update}");
+    assert!(
+        update.contains("providerRequestId = :providerRequestId"),
+        "{update}"
+    );
+    assert!(update.contains("receiptHash = :receipt"), "{update}");
+    let values = &body["ExpressionAttributeValues"];
+    assert_eq!(values[":operation"]["S"], "op-1");
+    assert_eq!(values[":providerRequestId"]["S"], "req-1");
+    assert_eq!(values[":receipt"]["S"], receipt.to_hex());
+}
+
+/// Evidence a dispatch did not produce is not written as an empty string: an absent optional
+/// attribute is how the decoder reports absence, and `""` would decode as a real operation.
+#[tokio::test]
+async fn absent_evidence_is_left_absent_rather_than_written_empty() {
+    use aex_brain_domain::effect::{DispatchEvidence, DispatchStage};
+
+    let (store, receiver) = capturing();
+    let guard = FenceGuard::new(
+        key(),
+        OwnerToken(uuid::Uuid::from_u128(5)),
+        Fence(7),
+        AgentRevision(2),
+        Some(JournalSeq(4)),
+        CancelEpoch(0),
+        CancelToken::new(),
+    );
+    let ticket = DispatchTicket::mint(
+        &guard,
+        EffectId([9; 16]),
+        1,
+        Timestamp::from_millis(1_767_225_600_000),
+    );
+    let _ = store
+        .mark_response_started(
+            &ticket,
+            &DispatchEvidence::ambiguous(1, DispatchStage::Dispatched),
+        )
+        .await;
+    let body = captured(receiver);
+    let update = body["UpdateExpression"].as_str().expect("an update");
+    assert!(!update.contains("operationId"), "{update}");
+    assert!(!update.contains("receiptHash"), "{update}");
 }
 
 /// A journal read is strongly consistent and bounded. An authority read that may be stale

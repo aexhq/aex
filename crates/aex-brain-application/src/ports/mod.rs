@@ -39,7 +39,8 @@ pub use hands::{
     HandsResult, ResultBounds,
 };
 pub use proof::{
-    CancelToken, DispatchTicket, FenceGuard, PreviewSink, StreamBudget, TicketMismatch,
+    CancelToken, DispatchTicket, FenceGuard, NullPreviewSink, PreviewSink, StreamBudget,
+    TicketMismatch,
 };
 pub use provider::{
     ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail,

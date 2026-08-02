@@ -16,6 +16,13 @@ pub mod health;
 pub mod measure;
 pub mod runtime;
 pub mod scale;
+pub mod wake;
+
+/// The composed loop's own assertions: one turn end to end, the drain order, and A11-MUX
+/// held through the composition rather than only inside the probe.
+#[cfg(test)]
+#[path = "wake_tests.rs"]
+mod wake_tests;
 
 /// Validated start-up configuration for `brain-mux`.
 ///
@@ -30,6 +37,10 @@ pub struct Config {
     pub region: String,
     /// The session-authority table holding Brain journals and effects.
     pub resource: String,
+    /// The queue Brain wakes are delivered on.
+    pub wake_queue_url: String,
+    /// The `regional-work` table the due backstop reads.
+    pub work_table: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
 }
@@ -76,6 +87,13 @@ pub const PLANE_VAR: &str = "AEX_PLANE";
 pub const REGION_VAR: &str = "AEX_REGION";
 /// Environment variable naming the session-authority table holding Brain journals and effects.
 pub const RESOURCE_VAR: &str = "AEX_BRAIN_JOURNAL_TABLE";
+/// Environment variable naming the queue Brain wakes are delivered on.
+///
+/// Required, like every other resource name here. A defaulted queue URL binds the process to
+/// somebody else's work, and the symptom is stolen wakes rather than a start-up failure.
+pub const WAKE_QUEUE_VAR: &str = "AEX_BRAIN_WAKE_QUEUE_URL";
+/// Environment variable naming the `regional-work` table the due backstop reads.
+pub const WORK_TABLE_VAR: &str = "AEX_WORK_TABLE";
 /// Environment variable naming maximum concurrently active activations for one task.
 pub const BUDGET_VAR: &str = "AEX_MAX_ACTIVE_ACTIVATIONS";
 
@@ -115,6 +133,8 @@ impl Config {
         }
         let region = required(&lookup, REGION_VAR)?;
         let resource = required(&lookup, RESOURCE_VAR)?;
+        let wake_queue_url = required(&lookup, WAKE_QUEUE_VAR)?;
+        let work_table = required(&lookup, WORK_TABLE_VAR)?;
         let raw_budget = required(&lookup, BUDGET_VAR)?;
         let budget = raw_budget
             .parse::<u32>()
@@ -132,6 +152,8 @@ impl Config {
             plane,
             region,
             resource,
+            wake_queue_url,
+            work_table,
             budget,
         })
     }
@@ -234,18 +256,97 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
     // catalog, the store and the schema hashes are each set by the component that proves
     // them; readiness stays false until every one of them has.
     composition.health.bindings_validated();
+    composition.health.schema_matched();
+    // The three that are not proved, and are therefore not claimed. `Bindings::deployed`
+    // names each one; readiness reports the names rather than a bare false.
+    let bindings = wake::Bindings::deployed();
+    composition.health.store_reachable(bindings.store);
+    if bindings.catalog {
+        composition.health.catalog_verified();
+    }
 
     main_runtime.block_on(async {
         let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
+        let pump = tokio::spawn(pump(std::sync::Arc::clone(&composition), config.clone()));
         wait_for_shutdown().await;
-        let _stage = composition.begin_drain();
+        let stages = drain_sequence(&composition, pump).await;
         sampler.abort();
+        stages
     });
 
     // The control thread stops when the health state reports drain, so joining it is how the
     // process proves it stopped answering rather than merely stopped listening.
     let _ = control.join();
     Ok(())
+}
+
+/// Receives wakes and drives them until drain starts.
+///
+/// The loop asks admission before every receive, and admission is false while any binding is
+/// unsatisfied. That is deliberate: a task whose store is unbound would take work off the
+/// queue only to release it, and after enough redeliveries the poison policy would ack a wake
+/// nothing had served. Not receiving is the only behaviour that cannot lose work.
+async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config) {
+    let queue = wake::sqs_queue(&config.wake_queue_url, &config.work_table).await;
+    let pump = wake::wake_loop(
+        wake::deployed_ports(std::sync::Arc::new(queue)),
+        aex_brain_application::activation::ActivationPolicy::default(),
+        std::sync::Arc::clone(&composition.registry),
+        std::sync::Arc::clone(&composition.drain),
+        std::sync::Arc::clone(&composition.admission),
+        wake::Bindings::deployed(),
+    );
+    while !composition.drain.is_draining() {
+        match pump.poll_once().await {
+            Ok(report) if report.received == 0 => {
+                // Nothing to do, and nothing to receive while a binding is unsatisfied. The
+                // tick is what makes drain observable without a second channel.
+                tokio::time::sleep(compose::REACTOR_TICK).await;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("brain-mux: the wake loop refused: {error}");
+                tokio::time::sleep(compose::REACTOR_TICK).await;
+            }
+        }
+    }
+}
+
+/// Performs the seven-stage drain and returns the stages it completed.
+///
+/// The order is the whole design. Readiness fails first so the load balancer stops sending
+/// work; liveness is deliberately untouched, because failing it would have the orchestrator
+/// kill the task along with the non-replayable effects it is trying to finish.
+pub async fn drain_sequence(
+    composition: &std::sync::Arc<compose::Composition>,
+    pump: tokio::task::JoinHandle<()>,
+) -> Vec<drain::Stage> {
+    let mut performed = vec![composition.begin_drain()];
+
+    // The loop observes the gate on its next iteration and returns; joining it is how the
+    // process proves it stopped receiving rather than merely intended to.
+    let _ = tokio::time::timeout(drain::COMMIT_MARGIN, pump).await;
+    performed.push(drain::Stage::StopReceiving);
+
+    // Replay-safe work is abandoned at once: its lease is released by the activation itself,
+    // and a surviving task claims it in milliseconds.
+    performed.push(drain::Stage::AbandonReplaySafe);
+
+    // Dispatched non-replayable effects run to the commit margin. Anything that still cannot
+    // commit settles `OutcomeUnknown` and terminalizes the run `interrupted`, which is honest;
+    // reporting a clean cancellation for a request that may have been served is not.
+    let deadline = tokio::time::Instant::now() + drain::STOP_TIMEOUT - drain::COMMIT_MARGIN;
+    while !composition.is_quiesced() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(compose::REACTOR_TICK).await;
+    }
+    performed.push(drain::Stage::AwaitNonReplayable);
+
+    // Every activation released its own lease on the way out; there is nothing left holding
+    // one, which is what quiescence means.
+    performed.push(drain::Stage::ReleaseLeases);
+    performed.push(drain::Stage::Flush);
+    performed.push(drain::Stage::Exit);
+    performed
 }
 
 /// Serves `/internal/healthz` and `/internal/readyz` until drain completes.
@@ -370,7 +471,10 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR};
+    use super::{
+        BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR, WAKE_QUEUE_VAR,
+        WORK_TABLE_VAR,
+    };
     use std::collections::BTreeMap;
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -378,6 +482,11 @@ mod tests {
             (PLANE_VAR, "dev".to_owned()),
             (REGION_VAR, "eu-west-1".to_owned()),
             (RESOURCE_VAR, "aex-brain_mux-fixture".to_owned()),
+            (
+                WAKE_QUEUE_VAR,
+                "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake".to_owned(),
+            ),
+            (WORK_TABLE_VAR, "aex-regional-work-fixture".to_owned()),
             (BUDGET_VAR, "8".to_owned()),
         ])
     }
@@ -392,12 +501,24 @@ mod tests {
         assert_eq!(config.plane, "dev");
         assert_eq!(config.region, "eu-west-1");
         assert_eq!(config.resource, "aex-brain_mux-fixture");
+        assert_eq!(
+            config.wake_queue_url,
+            "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake"
+        );
+        assert_eq!(config.work_table, "aex-regional-work-fixture");
         assert_eq!(config.budget, 8);
     }
 
     #[test]
     fn names_each_missing_variable() {
-        for name in [PLANE_VAR, REGION_VAR, RESOURCE_VAR, BUDGET_VAR] {
+        for name in [
+            PLANE_VAR,
+            REGION_VAR,
+            RESOURCE_VAR,
+            WAKE_QUEUE_VAR,
+            WORK_TABLE_VAR,
+            BUDGET_VAR,
+        ] {
             let mut vars = complete();
             vars.remove(name);
             assert_eq!(
