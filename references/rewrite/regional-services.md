@@ -948,7 +948,8 @@ Three decisions worth naming:
 - **It stays inside its own stream.** The three usage authority adapters carry
   their own row reader and their own port error rather than linking
   `aex-session-dynamodb`, so this one does too. That is what keeps
-  `tests/write_incapability.rs` a fact about this crate's sources alone.
+  `crates/aex-usage-query-aws/tests/write_incapability.rs` a fact about this
+  crate's sources alone.
 - **`current_generation` answers `Option`.** An absent pointer means the
   projection was never cut over. Substituting `Generation::FIRST` would make a
   never-built projection read as an empty one.

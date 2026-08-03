@@ -909,11 +909,11 @@ would have made the payload check compare the bound parameter to itself.
 Material is held in a bounded (8) zeroizing cache keyed by version id. The bound
 is a security property, not a memory one: an unbounded cache keyed by
 caller-supplied version is how a process ends up holding every pepper that ever
-existed. `tests/security.rs` drives the four renderings material has escaped
-through before — `Debug`, the alternate `Debug`, an error `Display`, and a
-telemetry attribute built from one — including a scripted denial whose vendor
-message quotes the material, which is why the service **code** crosses the
-boundary and the service message never does.
+existed. `crates/aex-central-runtime/tests/security.rs` drives the four
+renderings material has escaped through before — `Debug`, the alternate
+`Debug`, an error `Display`, and a telemetry attribute built from one — including
+a scripted denial whose vendor message quotes the material, which is why the
+service **code** crosses the boundary and the service message never does.
 
 ### 10.3 `MailerPort` is a durable intent, not a send (OD-40)
 
