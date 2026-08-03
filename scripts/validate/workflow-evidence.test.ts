@@ -59,4 +59,78 @@ describe("workflow evidence producers", () => {
       expect(inputs.selection_mode).toBe(mode);
     }
   });
+
+  test("the Node lane derives and verifies Stripe unit receipts from two real Bun reports", () => {
+    const source = readRepoFile(".github/workflows/_node-lane.yml");
+    const workflow = readWorkflow(".github/workflows/_node-lane.yml");
+    const job = workflowJob(workflow, "unit");
+    const workflowCall = workflowTriggers(workflow).workflow_call as {
+      readonly inputs: Readonly<Record<string, { readonly required?: boolean }>>;
+    };
+
+    expect(workflowCall.inputs.matrix?.required).toBeTrue();
+    expect(workflowCall.inputs.job_name?.required).toBeTrue();
+    expect(workflowCall.inputs.selection_mode?.required).toBeTrue();
+    expect(job.strategy?.["fail-fast"]).toBeFalse();
+    expect(stepIndex(job, "Record the declared test inventory")).toBeLessThan(
+      stepIndex(job, "Test the selected package")
+    );
+    expect(stepIndex(job, "Test the selected package")).toBeLessThan(
+      stepIndex(job, "Build and verify the unit receipt")
+    );
+    expect(workflowStep(job, "Record the declared test inventory").run).toContain(
+      "--reporter=junit"
+    );
+    expect(workflowStep(job, "Record the declared test inventory").run).toContain(
+      "assert-no-skips.mjs"
+    );
+    expect(workflowStep(job, "Test the selected package").run).toContain(
+      "assert-no-skips.mjs"
+    );
+    expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
+      "aex-release-tool -- evidence new"
+    );
+    expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
+      "aex-release-tool -- evidence verify"
+    );
+    expect(source).toContain("SELECTED_PACKAGE: ${{ matrix.name }}");
+    expect(source).toContain("SELECTED_PACKAGE_DIR: ${{ matrix.directory }}");
+    expect(source).toContain("SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}");
+    expect(source).toContain("PARTITION_INDEX: ${{ matrix.partition }}");
+    expect(source).toContain("PARTITION_TOTAL: ${{ matrix.partitions }}");
+    expect(source).toContain("commitSha: $commitSha");
+    expect(source).toContain("workflowRunId: $workflowRunId");
+    expect(source).toContain("runAttempt: $runAttempt");
+    expect(source).toContain("subject: {unitIds: $unitIds}");
+    expect(source).toContain("name: receipt-${{ inputs.lane }}-node-${{ matrix.partition }}");
+    expect(source).not.toContain("composition-inputs");
+    expect(source).not.toContain('class: "sbom"');
+    expect(source).not.toContain('class: "license"');
+    expect(source).not.toContain('class: "vulnerability"');
+  });
+
+  test("every Node caller passes the release-derived matrix, aggregate job id, and routing mode", () => {
+    const cases = [
+      [".github/workflows/pr.yml", "node", "affected"],
+      [".github/workflows/main.yml", "node", "full"]
+    ] as const;
+
+    for (const [path, jobId, mode] of cases) {
+      const job = workflowJob(readWorkflow(path), jobId);
+      const inputs = job.with as Readonly<Record<string, unknown>>;
+      expect(inputs.matrix).toBe("${{ needs.route.outputs.node_matrix }}");
+      expect(inputs.job_name).toBe(jobId);
+      expect(inputs.selection_mode).toBe(mode);
+    }
+  });
+
+  test("the router derives the Node matrix from release metadata", () => {
+    const source = readRepoFile(".github/workflows/_route.yml");
+    const workflow = readWorkflow(".github/workflows/_route.yml");
+    const job = workflowJob(workflow, "route");
+
+    expect(source).toContain("node_matrix:");
+    expect(source).toContain("has_node:");
+    expect(workflowStep(job, "Node matrix").run).toContain("--kind node");
+  });
 });

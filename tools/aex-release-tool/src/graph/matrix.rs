@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Exit, Result, ToolError};
 
 use super::NodeKind;
-use super::inputs::{ScenarioOwnership, Units};
+use super::inputs::{NpmPackage, ScenarioOwnership, Units};
 use super::select::Selection;
 
 /// Which slice of the selection to emit.
@@ -22,6 +22,8 @@ use super::select::Selection;
 pub enum MatrixKind {
     /// Cargo packages to test in the Rust lane.
     Test,
+    /// npm packages that own deployable units to test in the Node lane.
+    Node,
     /// Artifacts to build.
     Artifact,
     /// Scenarios to exercise.
@@ -46,6 +48,9 @@ pub struct MatrixEntry {
     /// Exact package target for a scenario entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// Repository-relative npm package directory for a Node entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
     /// Deployable unit ids whose own package this entry exercises.
     #[serde(default)]
     pub units: Vec<String>,
@@ -99,6 +104,7 @@ pub fn build(
     durations: &BTreeMap<String, u64>,
     scenarios: &ScenarioOwnership,
     units: &Units,
+    npm: &[NpmPackage],
 ) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
@@ -113,6 +119,18 @@ pub fn build(
             .iter()
             .filter(|selected| {
                 selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
+            })
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Node => selection
+            .test
+            .iter()
+            .filter(|selected| {
+                selected.id.namespace() == "npm"
+                    && units
+                        .units
+                        .iter()
+                        .any(|unit| unit.package == selected.id.local())
             })
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
@@ -167,12 +185,32 @@ pub fn build(
             } else {
                 (None, None)
             };
+            let directory = if kind == MatrixKind::Node {
+                Some(
+                    npm.iter()
+                        .find(|candidate| candidate.name == *name)
+                        .ok_or_else(|| {
+                            ToolError::single(
+                                Exit::GraphVerification,
+                                "node-package-directory-missing",
+                                format!(
+                                    "selected Node package `{name}` has no npm package directory"
+                                ),
+                            )
+                        })?
+                        .dir
+                        .clone(),
+                )
+            } else {
+                None
+            };
             include.push(MatrixEntry {
                 id: id.clone(),
                 name: name.clone(),
                 package,
                 target,
-                units: if kind == MatrixKind::Test {
+                directory,
+                units: if matches!(kind, MatrixKind::Test | MatrixKind::Node) {
                     units
                         .units
                         .iter()
@@ -268,6 +306,7 @@ pub fn to_github_output(output: &MatrixOutput) -> Result<String> {
 pub const fn source_kind(kind: MatrixKind) -> NodeKind {
     match kind {
         MatrixKind::Test | MatrixKind::Live => NodeKind::Crate,
+        MatrixKind::Node => NodeKind::NpmPackage,
         MatrixKind::Artifact => NodeKind::Artifact,
         MatrixKind::Scenario => NodeKind::Scenario,
         MatrixKind::Terraform => NodeKind::TerraformModule,
@@ -330,6 +369,7 @@ mod tests {
                 &BTreeMap::new(),
                 &no_scenarios(),
                 &no_units(),
+                &[],
             )
             .unwrap(),
         )
@@ -367,6 +407,7 @@ mod tests {
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
         )
         .unwrap();
         let live = build(
@@ -376,6 +417,7 @@ mod tests {
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -398,6 +440,96 @@ mod tests {
                 .all(|entry| entry.id.starts_with("cargo:")),
             "the Rust lane must never receive an npm package"
         );
+    }
+
+    #[test]
+    fn node_matrix_is_bounded_to_npm_packages_that_own_deployable_units() {
+        let selection = selection(&[
+            NodeId::npm("@aexhq/sdk"),
+            NodeId::npm("@aexhq/stripe-command-edge"),
+            NodeId::npm("@aexhq/stripe-webhook-edge"),
+            NodeId::cargo("aex-wire"),
+        ]);
+        let units: Units = toml::from_str(
+            r#"
+schema = "aex.units.v1"
+[[unit]]
+id = "stripe-command-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@aexhq/stripe-command-edge"
+target = "none"
+profile = "release"
+form = "zip"
+config_env_namespace = "AEX_STRIPE_COMMAND_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "stripe-command-edge"
+[[unit]]
+id = "stripe-webhook-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@aexhq/stripe-webhook-edge"
+target = "none"
+profile = "release"
+form = "zip"
+config_env_namespace = "AEX_STRIPE_WEBHOOK_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "stripe-webhook-edge"
+"#,
+        )
+        .unwrap();
+        let npm = vec![
+            crate::graph::inputs::NpmPackage {
+                name: "@aexhq/sdk".to_owned(),
+                dir: "packages/sdk".to_owned(),
+                meta: None,
+                publishable: true,
+                deps: Vec::new(),
+            },
+            crate::graph::inputs::NpmPackage {
+                name: "@aexhq/stripe-command-edge".to_owned(),
+                dir: "services/stripe-command-edge".to_owned(),
+                meta: None,
+                publishable: false,
+                deps: Vec::new(),
+            },
+            crate::graph::inputs::NpmPackage {
+                name: "@aexhq/stripe-webhook-edge".to_owned(),
+                dir: "services/stripe-webhook-edge".to_owned(),
+                meta: None,
+                publishable: false,
+                deps: Vec::new(),
+            },
+        ];
+
+        let output = build(
+            &selection,
+            MatrixKind::Node,
+            8,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &units,
+            &npm,
+        )
+        .unwrap();
+
+        assert_eq!(output.include.len(), 2);
+        assert_eq!(output.include[0].name, "@aexhq/stripe-command-edge");
+        assert_eq!(
+            output.include[0].directory.as_deref(),
+            Some("services/stripe-command-edge")
+        );
+        assert_eq!(output.include[0].units, vec!["stripe-command-edge"]);
+        assert_eq!(output.include[1].name, "@aexhq/stripe-webhook-edge");
+        assert_eq!(
+            output.include[1].directory.as_deref(),
+            Some("services/stripe-webhook-edge")
+        );
+        assert_eq!(output.include[1].units, vec!["stripe-webhook-edge"]);
+        assert_eq!(output.include[0].partitions, 2);
+        assert_eq!(output.include[1].partitions, 2);
     }
 
     #[test]
@@ -426,6 +558,7 @@ target = "live"
             &BTreeMap::new(),
             &registry,
             &no_units(),
+            &[],
         )
         .expect("scenario matrix");
         assert_eq!(output.include.len(), 1);
@@ -451,6 +584,7 @@ target = "live"
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
         )
         .unwrap_err();
         assert_eq!(err.rules(), vec!["scenario-runnable-missing"]);
@@ -527,6 +661,7 @@ alarm_spec = "hands-image-large"
             &BTreeMap::new(),
             &no_scenarios(),
             &units,
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -544,6 +679,7 @@ alarm_spec = "hands-image-large"
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
         )
         .unwrap();
         assert!(!output.has_entries);
@@ -560,6 +696,7 @@ alarm_spec = "hands-image-large"
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
         )
         .unwrap_err();
         assert_eq!(err.exit.code(), 2);

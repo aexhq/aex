@@ -103,7 +103,10 @@ jobs:
     needs: route
     uses: ./.github/workflows/_node-lane.yml
     with:
+      matrix: ${{ needs.route.outputs.node_matrix }}
       lane: pr
+      job_name: node
+      selection_mode: affected
 
   scenarios:
     name: Scenarios

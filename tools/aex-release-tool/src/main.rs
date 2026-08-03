@@ -1036,6 +1036,7 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
                 &durations,
                 &inputs.scenarios,
                 &inputs.units,
+                &inputs.npm,
             )?;
             if let Some(path) = github_output {
                 append_text(path, &matrix::to_github_output(&output)?)?;

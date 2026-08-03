@@ -53,7 +53,10 @@ jobs:
     needs: route
     uses: ./.github/workflows/_node-lane.yml
     with:
+      matrix: ${{ needs.route.outputs.node_matrix }}
       lane: main
+      job_name: node
+      selection_mode: full
 
   scenarios:
     name: Scenarios

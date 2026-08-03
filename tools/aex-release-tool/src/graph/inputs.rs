@@ -526,12 +526,11 @@ fn parse_npm(root: &Path, violations: &mut Vec<Violation>) -> Result<Vec<NpmPack
             expand_workspace_glob(root, glob, &mut dirs);
         }
     }
-    // Three npm packages no `workspaces` glob reaches: the lint plugin, which is
-    // referenced by path, and the two Stripe edges, which live under `services/`
-    // beside Cargo members. The list is `aex-workspace-check`'s, not a second
-    // copy: if the two authorities read different package sets they derive
-    // different live targets from the same tree, which is precisely what
-    // `live-target-disagreement` exists to catch.
+    // Extra npm inventory comes from `aex-workspace-check` rather than a
+    // second list. The Stripe edges are also literal root workspaces so Bun's
+    // frozen install and this graph read the same manifests; the set de-dupes
+    // their two discovery paths. The path-referenced lint plugin exists only
+    // in the explicit set.
     for explicit in aex_workspace_check::collect::NPM_EXPLICIT {
         if root.join(explicit).join("package.json").is_file() {
             dirs.insert((*explicit).to_owned());

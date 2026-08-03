@@ -40,6 +40,10 @@ on:
         value: ${{ jobs.route.outputs.test_matrix }}
       has_test:
         value: ${{ jobs.route.outputs.has_test }}
+      node_matrix:
+        value: ${{ jobs.route.outputs.node_matrix }}
+      has_node:
+        value: ${{ jobs.route.outputs.has_node }}
       artifact_matrix:
         value: ${{ jobs.route.outputs.artifact_matrix }}
       has_artifact:
@@ -67,6 +71,8 @@ jobs:
       repo_wide: ${{ steps.test.outputs.repo_wide }}
       test_matrix: ${{ steps.test.outputs.matrix }}
       has_test: ${{ steps.test.outputs.has_entries }}
+      node_matrix: ${{ steps.node.outputs.matrix }}
+      has_node: ${{ steps.node.outputs.has_entries }}
       artifact_matrix: ${{ steps.artifact.outputs.matrix }}
       has_artifact: ${{ steps.artifact.outputs.has_entries }}
       scenario_matrix: ${{ steps.scenario.outputs.matrix }}
@@ -119,6 +125,15 @@ jobs:
           set -euo pipefail
           ./target/release/aex-release-tool graph matrix \
             --selection selection.json --kind artifact \
+            --github-output "$GITHUB_OUTPUT" --quiet
+
+      - name: Node matrix
+        id: node
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph matrix \
+            --selection selection.json --kind node \
+            --partitions "${{ inputs.partitions }}" \
             --github-output "$GITHUB_OUTPUT" --quiet
 
       - name: Scenario matrix
