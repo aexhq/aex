@@ -25,8 +25,7 @@ use aex_brain_application::ports::{
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
-    WakeId, WorkShard,
+    AgentId, AgentKey, JournalSeq, ModelSlug, SessionId, Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
@@ -354,8 +353,10 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         clock,
         ids: Arc::new(CountingIds::new()),
     };
-    let mut policy = ActivationPolicy::default();
-    policy.max_concurrent_drives = COUNT;
+    let policy = ActivationPolicy {
+        max_concurrent_drives: COUNT,
+        ..ActivationPolicy::default()
+    };
     let context_bytes = u64::try_from(policy.restore.max_bytes)
         .expect("the restore budget fits u64")
         .saturating_mul(COUNT_U64);
@@ -473,6 +474,10 @@ impl ProviderPort for RefillProvider {
 /// sibling refills the other slot and recovers a subsequently persisted lost hint while the
 /// first effect is still live. Drain then cancels that structured child and joins the set.
 #[tokio::test(flavor = "current_thread")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the scheduler refill scenario keeps queue, recovery, and aggregate-cap evidence together"
+)]
 async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_live() {
     const CAP: usize = 2;
     let slow = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4010)));
@@ -516,14 +521,16 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
         clock: Arc::new(ReactorClock::new()),
         ids: Arc::new(CountingIds::new()),
     };
-    let mut policy = ActivationPolicy::default();
-    policy.receive_batch = 1;
-    policy.max_concurrent_drives = 1;
-    policy.due_shards = 1;
-    policy.due_scan_shards_per_pass = 1;
-    policy.due_scan_page = 1;
-    policy.due_scan_interval = core::time::Duration::ZERO;
-    policy.renew_interval = core::time::Duration::from_millis(10);
+    let policy = ActivationPolicy {
+        receive_batch: 1,
+        max_concurrent_drives: 1,
+        due_shards: 1,
+        due_scan_shards_per_pass: 1,
+        due_scan_page: 1,
+        due_scan_interval: core::time::Duration::ZERO,
+        renew_interval: core::time::Duration::from_millis(10),
+        ..ActivationPolicy::default()
+    };
     let context_bytes = u64::try_from(policy.restore.max_bytes)
         .expect("the restore budget fits u64")
         .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));

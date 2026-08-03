@@ -465,6 +465,11 @@ fn emit_due_isolations(
 /// The order is the whole design. Readiness fails first so the load balancer stops sending
 /// work; liveness is deliberately untouched, because failing it would have the orchestrator
 /// kill the task along with the non-replayable effects it is trying to finish.
+///
+/// # Errors
+///
+/// Returns the first drain-stage failure, including an activation pump that
+/// panicked before it relinquished receive authority.
 pub async fn drain_sequence(
     composition: &std::sync::Arc<compose::Composition>,
     pump: tokio::task::JoinHandle<()>,

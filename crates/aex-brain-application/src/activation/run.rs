@@ -48,9 +48,9 @@ use aex_brain_domain::wire_pending::{
     CanonicalMessage, CanonicalModelRequest, ContentBlockRef, DurableOperationSupport,
     ResolvedAgentConfig, Role,
 };
-use futures::stream::{self, StreamExt as _};
 use aex_model_catalog::BoundedString;
 use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice, ToolResultPart};
+use futures::stream::{self, StreamExt as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -614,14 +614,11 @@ impl WakeLoop {
                     after,
                 )
                 .await;
-            let page = match page {
-                Ok(page) => page,
-                Err(_) => {
-                    // A failed shard is retained at its prior cursor. Rotation continues so
-                    // one throttled partition cannot suppress recovery in later shards.
-                    report.refused = report.refused.saturating_add(1);
-                    continue;
-                }
+            let Ok(page) = page else {
+                // A failed shard is retained at its prior cursor. Rotation continues so
+                // one throttled partition cannot suppress recovery in later shards.
+                report.refused = report.refused.saturating_add(1);
+                continue;
             };
             report.malformed = report.malformed.saturating_add(page.malformed);
             let sample_room = MAX_DUE_ROW_ISOLATIONS.saturating_sub(report.isolations.len());
@@ -883,12 +880,8 @@ impl Session<'_> {
             let remaining_bytes = self.policy.restore.max_bytes.saturating_sub(restored_bytes);
             if remaining_entries == 0 || remaining_bytes == 0 {
                 return Err(StoreError::RestoreBudgetExhausted {
-                    entries: restored_entries.saturating_add(if remaining_entries == 0 {
-                        1
-                    } else {
-                        0
-                    }),
-                    bytes: restored_bytes.saturating_add(if remaining_bytes == 0 { 1 } else { 0 }),
+                    entries: restored_entries.saturating_add(usize::from(remaining_entries == 0)),
+                    bytes: restored_bytes.saturating_add(usize::from(remaining_bytes == 0)),
                     max_entries: self.policy.restore.max_entries,
                     max_bytes: self.policy.restore.max_bytes,
                 }

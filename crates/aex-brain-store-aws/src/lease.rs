@@ -217,7 +217,7 @@ impl LeaseStore for BrainStore {
                     &claim.authority,
                 ),
             )
-            .map_err(renew_plan_error)?;
+            .map_err(|error| renew_plan_error(&error))?;
             plan.update(
                 aex_session_dynamodb::plan::Participant::AGENT_CONTROL,
                 aws_sdk_dynamodb::types::Update::builder()
@@ -237,11 +237,11 @@ impl LeaseStore for BrainStore {
                     .expression_attribute_values(":expires", stamp(wire_expires))
                     .expression_attribute_values(":now", stamp(wire_now)),
             )
-            .map_err(renew_plan_error)?;
+            .map_err(|error| renew_plan_error(&error))?;
             debug_assert_eq!(plan.participants(), RENEW_ORDER);
             let participants = plan.participants().to_vec();
             plan.compile(self.client())
-                .map_err(renew_plan_error)?
+                .map_err(|error| renew_plan_error(&error))?
                 .send()
                 .await
                 .map_err(|error| renewal_transaction_error(claim, &participants, &error))?;
@@ -285,7 +285,7 @@ impl LeaseStore for BrainStore {
     }
 }
 
-fn renew_plan_error(error: aex_session_dynamodb::error::StoreError) -> ClaimError {
+fn renew_plan_error(error: &aex_session_dynamodb::error::StoreError) -> ClaimError {
     ClaimError::Store(StoreError::Transport {
         reason: error.to_string(),
         retryable: error.retryable(),
@@ -320,6 +320,6 @@ fn renewal_transaction_error<R>(
         } => ClaimError::Fenced {
             current: Fence(claim.fence.0.saturating_add(1)),
         },
-        other => renew_plan_error(other),
+        other => renew_plan_error(&other),
     }
 }

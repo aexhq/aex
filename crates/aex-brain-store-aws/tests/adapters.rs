@@ -265,6 +265,10 @@ async fn every_release_disposition_expires_the_exact_owned_lease_immediately() {
 /// This rejects cancellation/deletion and a stale owner while allowing a successor to
 /// dispatch the same prepared identity.
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the transaction-shape test audits every participant and condition together"
+)]
 async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the_effect() {
     let (store, receiver) = capturing();
     let guard = FenceGuard::new(
@@ -380,7 +384,7 @@ async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the
 }
 
 /// Once the application classifies a page stable and installs its cursor, the adapter must
-/// return that cursor verbatim as DynamoDB's native `ExclusiveStartKey`. Transient pages
+/// return that cursor verbatim as `DynamoDB`'s native `ExclusiveStartKey`. Transient pages
 /// retain their previous cursor in the application and never reach this adapter assertion.
 #[tokio::test]
 async fn a_due_scan_resumes_from_the_native_per_shard_continuation() {

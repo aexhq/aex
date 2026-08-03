@@ -281,7 +281,8 @@ mod tests {
     #[test]
     fn an_overlong_provider_request_id_is_refused_rather_than_truncated() {
         let item = row("responding")
-            .set("dispatchStage", s("ResponseStarted"))
+            .set("dispatchStage", s("Streaming"))
+            .set("dispatchProof", s("ResponseStarted"))
             .set("providerRequestId", s("r".repeat(81)))
             .build();
         let error = decode(&item).expect_err("stored authority is decoded strictly");

@@ -344,7 +344,10 @@ fn the_tool_result_cap_is_idempotent() {
         "the marker must be charged against the budget, not appended after it: {} bytes",
         text.len()
     );
-    assert!(text.ends_with(CLEARED_PLACEHOLDER), "truncation is visible");
+    assert!(
+        text.as_str().ends_with(CLEARED_PLACEHOLDER),
+        "truncation is visible"
+    );
 }
 
 /// A max-output stop is terminal and therefore sealable; the planner still

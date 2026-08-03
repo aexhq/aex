@@ -1229,7 +1229,7 @@ impl ProviderPort for CancelAwareProvider {
             if cancel.is_cancelled() {
                 return core::task::Poll::Ready(Err(failure(
                     self.proof,
-                    ProviderFailureClass::Transient,
+                    ProviderFailureKind::Transport,
                 )));
             }
             context.waker().wake_by_ref();
@@ -1267,7 +1267,7 @@ impl ProviderPort for DrainOnFirstNotSent {
         Box::pin(async {
             Err(failure(
                 DispatchProof::NotSent,
-                ProviderFailureClass::Transient,
+                ProviderFailureKind::Transport,
             ))
         })
     }
@@ -1854,6 +1854,10 @@ fn every_completed_release_is_immediately_claimable_and_stale_release_is_harmles
 /// its predecessor. The stale and forged-owner guards fail; the live guard takes over the
 /// same effect identity and mints the only dispatch ticket.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the takeover test keeps every stale/current authority assertion in one scenario"
+)]
 fn prepared_effect_takeover_requires_the_current_fence_and_owner() {
     let harness = Harness::new(Vec::new());
     let effect = EffectId([0x33; 16]);
