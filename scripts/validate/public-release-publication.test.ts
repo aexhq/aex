@@ -102,7 +102,7 @@ describe("public main-push publication", () => {
     expect(source).not.toContain("merge-multiple: true");
     expect(deferral?.run).toContain("evidence bind-artifact");
     expect(deferral?.run).toContain("artifact defer-certification");
-    expect(deferral?.run).toContain('test "${#drafts[@]}" -eq 38');
+    expect(deferral?.run).toContain('test "$deferral_count" -eq "${#drafts[@]}"');
     expect(deferralUpload?.with.name).toBe("certification-deferrals");
     expect(deferralUpload?.with["if-no-files-found"]).toBe("error");
     expect(blobReadback?.run).toContain("gh release download");

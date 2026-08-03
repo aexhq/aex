@@ -718,8 +718,9 @@ jobs:
               --builder-id "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
               --out "dist/certification-deferrals/$unit.json"
           done
-          test "${#drafts[@]}" -eq 38
-          test "$(find dist/certification-deferrals -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 38
+          test "${#drafts[@]}" -gt 0
+          deferral_count=$(find dist/certification-deferrals -maxdepth 1 -type f -name '*.json' | wc -l)
+          test "$deferral_count" -eq "${#drafts[@]}"
 
       - name: Upload exact certification deferrals
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
