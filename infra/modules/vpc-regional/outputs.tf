@@ -19,6 +19,11 @@ output "endpoint_ids" {
   description = "Service short name to endpoint id, gateway and interface together."
 }
 
+output "interface_endpoint_security_group_id" {
+  value       = aws_security_group.interface_endpoints.id
+  description = "Security group attached to every interface endpoint; it admits TLS from this VPC only."
+}
+
 output "nat_gateway_ids" {
   value       = aws_nat_gateway.this[*].id
   description = "NAT gateway ids. Empty unless a root explicitly enabled NAT."

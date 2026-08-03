@@ -35,6 +35,7 @@ account it happens to run in.
 | `vpc_id` | Id of the VPC. |
 | `subnet_ids` | `{ private, public }` subnet id lists. |
 | `endpoint_ids` | Service short name to endpoint id. |
+| `interface_endpoint_security_group_id` | Endpoint-only group admitting TCP/443 from this VPC. |
 | `nat_gateway_ids` | NAT gateway ids; empty unless NAT was enabled. |
 
 ## Policy asserted
@@ -45,7 +46,9 @@ account it happens to run in.
   one-shot schema-admin task always has a path to ECR, KMS, CloudWatch Logs,
   Secrets Manager and STS from a private subnet.
 - Every interface endpoint enables private DNS; without it the SDK still
-  resolves the public name and the endpoint does nothing.
+  resolves the public name and the endpoint does nothing. Every endpoint also
+  uses a dedicated security group admitting only TCP/443 from this VPC; it
+  never inherits the default security group's self-reference.
 - Gateway endpoints for S3 and DynamoDB always exist.
 - Private subnets never auto-assign a public address, and there is one per zone.
 - The zone list must match `az_count`, and the VPC prefix must be between /16

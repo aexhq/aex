@@ -117,6 +117,28 @@ resource "aws_vpc_endpoint" "gateway" {
   tags = merge(var.tags, { Name = "${var.name}-${each.key}" })
 }
 
+# Interface endpoints must never inherit the VPC default security group. The
+# workloads use dedicated groups, so the default group's self-reference would
+# resolve the private AWS hostname successfully and then reject the TLS
+# connection. This endpoint-only group admits exactly TCP/443 from addresses in
+# this VPC; it grants no public ingress and no additional destination port.
+resource "aws_security_group" "interface_endpoints" {
+  name        = "${var.name}-interface-endpoints"
+  description = "TLS ingress to private AWS interface endpoints"
+  vpc_id      = aws_vpc.this.id
+
+  tags = merge(var.tags, { Name = "${var.name}-interface-endpoints" })
+}
+
+resource "aws_vpc_security_group_ingress_rule" "interface_endpoints_https" {
+  security_group_id = aws_security_group.interface_endpoints.id
+  description       = "TLS from workloads inside this VPC"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  cidr_ipv4         = var.cidr
+}
+
 resource "aws_vpc_endpoint" "interface" {
   for_each = toset(var.endpoints)
 
@@ -124,6 +146,7 @@ resource "aws_vpc_endpoint" "interface" {
   service_name        = "com.amazonaws.${var.region}.${each.key}"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.interface_endpoints.id]
   private_dns_enabled = true
 
   tags = merge(var.tags, { Name = "${var.name}-${replace(each.key, ".", "-")}" })

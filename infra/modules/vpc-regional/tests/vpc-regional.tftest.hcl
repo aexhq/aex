@@ -1,5 +1,13 @@
 mock_provider "aws" {}
 
+override_resource {
+  target          = aws_security_group.interface_endpoints
+  override_during = plan
+  values = {
+    id = "sg-0123456789abcdef0"
+  }
+}
+
 variables {
   name               = "aex-dev-euw1"
   region             = "eu-west-1"
@@ -52,6 +60,24 @@ run "interface_endpoints_cover_everything_the_schema_admin_task_needs" {
       for k, e in aws_vpc_endpoint.interface : e.private_dns_enabled
     ])
     error_message = "Every interface endpoint must enable private DNS, or the SDK will still resolve the public name."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, e in aws_vpc_endpoint.interface :
+      toset(e.security_group_ids) == toset([aws_security_group.interface_endpoints.id])
+    ])
+    error_message = "Every interface endpoint must use the dedicated endpoint security group rather than the VPC default group."
+  }
+
+  assert {
+    condition = (
+      aws_vpc_security_group_ingress_rule.interface_endpoints_https.ip_protocol == "tcp" &&
+      aws_vpc_security_group_ingress_rule.interface_endpoints_https.from_port == 443 &&
+      aws_vpc_security_group_ingress_rule.interface_endpoints_https.to_port == 443 &&
+      aws_vpc_security_group_ingress_rule.interface_endpoints_https.cidr_ipv4 == var.cidr
+    )
+    error_message = "The endpoint group must admit only TLS from this VPC."
   }
 
   assert {
