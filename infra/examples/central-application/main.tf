@@ -35,7 +35,6 @@ module "database" {
   min_acu                = var.database.min_acu
   max_acu                = var.database.max_acu
   backup_retention_days  = var.database.backup_retention_days
-  admin_secret_arn       = var.database.admin_secret_arn
   region                 = var.region
   kms_key_arn            = var.kms_key_arn
   subnet_ids             = var.subnet_ids

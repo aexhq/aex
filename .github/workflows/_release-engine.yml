@@ -5,9 +5,9 @@
 # somebody else already built, recorded and attested; if the bytes it needs do
 # not exist, that is a missing build, not something to produce here.
 #
-# `execute: apply` requires the `aex-<plane>` GitHub Environment. That
-# environment does not exist, so every apply fails at environment resolution.
-# That is the intended state until the cut-readiness review creates it.
+# Plan and apply credentials require the `aex-<plane>` GitHub Environment.
+# Those environments do not exist, so cloud-bearing jobs fail at environment
+# resolution. That is the intended state until cut readiness creates them.
 
 name: release-engine
 
@@ -78,6 +78,7 @@ jobs:
     name: Plan
     needs: admit
     runs-on: ubuntu-latest
+    environment: aex-${{ inputs.plane }}
     permissions:
       contents: read
       id-token: write

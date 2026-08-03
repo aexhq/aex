@@ -45,7 +45,6 @@ variables {
     min_acu               = 0.5
     max_acu               = 8
     backup_retention_days = 7
-    admin_secret_arn      = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-dev-central-admin"
   }
 
   schema_admin = {

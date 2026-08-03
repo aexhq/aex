@@ -99,38 +99,61 @@ variable "permissions_profile" {
   }
 }
 
-variable "permission_profiles" {
-  type        = map(list(string))
-  description = "Actions granted by each profile. Supplied by the root so the profile contents are auditable in one place rather than buried in a module."
+variable "profile_statements" {
+  type = map(list(object({
+    sid       = string
+    actions   = list(string)
+    resources = list(string)
+  })))
+  description = "Independent IAM statements per profile. Actions and resources are paired in each statement so an unscopable action can use `*` without widening the profile's resource-scoped mutations."
 
   validation {
-    condition     = length(setsubtract(["publish", "plan", "deploy", "readonly"], keys(var.permission_profiles))) == 0
+    condition = (
+      length(setsubtract(toset(keys(var.profile_statements)), toset(["publish", "plan", "deploy", "readonly"]))) == 0
+      && length(setsubtract(toset(["publish", "plan", "deploy", "readonly"]), toset(keys(var.profile_statements)))) == 0
+    )
     error_message = "All four profiles must be defined: `publish`, `plan`, `deploy` and `readonly`."
   }
 
   validation {
     condition = length(setintersection(
-      toset(lookup(var.permission_profiles, "publish", [])),
-      toset(lookup(var.permission_profiles, "deploy", []))
+      toset(flatten([
+        for statement in lookup(var.profile_statements, "publish", []) : [
+          for action in statement.actions : [for resource in statement.resources : "${action}|${resource}"]
+        ]
+      ])),
+      toset(flatten([
+        for statement in lookup(var.profile_statements, "deploy", []) : [
+          for action in statement.actions : [for resource in statement.resources : "${action}|${resource}"]
+        ]
+      ]))
     )) == 0
-    error_message = "The `publish` and `deploy` profiles must be disjoint; an action in both would let one credential mint bytes and roll them out."
+    error_message = "The `publish` and `deploy` profiles must share no action/resource grant; one credential must not be able to mint bytes and roll them out."
   }
 
   validation {
     condition = alltrue(flatten([
-      for p, actions in var.permission_profiles : [for a in actions : !contains(["*"], a) && !endswith(a, ":*")]
+      for profile, statements in var.profile_statements : [
+        for statement in statements : (
+          can(regex("^[A-Za-z0-9]+$", statement.sid))
+          && length(statement.actions) > 0
+          && length(statement.resources) > 0
+          && alltrue([for action in statement.actions : action != "*" && !endswith(action, ":*")])
+          && alltrue([for resource in statement.resources : trimspace(resource) != ""])
+          && (!contains(statement.resources, "*") || length(statement.resources) == 1)
+        )
+      ]
     ]))
-    error_message = "No profile may grant a wildcard action."
+    error_message = "Every statement needs an alphanumeric Sid, non-empty actions/resources, no wildcard action, and either exact resources or `*` alone."
   }
-}
-
-variable "profile_resources" {
-  type        = map(list(string))
-  description = "Resources each profile's actions apply to."
 
   validation {
-    condition     = length(setsubtract(["publish", "plan", "deploy", "readonly"], keys(var.profile_resources))) == 0
-    error_message = "All four profiles must declare their resources."
+    condition = alltrue([
+      for profile, statements in var.profile_statements : (
+        length(distinct([for statement in statements : statement.sid])) == length(statements)
+      )
+    ])
+    error_message = "Statement Sids must be unique inside each profile."
   }
 }
 

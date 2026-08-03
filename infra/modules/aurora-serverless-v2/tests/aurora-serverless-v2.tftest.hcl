@@ -7,7 +7,6 @@ variables {
   engine_version         = "17.5"
   subnet_ids             = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
   vpc_security_group_ids = ["sg-0123456789abcdef0"]
-  admin_secret_arn       = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-dev-central-admin"
   region                 = "eu-west-1"
   kms_key_arn            = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
 }
@@ -45,12 +44,25 @@ run "no_instance_is_publicly_accessible" {
   }
 }
 
-run "there_is_no_reader_instance_at_launch" {
+run "dev_can_omit_a_reader_instance" {
   command = plan
 
   assert {
     condition     = length(aws_rds_cluster_instance.reader) == 0
     error_message = "No reader instance may exist at launch."
+  }
+}
+
+run "production_can_create_one_warm_failover_reader" {
+  command = plan
+
+  variables {
+    reader_count = 1
+  }
+
+  assert {
+    condition     = length(aws_rds_cluster_instance.reader) == 1
+    error_message = "One warm failover reader must be legal for the production binding."
   }
 }
 
@@ -122,24 +134,14 @@ run "rejects_a_publicly_accessible_cluster" {
   expect_failures = [var.publicly_accessible]
 }
 
-run "rejects_a_reader_instance" {
+run "rejects_more_than_one_reader_instance" {
   command = plan
 
   variables {
-    reader_count = 1
+    reader_count = 2
   }
 
   expect_failures = [var.reader_count]
-}
-
-run "rejects_a_cross_region_admin_secret" {
-  command = plan
-
-  variables {
-    admin_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:aex-dev-central-admin"
-  }
-
-  expect_failures = [aws_rds_cluster.this]
 }
 
 run "rejects_an_unpinned_engine_version" {

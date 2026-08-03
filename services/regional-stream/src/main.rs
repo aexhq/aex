@@ -192,9 +192,22 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         let observation = config.observation_stream.as_ref().ok_or_else(|| {
             RunError::Probe("ddb_streams mode omitted the observation stream ARN".to_owned())
         })?;
+        let endpoint = config
+            .dynamodb_streams_endpoint_url
+            .as_ref()
+            .ok_or_else(|| {
+                RunError::Probe(
+                    "ddb_streams mode omitted the private DynamoDB Streams endpoint".to_owned(),
+                )
+            })?;
+        let streams = aws_sdk_dynamodbstreams::Client::from_conf(
+            aws_sdk_dynamodbstreams::config::Builder::from(&aws)
+                .endpoint_url(endpoint.clone())
+                .build(),
+        );
         Some(
             regional_stream::wakes::start(
-                aws_sdk_dynamodbstreams::Client::new(&aws),
+                streams,
                 dynamodb.clone(),
                 config.session_table.clone(),
                 vec![

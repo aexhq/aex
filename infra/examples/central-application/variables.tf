@@ -63,7 +63,6 @@ variable "database" {
     min_acu               = number
     max_acu               = number
     backup_retention_days = number
-    admin_secret_arn      = string
   })
   description = "The central finance cluster."
 }

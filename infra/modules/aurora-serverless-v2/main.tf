@@ -35,12 +35,6 @@ resource "aws_rds_cluster" "this" {
 
   tags = var.tags
 
-  lifecycle {
-    precondition {
-      condition     = split(":", var.admin_secret_arn)[3] == var.region
-      error_message = "The admin secret must live in the same region as the cluster; a cross-region secret would make the Data API call fail at runtime rather than at plan time."
-    }
-  }
 }
 
 resource "aws_rds_cluster_instance" "writer" {
@@ -53,8 +47,8 @@ resource "aws_rds_cluster_instance" "writer" {
   tags                = var.tags
 }
 
-# There is no reader at launch. The count is driven by a variable the module
-# validates to zero so the intent is explicit rather than an omission.
+# Dev may omit the reader. Production may create one warm failover target; no
+# application read path is directed at the reader endpoint.
 resource "aws_rds_cluster_instance" "reader" {
   count = var.reader_count
 

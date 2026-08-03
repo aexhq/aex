@@ -18,8 +18,7 @@ compromised job cannot both forge an artifact and put it in front of traffic.
 | `allowed_environments` | `list(string)` | Optional exact protected `aex-dev`/`aex-prd` environment. When set, ref-only subjects are excluded. |
 | `allowed_workflows` | `list(string)` | Exact workflow paths under `.github/workflows/`. |
 | `permissions_profile` | `string` | `publish`, `plan`, `deploy` or `readonly`. |
-| `permission_profiles` | `map(list(string))` | Actions per profile, supplied by the root. |
-| `profile_resources` | `map(list(string))` | Resources per profile. |
+| `profile_statements` | `map(list(object))` | Explicit action/resource statements per profile, supplied by the root. |
 | `max_session_duration` | `number` | Session duration in seconds. |
 | `tags` | `map(string)` | Tags. |
 
@@ -42,10 +41,12 @@ compromised job cannot both forge an artifact and put it in front of traffic.
 - A protected-environment role accepts only the environment-shaped GitHub
   subject. It does not also accept the branch subject, because doing so would
   let the same reusable workflow bypass the Environment approval gate.
-- `publish` and `deploy` are disjoint: a profile map where an action appears in
-  both is rejected, and the rendered policy of a `publish` role shares no action
-  with `deploy`.
-- The role grants only the actions of its own profile.
+- `publish` and `deploy` share no action/resource grant. The same read action may
+  appear on separate artifact and state resources without collapsing the two
+  credentials.
+- The role renders only the statements of its own profile. An unscopable action
+  may use `Resource = "*"` without widening resource-scoped mutations because
+  the action/resource pair remains a separate IAM statement.
 - No profile may grant a wildcard action.
 - The physical name is supplied explicitly and must use an exact lowercase
   `aex-...` namespace. The module never derives the same role name for two

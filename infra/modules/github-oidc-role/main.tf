@@ -40,12 +40,12 @@ locals {
   inline_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Sid      = "ProfileGrants"
+      for statement in var.profile_statements[var.permissions_profile] : {
+        Sid      = statement.sid
         Effect   = "Allow"
-        Action   = var.permission_profiles[var.permissions_profile]
-        Resource = var.profile_resources[var.permissions_profile]
-      },
+        Action   = statement.actions
+        Resource = statement.resources
+      }
     ]
   })
 }

@@ -35,8 +35,7 @@ module "deploy_role" {
   allowed_refs        = var.github_allowed_refs
   allowed_workflows   = var.github_allowed_workflows
   permissions_profile = "deploy"
-  permission_profiles = var.permission_profiles
-  profile_resources   = var.profile_resources
+  profile_statements  = var.profile_statements
   tags                = var.tags
 }
 

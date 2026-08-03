@@ -27,18 +27,11 @@ variables {
   github_allowed_refs      = ["refs/heads/main"]
   github_allowed_workflows = [".github/workflows/main.yml"]
 
-  permission_profiles = {
-    publish  = ["s3:PutObject", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload"]
-    plan     = ["s3:GetObject", "dynamodb:DescribeTable"]
-    deploy   = ["lambda:UpdateFunctionCode", "lambda:PublishVersion", "ecs:UpdateService"]
-    readonly = ["s3:GetObject"]
-  }
-
-  profile_resources = {
-    publish  = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"]
-    plan     = ["arn:aws:s3:::aex-tfstate-dev-0a1b2c3d/*"]
-    deploy   = ["arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-regional-session-api"]
-    readonly = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"]
+  profile_statements = {
+    publish  = [{ sid = "Publish", actions = ["s3:PutObject"], resources = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"] }]
+    plan     = [{ sid = "Plan", actions = ["s3:GetObject"], resources = ["arn:aws:s3:::aex-tfstate-dev-0a1b2c3d/*"] }]
+    deploy   = [{ sid = "Deploy", actions = ["lambda:UpdateFunctionCode"], resources = ["arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-regional-session-api"] }]
+    readonly = [{ sid = "Read", actions = ["s3:GetObject"], resources = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"] }]
   }
 
   anomaly_thresholds = {
@@ -82,8 +75,8 @@ run "the_publish_role_carries_no_deploy_action" {
 
   assert {
     condition = length(setintersection(
-      toset(var.permission_profiles["publish"]),
-      toset(var.permission_profiles["deploy"])
+      toset(flatten([for statement in var.profile_statements["publish"] : statement.actions])),
+      toset(flatten([for statement in var.profile_statements["deploy"] : statement.actions]))
     )) == 0
     error_message = "The publish and deploy profiles must stay disjoint at the root as well as in the module."
   }
