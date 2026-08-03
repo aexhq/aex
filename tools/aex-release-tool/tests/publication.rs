@@ -7,7 +7,10 @@ use std::io::Read as _;
 
 use aex_release_tool::canon;
 use aex_release_tool::manifest::CompositionManifest;
-use aex_release_tool::publication::{package_module_bundle_from_paths, verify_blob};
+use aex_release_tool::publication::{
+    package_module_bundle_from_paths, regional_tables_bundle, verify_blob,
+    verify_regional_tables_bundle,
+};
 use common::docs::valid_manifest;
 
 #[test]
@@ -131,30 +134,79 @@ fn blob_identity_rejects_missing_tampered_and_truncated_inputs() {
     assert!(err.rules().contains(&"published-blob-missing"));
 }
 
+fn regional_document(definitions_digest: &str) -> Vec<u8> {
+    format!(
+        "{{\"schema\":\"aex.regional-tables.v1\",\"digest\":\"{definitions_digest}\",\"tables\":[{{\"table\":\"sessions\"}}]}}\n"
+    )
+    .into_bytes()
+}
+
 #[test]
-fn manifest_admission_cross_checks_both_downloaded_subjects() {
+fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("migrations/regional/generated");
+    fs::create_dir_all(&directory).unwrap();
+    let definitions_digest = format!("blake3:{}", "ab".repeat(32));
+    let bytes = regional_document(&definitions_digest);
+    fs::write(directory.join("regional-tables.json"), &bytes).unwrap();
+
+    let (observed, identity) = regional_tables_bundle(root.path()).unwrap();
+    assert_eq!(observed, bytes);
+    assert_eq!(identity.digest, canon::digest_bytes(&bytes));
+    assert_eq!(identity.size_bytes, bytes.len() as u64);
+    assert_eq!(identity.definitions_digest, definitions_digest);
+
+    let acquired = root.path().join("acquired.json");
+    fs::write(&acquired, &bytes).unwrap();
+    verify_regional_tables_bundle(
+        &acquired,
+        &identity.digest,
+        identity.size_bytes,
+        &identity.definitions_digest,
+    )
+    .unwrap();
+    let err = verify_regional_tables_bundle(
+        &acquired,
+        &identity.digest,
+        identity.size_bytes,
+        &format!("blake3:{}", "cd".repeat(32)),
+    )
+    .unwrap_err();
+    assert!(err.rules().contains(&"regional-tables-identity"));
+}
+
+#[test]
+fn manifest_admission_cross_checks_all_downloaded_subjects() {
     let root = tempfile::tempdir().unwrap();
     let tool = root.path().join("aex-release-tool");
     let modules = root.path().join("terraform-modules.tar.gz");
+    let regional = root.path().join("regional-tables.json");
+    let definitions_digest = format!("blake3:{}", "23".repeat(32));
+    let regional_bytes = regional_document(&definitions_digest);
     fs::write(&tool, b"tool bytes").unwrap();
     fs::write(&modules, b"module bytes").unwrap();
+    fs::write(&regional, &regional_bytes).unwrap();
 
     let mut value = valid_manifest();
     value["releaseTool"]["digest"] = serde_json::json!(canon::digest_bytes(b"tool bytes"));
     value["releaseTool"]["sizeBytes"] = serde_json::json!(10);
     value["infra"]["moduleBundleDigest"] = serde_json::json!(canon::digest_bytes(b"module bytes"));
     value["infra"]["moduleBundleSizeBytes"] = serde_json::json!(12);
+    value["migrations"]["regional"]["bundleDigest"] =
+        serde_json::json!(canon::digest_bytes(&regional_bytes));
+    value["migrations"]["regional"]["bundleSizeBytes"] = serde_json::json!(regional_bytes.len());
+    value["migrations"]["regional"]["definitionsDigest"] = serde_json::json!(definitions_digest);
     let manifest = serde_json::from_value::<CompositionManifest>(value)
         .unwrap()
         .seal()
         .unwrap();
 
     manifest
-        .validate_acquired_inputs(&tool, &modules, true)
+        .validate_acquired_inputs(&tool, &modules, &regional, true)
         .unwrap();
     fs::write(&modules, b"altered bytes").unwrap();
     let err = manifest
-        .validate_acquired_inputs(&tool, &modules, true)
+        .validate_acquired_inputs(&tool, &modules, &regional, true)
         .unwrap_err();
     assert_eq!(err.exit.code(), 21);
     assert!(err.rules().contains(&"published-blob-digest-mismatch"));

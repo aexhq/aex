@@ -155,9 +155,12 @@
         "regional": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["bundleDigest", "generation"],
+          "required": ["bundleDigest", "bundleSizeBytes", "bundleUri", "definitionsDigest", "generation"],
           "properties": {
             "bundleDigest": { "$ref": "#/$defs/sha256" },
+            "bundleSizeBytes": { "type": "integer", "minimum": 1 },
+            "bundleUri": { "type": "string", "pattern": "^https://github\\.com/aexhq/aex/releases/download/main-[0-9a-f]{40}-run-[1-9][0-9]*-attempt-[1-9][0-9]*/regional-tables\\.json$" },
+            "definitionsDigest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
             "generation": { "type": "integer", "minimum": 1 }
           }
         }

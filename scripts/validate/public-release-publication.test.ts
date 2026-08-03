@@ -39,7 +39,7 @@ describe("public main-push publication", () => {
     expect(source).toContain("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld");
     expect(source).toContain("link-self-contained=yes");
     expect(source).toContain("artifact module-bundle");
-    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(3);
+    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(4);
     expect(source).not.toContain("actions/attest-build-provenance@");
     expect(source).toContain("outputs['attestation-id']");
     expect(source).toContain("outputs['attestation-url']");
@@ -65,10 +65,17 @@ describe("public main-push publication", () => {
     expect(workflow.on.workflow_call.outputs).toHaveProperty("module_bundle_digest");
     expect(workflow.on.workflow_call.outputs).toHaveProperty("release_tool_attestation_id");
     expect(workflow.on.workflow_call.outputs).toHaveProperty("module_bundle_attestation_id");
+    expect(workflow.on.workflow_call.outputs).toHaveProperty("regional_tables_digest");
+    expect(workflow.on.workflow_call.outputs).toHaveProperty("regional_tables_definitions_digest");
+    expect(workflow.on.workflow_call.outputs).toHaveProperty("regional_tables_attestation_id");
+    expect(source).toContain("artifact regional-tables --out dist/regional-tables.json");
+    expect(source).toContain("dist/regional-tables.json");
   });
 
   test("composition publication remains explicit and fail closed", () => {
     const source = read(".github/workflows/main.yml");
+    expect(source).toContain("public-inputs/regional-tables.json");
+    expect(source).toContain("REGIONAL_TABLES_DEFINITIONS_DIGEST");
     expect(source).toContain("complete unit envelopes are not yet published");
     expect(source).toContain("exit 40");
   });

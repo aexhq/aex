@@ -201,6 +201,12 @@ enum ArtifactCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Validate and copy the generated regional table definition bundle.
+    RegionalTables {
+        /// Where to write `regional-tables.json`.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print every build recipe.
     Recipes {
         /// Restrict to one unit.
@@ -379,6 +385,9 @@ enum ManifestCommand {
         /// Downloaded `terraform-modules.tar.gz`.
         #[arg(long)]
         module_bundle: PathBuf,
+        /// Downloaded `regional-tables.json`.
+        #[arg(long)]
+        regional_tables: PathBuf,
         /// Also reject environment identities, mutable references and ranges.
         #[arg(long)]
         strict_environment_scan: bool,
@@ -878,6 +887,7 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
 fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
     match command {
         ArtifactCommand::ModuleBundle { out } => run_module_bundle(cli, root, out),
+        ArtifactCommand::RegionalTables { out } => run_regional_tables(cli, root, out),
         ArtifactCommand::Recipes { unit } => {
             let units = read_units(root)?;
             let plans = artifact::release_recipes(&units, root)?;
@@ -1064,6 +1074,21 @@ fn run_module_bundle(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
     )
 }
 
+fn run_regional_tables(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
+    let (bytes, identity) = publication::regional_tables_bundle(root)?;
+    std::fs::write(out, &bytes).map_err(|err| io(&out.display().to_string(), &err))?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "asset": publication::REGIONAL_TABLES_ASSET,
+            "digest": identity.digest,
+            "sizeBytes": identity.size_bytes,
+            "definitionsDigest": identity.definitions_digest,
+            "path": out.display().to_string(),
+        }),
+    )
+}
+
 fn run_artifact_plan(
     cli: &Cli,
     root: &Path,
@@ -1219,12 +1244,14 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             file,
             release_tool,
             module_bundle,
+            regional_tables,
             strict_environment_scan,
         } => {
             let manifest: CompositionManifest = read_json(file)?;
             manifest.validate_acquired_inputs(
                 release_tool,
                 module_bundle,
+                regional_tables,
                 *strict_environment_scan,
             )?;
             emit(

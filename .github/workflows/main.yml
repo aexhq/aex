@@ -114,6 +114,11 @@ jobs:
           MODULE_BUNDLE_DIGEST: ${{ needs.build.outputs.module_bundle_digest }}
           MODULE_BUNDLE_SIZE_BYTES: ${{ needs.build.outputs.module_bundle_size_bytes }}
           MODULE_BUNDLE_ATTESTATION_ID: ${{ needs.build.outputs.module_bundle_attestation_id }}
+          REGIONAL_TABLES_URI: ${{ needs.build.outputs.regional_tables_uri }}
+          REGIONAL_TABLES_DIGEST: ${{ needs.build.outputs.regional_tables_digest }}
+          REGIONAL_TABLES_SIZE_BYTES: ${{ needs.build.outputs.regional_tables_size_bytes }}
+          REGIONAL_TABLES_DEFINITIONS_DIGEST: ${{ needs.build.outputs.regional_tables_definitions_digest }}
+          REGIONAL_TABLES_ATTESTATION_ID: ${{ needs.build.outputs.regional_tables_attestation_id }}
         run: |
           set -euo pipefail
           expected_tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
@@ -121,15 +126,20 @@ jobs:
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$expected_tag"
           [[ "$RELEASE_TOOL_URI" == "$base/aex-release-tool" ]]
           [[ "$MODULE_BUNDLE_URI" == "$base/terraform-modules.tar.gz" ]]
+          [[ "$REGIONAL_TABLES_URI" == "$base/regional-tables.json" ]]
           [[ "$RELEASE_TOOL_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$MODULE_BUNDLE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$REGIONAL_TABLES_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$RELEASE_TOOL_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
           [[ "$MODULE_BUNDLE_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
+          [[ "$REGIONAL_TABLES_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
+          [[ "$REGIONAL_TABLES_DEFINITIONS_DIGEST" =~ ^blake3:[0-9a-f]{64}$ ]]
           [[ "$RELEASE_TOOL_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
           # Attestation IDs are audit locators, not admission identities. The
           # verifier below binds the exact subject digest and signer/source.
           test -n "$RELEASE_TOOL_ATTESTATION_ID"
           test -n "$MODULE_BUNDLE_ATTESTATION_ID"
+          test -n "$REGIONAL_TABLES_ATTESTATION_ID"
           mkdir public-inputs
           acquire() {
             local uri=$1 digest=$2 size=$3 destination=$4
@@ -150,6 +160,11 @@ jobs:
             "$RELEASE_TOOL_SIZE_BYTES" public-inputs/aex-release-tool
           acquire "$MODULE_BUNDLE_URI" "$MODULE_BUNDLE_DIGEST" \
             "$MODULE_BUNDLE_SIZE_BYTES" public-inputs/terraform-modules.tar.gz
+          acquire "$REGIONAL_TABLES_URI" "$REGIONAL_TABLES_DIGEST" \
+            "$REGIONAL_TABLES_SIZE_BYTES" public-inputs/regional-tables.json
+          [[ "$(jq -er .schema public-inputs/regional-tables.json)" == "aex.regional-tables.v1" ]]
+          [[ "$(jq -er .digest public-inputs/regional-tables.json)" == "$REGIONAL_TABLES_DEFINITIONS_DIGEST" ]]
+          [[ "$(jq -er '.tables | length' public-inputs/regional-tables.json)" -gt 0 ]]
           chmod 0755 public-inputs/aex-release-tool
           observed_tool_version=$(public-inputs/aex-release-tool --version | awk '{print $2}')
           [[ "$observed_tool_version" == "$RELEASE_TOOL_VERSION" ]]

@@ -99,8 +99,14 @@ pub struct CentralMigrations {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegionalMigrations {
-    /// Bundle digest.
+    /// SHA-256 over the transported JSON bytes.
     pub bundle_digest: String,
+    /// Exact transported byte length.
+    pub bundle_size_bytes: u64,
+    /// Commit/run-addressed public HTTPS release asset.
+    pub bundle_uri: String,
+    /// BLAKE3 identity over the canonical decoded table definitions.
+    pub definitions_digest: String,
     /// Generation number.
     pub generation: u32,
 }
@@ -448,6 +454,7 @@ impl CompositionManifest {
         &self,
         release_tool: &std::path::Path,
         module_bundle: &std::path::Path,
+        regional_tables: &std::path::Path,
         strict_environment_scan: bool,
     ) -> Result<()> {
         self.validate(strict_environment_scan)?;
@@ -460,6 +467,12 @@ impl CompositionManifest {
             module_bundle,
             &self.infra.module_bundle_digest,
             self.infra.module_bundle_size_bytes,
+        )?;
+        crate::publication::verify_regional_tables_bundle(
+            regional_tables,
+            &self.migrations.regional.bundle_digest,
+            self.migrations.regional.bundle_size_bytes,
+            &self.migrations.regional.definitions_digest,
         )
     }
 
@@ -647,6 +660,41 @@ fn validate_public_inputs(manifest: &CompositionManifest, violations: &mut Vec<V
             "the Terraform module bundle must contain at least one byte",
         ));
     }
+    if !sha256(&manifest.migrations.regional.bundle_digest) {
+        violations.push(Violation::new(
+            "manifest-regional-bundle-digest",
+            format!(
+                "`{}` is not a SHA-256 digest",
+                manifest.migrations.regional.bundle_digest
+            ),
+        ));
+    }
+    if manifest.migrations.regional.bundle_size_bytes == 0 {
+        violations.push(Violation::new(
+            "manifest-regional-bundle-size",
+            "the regional table bundle must contain at least one byte",
+        ));
+    }
+    if !manifest
+        .migrations
+        .regional
+        .definitions_digest
+        .strip_prefix("blake3:")
+        .is_some_and(|bare| {
+            bare.len() == 64
+                && bare
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+    {
+        violations.push(Violation::new(
+            "manifest-regional-definitions-digest",
+            format!(
+                "`{}` is not a lowercase BLAKE3 digest",
+                manifest.migrations.regional.definitions_digest
+            ),
+        ));
+    }
 
     if sha1(&manifest.source.commit_sha)
         && !manifest.source.workflow_run_id.is_empty()
@@ -676,6 +724,16 @@ fn validate_public_inputs(manifest: &CompositionManifest, violations: &mut Vec<V
                 format!(
                     "`{}` is not the exact public module asset `{expected_modules}`",
                     manifest.infra.module_bundle_uri
+                ),
+            ));
+        }
+        let expected_regional = format!("{base}/{}", crate::publication::REGIONAL_TABLES_ASSET);
+        if manifest.migrations.regional.bundle_uri != expected_regional {
+            violations.push(Violation::new(
+                "manifest-regional-bundle-uri",
+                format!(
+                    "`{}` is not the exact public regional table asset `{expected_regional}`",
+                    manifest.migrations.regional.bundle_uri
                 ),
             ));
         }
@@ -793,12 +851,22 @@ pub struct ManifestDiff {
     pub removed: Vec<String>,
     /// Units whose artifact digest changed.
     pub changed: Vec<UnitChange>,
-    /// Whether the contract bundle changed.
-    pub contract_changed: bool,
-    /// Whether the central migration head or bundle changed.
-    pub central_migrations_changed: bool,
-    /// Whether the infrastructure module bundle changed.
-    pub infra_changed: bool,
+    /// Closed, ordered list of non-unit composition inputs that changed.
+    pub inputs_changed: Vec<CompositionInputChange>,
+}
+
+/// A non-unit composition input whose identity changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompositionInputChange {
+    /// Generated API/SDK contract bundle.
+    Contract,
+    /// Central migration bundle or head.
+    CentralMigrations,
+    /// Regional table bundle, definitions, or generation.
+    RegionalMigrations,
+    /// Terraform module bundle.
+    Infra,
 }
 
 /// One unit whose bytes differ between two compositions.
@@ -847,6 +915,24 @@ pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDif
             })
         })
         .collect();
+    let mut inputs_changed = Vec::new();
+    if from.contract_digest != to.contract_digest {
+        inputs_changed.push(CompositionInputChange::Contract);
+    }
+    if from.migrations.central.bundle_digest != to.migrations.central.bundle_digest
+        || from.migrations.central.head != to.migrations.central.head
+    {
+        inputs_changed.push(CompositionInputChange::CentralMigrations);
+    }
+    if from.migrations.regional.bundle_digest != to.migrations.regional.bundle_digest
+        || from.migrations.regional.definitions_digest != to.migrations.regional.definitions_digest
+        || from.migrations.regional.generation != to.migrations.regional.generation
+    {
+        inputs_changed.push(CompositionInputChange::RegionalMigrations);
+    }
+    if from.infra.module_bundle_digest != to.infra.module_bundle_digest {
+        inputs_changed.push(CompositionInputChange::Infra);
+    }
     ManifestDiff {
         schema: "aex.composition-diff.v1",
         from: from.release_id.clone(),
@@ -854,11 +940,7 @@ pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDif
         added,
         removed,
         changed,
-        contract_changed: from.contract_digest != to.contract_digest,
-        central_migrations_changed: from.migrations.central.bundle_digest
-            != to.migrations.central.bundle_digest
-            || from.migrations.central.head != to.migrations.central.head,
-        infra_changed: from.infra.module_bundle_digest != to.infra.module_bundle_digest,
+        inputs_changed,
     }
 }
 
@@ -937,8 +1019,10 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
             .split_once("//")
             .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
         let exact_public_asset = host == "github.com"
-            && (matches!(path, ".releaseTool.uri" | ".infra.moduleBundleUri")
-                || (path.starts_with(".units.") && path.ends_with(".location.uri")));
+            && (matches!(
+                path,
+                ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
+            ) || (path.starts_with(".units.") && path.ends_with(".location.uri")));
         if !exact_public_asset
             && !matches!(
                 host,
@@ -1117,7 +1201,13 @@ mod tests {
             "units": {},
             "migrations": {
                 "central": { "bundleDigest": "sha256:bb", "head": "0007", "adminImageDigest": "sha256:cc" },
-                "regional": { "bundleDigest": "sha256:dd", "generation": 1 }
+                "regional": {
+                    "bundleDigest": "sha256:dd",
+                    "bundleSizeBytes": 1,
+                    "bundleUri": "https://github.com/aexhq/aex/releases/download/main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-run-123-attempt-1/regional-tables.json",
+                    "definitionsDigest": "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "generation": 1
+                }
             },
             "infra": {
                 "moduleBundleDigest": "sha256:ee",
@@ -1267,9 +1357,15 @@ alarm_spec = "regional-otlp"
         assert_eq!(report.changed[0].unit, "regional-stream");
         assert_eq!(report.changed[0].from, "sha256:10");
         assert_eq!(report.changed[0].to, "sha256:11");
-        assert!(!report.contract_changed);
-        assert!(!report.central_migrations_changed);
-        assert!(!report.infra_changed);
+        assert!(report.inputs_changed.is_empty());
+
+        let mut regional_change = to.clone();
+        regional_change.migrations.regional.definitions_digest =
+            format!("blake3:{}", "ef".repeat(32));
+        assert_eq!(
+            diff(&to, &regional_change).inputs_changed,
+            vec![super::CompositionInputChange::RegionalMigrations]
+        );
 
         let reverse = diff(&to, &from);
         assert_eq!(reverse.removed, vec!["regional-otlp"]);

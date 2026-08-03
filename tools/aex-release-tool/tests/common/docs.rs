@@ -172,7 +172,13 @@ pub fn valid_manifest() -> Value {
                 "head": "20260801000100",
                 "adminImageDigest": digest(0x22)
             },
-            "regional": { "bundleDigest": digest(0x23), "generation": 1 }
+            "regional": {
+                "bundleDigest": digest(0x23),
+                "bundleSizeBytes": 71384,
+                "bundleUri": format!("https://github.com/aexhq/aex/releases/download/main-{}-run-123-attempt-1/regional-tables.json", sha1()),
+                "definitionsDigest": format!("blake3:{}", "23".repeat(32)),
+                "generation": 1
+            }
         },
         "infra": {
             "moduleBundleDigest": digest(0x24),

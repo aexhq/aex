@@ -60,6 +60,24 @@ on:
       module_bundle_attestation_url:
         description: GitHub provenance URL returned by the official action.
         value: ${{ jobs.public_release_inputs.outputs.module_bundle_attestation_url }}
+      regional_tables_uri:
+        description: Public generated regional table bundle asset URL.
+        value: ${{ jobs.public_release_inputs.outputs.regional_tables_uri }}
+      regional_tables_digest:
+        description: SHA-256 identity of the transported regional table JSON.
+        value: ${{ jobs.public_release_inputs.outputs.regional_tables_digest }}
+      regional_tables_size_bytes:
+        description: Exact regional table JSON byte length.
+        value: ${{ jobs.public_release_inputs.outputs.regional_tables_size_bytes }}
+      regional_tables_definitions_digest:
+        description: BLAKE3 identity of the canonical decoded definitions.
+        value: ${{ jobs.public_release_inputs.outputs.regional_tables_definitions_digest }}
+      regional_tables_attestation_id:
+        description: Official GitHub provenance locator; admission re-verifies subject and signer.
+        value: ${{ jobs.public_release_inputs.outputs.regional_tables_attestation_id }}
+      regional_tables_attestation_url:
+        description: GitHub provenance URL returned by the official action.
+        value: ${{ jobs.public_release_inputs.outputs.regional_tables_attestation_url }}
 
 permissions:
   contents: read
@@ -227,6 +245,12 @@ jobs:
       module_bundle_size_bytes: ${{ steps.identities.outputs.module_bundle_size_bytes }}
       module_bundle_attestation_id: ${{ steps.attest_module_bundle.outputs['attestation-id'] }}
       module_bundle_attestation_url: ${{ steps.attest_module_bundle.outputs['attestation-url'] }}
+      regional_tables_uri: ${{ steps.publish.outputs.regional_tables_uri }}
+      regional_tables_digest: ${{ steps.identities.outputs.regional_tables_digest }}
+      regional_tables_size_bytes: ${{ steps.identities.outputs.regional_tables_size_bytes }}
+      regional_tables_definitions_digest: ${{ steps.identities.outputs.regional_tables_definitions_digest }}
+      regional_tables_attestation_id: ${{ steps.attest_regional_tables.outputs['attestation-id'] }}
+      regional_tables_attestation_url: ${{ steps.attest_regional_tables.outputs['attestation-url'] }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
@@ -304,25 +328,44 @@ jobs:
           cmp dist/terraform-modules.tar.gz dist/terraform-modules.check.tar.gz
           rm dist/terraform-modules.check.tar.gz
 
+      - name: Validate regional table definitions twice and prove byte identity
+        run: |
+          set -euo pipefail
+          dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+            artifact regional-tables --out dist/regional-tables.json
+          dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+            artifact regional-tables --out dist/regional-tables.check.json
+          cmp dist/regional-tables.json dist/regional-tables.check.json
+          rm dist/regional-tables.check.json
+
       - name: Record exact identities
         id: identities
         run: |
           set -euo pipefail
           tool_digest="sha256:$(sha256sum dist/aex-release-tool | cut -d' ' -f1)"
           module_digest="sha256:$(sha256sum dist/terraform-modules.tar.gz | cut -d' ' -f1)"
+          regional_digest="sha256:$(sha256sum dist/regional-tables.json | cut -d' ' -f1)"
           tool_size=$(stat -c '%s' dist/aex-release-tool)
           module_size=$(stat -c '%s' dist/terraform-modules.tar.gz)
+          regional_size=$(stat -c '%s' dist/regional-tables.json)
+          regional_definitions_digest=$(jq -er .digest dist/regional-tables.json)
           tool_version=$(dist/aex-release-tool --version | awk '{print $2}')
           [[ "$tool_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$module_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$regional_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$tool_size" =~ ^[1-9][0-9]*$ ]]
           [[ "$module_size" =~ ^[1-9][0-9]*$ ]]
+          [[ "$regional_size" =~ ^[1-9][0-9]*$ ]]
+          [[ "$regional_definitions_digest" =~ ^blake3:[0-9a-f]{64}$ ]]
           [[ "$tool_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
           echo "release_tool_digest=$tool_digest" >> "$GITHUB_OUTPUT"
           echo "release_tool_size_bytes=$tool_size" >> "$GITHUB_OUTPUT"
           echo "release_tool_version=$tool_version" >> "$GITHUB_OUTPUT"
           echo "module_bundle_digest=$module_digest" >> "$GITHUB_OUTPUT"
           echo "module_bundle_size_bytes=$module_size" >> "$GITHUB_OUTPUT"
+          echo "regional_tables_digest=$regional_digest" >> "$GITHUB_OUTPUT"
+          echo "regional_tables_size_bytes=$regional_size" >> "$GITHUB_OUTPUT"
+          echo "regional_tables_definitions_digest=$regional_definitions_digest" >> "$GITHUB_OUTPUT"
 
       - name: Name every blob from its unit and real byte digest
         run: |
@@ -366,6 +409,12 @@ jobs:
         with:
           subject-path: dist/terraform-modules.tar.gz
 
+      - name: Attest regional table bundle provenance
+        id: attest_regional_tables
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: dist/regional-tables.json
+
       - name: Create immutable public prerelease
         id: publish
         env:
@@ -388,6 +437,7 @@ jobs:
           # Never clean up or replace a partial upload. A failed attempt stays
           # visible, and the fixed-forward retry receives a new attempt tag.
           gh release upload "$tag" dist/aex-release-tool dist/terraform-modules.tar.gz \
+            dist/regional-tables.json \
             --repo "$GITHUB_REPOSITORY"
           shopt -s nullglob
           unit_assets=(dist/unit-assets/*)
@@ -400,7 +450,7 @@ jobs:
           fi
           observed_count=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '.assets | length')
-          expected_count=$((2 + blob_count))
+          expected_count=$((3 + blob_count))
           [[ "$observed_count" -eq "$expected_count" ]]
           if [ "$blocker_count" -ne 0 ]; then
             echo "$blocker_count OCI unit(s) have no real manifest; keeping the release draft" >&2
@@ -412,6 +462,7 @@ jobs:
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
           echo "release_tool_uri=$base/aex-release-tool" >> "$GITHUB_OUTPUT"
           echo "module_bundle_uri=$base/terraform-modules.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "regional_tables_uri=$base/regional-tables.json" >> "$GITHUB_OUTPUT"
 
       - name: Record provenance outputs
         env:
@@ -419,14 +470,19 @@ jobs:
           TOOL_ATTESTATION_URL: ${{ steps.attest_release_tool.outputs['attestation-url'] }}
           MODULE_ATTESTATION_ID: ${{ steps.attest_module_bundle.outputs['attestation-id'] }}
           MODULE_ATTESTATION_URL: ${{ steps.attest_module_bundle.outputs['attestation-url'] }}
+          REGIONAL_ATTESTATION_ID: ${{ steps.attest_regional_tables.outputs['attestation-id'] }}
+          REGIONAL_ATTESTATION_URL: ${{ steps.attest_regional_tables.outputs['attestation-url'] }}
         run: |
           set -euo pipefail
           test -n "$TOOL_ATTESTATION_ID"
           test -n "$TOOL_ATTESTATION_URL"
           test -n "$MODULE_ATTESTATION_ID"
           test -n "$MODULE_ATTESTATION_URL"
+          test -n "$REGIONAL_ATTESTATION_ID"
+          test -n "$REGIONAL_ATTESTATION_URL"
           {
             echo "### Public release input provenance"
             echo "- release tool: $TOOL_ATTESTATION_URL"
             echo "- module bundle: $MODULE_ATTESTATION_URL"
+            echo "- regional tables: $REGIONAL_ATTESTATION_URL"
           } >> "$GITHUB_STEP_SUMMARY"

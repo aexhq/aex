@@ -237,6 +237,18 @@ pub struct BlobIdentity {
     pub size_bytes: u64,
 }
 
+/// Exact transported and semantic identities of the regional table bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegionalTablesIdentity {
+    /// SHA-256 digest over the transported JSON bytes.
+    pub digest: String,
+    /// Exact transported byte length.
+    pub size_bytes: u64,
+    /// BLAKE3 identity over the canonical decoded definitions.
+    pub definitions_digest: String,
+}
+
 /// Identity of the release tool binary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -404,6 +416,8 @@ pub struct SavedPlanEnvelope {
     pub source_archive: BlobIdentity,
     /// Public Terraform module bundle identity.
     pub module_bundle: BlobIdentity,
+    /// Public generated regional table bundle identity.
+    pub regional_tables: RegionalTablesIdentity,
     /// Runner and fixed-path compatibility identity.
     pub runner: RunnerIdentity,
     /// Terraform and provider closure.
@@ -735,6 +749,10 @@ fn validate_saved_identity(envelope: &SavedPlanEnvelope, violations: &mut Vec<Vi
             &envelope.module_bundle.digest,
         ),
         (
+            "regional-tables-digest-invalid",
+            &envelope.regional_tables.digest,
+        ),
+        (
             "terraform-root-digest-invalid",
             &envelope.terraform.root_digest,
         ),
@@ -762,6 +780,10 @@ fn validate_saved_identity(envelope: &SavedPlanEnvelope, violations: &mut Vec<Vi
             envelope.module_bundle.size_bytes,
         ),
         (
+            "regional-tables-size-invalid",
+            envelope.regional_tables.size_bytes,
+        ),
+        (
             "terraform-binary-size-invalid",
             envelope.terraform.binary.size_bytes,
         ),
@@ -770,12 +792,26 @@ fn validate_saved_identity(envelope: &SavedPlanEnvelope, violations: &mut Vec<Vi
             violations.push(Violation::new(rule, "sizeBytes must be greater than zero"));
         }
     }
+    if !valid_blake3(&envelope.regional_tables.definitions_digest) {
+        violations.push(Violation::new(
+            "regional-tables-definitions-digest-invalid",
+            "regionalTables.definitionsDigest must be one lowercase BLAKE3 digest",
+        ));
+    }
     require_version(
         "release-tool-version-invalid",
         &envelope.tool.version,
         violations,
     );
     validate_runner(&envelope.runner, violations);
+}
+
+fn valid_blake3(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("blake3:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn validate_terraform(terraform: &TerraformIdentity, violations: &mut Vec<Violation>) {

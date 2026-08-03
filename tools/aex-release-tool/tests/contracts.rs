@@ -192,6 +192,8 @@ fn saved_plan_envelope_binds_execution_storage_backend_and_max_ttl() {
     for pointer in [
         "/runner/arch",
         "/runner/moduleExtractionPath",
+        "/regionalTables/digest",
+        "/regionalTables/definitionsDigest",
         "/bindingDigest",
         "/plan/location/key",
         "/plan/location/kmsKeyArn",
@@ -205,6 +207,12 @@ fn saved_plan_envelope_binds_execution_storage_backend_and_max_ttl() {
             match pointer {
                 "/runner/arch" => "aarch64",
                 "/runner/moduleExtractionPath" => "/tmp/substituted/modules",
+                "/regionalTables/digest" => {
+                    "sha256:1212121212121212121212121212121212121212121212121212121212121213"
+                }
+                "/regionalTables/definitionsDigest" => {
+                    "blake3:3434343434343434343434343434343434343434343434343434343434343435"
+                }
                 "/bindingDigest" => {
                     "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                 }
