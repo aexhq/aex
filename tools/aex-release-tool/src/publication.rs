@@ -16,6 +16,209 @@ pub const RELEASE_TOOL_ASSET: &str = "aex-release-tool";
 /// Fixed public asset name for the Terraform module source bundle.
 pub const MODULE_BUNDLE_ASSET: &str = "terraform-modules.tar.gz";
 
+/// Closed naming pair for an auxiliary unit asset.
+#[derive(Debug, Clone, Copy)]
+pub struct AuxiliaryAsset<'a> {
+    /// Evidence class encoded in the basename.
+    pub class: &'a str,
+    /// Exact safe suffix encoded in the basename.
+    pub extension: &'a str,
+}
+
+/// The closed, plane-neutral public location for one non-OCI unit artifact.
+///
+/// The release tag binds source commit and workflow run/attempt. The asset
+/// basename additionally binds the unit and byte digest, so neither a retry nor
+/// a second unit can alias an already named object.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for an invalid source identity, unit id,
+/// digest, or artifact form.
+pub fn github_release_unit_uri(
+    repository: &str,
+    commit_sha: &str,
+    run_id: &str,
+    run_attempt: u64,
+    unit: &str,
+    digest: &str,
+    form: &str,
+) -> Result<String> {
+    validate_public_identity(repository, commit_sha, run_id, run_attempt, unit, digest)?;
+    let asset = unit_asset_name(unit, digest, form)?;
+    Ok(format!(
+        "https://github.com/{repository}/releases/download/main-{commit_sha}-run-{run_id}-attempt-{run_attempt}/{asset}"
+    ))
+}
+
+/// The closed, plane-neutral OCI reference for one service/task image.
+///
+/// Public CI publishes to GHCR. Private release later performs a
+/// registry-to-registry copy to ECR and reads the destination manifest digest
+/// back; the public subject remains this digest-only reference.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for an invalid source identity, unit id or
+/// digest.
+pub fn ghcr_unit_uri(repository: &str, unit: &str, digest: &str) -> Result<String> {
+    validate_public_identity(repository, &"a".repeat(40), "1", 1, unit, digest)?;
+    let (owner, repo) = repository.split_once('/').ok_or_else(|| {
+        ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-repository",
+            "the repository must have exact `owner/repo` form",
+        )
+    })?;
+    Ok(format!(
+        "oci://ghcr.io/{}/{}-units/{unit}@{digest}",
+        owner.to_ascii_lowercase(),
+        repo.to_ascii_lowercase()
+    ))
+}
+
+/// Content-addressed release asset basename for one non-OCI unit.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for an unsupported form or malformed
+/// digest/unit id.
+pub fn unit_asset_name(unit: &str, digest: &str, form: &str) -> Result<String> {
+    if !safe_unit_id(unit) {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-unit-id",
+            format!("`{unit}` is not a safe release asset unit id"),
+        ));
+    }
+    let bare = digest.strip_prefix("sha256:").ok_or_else(|| {
+        ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-digest",
+            format!("`{digest}` is not a SHA-256 digest"),
+        )
+    })?;
+    if bare.len() != 64
+        || !bare
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-digest",
+            format!("`{digest}` is not a lowercase SHA-256 digest"),
+        ));
+    }
+    let extension = match form {
+        "zip" => "zip",
+        "tar.gz" | "build-output" => "tar.gz",
+        other => {
+            return Err(ToolError::single(
+                Exit::EnvelopeInvalid,
+                "publication-form",
+                format!("artifact form `{other}` is not a GitHub Release blob"),
+            ));
+        }
+    };
+    Ok(format!("unit-{unit}-{bare}.{extension}"))
+}
+
+/// Public blob form implied by a deployable kind in a composition manifest.
+///
+/// Manifests deliberately do not repeat the envelope's media block; this
+/// mapping is therefore the one way to cross-check a manifest's release asset
+/// basename without trusting a filename supplied by the manifest itself.
+#[must_use]
+pub fn blob_form_for_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "rust-lambda" | "ts-lambda" | "microvm-image" => Some("zip"),
+        "rust-binary" | "build-output" => Some("tar.gz"),
+        _ => None,
+    }
+}
+
+/// Exact release URL for one content-addressed auxiliary unit document.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for an unsafe class/extension or malformed
+/// immutable identity.
+pub fn github_release_aux_uri(
+    repository: &str,
+    commit_sha: &str,
+    run_id: &str,
+    run_attempt: u64,
+    unit: &str,
+    digest: &str,
+    asset: AuxiliaryAsset<'_>,
+) -> Result<String> {
+    validate_public_identity(repository, commit_sha, run_id, run_attempt, unit, digest)?;
+    let AuxiliaryAsset { class, extension } = asset;
+    if !matches!(class, "sbom" | "provenance" | "signature" | "receipt")
+        || !matches!(extension, "json" | "jsonl" | "cdx.json" | "sigstore.json")
+    {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-auxiliary-name",
+            "auxiliary release assets use a closed class and extension vocabulary",
+        ));
+    }
+    let bare = digest.strip_prefix("sha256:").ok_or_else(|| {
+        ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-digest",
+            "auxiliary assets require a SHA-256 digest",
+        )
+    })?;
+    Ok(format!(
+        "https://github.com/{repository}/releases/download/main-{commit_sha}-run-{run_id}-attempt-{run_attempt}/{class}-{unit}-{bare}.{extension}"
+    ))
+}
+
+fn validate_public_identity(
+    repository: &str,
+    commit_sha: &str,
+    run_id: &str,
+    run_attempt: u64,
+    unit: &str,
+    digest: &str,
+) -> Result<()> {
+    let valid_segment = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    let repository_valid = repository
+        .split_once('/')
+        .is_some_and(|(owner, repo)| valid_segment(owner) && valid_segment(repo));
+    let sha_valid = commit_sha.len() == 40
+        && commit_sha
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    let run_valid = !run_id.is_empty()
+        && !run_id.starts_with('0')
+        && run_id.bytes().all(|byte| byte.is_ascii_digit());
+    if !repository_valid
+        || !sha_valid
+        || !run_valid
+        || run_attempt == 0
+        || !safe_unit_id(unit)
+        || unit_asset_name(unit, digest, "zip").is_err()
+    {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-identity",
+            "repository, commit, run, attempt, unit and digest must be exact immutable identities",
+        ));
+    }
+    Ok(())
+}
+
+fn safe_unit_id(unit: &str) -> bool {
+    (3..=64).contains(&unit.len())
+        && unit.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && unit
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 /// Package every Git-tracked Terraform module source into a deterministic
 /// archive rooted at `modules/`.
 ///

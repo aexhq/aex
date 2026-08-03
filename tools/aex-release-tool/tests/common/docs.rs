@@ -39,7 +39,7 @@ pub fn valid_envelope() -> Value {
             "workflow": {
                 "repository": "aexhq/aex",
                 "ref": "refs/heads/main",
-                "path": ".github/workflows/main.yml",
+                "path": ".github/workflows/_build-artifacts.yml",
                 "runId": "123",
                 "runAttempt": 1,
                 "jobName": "build",

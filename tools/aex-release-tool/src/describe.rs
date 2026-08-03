@@ -20,9 +20,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
-    Adjacent, ArtifactEnvelope, BuildCommand, BuildPlan, Composition, Identities, Inputs, Licenses,
-    Location, Media, Output, Provenance, ReceiptRef, Retention, Signature, Source, Target,
-    Toolchain, UnitIdentity, Vulnerabilities, Workflow,
+    Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Composition, Identities,
+    Inputs, Licenses, Location, Media, Output, Provenance, ReceiptRef, Retention, Signature,
+    Source, Target, Toolchain, UnitIdentity, Vulnerabilities, Workflow,
 };
 use crate::error::{Result, io};
 use crate::graph::inputs::Unit;
@@ -177,8 +177,8 @@ fn unearned_fields() -> Vec<UnearnedField> {
         },
         UnearnedField {
             pointer: "/output/location".to_owned(),
-            reason: "the artifact bucket does not exist, so the bytes live on a local filesystem \
-                     and the location is not immutable"
+            reason: "the bytes have not reached their immutable public location, so the local \
+                     filesystem path is not a publication identity"
                 .to_owned(),
         },
         UnearnedField {
@@ -265,7 +265,12 @@ fn build_envelope(
             },
             input_closure_digest: closure_digest,
             input_closure_count: Some(build.closure.len() as u64),
-            base_image: None,
+            base_image: build.unit.base_image.as_ref().and_then(|reference| {
+                reference.rsplit_once('@').map(|(_, digest)| BaseImage {
+                    r#ref: reference.clone(),
+                    digest: digest.to_owned(),
+                })
+            }),
             build_args: BTreeMap::new(),
             source_date_epoch: Some(0),
         },

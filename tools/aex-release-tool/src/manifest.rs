@@ -19,6 +19,16 @@ use serde::{Deserialize, Serialize};
 use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
 
+const LOCATION_KINDS: &[&str] = &[
+    "github-release",
+    "oci",
+    "s3",
+    "ecr",
+    "npm",
+    "gha-artifact",
+    "local",
+];
+
 /// One unit's entry in a composition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -670,6 +680,69 @@ fn validate_public_inputs(manifest: &CompositionManifest, violations: &mut Vec<V
             ));
         }
     }
+
+    for (unit, entry) in &manifest.units {
+        if !LOCATION_KINDS.contains(&entry.location.kind.as_str()) {
+            violations.push(Violation::new(
+                "manifest-location-kind",
+                format!(
+                    "unit `{unit}` location kind `{}` is outside the closed release vocabulary",
+                    entry.location.kind
+                ),
+            ));
+            continue;
+        }
+        match entry.location.kind.as_str() {
+            "github-release" => {
+                let Some(form) = crate::publication::blob_form_for_kind(&entry.kind) else {
+                    violations.push(Violation::new(
+                        "manifest-location-kind",
+                        format!(
+                            "unit `{unit}` kind `{}` cannot publish as a release blob",
+                            entry.kind
+                        ),
+                    ));
+                    continue;
+                };
+                match crate::publication::github_release_unit_uri(
+                    &manifest.source.repository,
+                    &manifest.source.commit_sha,
+                    &manifest.source.workflow_run_id,
+                    manifest.source.workflow_run_attempt,
+                    unit,
+                    &entry.artifact_digest,
+                    form,
+                ) {
+                    Ok(expected) if expected == entry.location.uri => {}
+                    Ok(expected) => violations.push(Violation::new(
+                        "manifest-github-release-location",
+                        format!(
+                            "unit `{unit}` location `{}` is not `{expected}`",
+                            entry.location.uri
+                        ),
+                    )),
+                    Err(err) => violations.extend(err.violations),
+                }
+            }
+            "oci" => match crate::publication::ghcr_unit_uri(
+                &manifest.source.repository,
+                unit,
+                &entry.artifact_digest,
+            ) {
+                Ok(expected)
+                    if expected == entry.location.uri && entry.kind.starts_with("rust-oci-") => {}
+                Ok(expected) => violations.push(Violation::new(
+                    "manifest-oci-location",
+                    format!(
+                        "unit `{unit}` location `{}` is not the OCI-kind-bound digest reference `{expected}`",
+                        entry.location.uri
+                    ),
+                )),
+                Err(err) => violations.extend(err.violations),
+            },
+            _ => {}
+        }
+    }
 }
 
 /// Deployables that are neither described by an envelope nor recorded as
@@ -863,8 +936,9 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
         let host = text
             .split_once("//")
             .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
-        let exact_public_asset =
-            host == "github.com" && matches!(path, ".releaseTool.uri" | ".infra.moduleBundleUri");
+        let exact_public_asset = host == "github.com"
+            && (matches!(path, ".releaseTool.uri" | ".infra.moduleBundleUri")
+                || (path.starts_with(".units.") && path.ends_with(".location.uri")));
         if !exact_public_asset
             && !matches!(
                 host,

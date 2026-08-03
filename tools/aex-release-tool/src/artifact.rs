@@ -1243,6 +1243,16 @@ pub const PREPUBLICATION_RECEIPT_CLASSES: &[&str] = &[
     "vulnerability",
 ];
 
+const LOCATION_KINDS: &[&str] = &[
+    "github-release",
+    "oci",
+    "s3",
+    "ecr",
+    "npm",
+    "gha-artifact",
+    "local",
+];
+
 impl ArtifactEnvelope {
     /// Recompute and set the self-digest.
     ///
@@ -1285,6 +1295,32 @@ impl ArtifactEnvelope {
                 "the build tree was not clean; a dirty tree cannot mint an identity",
             ));
         }
+        let positive_run = !self.source.workflow.run_id.is_empty()
+            && !self.source.workflow.run_id.starts_with('0')
+            && self
+                .source
+                .workflow
+                .run_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit());
+        if self.source.r#ref.as_deref() != Some("refs/heads/main")
+            || self.source.workflow.repository != self.source.repository
+            || self.source.workflow.r#ref != "refs/heads/main"
+            || self.source.workflow.path != ".github/workflows/_build-artifacts.yml"
+            || !positive_run
+            || self.source.workflow.run_attempt == 0
+        {
+            structural.push(Violation::new(
+                "envelope-workflow-identity",
+                "published bytes must come from the exact protected-main reusable artifact workflow and a positive run identity",
+            ));
+        }
+        if self.provenance.builder_id != self.source.workflow.builder_id {
+            structural.push(Violation::new(
+                "envelope-builder-mismatch",
+                "the envelope workflow and provenance builder identities differ",
+            ));
+        }
         if !self.output.location.immutable {
             structural.push(Violation::new(
                 "envelope-mutable-location",
@@ -1302,6 +1338,73 @@ impl ArtifactEnvelope {
                     self.output.location.uri
                 ),
             ));
+        }
+        if !LOCATION_KINDS.contains(&self.output.location.kind.as_str()) {
+            structural.push(Violation::new(
+                "envelope-location-kind",
+                format!(
+                    "location kind `{}` is outside the closed release vocabulary",
+                    self.output.location.kind
+                ),
+            ));
+        }
+        match self.output.location.kind.as_str() {
+            "github-release" => {
+                let expected = crate::publication::github_release_unit_uri(
+                    &self.source.repository,
+                    &self.source.commit_sha,
+                    &self.source.workflow.run_id,
+                    u64::from(self.source.workflow.run_attempt),
+                    &self.unit.id,
+                    &self.output.digest,
+                    &self.media.form,
+                );
+                match expected {
+                    Ok(expected) if expected == self.output.location.uri => {}
+                    Ok(expected) => structural.push(Violation::new(
+                        "envelope-github-release-location",
+                        format!(
+                            "`{}` is not the exact source/run/content-bound URI `{expected}`",
+                            self.output.location.uri
+                        ),
+                    )),
+                    Err(err) => structural.extend(err.violations),
+                }
+                if self.unit.kind.starts_with("rust-oci-") {
+                    structural.push(Violation::new(
+                        "envelope-location-kind",
+                        "OCI units must use a digest-only `oci` location, not a release tarball",
+                    ));
+                }
+            }
+            "oci" => {
+                let expected = crate::publication::ghcr_unit_uri(
+                    &self.source.repository,
+                    &self.unit.id,
+                    &self.output.digest,
+                );
+                match expected {
+                    Ok(expected) if expected == self.output.location.uri => {}
+                    Ok(expected) => structural.push(Violation::new(
+                        "envelope-oci-location",
+                        format!(
+                            "`{}` is not the exact GHCR digest reference `{expected}`",
+                            self.output.location.uri
+                        ),
+                    )),
+                    Err(err) => structural.extend(err.violations),
+                }
+                if !self.unit.kind.starts_with("rust-oci-") {
+                    structural.push(Violation::new(
+                        "envelope-location-kind",
+                        format!(
+                            "unit kind `{}` is a blob and cannot claim an OCI manifest location",
+                            self.unit.kind
+                        ),
+                    ));
+                }
+            }
+            _ => {}
         }
         if self.receipts.is_empty() {
             structural.push(Violation::new(
@@ -1325,6 +1428,19 @@ impl ArtifactEnvelope {
                     format!(
                         "receipt class `{}` is post-deployment evidence and belongs to the \
                          verification statement, not to an artifact envelope",
+                        receipt.class
+                    ),
+                ));
+            }
+            if receipt.source.repository != self.source.repository
+                || receipt.source.commit_sha != self.source.commit_sha
+                || receipt.source.workflow_run_id != self.source.workflow.run_id
+                || receipt.source.run_attempt != self.source.workflow.run_attempt
+            {
+                structural.push(Violation::new(
+                    "envelope-receipt-binding",
+                    format!(
+                        "receipt class `{}` is not bound to this exact repository, commit and workflow attempt",
                         receipt.class
                     ),
                 ));
@@ -1459,22 +1575,19 @@ pub struct PublishDestination {
 /// # Errors
 /// Returns [`Exit::EnvelopeInvalid`] for a unit kind with no publication rule.
 pub fn publish_destination(envelope: &ArtifactEnvelope) -> Result<PublishDestination> {
-    let bare = envelope
-        .output
-        .digest
-        .strip_prefix("sha256:")
-        .unwrap_or(&envelope.output.digest);
     let (kind, key) = match envelope.unit.kind.as_str() {
-        "rust-lambda" | "ts-lambda" => ("s3", format!("lambda/{}/{bare}.zip", envelope.unit.id)),
+        "rust-lambda" | "ts-lambda" | "rust-binary" | "build-output" | "microvm-image" => (
+            "github-release",
+            crate::publication::unit_asset_name(
+                &envelope.unit.id,
+                &envelope.output.digest,
+                &envelope.media.form,
+            )?,
+        ),
         "rust-oci-service" | "rust-oci-task" => (
-            "ecr",
+            "oci",
             format!("{}@{}", envelope.unit.id, envelope.output.digest),
         ),
-        "rust-binary" | "build-output" => (
-            "s3",
-            format!("{}/{}/{bare}", envelope.unit.kind, envelope.unit.id),
-        ),
-        "microvm-image" => ("s3", format!("microvm/{}/{bare}.zip", envelope.unit.id)),
         "npm-package" => ("npm", envelope.unit.id.clone()),
         other => {
             return Err(ToolError::single(

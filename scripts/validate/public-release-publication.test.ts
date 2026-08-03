@@ -19,6 +19,7 @@ describe("public main-push publication", () => {
       attestations: "write",
       "artifact-metadata": "write"
     });
+    expect(workflow.jobs.route.with.mode).toBe("full");
   });
 
   test("the reusable workflow mints non-overwriting public inputs", () => {
@@ -32,6 +33,8 @@ describe("public main-push publication", () => {
       attestations: "write",
       "artifact-metadata": "write"
     });
+    expect(job.needs).toBe("build");
+    expect(workflow.jobs.build.strategy["fail-fast"]).toBeFalse();
     expect(source).toContain("x86_64-unknown-linux-musl");
     expect(source).toContain("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld");
     expect(source).toContain("link-self-contained=yes");
@@ -42,7 +45,19 @@ describe("public main-push publication", () => {
     expect(source).toContain("outputs['attestation-url']");
     expect(source).toContain("main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}");
     expect(source).toContain("--prerelease");
+    expect(source).toContain("--draft --prerelease");
     expect(source).not.toContain("--clobber");
+    expect(source.match(/gh release create/g)).toHaveLength(1);
+    expect(source).toContain('if [ "$total" -ne 38 ]');
+    expect(source).toContain('if [ "$blocker_count" -ne 0 ]');
+    expect(source).toContain("keeping the release draft");
+    expect(source).toContain("gh release edit \"$tag\" --repo \"$GITHUB_REPOSITORY\" --draft=false --prerelease");
+    expect(source.indexOf("keeping the release draft")).toBeLessThan(
+      source.indexOf("gh release edit \"$tag\"")
+    );
+    expect(source.indexOf("Record the explicit OCI publication blocker")).toBeLessThan(
+      source.indexOf("- name: Build\n")
+    );
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
     expect(source).not.toMatch(/\bsecrets\./);
     expect(read(".github/workflows/main.yml")).toContain('"--deny-${denied_runner_class}-runners"');

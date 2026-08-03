@@ -50,6 +50,19 @@ fn module_bundle_is_deterministic_and_rooted_at_modules() {
 }
 
 #[test]
+fn unit_asset_names_reject_path_and_case_injection() {
+    let digest = canon::digest_bytes(b"artifact");
+    for hostile in ["../unit", "Unit-name", "a/b", "ab"] {
+        let err =
+            aex_release_tool::publication::unit_asset_name(hostile, &digest, "zip").unwrap_err();
+        assert!(err.rules().contains(&"publication-unit-id"));
+    }
+    let err = aex_release_tool::publication::unit_asset_name("safe-unit", &digest, "oci-image")
+        .unwrap_err();
+    assert!(err.rules().contains(&"publication-form"));
+}
+
+#[test]
 fn module_bundle_rejects_unsafe_shapes_and_non_regular_members() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir_all(root.path().join("infra/modules/example")).unwrap();
@@ -160,4 +173,78 @@ fn manifest_rejects_a_release_asset_uri_from_another_run() {
     let err = manifest.validate(false).unwrap_err();
     assert_eq!(err.exit.code(), 30);
     assert!(err.rules().contains(&"manifest-release-tool-uri"));
+}
+
+#[test]
+fn manifest_cross_binds_unit_blob_and_oci_locations_to_its_source() {
+    let mut value = valid_manifest();
+    let digest = value["units"]["regional-session-api"]["artifactDigest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let uri = aex_release_tool::publication::github_release_unit_uri(
+        "aexhq/aex",
+        &"a".repeat(40),
+        "123",
+        1,
+        "regional-session-api",
+        &digest,
+        "zip",
+    )
+    .unwrap();
+    value["units"]["regional-session-api"]["location"] = serde_json::json!({
+        "kind": "github-release",
+        "uri": uri,
+        "immutable": true
+    });
+    let manifest = serde_json::from_value::<CompositionManifest>(value.clone())
+        .unwrap()
+        .seal()
+        .unwrap();
+    manifest.validate(true).unwrap();
+
+    value["units"]["regional-session-api"]["location"]["uri"] =
+        serde_json::json!(uri.replace("run-123", "run-999"));
+    let err = serde_json::from_value::<CompositionManifest>(value)
+        .unwrap()
+        .seal()
+        .unwrap()
+        .validate(true)
+        .unwrap_err();
+    assert!(err.rules().contains(&"manifest-github-release-location"));
+
+    let mut value = valid_manifest();
+    let entry = value["units"]
+        .as_object_mut()
+        .unwrap()
+        .remove("regional-session-api")
+        .unwrap();
+    value["units"]["brain-mux"] = entry;
+    value["units"]["brain-mux"]["kind"] = serde_json::json!("rust-oci-service");
+    let digest = value["units"]["brain-mux"]["artifactDigest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    value["units"]["brain-mux"]["location"] = serde_json::json!({
+        "kind": "oci",
+        "uri": aex_release_tool::publication::ghcr_unit_uri("aexhq/aex", "brain-mux", &digest).unwrap(),
+        "immutable": true
+    });
+    value["order"][0]["units"] = serde_json::json!(["brain-mux"]);
+    serde_json::from_value::<CompositionManifest>(value.clone())
+        .unwrap()
+        .seal()
+        .unwrap()
+        .validate(true)
+        .unwrap();
+    value["units"]["brain-mux"]["location"]["uri"] = serde_json::json!(format!(
+        "oci://ghcr.io/aexhq/aex-units/brain-mux:main@{digest}"
+    ));
+    let err = serde_json::from_value::<CompositionManifest>(value)
+        .unwrap()
+        .seal()
+        .unwrap()
+        .validate(true)
+        .unwrap_err();
+    assert!(err.rules().contains(&"manifest-oci-location"));
 }

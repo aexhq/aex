@@ -40,6 +40,26 @@ fn every_shipped_unit_has_a_recipe() {
 }
 
 #[test]
+fn publication_inventory_is_exactly_38_with_every_gap_classified() {
+    let units = shipped_units();
+    assert_eq!(units.units.len(), 38);
+    let blob = units
+        .units
+        .iter()
+        .filter(|unit| !unit.kind.starts_with("rust-oci-"))
+        .count();
+    let oci = units.units.len() - blob;
+    assert_eq!(blob, 33, "blob units can use immutable release assets");
+    assert_eq!(oci, 5, "OCI units require real GHCR manifest publication");
+    let unique = units
+        .units
+        .iter()
+        .map(|unit| unit.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(unique.len(), 38, "no two deployables may share an identity");
+}
+
+#[test]
 fn recipes_are_byte_stable_across_runs() {
     let units = shipped_units();
     let first = aex_release_tool::artifact::recipes(&units).unwrap();
@@ -450,6 +470,21 @@ fn a_post_deployment_receipt_class_is_refused_by_the_rust_check_too() {
 }
 
 #[test]
+fn receipt_refs_are_bound_to_the_exact_build_attempt() {
+    let mut envelope = envelope_from(valid_envelope());
+    envelope.receipts[0].source.run_attempt += 1;
+    envelope = envelope.seal().unwrap();
+
+    let err = envelope.verify(None, false).unwrap_err();
+    assert_eq!(err.exit.code(), 20);
+    assert!(
+        err.violations
+            .iter()
+            .any(|violation| violation.rule == "envelope-receipt-binding")
+    );
+}
+
+#[test]
 fn a_licence_denial_or_an_unapproved_advisory_denies_the_supply_chain() {
     let mut value = valid_envelope();
     value["licenses"]["verdict"] = serde_json::json!("denied");
@@ -475,27 +510,105 @@ fn an_envelope_with_no_receipt_proves_nothing() {
 #[test]
 fn the_publication_destination_is_content_addressed_and_immutable() {
     let destination = publish_destination(&envelope_from(valid_envelope())).unwrap();
-    assert_eq!(destination.kind, "s3");
+    assert_eq!(destination.kind, "github-release");
     assert!(destination.immutable);
-    assert!(
-        destination.key.starts_with("lambda/regional-session-api/")
-            && std::path::Path::new(&destination.key)
-                .extension()
-                .is_some_and(|ext| ext == "zip"),
-        "key was `{}`",
-        destination.key
+    assert_eq!(
+        destination.key,
+        format!("unit-regional-session-api-{}.zip", &digest(5)[7..])
     );
     assert!(
         !destination.key.contains("sha256:"),
-        "an S3 key holds the bare digest, not the scheme prefix"
+        "a release asset basename holds the bare digest, not the scheme prefix"
     );
 
     let mut value = valid_envelope();
     value["unit"]["kind"] = serde_json::json!("rust-oci-service");
     value["unit"]["id"] = serde_json::json!("brain-mux");
     let destination = publish_destination(&envelope_from(value)).unwrap();
-    assert_eq!(destination.kind, "ecr");
+    assert_eq!(destination.kind, "oci");
     assert!(destination.key.contains("@sha256:"));
+}
+
+#[test]
+fn github_release_locations_bind_repo_commit_run_attempt_unit_and_digest() {
+    let mut value = valid_envelope();
+    let digest = value["output"]["digest"].as_str().unwrap().to_owned();
+    let expected = aex_release_tool::publication::github_release_unit_uri(
+        "aexhq/aex",
+        &common::docs::sha1(),
+        "123",
+        1,
+        "regional-session-api",
+        &digest,
+        "zip",
+    )
+    .unwrap();
+    value["output"]["location"] = serde_json::json!({
+        "kind": "github-release",
+        "uri": expected,
+        "immutable": true
+    });
+    envelope_from(value.clone()).verify(None, false).unwrap();
+
+    for altered in [
+        expected.replace("github.com", "example.com"),
+        expected.replace("run-123", "run-124"),
+        expected.replace("attempt-1", "attempt-2"),
+        expected.replace("regional-session-api", "central-authz"),
+        expected.replace(&digest[7..], &"f".repeat(64)),
+    ] {
+        value["output"]["location"]["uri"] = serde_json::json!(altered);
+        let err = envelope_from(value.clone())
+            .verify(None, false)
+            .unwrap_err();
+        assert!(
+            err.rules().contains(&"envelope-github-release-location"),
+            "{:?}",
+            err.rules()
+        );
+    }
+}
+
+#[test]
+fn oci_locations_are_ghcr_digest_only_and_kind_bound() {
+    let mut value = valid_envelope();
+    value["unit"]["kind"] = serde_json::json!("rust-oci-service");
+    value["unit"]["id"] = serde_json::json!("brain-mux");
+    value["media"]["mediaType"] = serde_json::json!("application/vnd.oci.image.index.v1+json");
+    value["media"]["form"] = serde_json::json!("oci-image");
+    let digest = value["output"]["digest"].as_str().unwrap().to_owned();
+    let expected =
+        aex_release_tool::publication::ghcr_unit_uri("aexhq/aex", "brain-mux", &digest).unwrap();
+    value["output"]["location"] = serde_json::json!({
+        "kind": "oci",
+        "uri": expected,
+        "immutable": true
+    });
+    envelope_from(value.clone()).verify(None, false).unwrap();
+
+    for altered in [
+        expected.replace("ghcr.io", "docker.io"),
+        expected.replace("@sha256:", ":main@sha256:"),
+        expected.replace(&digest[7..], &"f".repeat(64)),
+    ] {
+        value["output"]["location"]["uri"] = serde_json::json!(altered);
+        let err = envelope_from(value.clone())
+            .verify(None, false)
+            .unwrap_err();
+        assert!(err.rules().contains(&"envelope-oci-location"));
+    }
+
+    value["unit"]["kind"] = serde_json::json!("rust-lambda");
+    let err = envelope_from(value).verify(None, false).unwrap_err();
+    assert!(err.rules().contains(&"envelope-location-kind"));
+}
+
+#[test]
+fn unknown_location_kinds_are_refused_before_admission() {
+    let mut value = valid_envelope();
+    value["output"]["location"]["kind"] = serde_json::json!("bucket-ish");
+    let err = envelope_from(value).verify(None, false).unwrap_err();
+    assert!(err.rules().contains(&"envelope-location-kind"));
 }
 
 #[test]

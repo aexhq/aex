@@ -268,6 +268,33 @@ enum ArtifactCommand {
         #[arg(long)]
         now: Option<String>,
     },
+    /// Replace a local draft's unearned fields with exact CI evidence.
+    Certify {
+        /// The local draft emitted by `artifact describe`.
+        #[arg(long)]
+        draft: PathBuf,
+        /// CI/scanner claims. File-backed digests and counts are recomputed.
+        #[arg(long)]
+        claims: PathBuf,
+        /// Packaged bytes. Omit only for an OCI registry manifest.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// `CycloneDX` JSON SBOM.
+        #[arg(long)]
+        sbom: PathBuf,
+        /// Complete licence inventory from the passing scan.
+        #[arg(long)]
+        license_inventory: PathBuf,
+        /// Official GitHub attestation bundle.
+        #[arg(long)]
+        provenance_bundle: PathBuf,
+        /// Passing evidence receipts, repeated.
+        #[arg(long = "receipt")]
+        receipts: Vec<PathBuf>,
+        /// Where to write the certified envelope.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Verify an envelope, and optionally the bytes it describes.
     Verify {
         /// The envelope.
@@ -285,6 +312,15 @@ enum ArtifactCommand {
         /// The envelope.
         #[arg(long)]
         envelope: PathBuf,
+    },
+    /// Derive the safe content-addressed public asset basename from real bytes.
+    AssetName {
+        /// Registry unit id.
+        #[arg(long)]
+        unit: String,
+        /// Packaged artifact bytes.
+        #[arg(long)]
+        file: PathBuf,
     },
 }
 
@@ -914,6 +950,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
             ran,
             now.as_deref(),
         ),
+        ArtifactCommand::Certify { .. } => run_artifact_certify(cli, root, command),
         ArtifactCommand::Verify {
             envelope,
             file,
@@ -930,7 +967,87 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
             let envelope: ArtifactEnvelope = read_json(envelope)?;
             emit(cli, &artifact::publish_destination(&envelope)?)
         }
+        ArtifactCommand::AssetName { .. } => run_artifact_asset_name(cli, root, command),
     }
+}
+
+fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
+    let ArtifactCommand::Certify {
+        draft,
+        claims,
+        file,
+        sbom,
+        license_inventory,
+        provenance_bundle,
+        receipts,
+        out,
+    } = command
+    else {
+        return Err(usage("internal artifact certification dispatch mismatch"));
+    };
+    let draft: ArtifactEnvelope = read_json(draft)?;
+    let units = read_units(root)?;
+    let unit = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == draft.unit.id)
+        .ok_or_else(|| usage(format!("`{}` is not in release/units.toml", draft.unit.id)))?;
+    let claims: aex_release_tool::certify::CertificationClaims = read_json(claims)?;
+    let receipts = receipts
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<_>>>()?;
+    let envelope = aex_release_tool::certify::certify(
+        draft,
+        unit,
+        claims,
+        aex_release_tool::certify::CertificationFiles {
+            artifact: file.as_deref(),
+            sbom,
+            license_inventory,
+            provenance_bundle,
+        },
+        &receipts,
+    )?;
+    write_canonical(out, &envelope)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "unit": envelope.unit.id,
+            "envelopeDigest": envelope.envelope_digest,
+            "artifactDigest": envelope.output.digest,
+            "location": envelope.output.location,
+        }),
+    )
+}
+
+fn run_artifact_asset_name(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
+    let ArtifactCommand::AssetName { unit, file } = command else {
+        return Err(usage("internal artifact asset-name dispatch mismatch"));
+    };
+    let units = read_units(root)?;
+    let found = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == *unit)
+        .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+    if found.kind.starts_with("rust-oci-") {
+        return Err(usage(format!(
+            "unit `{unit}` is OCI and must publish a registry manifest, not a release asset"
+        )));
+    }
+    let bytes = std::fs::read(file).map_err(|err| io(&file.display().to_string(), &err))?;
+    let digest = canon::digest_bytes(&bytes);
+    let asset = publication::unit_asset_name(unit, &digest, &found.form)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "unit": unit,
+            "asset": asset,
+            "digest": digest,
+            "sizeBytes": bytes.len(),
+        }),
+    )
 }
 
 fn run_module_bundle(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
@@ -999,7 +1116,7 @@ fn run_describe(
         repository: "aexhq/aex".to_owned(),
         commit_sha: git_output(root, &["rev-parse", "HEAD"])?,
         tree_clean: git_output(root, &["status", "--porcelain"])?.is_empty(),
-        git_ref: None,
+        git_ref: source_ref(root)?,
         toolchain: local_toolchain(&found.target)?,
         lockfile_digest: file_digest(&root.join(lockfile_for(&found.kind)))?,
         contract_digest: contract_digest.to_owned(),
@@ -1631,6 +1748,31 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String> {
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn source_ref(root: &Path) -> Result<Option<String>> {
+    if let Some(value) = std::env::var_os("GITHUB_REF") {
+        let value = value.into_string().map_err(|_| {
+            usage("`GITHUB_REF` is not valid Unicode and cannot identify the source ref")
+        })?;
+        return Ok(Some(value));
+    }
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .output()
+        .map_err(|err| {
+            usage(format!(
+                "`git symbolic-ref -q HEAD` could not be run: {err}"
+            ))
+        })?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ));
+    }
+    Ok(None)
 }
 
 /// The toolchain that produced the bytes, read from `rustc` rather than

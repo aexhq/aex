@@ -234,6 +234,49 @@ fn the_envelope_schema_forbids_a_mutable_location_and_a_dirty_tree() {
 }
 
 #[test]
+fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
+    let mut envelope = valid_envelope();
+    let digest = envelope["output"]["digest"].as_str().unwrap().to_owned();
+    let uri = aex_release_tool::publication::github_release_unit_uri(
+        "aexhq/aex",
+        &sha1(),
+        "123",
+        1,
+        "regional-session-api",
+        &digest,
+        "zip",
+    )
+    .unwrap();
+    envelope["output"]["location"] = json!({
+        "kind": "github-release",
+        "uri": uri,
+        "immutable": true
+    });
+    assert!(schema_accepts(SchemaName::ArtifactEnvelope, &envelope));
+    for altered in [
+        uri.replace("github.com", "example.com"),
+        uri.replace("run-123", "run-latest"),
+        uri.replace(&digest[7..], "mutable"),
+    ] {
+        envelope["output"]["location"]["uri"] = json!(altered);
+        assert!(!schema_accepts(SchemaName::ArtifactEnvelope, &envelope));
+    }
+
+    let mut manifest = valid_manifest();
+    manifest["units"]["regional-session-api"]["kind"] = json!("rust-oci-service");
+    manifest["units"]["regional-session-api"]["location"] = json!({
+        "kind": "oci",
+        "uri": format!("oci://ghcr.io/aexhq/aex-units/regional-session-api@{digest}"),
+        "immutable": true
+    });
+    assert!(schema_accepts(SchemaName::CompositionManifest, &manifest));
+    manifest["units"]["regional-session-api"]["location"]["uri"] = json!(format!(
+        "oci://ghcr.io/aexhq/aex-units/regional-session-api:main@{digest}"
+    ));
+    assert!(!schema_accepts(SchemaName::CompositionManifest, &manifest));
+}
+
+#[test]
 fn the_envelope_schema_forbids_post_deployment_receipt_classes() {
     let mut envelope = valid_envelope();
     envelope["receipts"][0]["class"] = json!("smoke");

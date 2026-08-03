@@ -163,11 +163,21 @@
           "additionalProperties": false,
           "required": ["kind", "uri", "immutable"],
           "properties": {
-            "kind": { "enum": ["s3", "ecr", "npm", "gha-artifact", "local"] },
+            "kind": { "enum": ["github-release", "oci", "s3", "ecr", "npm", "gha-artifact", "local"] },
             "uri": { "type": "string" },
             "immutable": { "const": true },
             "objectVersionId": { "type": "string" }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "github-release" } }, "required": ["kind"] },
+              "then": { "properties": { "uri": { "pattern": "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/main-[0-9a-f]{40}-run-[1-9][0-9]*-attempt-[1-9][0-9]*/unit-[a-z][a-z0-9-]{2,63}-[0-9a-f]{64}\\.(zip|tar\\.gz)$" } } }
+            },
+            {
+              "if": { "properties": { "kind": { "const": "oci" } }, "required": ["kind"] },
+              "then": { "properties": { "uri": { "pattern": "^oci://ghcr\\.io/[a-z0-9._-]+/[a-z0-9._-]+-units/[a-z][a-z0-9-]{2,63}@sha256:[0-9a-f]{64}$" } } }
+            }
+          ]
         },
         "symbols": {
           "type": "object",
