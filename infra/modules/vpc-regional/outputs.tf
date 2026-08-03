@@ -19,6 +19,11 @@ output "endpoint_ids" {
   description = "Service short name to endpoint id, gateway and interface together."
 }
 
+output "gateway_endpoint_prefix_list_ids" {
+  value       = { for k, e in aws_vpc_endpoint.gateway : k => e.prefix_list_id }
+  description = "Gateway endpoint service to AWS-managed prefix-list id, for least-privilege workload egress rules."
+}
+
 output "interface_endpoint_security_group_id" {
   value       = aws_security_group.interface_endpoints.id
   description = "Security group attached to every interface endpoint; it admits TLS from this VPC only."

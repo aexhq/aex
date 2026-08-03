@@ -35,6 +35,7 @@ account it happens to run in.
 | `vpc_id` | Id of the VPC. |
 | `subnet_ids` | `{ private, public }` subnet id lists. |
 | `endpoint_ids` | Service short name to endpoint id. |
+| `gateway_endpoint_prefix_list_ids` | S3/DynamoDB service to AWS-managed prefix-list id for workload egress rules. |
 | `interface_endpoint_security_group_id` | Endpoint-only group admitting TCP/443 from this VPC. |
 | `nat_gateway_ids` | NAT gateway ids; empty unless NAT was enabled. |
 

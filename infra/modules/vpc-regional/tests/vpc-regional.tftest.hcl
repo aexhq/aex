@@ -8,6 +8,14 @@ override_resource {
   }
 }
 
+override_resource {
+  target          = aws_vpc_endpoint.gateway
+  override_during = plan
+  values = {
+    prefix_list_id = "pl-0123456789abcdef0"
+  }
+}
+
 variables {
   name               = "aex-dev-euw1"
   region             = "eu-west-1"
@@ -85,6 +93,14 @@ run "interface_endpoints_cover_everything_the_schema_admin_task_needs" {
       for k in ["s3", "dynamodb"] : contains(keys(aws_vpc_endpoint.gateway), k)
     ])
     error_message = "Gateway endpoints for S3 and DynamoDB must always exist."
+  }
+
+  assert {
+    condition = alltrue([
+      for k in ["s3", "dynamodb"] :
+      output.gateway_endpoint_prefix_list_ids[k] == aws_vpc_endpoint.gateway[k].prefix_list_id
+    ])
+    error_message = "The module must expose both gateway prefix-list ids so workload egress can stay service-exact."
   }
 }
 
