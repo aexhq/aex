@@ -21,7 +21,7 @@ use aex_regional_http::context::{
 use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
 use aex_regional_http::projection::entity_tag;
-use aex_regional_http::router::RouteOwner;
+use aex_regional_http::router::{RouteOwner, route_owner};
 use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
@@ -906,6 +906,18 @@ fn the_served_set_is_a_subset_of_the_owned_set_and_never_a_second_list() {
         },
         "the served set keeps `RouteId` order"
     );
+}
+
+#[test]
+fn workspace_limit_reads_are_owned_but_remain_explicitly_unmounted() {
+    let served = Routes::served();
+    for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
+        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
+        assert!(
+            !served.contains(&id),
+            "`{id}` must wait for the capacity authority"
+        );
+    }
 }
 
 #[tokio::test]

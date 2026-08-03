@@ -1109,7 +1109,9 @@ existing regional reader decodes. This producer is exposed only by
   compares revisions; an equal revision is replay success only when identity,
   value, provenance and change instant all match;
 - only a failed condition or a typed commit-ambiguous outcome is resolved by one
-  strongly consistent point read. Denial, validation, throttling and a missing
+  strongly consistent point read. A provider `InternalServerError` after the
+  write is in that ambiguous class; reads remain unavailable, while an invalid
+  endpoint is definitive unavailability. Denial, validation, throttling and a missing
   table return directly; a conflicting equal revision is never overwritten and
   no write is blindly retried;
 - the read and write features share one row decoder, while a producer-only
@@ -1125,6 +1127,13 @@ the Rust feature or the IAM keyspace.
 There is deliberately no call site yet. Calling the producer without an
 authoritative input would convert a missing policy into apparently durable
 truth.
+
+CI exercises the capacity transport as an independent feature build: default
+features are disabled while the crate is checked, clippied and tested, and its
+authored `limit_projection` target is registered in the test inventory. Central
+control's manifest dependency is inspected as structured Cargo metadata, and a
+compiler-fail doctest under `authz-projection-write` proves the capacity module
+is not link-visible. This replaces the former substring-only source assertion.
 
 ### Ordered blocker ledger
 

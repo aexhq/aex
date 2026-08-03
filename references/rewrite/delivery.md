@@ -317,6 +317,14 @@ to fabricate them from.
    code rather than pretending. The lanes are wired end to end; the buckets,
    repositories, roles and GitHub Environments are not.
 
+The reusable Rust lane also owns one feature-specific target that an ordinary
+package build cannot discover: whenever `aex-session-dynamodb` is selected it
+checks, clippies and tests the crate with only
+`capacity-limit-projection-write`. The same job compiles central control under
+its declared dependency and runs the `authz-projection-write` compile-fail
+boundary proof, so feature unification cannot silently hand central control the
+regional capacity producer.
+
 ## 5. Decisions taken
 
 | ID | Decision | Why |

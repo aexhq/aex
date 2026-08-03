@@ -173,6 +173,44 @@ async fn conditional_and_commit_ambiguous_outcomes_use_one_strong_resolution_rea
 }
 
 #[tokio::test]
+async fn a_provider_500_performs_one_strong_target_read_and_no_second_write() {
+    let write = write();
+    let (client, replay) = client(vec![
+        Answer {
+            status: 500,
+            code: Some("InternalServerError"),
+            body: serde_json::json!({
+                "__type": "com.amazonaws.dynamodb.v20120810#InternalServerError",
+                "message": "fixture"
+            })
+            .to_string(),
+        },
+        Answer {
+            status: 200,
+            code: None,
+            body: durable_item(&write, write.id),
+        },
+    ]);
+
+    CapacityLimitProjectionWriter::new(client, "projection")
+        .put_limit(&write)
+        .await
+        .expect("the strong target read observes the committed write");
+
+    let requests = requests(&replay);
+    assert_eq!(requests.len(), 2, "one write and one resolver read");
+    assert!(
+        requests[0].get("Item").is_some(),
+        "the first call is PutItem"
+    );
+    assert!(
+        requests[1].get("Item").is_none(),
+        "the second call is not another PutItem"
+    );
+    assert_eq!(requests[1]["ConsistentRead"].as_bool(), Some(true));
+}
+
+#[tokio::test]
 async fn denial_throttle_validation_and_missing_table_return_without_a_read() {
     for (code, expected) in [
         ("AccessDeniedException", "denied"),

@@ -72,6 +72,8 @@ DynamoDB adapter shares. Module map:
 | `paging` | signed cursors, `PagePosition`, `PageBudget` | always |
 | `keys`, `codec`, `transactions`, `store`, `wire_pending` | the `session-authority` table | `session-authority` |
 | `projection` | the read-only `regional-authz-projection` reader | `authz-projection` |
+| `projection_write` | central control's placement/profile/revocation producer | `authz-projection-write` |
+| `capacity_limit_projection_write` | regional capacity's transport-only effective-limit producer | `capacity-limit-projection-write` |
 
 Load-bearing properties, each asserted rather than documented:
 
@@ -81,6 +83,10 @@ Load-bearing properties, each asserted rather than documented:
 - A cancellation's positional reason vector maps back to the participant that
   lost. A reason vector that does not match the plan is `Invalid`, never a guess.
 - `CommitAmbiguous` is a distinct, non-retryable type carrying how to resolve it.
+- A provider `InternalServerError` after a write is commit-ambiguous and must be
+  resolved; the same code on a read is unavailable. `InvalidEndpointException`
+  is definitive unavailability for both, because the request did not reach the
+  addressed service.
 - `commit_or_replay` implements plan 05 §3.9 exactly: receipt first, one re-read
   on a receipt-participant loss or an ambiguous commit, a non-receipt
   precondition failure propagated unchanged, and bounded retries that re-enter at

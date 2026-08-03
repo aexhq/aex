@@ -31,6 +31,7 @@ conformance = "unit"
 properties = "unit"
 faults = "unit"
 security = "unit"
+limit_projection = "unit"
 
 [package.metadata.aex.not_applicable]
 integration = "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."

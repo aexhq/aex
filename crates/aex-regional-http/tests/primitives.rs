@@ -574,6 +574,9 @@ fn every_generated_regional_route_has_exactly_one_owner() {
         route_owner(RouteId::SessionObservationsEventsQuery),
         Some(RouteOwner::ObservationApi)
     );
+    for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
+        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
+    }
 }
 
 #[test]

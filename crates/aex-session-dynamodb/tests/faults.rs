@@ -162,12 +162,50 @@ fn the_error_mapping_table_holds_for_every_row_the_plan_declares() {
             matches!(error, StoreError::Misconfigured { .. })
         }),
         ("InternalServerError", |error| {
-            matches!(error, StoreError::Unavailable { .. })
+            matches!(
+                error,
+                StoreError::CommitAmbiguous {
+                    resolve_by: Resolution::IdempotencyReceipt
+                }
+            )
         }),
     ];
     for (code, expected) in rows {
         let error = classify_code(code, write);
         assert!(expected(&error), "`{code}` mapped to {error}");
+    }
+}
+
+#[test]
+fn provider_internal_errors_are_ambiguous_only_after_a_write() {
+    let read = classify_code("InternalServerError", Idempotence::Read);
+    assert!(matches!(read, StoreError::Unavailable { .. }), "{read}");
+
+    let write = classify_code(
+        "InternalServerError",
+        Idempotence::Write(Resolution::TargetItem),
+    );
+    assert_eq!(
+        write,
+        StoreError::CommitAmbiguous {
+            resolve_by: Resolution::TargetItem
+        }
+    );
+    assert!(
+        !write.retryable(),
+        "a provider 500 write is never replayed blindly"
+    );
+}
+
+#[test]
+fn an_invalid_endpoint_is_definitive_unavailability_even_for_a_write() {
+    for idempotence in [
+        Idempotence::Read,
+        Idempotence::Write(Resolution::TargetItem),
+    ] {
+        let error = classify_code("InvalidEndpointException", idempotence);
+        assert!(matches!(error, StoreError::Unavailable { .. }), "{error}");
+        assert!(error.retryable());
     }
 }
 

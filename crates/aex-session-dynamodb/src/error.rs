@@ -239,11 +239,15 @@ pub fn classify_code(code: &str, idempotence: Idempotence) -> StoreError {
             detail: "an item collection exceeded its size limit; there are no LSIs here".to_owned(),
         },
         "AccessDeniedException" | "NotAuthorized" => StoreError::Denied,
-        "InternalServerError" | "InvalidEndpointException" | "ServiceUnavailable" => {
-            StoreError::Unavailable {
+        "InternalServerError" => match idempotence {
+            Idempotence::Read => StoreError::Unavailable {
                 detail: format!("the service reported `{code}`"),
-            }
-        }
+            },
+            Idempotence::Write(resolve_by) => StoreError::CommitAmbiguous { resolve_by },
+        },
+        "InvalidEndpointException" | "ServiceUnavailable" => StoreError::Unavailable {
+            detail: format!("the service reported `{code}`"),
+        },
         "RequestTimeout" | "RequestTimeoutException" => match idempotence {
             Idempotence::Read => StoreError::Unavailable {
                 detail: "the request timed out".to_owned(),

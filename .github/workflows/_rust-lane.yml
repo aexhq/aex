@@ -85,3 +85,69 @@ jobs:
           name: junit-${{ inputs.lane }}-${{ matrix.name }}-${{ matrix.partition }}
           path: target/nextest/${{ inputs.profile }}/junit.xml
           if-no-files-found: error
+
+  capacity-limit-projection:
+    name: aex-session-dynamodb / capacity limit producer
+    if: ${{ contains(fromJSON(inputs.matrix).include.*.name, 'aex-session-dynamodb') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          components: clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: ${{ inputs.cache_mode == 'restore-save' }}
+          shared-key: ${{ inputs.lane }}-capacity-limit-projection
+
+      - name: Install nextest
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-nextest
+
+      - name: Compile the isolated producer
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          cargo check --locked -p aex-session-dynamodb --no-default-features
+          --features capacity-limit-projection-write
+
+      - name: Clippy the isolated producer
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          cargo clippy --locked -p aex-session-dynamodb --all-targets
+          --no-default-features --features capacity-limit-projection-write -- -D warnings
+
+      - name: Test the isolated producer
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          cargo nextest run --locked --profile "${{ inputs.profile }}"
+          -p aex-session-dynamodb --no-default-features
+          --features capacity-limit-projection-write --no-tests=fail
+
+      - name: Prove central producer feature isolation
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: |
+          set -euo pipefail
+          cargo check --locked -p central-control-worker
+          cargo test --locked --doc -p aex-session-dynamodb \
+            --no-default-features --features authz-projection-write
+
+      - name: Upload the JUnit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: junit-${{ inputs.lane }}-aex-session-dynamodb-capacity-limit-projection
+          path: target/nextest/${{ inputs.profile }}/junit.xml
+          if-no-files-found: error

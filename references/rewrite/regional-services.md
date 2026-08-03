@@ -1581,8 +1581,9 @@ exact row `WorkspaceProjection::{read_limit,page_limits}` already consumes. The
 writer refuses a scalar/map mismatch before I/O, admits a newer durable revision
 as a completed stale delivery, and admits an equal revision only when immutable
 identity and every projected fact agree. Only failed conditions and typed
-commit-ambiguous outcomes use one strong read; denial, validation, throttling
-and missing-table failures return directly. The producer and consumer share one
+commit-ambiguous outcomes use one strong read; this includes a provider `500`
+after `PutItem`, whose outcome cannot be inferred from the response. Denial,
+validation, throttling, invalid-endpoint and missing-table failures return directly. The producer and consumer share one
 codec even when the independently testable producer feature does not link the
 wider regional query surface.
 
@@ -1604,3 +1605,11 @@ deployment, workspace completeness gate or dynamic edge consumption exists yet.
 site and both workspace-limit routes remain absent rather than publishing
 inferred, partial or environment-derived values. The exact dependency order is
 recorded in `central-identity.md` §12.
+
+The permanent Rust lane compiles, clippies and tests `aex-session-dynamodb`
+with default features disabled and only `capacity-limit-projection-write`
+enabled. A separate compiler-fail doctest runs with only
+`authz-projection-write`; if central control ever gains the capacity module
+through feature unification, that proof turns red. The authored
+`limit_projection` target is registered as unit evidence rather than relying on
+a local command that CI never selects.

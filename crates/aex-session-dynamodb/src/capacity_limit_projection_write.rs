@@ -311,6 +311,32 @@ mod tests {
     }
 
     #[test]
+    fn lower_equal_and_newer_durable_revisions_have_distinct_results() {
+        let write = write();
+        let exact = ProjectedWorkspaceLimit {
+            workspace: write.workspace,
+            id: write.id,
+            effective_value: write.effective_value.clone(),
+            source: write.source,
+            revision: write.revision,
+            changed_at: write.changed_at,
+        };
+
+        let mut lower = exact.clone();
+        lower.revision -= 1;
+        assert!(matches!(
+            classify_limit_replay(Some(&lower), &write),
+            Err(StoreError::PreconditionFailed { .. })
+        ));
+
+        assert!(classify_limit_replay(Some(&exact), &write).is_ok());
+
+        let mut newer = exact;
+        newer.revision += 1;
+        assert!(classify_limit_replay(Some(&newer), &write).is_ok());
+    }
+
+    #[test]
     fn only_commit_ambiguous_requires_a_resolution_read() {
         assert!(limit_write_needs_resolution(&StoreError::CommitAmbiguous {
             resolve_by: Resolution::TargetItem,
