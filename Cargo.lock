@@ -63,6 +63,10 @@ dependencies = [
 name = "aex-brain-managed-web"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
+ "aex-brain-domain",
+ "aex-brain-tool-catalog",
+ "aex-model-catalog",
  "aex-wire",
  "async-trait",
  "brotli",
@@ -78,6 +82,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
