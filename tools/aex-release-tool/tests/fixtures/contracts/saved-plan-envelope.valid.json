@@ -1,0 +1,78 @@
+{
+  "schema": "aex.saved-plan-envelope.v1",
+  "envelopeDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "releaseId": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "bindingDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "bindingRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "placementDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "plan": {
+    "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "sizeBytes": 1,
+    "location": {
+      "bucket": "aex-fixture-release-plans",
+      "key": "saved-plans/dev/release/plan.tfplan",
+      "region": "eu-west-1",
+      "objectVersionId": "fixture-plan-version-1",
+      "kmsKeyArn": "arn:aws:kms:eu-west-1:000000000000:key/11111111-2222-3333-4444-555555555555"
+    }
+  },
+  "tool": {
+    "version": "0.1.0",
+    "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "sizeBytes": 1024
+  },
+  "sourceArchive": {
+    "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "sizeBytes": 2048
+  },
+  "moduleBundle": {
+    "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "sizeBytes": 3072
+  },
+  "runner": {
+    "os": "linux",
+    "arch": "x86_64",
+    "workingDirectory": "/home/runner/work/platform/platform",
+    "moduleExtractionPath": "/home/runner/work/platform/platform/.release-inputs/modules"
+  },
+  "terraform": {
+    "binary": {
+      "version": "1.14.3",
+      "digest": "sha256:dededededededededededededededededededededededededededededededede",
+      "sizeBytes": 1048576
+    },
+    "root": "infra/terraform/composition/roots/dev-eu-west-1",
+    "rootDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "providerLockDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "providers": {
+      "registry.terraform.io/hashicorp/aws": {
+        "version": "6.57.1",
+        "checksum": "sha256:abababababababababababababababababababababababababababababababab"
+      }
+    }
+  },
+  "state": {
+    "status": "present",
+    "backend": {
+      "kind": "s3",
+      "bucket": "aex-fixture-terraform-state",
+      "region": "eu-west-1",
+      "configDigest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "backendKey": "composition/dev/eu-west-1/application.tfstate",
+    "lineage": "11111111-2222-3333-4444-555555555555",
+    "serial": 41,
+    "objectVersionId": "fixture-state-version-41"
+  },
+  "workflow": {
+    "repository": "aexhq/platform",
+    "repositoryId": "123456789",
+    "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "workflowRef": "aexhq/platform/.github/workflows/_release-engine.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "runId": "1001",
+    "runAttempt": 1,
+    "jobName": "plan"
+  },
+  "createdAt": "2026-08-03T12:00:00Z",
+  "expiresAt": "2026-08-03T12:30:00Z"
+}

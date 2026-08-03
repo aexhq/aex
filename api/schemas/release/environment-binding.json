@@ -21,10 +21,19 @@
   ],
   "properties": {
     "schema": { "const": "aex.environment-binding.v1" },
-    "bindingDigest": { "$ref": "#/$defs/sha256" },
+    "bindingDigest": {
+      "description": "sha256 over RFC 8785 canonical bytes with bindingDigest removed.",
+      "$ref": "#/$defs/sha256"
+    },
     "bindingRef": { "$ref": "#/$defs/sha1" },
     "plane": { "enum": ["dev", "prd"] },
-    "regions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "regions": {
+      "description": "Unique AWS regions in ascending lexical order.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]$" }
+    },
     "desiredReleaseId": { "$ref": "#/$defs/sha256" },
     "rootModuleVersion": { "type": "string" },
     "infraModuleBundleDigest": { "$ref": "#/$defs/sha256" },
@@ -41,7 +50,11 @@
           "accountId": { "type": "string", "pattern": "^[0-9]{12}$" },
           "region": { "type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]$" },
           "arn": { "type": "string", "pattern": "^arn:aws[a-z-]*:" },
-          "url": { "type": "string" },
+          "url": {
+            "description": "HTTPS endpoint without userinfo, query or fragment.",
+            "type": "string",
+            "pattern": "^https://[^/?#@]+(?:/[^?#]*)?$"
+          },
           "immutableVersion": { "type": "string" }
         }
       }
@@ -53,7 +66,7 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["arn", "kind"],
+        "required": ["arn", "versionId", "kind"],
         "properties": {
           "arn": { "type": "string", "pattern": "^arn:aws[a-z-]*:secretsmanager:" },
           "versionId": { "type": "string" },

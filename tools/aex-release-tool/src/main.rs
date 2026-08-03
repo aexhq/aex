@@ -27,6 +27,7 @@ use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::migration;
 use aex_release_tool::policy;
 use aex_release_tool::private_path;
+use aex_release_tool::release_contract;
 use aex_release_tool::schemas::{self, SchemaName};
 use aex_release_tool::selftest;
 use aex_release_tool::verification::VerificationStatement;
@@ -78,6 +79,9 @@ enum Command {
     /// Terraform plan handling.
     #[command(subcommand)]
     Plan(PlanCommand),
+    /// Validate public-schema/private-value release contracts.
+    #[command(subcommand)]
+    Contract(ContractCommand),
     /// The deployment ledger.
     #[command(subcommand)]
     Ledger(LedgerCommand),
@@ -513,6 +517,36 @@ enum PlanCommand {
     },
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+enum ContractKind {
+    /// `aex.environment-binding.v1`.
+    EnvironmentBinding,
+    /// `aex.resolved-placement.v1`.
+    ResolvedPlacement,
+    /// `aex.saved-plan-envelope.v1`.
+    SavedPlanEnvelope,
+}
+
+#[derive(Debug, Subcommand)]
+enum ContractCommand {
+    /// Parse, close, digest-check and freshness-check a release contract.
+    Validate {
+        /// Contract kind.
+        #[arg(long)]
+        kind: ContractKind,
+        /// JSON contract document.
+        #[arg(long)]
+        file: PathBuf,
+        /// Opaque saved plan bytes. Valid only for a saved-plan envelope.
+        #[arg(long)]
+        payload: Option<PathBuf>,
+        /// Evaluation instant, RFC 3339. Defaults to now.
+        #[arg(long)]
+        now: Option<String>,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum LedgerCommand {
     /// Append one entry.
@@ -648,6 +682,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Verification(command) => run_verification(cli, command),
         Command::Admit(args) => run_admit(cli, &root, args),
         Command::Plan(command) => run_plan(cli, command),
+        Command::Contract(command) => run_contract(cli, command),
         Command::Ledger(command) => run_ledger(cli, command),
         Command::PrivatePath(command) => run_private_path(command),
         Command::Migration(command) => run_migration(cli, &root, command),
@@ -1271,6 +1306,62 @@ fn run_plan(cli: &Cli, command: &PlanCommand) -> Result<()> {
     }
 }
 
+fn run_contract(cli: &Cli, command: &ContractCommand) -> Result<()> {
+    match command {
+        ContractCommand::Validate {
+            kind,
+            file,
+            payload,
+            now,
+        } => {
+            let text = std::fs::read_to_string(file)
+                .map_err(|err| io(&file.display().to_string(), &err))?;
+            match kind {
+                ContractKind::EnvironmentBinding => {
+                    if payload.is_some() || now.is_some() {
+                        return Err(usage(
+                            "--payload and --now are valid only for saved-plan-envelope",
+                        ));
+                    }
+                    emit(cli, &release_contract::parse_environment_binding(&text)?)
+                }
+                ContractKind::ResolvedPlacement => {
+                    if payload.is_some() || now.is_some() {
+                        return Err(usage(
+                            "--payload and --now are valid only for saved-plan-envelope",
+                        ));
+                    }
+                    emit(cli, &release_contract::parse_resolved_placement(&text)?)
+                }
+                ContractKind::SavedPlanEnvelope => {
+                    let bytes =
+                        payload
+                            .as_deref()
+                            .map(std::fs::read)
+                            .transpose()
+                            .map_err(|err| {
+                                io(
+                                    &payload.as_deref().map_or_else(
+                                        || "saved plan".to_owned(),
+                                        |path| path.display().to_string(),
+                                    ),
+                                    &err,
+                                )
+                            })?;
+                    emit(
+                        cli,
+                        &release_contract::parse_saved_plan_envelope(
+                            &text,
+                            parse_now(now.as_deref())?,
+                            bytes.as_deref(),
+                        )?,
+                    )
+                }
+            }
+        }
+    }
+}
+
 fn run_ledger(cli: &Cli, command: &LedgerCommand) -> Result<()> {
     match command {
         LedgerCommand::Append { entry, store } => {
@@ -1711,6 +1802,7 @@ mod tests {
             vec![
                 "admit",
                 "artifact",
+                "contract",
                 "evidence",
                 "graph",
                 "janitor",

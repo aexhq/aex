@@ -28,6 +28,7 @@ pub mod migration;
 pub mod pack;
 pub mod policy;
 pub mod private_path;
+pub mod release_contract;
 pub mod schemas;
 pub mod selftest;
 pub mod test_registry;

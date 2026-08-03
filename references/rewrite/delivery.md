@@ -24,6 +24,26 @@ Every gate below was run locally and passes; the one intentional exception is
 `graph verify` against the real repository, which is red by design and is the
 first item under "What every stream owes me".
 
+### 2026-08-03 clean-cut ownership ledger
+
+D19/D20 ownership is now mechanically split. Public `aex` owns immutable,
+plane-neutral build/publication inputs and the release contract vocabulary;
+private `platform` owns every binding value and is the only manual hosted
+release entry point. The public `release.yml` and `_release-engine.yml` were
+removed, and `assurance.yml` no longer accepts or resolves a plane. A structural
+test refuses their return, any public `binding_ref`, private-repository checkout,
+hosted environment, or AWS credential step.
+
+The public contract set now also includes `aex.resolved-placement.v1` and
+`aex.saved-plan-envelope.v1`. Typed validation rejects self-digest tampering,
+plaintext credential shapes, mutable secret versions, unsafe endpoints,
+unsorted regions, stale or over-60-minute plans, mutable workflow refs and
+opaque-plan byte mismatches. The saved-plan envelope binds the private source
+and public module bundle, release tool and Terraform binary bytes, provider lock
+and packages, fixed runner paths, encrypted plan object and KMS identity, and an
+explicit present/absent state snapshot with backend configuration identity.
+No artifact was published and no hosted system was touched by this slice.
+
 ## 1. What was implemented
 
 ### `tools/aex-release-tool/`
@@ -47,7 +67,8 @@ no self-skip, no empty suite.
 | `migration` | Bundle packaging, header parsing, below-head insert and edit rejection. |
 | `private_path` | The public classifier the private repository invokes, with its own glob matcher. |
 | `policy` | Terraform source policy, Dockerfile COPY-only policy, workflow structural gates, Terraform plan policy. |
-| `schemas` | The five release JSON Schemas, embedded. |
+| `schemas` | The seven release JSON Schemas, embedded. |
+| `release_contract` | Typed environment-binding, resolved-placement, and saved-plan-envelope validation for the private hosted-release consumer. |
 | `selftest` | Determinism and monotonicity probed against the real graph. |
 | `test_registry` | Reads `release/test-registry.json` and `release/unearned-evidence.json` through `aex-workspace-check`'s own types. Derives nothing; asserts the delivery graph and the registry agree on the live set. |
 
@@ -58,6 +79,7 @@ Subcommands landed: `graph build|verify|select|explain|diff|matrix`,
 `verification new|verify`, `admit`,
 `plan summarize|policy`, `ledger append|list|verify`, `private-path check`,
 `migration bundle|verify`, `policy terraform|workflows|dockerfile`, `schema`,
+`contract validate`,
 `selftest`.
 
 `describe` is in `src/describe.rs` and assembles an envelope from a build that
@@ -71,10 +93,11 @@ location and nothing attested the bytes.
 
 ### `api/schemas/release/`
 
-Five schemas, authored here per D14-05 so the contract generator needs no
+Seven schemas, authored here per D14-05 so the contract generator needs no
 special case: `artifact-envelope.json`, `composition-manifest.json`,
 `verification-statement.json`, `environment-binding.json`,
-`evidence-receipt.json`. The contracts stream had not created that directory,
+`evidence-receipt.json`, `resolved-placement.json`, and
+`saved-plan-envelope.json`. The contracts stream had not created that directory,
 so there is no conflict to record.
 
 ### `release/`
@@ -87,10 +110,11 @@ so there is no conflict to record.
 
 ### `.github/workflows/`
 
-The old `ci.yml` and `live-user-tests.yml` are deleted, not aliased. Twelve
-files: four lane classes (`pr`, `main`, `assurance`, `release`) and eight
+The old `ci.yml` and `live-user-tests.yml` are deleted, not aliased. Ten
+files: three lane classes (`pr`, `main`, `assurance`) and seven
 reusable workflows (`_route`, `_rust-lane`, `_node-lane`, `_terraform-lane`,
-`_scenario-lane`, `_build-artifacts`, `_receipts`, `_release-engine`).
+`_scenario-lane`, `_build-artifacts`, `_receipts`). Hosted release orchestration
+lives only in the private repository.
 `.github/dependabot.yml` gains cargo and terraform ecosystems.
 
 ### `infra/`
@@ -329,10 +353,11 @@ to fabricate them from.
    rather than reporting a green sweep that removed nothing. The engine, the
    guard, the order and the report are complete; the adapter is one
    `Reclaimer` implementation away.
-7. **Live publication.** Every publish step in `main.yml` and every apply step
-   in `_release-engine.yml` refuses with a stated reason and a classified exit
-   code rather than pretending. The lanes are wired end to end; the buckets,
-   repositories, roles and GitHub Environments are not.
+7. **Live publication.** Public publish steps in `main.yml` refuse with a stated
+   reason and a classified exit code rather than pretending. Public release-tool,
+   module-bundle and manifest publication plus GitHub attestations are still
+   absent; private acquisition therefore has no valid input it can accept yet.
+   Hosted planning and apply are private responsibilities.
 
 The reusable Rust lane also owns one feature-specific target that an ordinary
 package build cannot discover: whenever `aex-session-dynamodb` is selected it
@@ -357,7 +382,7 @@ regional capacity producer.
 | D-9 | Publishing is not deploying, for the purpose of the permission-overlap gate | The gate fires when a job holds both publish scopes and applies a plan or holds a GitHub Environment. Uploading bytes to an immutable object store is publication; treating it as deployment would forbid the one job that must build and upload. |
 | D-10 | The workflow linter reads both `on:` and `true:` | A YAML 1.1 reader resolves a bare `on:` key to the boolean `true`. Looking under both spellings keeps quoting the key a style choice rather than a way past the gate. |
 | D-11 | `.terraform/`, `*.tfstate` and `*.tfstate.*` are added to `.gitignore`; `.terraform.lock.hcl` is not | `terraform init` drops provider binaries into the worktree. The lock file is deliberately tracked: the resolved provider versions are part of what a plan means. |
-| D-12 | The `assurance` and `release` lanes exit with a classified code rather than a green no-op where their subject does not exist | A scheduled suite that reports success having checked nothing is worse than one that is red for a stated reason. `admit` then refuses on a missing receipt (exit 40) instead of accepting silence as evidence. |
+| D-12 | The `assurance` lane exits with a classified code rather than a green no-op where its subject does not exist | A scheduled suite that reports success having checked nothing is worse than one that is red for a stated reason. `admit` then refuses on a missing receipt (exit 40) instead of accepting silence as evidence. Hosted release is private-owned. |
 | D-13 | `github-oidc-role` pins the workflow path through `job_workflow_ref`, not `sub` | GitHub carries the workflow path in `job_workflow_ref` unless subject customization is configured. Plan 14 §8.1 says `sub`; the module pins repo and ref via `sub` and the exact workflow path via `job_workflow_ref`, with no wildcard in either. Documented in that module's README. |
 | D-14 | Example roots carry an `aex.toml` with `role = "composition"` | Fail-closed rule 1 requires every Terraform root to be classified. Without the sidecar `graph verify` would exit `10` on the examples this stream shipped. |
 | D-15 | `aex-release-tool` depends on `aex-workspace-check` and consumes the derived registry rather than deriving a second one | Orchestrator ruling. Two parsers for one metadata block is exactly the drift both crates exist to prevent. `graph verify` adds one check neither authority can do alone: the live-target set the delivery graph derives must equal the one the registry derives, so a disagreement is a failure rather than a silent divergence. |
@@ -387,3 +412,12 @@ regional capacity producer.
    `declares-policy-or-rate-logic`) are declared in the policy and not
    implemented; they are content predicates rather than path globs. The corpus
    test skips them explicitly rather than counting them as covered.
+9. **Public release inputs are not published or attested.** `_build-artifacts.yml`
+   does not yet emit the Linux x86_64 release tool, Terraform module bundle and
+   composition-manifest blobs with exact byte identities and GitHub attestations.
+   Until it does, private immutable acquisition must fail.
+10. **Private roots still use sibling public-module paths.** A hosted plan may
+    satisfy those paths only from the verified module bundle extracted at the
+    fixed path recorded in its saved-plan envelope—never by checking out public
+    source beside `platform`. The private engine refuses planning until those
+    roots are converted.

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aex.dev/release/v1/saved-plan-envelope.json",
+  "title": "aex.saved-plan-envelope.v1",
+  "description": "The immutable identity and freshness boundary around one opaque saved Terraform plan. envelopeDigest is sha256 over RFC 8785 canonical bytes with envelopeDigest removed. The plan is sensitive and remains private.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "envelopeDigest", "releaseId", "bindingDigest", "bindingRef", "placementDigest", "plan", "tool", "sourceArchive", "moduleBundle", "runner", "terraform", "state", "workflow", "createdAt", "expiresAt"],
+  "properties": {
+    "schema": { "const": "aex.saved-plan-envelope.v1" },
+    "envelopeDigest": { "$ref": "#/$defs/sha256" },
+    "releaseId": { "$ref": "#/$defs/sha256" },
+    "bindingDigest": { "$ref": "#/$defs/sha256" },
+    "bindingRef": { "$ref": "#/$defs/sha1" },
+    "placementDigest": { "$ref": "#/$defs/sha256" },
+    "plan": { "$ref": "#/$defs/savedPlanIdentity" },
+    "tool": { "$ref": "#/$defs/toolIdentity" },
+    "sourceArchive": { "$ref": "#/$defs/blobIdentity" },
+    "moduleBundle": { "$ref": "#/$defs/blobIdentity" },
+    "runner": {
+      "description": "Execution compatibility and the fixed paths embedded in Terraform's saved plan.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "workingDirectory", "moduleExtractionPath"],
+      "properties": {
+        "os": { "const": "linux" },
+        "arch": { "const": "x86_64" },
+        "workingDirectory": { "type": "string", "pattern": "^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$" },
+        "moduleExtractionPath": { "type": "string", "pattern": "^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$" }
+      }
+    },
+    "terraform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binary", "root", "rootDigest", "providerLockDigest", "providers"],
+      "properties": {
+        "binary": { "$ref": "#/$defs/toolIdentity" },
+        "root": { "type": "string", "minLength": 1 },
+        "rootDigest": { "$ref": "#/$defs/sha256" },
+        "providerLockDigest": { "$ref": "#/$defs/sha256" },
+        "providers": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["version", "checksum"],
+            "properties": {
+              "version": { "$ref": "#/$defs/version" },
+              "checksum": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "state": { "$ref": "#/$defs/stateSnapshot" },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "repositoryId", "commitSha", "workflowRef", "runId", "runAttempt", "jobName"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "repositoryId": { "type": "string", "pattern": "^[0-9]+$" },
+        "commitSha": { "$ref": "#/$defs/sha1" },
+        "workflowRef": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml@[0-9a-f]{40}$" },
+        "runId": { "type": "string", "pattern": "^[0-9]+$" },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "jobName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "blobIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "sizeBytes"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "savedPlanIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "sizeBytes", "location"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "location": {
+          "description": "Exact encrypted private object to fetch for apply.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bucket", "key", "region", "objectVersionId", "kmsKeyArn"],
+          "properties": {
+            "bucket": { "type": "string", "minLength": 3 },
+            "key": { "type": "string", "minLength": 1 },
+            "region": { "type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]$" },
+            "objectVersionId": { "type": "string", "minLength": 1 },
+            "kmsKeyArn": { "type": "string", "pattern": "^arn:aws[a-z-]*:kms:[a-z]{2}-[a-z]+-[0-9]:[0-9]{12}:key/[A-Za-z0-9/_+=,.@-]+$" }
+          }
+        }
+      }
+    },
+    "toolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest", "sizeBytes"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "stateBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "bucket", "region", "configDigest"],
+      "properties": {
+        "kind": { "const": "s3" },
+        "bucket": { "type": "string", "minLength": 3 },
+        "region": { "type": "string", "pattern": "^[a-z]{2}-[a-z]+-[0-9]$" },
+        "configDigest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "stateSnapshot": {
+      "description": "Exact state observed during planning, including an explicit first-deploy absence.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "backend", "backendKey", "lineage", "serial", "objectVersionId"],
+          "properties": {
+            "status": { "const": "present" },
+            "backend": { "$ref": "#/$defs/stateBackend" },
+            "backendKey": { "type": "string", "minLength": 1 },
+            "lineage": { "type": "string", "minLength": 1 },
+            "serial": { "type": "integer", "minimum": 0 },
+            "objectVersionId": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "backend", "backendKey"],
+          "properties": {
+            "status": { "const": "absent" },
+            "backend": { "$ref": "#/$defs/stateBackend" },
+            "backendKey": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

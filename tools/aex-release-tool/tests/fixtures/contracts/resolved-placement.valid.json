@@ -1,0 +1,28 @@
+{
+  "schema": "aex.resolved-placement.v1",
+  "placementDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "releaseId": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "bindingDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "artifacts": {
+    "central-identity-api": {
+      "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "sizeBytes": 4096,
+      "destination": {
+        "kind": "s3",
+        "bucket": "aex-fixture-artifacts",
+        "key": "sha256/33/33333333333333333333333333333333333333333333333333333333333333",
+        "objectVersionId": "fixture-version-1",
+        "checksumSha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "brain-mux": {
+      "artifactDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "sizeBytes": 8192,
+      "destination": {
+        "kind": "oci",
+        "repository": "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/dev/brain-mux",
+        "manifestDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    }
+  }
+}
