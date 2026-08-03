@@ -357,6 +357,7 @@ kind = "rust-oci-task"
 plane = "central"
 package = "central-schema-admin"
 bin = "central-schema-admin"
+extra_inputs = ["bundle:migration"]
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"

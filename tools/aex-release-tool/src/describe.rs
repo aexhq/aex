@@ -21,11 +21,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
     Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Catalogs, Composition,
-    Identities, Inputs, Licenses, Location, MODEL_CATALOG_COLLECTION_SHA256_VAR, Media, Output,
-    Provenance, ReceiptRef, Retention, Signature, Source, TOOL_CATALOG_SHA256_VAR, Target,
-    Toolchain, UnitIdentity, Vulnerabilities, Workflow,
+    Identities, Inputs, Licenses, Location, MODEL_CATALOG_COLLECTION_SHA256_VAR, Media,
+    MigrationIdentity, Output, Provenance, ReceiptRef, Retention, Signature, Source, Target,
+    Toolchain, UnitIdentity, Vulnerabilities, Workflow, TOOL_CATALOG_SHA256_VAR,
 };
-use crate::error::{Result, io};
+use crate::error::{Exit, Result, ToolError, io};
 use crate::graph::inputs::Unit;
 
 /// The value every field a local build cannot establish carries.
@@ -377,7 +377,7 @@ fn build_envelope(
             telemetry_schema_digest: None,
             config_schema_version: build.unit.config_schema_version,
             config_env_namespace: Some(build.unit.config_env_namespace.clone()),
-            migration: None,
+            migration: migration_identity(&build.unit.id, &build.closure)?,
             catalogs: (build.unit.id == "brain-mux").then(|| Catalogs {
                 model: build
                     .plan
@@ -441,6 +441,40 @@ fn build_envelope(
     .seal()
 }
 
+fn migration_identity(
+    unit: &str,
+    closure: &BTreeMap<String, String>,
+) -> Result<Option<MigrationIdentity>> {
+    if unit != "central-schema-admin" {
+        return Ok(None);
+    }
+    let digest = closure
+        .get("migrations/central/bundle.lock.json")
+        .filter(|digest| {
+            digest
+                .strip_prefix("sha256:")
+                .is_some_and(|value| {
+                    value.len() == 64
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                })
+        })
+        .ok_or_else(|| {
+            ToolError::single(
+                Exit::ArtifactMismatch,
+                "central-migration-identity-missing",
+                "central-schema-admin's input closure must contain the canonical central bundle lock",
+            )
+        })?;
+    Ok(Some(MigrationIdentity {
+        required_central_head: None,
+        central_bundle_digest: Some(digest.clone()),
+        regional_bundle_digest: None,
+        regional_generation: None,
+    }))
+}
+
 fn media_type_of(form: &str) -> &'static str {
     match form {
         "lambda-zip" | "microvm-zip" => "application/zip",
@@ -451,7 +485,9 @@ fn media_type_of(form: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{UNEARNED, target_of};
+    use std::collections::BTreeMap;
+
+    use super::{UNEARNED, migration_identity, target_of};
 
     #[test]
     fn a_rust_triple_with_a_glibc_floor_keeps_the_floor() {
@@ -489,5 +525,31 @@ mod tests {
         assert!(!UNEARNED.starts_with("sha256:"));
         assert!(!UNEARNED.starts_with("https://"));
         assert!(UNEARNED.parse::<u64>().is_err());
+    }
+
+    #[test]
+    fn the_schema_admin_envelope_requires_the_embedded_bundle_identity() {
+        let missing = migration_identity("central-schema-admin", &BTreeMap::new())
+            .expect_err("an image with no central bundle input has no valid envelope");
+        assert!(
+            missing
+                .rules()
+                .contains(&"central-migration-identity-missing")
+        );
+
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let identity = migration_identity(
+            "central-schema-admin",
+            &BTreeMap::from([(
+                "migrations/central/bundle.lock.json".to_owned(),
+                digest.clone(),
+            )]),
+        )
+        .expect("the exact input identity is accepted")
+        .expect("schema admin carries migration identity");
+        assert_eq!(
+            identity.central_bundle_digest.as_deref(),
+            Some(digest.as_str())
+        );
     }
 }

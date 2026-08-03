@@ -46,8 +46,9 @@ Branch: `rw/central-finance`
   trigger, reversal-only mutation guard, customer prepaid balance fence, finance inbox/outbox/effect,
   usage/rating/statement/provider-cost tables, roles, and the public `synthetic-zero-v1` seed.
 - `central-schema-admin`: exact one-shot clap command tree, stable exit codes, native SQLx `Migrator`
-  configured for `schema_admin._sqlx_migrations`, migration header/linearity validation, declarative
-  grant validation, and local canonical plan receipts using advisory lock
+  configured for `schema_admin._sqlx_migrations`, compile-time embedded migration SQL, bundle lock,
+  and grants allowlist, migration header/linearity validation, declarative grant validation, and
+  local canonical plan receipts using advisory lock
   `0x4145585F4D494752` (`4703262552200136530`).
 - `finance-api`: total no-default configuration, role/plane validation, Lambda/axum composition, and
   distinct `/internal/healthz` and `/internal/readyz` behavior. Readiness remains false until the
@@ -390,3 +391,15 @@ that produces the work they exist to repair (F-29).
   revision fences, cursor progression, exact TypeScript/Rust result parity, and failure ambiguity.
   No live provider, Aurora, deployment, or AWS operation was used to earn this implementation
   evidence.
+
+## 2026-08-03 schema-admin image authority
+
+- The production schema-admin path no longer resolves `CARGO_MANIFEST_DIR` at runtime. SQLx forward
+  migrations, the generated bundle lock, every future explicit repair, and `grants.toml` are
+  compile-time inputs to the ELF copied into the minimal OCI image.
+- The artifact graph declares `bundle:migration` as a direct schema-admin input. Artifact description
+  now fails closed if that closure lacks `migrations/central/bundle.lock.json`, and the emitted
+  envelope carries its exact SHA-256 as `identities.migration.centralBundleDigest`.
+- Central migration files are pinned to LF in `.gitattributes`. The bundle lock is therefore an
+  operating-system-independent identity rather than a digest of whichever line endings a release
+  runner checked out.
