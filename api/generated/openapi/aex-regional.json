@@ -5818,6 +5818,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -6146,6 +6147,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -6365,6 +6367,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "invalid_metric_aggregation",
           "account_paused",
           "wrong_workspace_region",
@@ -6585,6 +6588,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -8357,6 +8361,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -9624,6 +9629,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -10199,6 +10205,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "invalid_metric_aggregation",
           "account_paused",
           "wrong_workspace_region",
@@ -10487,6 +10494,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -11605,6 +11613,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -12938,6 +12947,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -13368,6 +13378,7 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -14118,6 +14129,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -15067,6 +15079,16 @@
             },
             "description": "Error."
           },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "429": {
             "content": {
               "application/json": {
@@ -15088,6 +15110,7 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
+          "unsupported_media_type",
           "telemetry_payload_too_large",
           "invalid_telemetry",
           "telemetry_quota_exceeded",
@@ -15178,6 +15201,16 @@
             },
             "description": "Error."
           },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "429": {
             "content": {
               "application/json": {
@@ -15199,6 +15232,7 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
+          "unsupported_media_type",
           "telemetry_payload_too_large",
           "invalid_telemetry",
           "telemetry_quota_exceeded",
@@ -15289,6 +15323,16 @@
             },
             "description": "Error."
           },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "429": {
             "content": {
               "application/json": {
@@ -15310,6 +15354,7 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
+          "unsupported_media_type",
           "telemetry_payload_too_large",
           "invalid_telemetry",
           "telemetry_quota_exceeded",
@@ -15422,6 +15467,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -15750,6 +15796,7 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
+          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"

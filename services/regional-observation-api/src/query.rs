@@ -688,16 +688,10 @@ fn tuple_from_parts(parts: &[String]) -> WireResult<OrderTuple> {
 /// it rather than guess.
 #[must_use]
 pub fn budget_exhausted(dimension: &str, scanned: u32, limit: u32) -> WireError {
-    // `telemetry_query_budget_exhausted` is not a registered code yet, so the
-    // refusal is reported under the nearest registered one with the pending
-    // spelling named in the message rather than silently under a code that means
-    // something else.
-    WireError::new(ErrorCode::LimitExceeded)
+    WireError::new(ErrorCode::TelemetryQueryBudgetExhausted)
         .with_message(format!(
-            "{} ({dimension} exhausted after {scanned} items; narrow the time range, add an \
-             indexed predicate, or use an export)",
-            aex_otlp_admission::wire_pending::PendingErrorCode::TelemetryQueryBudgetExhausted
-                .as_str()
+            "{dimension} exhausted after {scanned} items; narrow the time range, add an indexed \
+             predicate, or use an export"
         ))
         .with_details(ErrorDetails::Limit(aex_wire::models::ErrorDetailsLimit {
             effective: DecimalU128::new(u128::from(limit)),
@@ -741,6 +735,7 @@ mod tests {
     use aex_regional_http::cursor::{
         CursorBinding, CursorKey, CursorKeyRing, CursorRequestBinding, Order, SnapshotToken,
     };
+    use aex_wire::error::ErrorCode;
     use aex_wire::ids::{ObservationId, PrefixedId as _, TelemetryGapId, WorkspaceId};
     use aex_wire::models::{
         ObservationFilter, ObservationFilterCompare, ObservationFilterExists, ObservationOperator,
@@ -750,8 +745,23 @@ mod tests {
     use aex_wire::types::{Region, Timestamp};
 
     use super::{
-        coverage, issue_page, operand, query_digest, resume_page, signal_for, to_predicate,
+        budget_exhausted, coverage, issue_page, operand, query_digest, resume_page, signal_for,
+        to_predicate,
     };
+
+    #[test]
+    fn a_zero_progress_budget_failure_uses_its_exact_non_retryable_409() {
+        let error = budget_exhausted("scanned_items", 50_000, 50_000);
+        assert_eq!(error.code, ErrorCode::TelemetryQueryBudgetExhausted);
+        assert_eq!(error.code.http_status(), 409);
+        assert!(!error.code.retryable());
+        assert!(
+            error
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("scanned_items"))
+        );
+    }
 
     fn instant(millis: i64) -> Timestamp {
         Timestamp::from_unix_millis(millis).expect("fixture instant")

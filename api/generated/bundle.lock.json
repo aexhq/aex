@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:f82dbaa7b8d6277c802be674aefa8b3969f28ceca9e0cc196cf4bda86fecfc6d",
+  "contractDigest": "sha256:27ff123b8074defd5769c3f7cbc70855d6ea869e1745cef8cb9d473cbd700054",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -19,9 +19,9 @@
     "api/openapi/plane.regional.yaml": "sha256:7a8b8d2ea049bdba1fc279e629ab12d76291f978cb2eaab736ea890140ce3a53",
     "api/openapi/regional/approvals.yaml": "sha256:304cbb7402c7ab6a02bee1556698a91abed5d1db36a5a5553a258459c76fc965",
     "api/openapi/regional/files.yaml": "sha256:5801d15cfe730c4a8928e441cb0260322baedb1ab4342ffca4769ee254242ceb",
-    "api/openapi/regional/observations.yaml": "sha256:34a5998982c2f3525ac58dd6ea4d8a285635b743f69a5a49184660149118723c",
+    "api/openapi/regional/observations.yaml": "sha256:3def232c96496d4016e2d83cbf149818b5ce501d9533e8bfb32d0ff9ac2b2576",
     "api/openapi/regional/operations.yaml": "sha256:7447a6ab351f10a93eabf185172c06ff5bfca4616c54b1fb76e51aa7e8298602",
-    "api/openapi/regional/otlp.yaml": "sha256:cff822b4b1ad4355d23a866eeb185a86e87ea074edb737593ab5d11d05c967aa",
+    "api/openapi/regional/otlp.yaml": "sha256:587faff2817620893c909c91c1a642e6cdc302c314e823cf71e93b3eb9ed1f28",
     "api/openapi/regional/provider-credentials.yaml": "sha256:a22d699d4cf14115d08963e64d4ea3c9decc4f1dc4f8a897774ce5059ea8e2ca",
     "api/openapi/regional/registry.yaml": "sha256:523bc7093828b76ca714fe5d52626582734f8cd1a8201aa9792cc9f1d2dd99ad",
     "api/openapi/regional/secrets.yaml": "sha256:83459eddd96955c34d1194e286718a6f58c6deae95369646dc55c880a82d2699",
@@ -37,7 +37,7 @@
     "api/schemas/provider/provider.yaml": "sha256:f6c97911fb900957e2c188f2c1225cc573ffcb86dbe4f8686d70ff2caeb5ecd9",
     "api/schemas/regional/content.yaml": "sha256:e813ec8c26f42c3f15c2736aabd4d8a49883c59bbbdb6c3507d28e10986ad729",
     "api/schemas/regional/sessions.yaml": "sha256:c9ff4b8bc939ad3e858c293b93c6717afa6ad1cf822b9576e736387207b7f4d9",
-    "api/schemas/registries/errors.yaml": "sha256:073db5ff70f53eb4ca1ee51e7693e7cbc3d7862c2abcaca9864cb54913cb13e4",
+    "api/schemas/registries/errors.yaml": "sha256:3247caac696cae1ba2491be3084bc08e08bb06bd4d9e628e28f6c84b41053356",
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",
     "api/schemas/registries/ids.yaml": "sha256:c1a62bd2a71d7cc81e65450c5816e71a3fc1535256e9492c49d6cce8e7d054e2",
     "api/schemas/registries/limits.yaml": "sha256:f7090618ccef5b4ec1edda480a8349c4675855be522b81238116b6e7d4ea955f",

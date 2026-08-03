@@ -24,6 +24,7 @@ errors:
   - { code: invalid_cursor, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the cursor is malformed, expired, or bound to a different query" }
   - { code: invalid_file_selection, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the include or exclude selection is not a valid file selection" }
   - { code: invalid_range, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the byte range is absent, empty, or larger than one grant may sign" }
+  - { code: unsupported_media_type, status: 415, retryable: false, class: validation, stage: transport_envelope, message: "the request Content-Type or Content-Encoding is not supported by this endpoint" }
   - { code: payload_too_large, status: 413, retryable: false, class: validation, stage: transport_envelope, message: "the encoded body exceeded the effective limit" }
   - { code: limit_exceeded, status: 429, retryable: true, class: quota, stage: domain_state, message: "an effective workspace limit was exceeded" }
   - { code: session_not_idle, status: 409, retryable: true, class: state, stage: domain_state, message: "the session must be idle for this operation" }
@@ -44,6 +45,7 @@ errors:
   - { code: export_not_ready, status: 409, retryable: true, class: state, stage: domain_state, message: "the export is still preparing" }
   - { code: export_expired, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the export expired" }
   - { code: export_revoked, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the export was revoked" }
+  - { code: export_capacity, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the export could not reserve its bounded worker capacity", remedy: "retry after capacity is available or select a smaller export" }
   - { code: download_grant_expired, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the download grant expired" }
   - { code: telemetry_payload_too_large, status: 413, retryable: false, class: validation, stage: transport_envelope, message: "the OTLP payload exceeded its effective limit" }
   - { code: invalid_telemetry, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the telemetry payload is not the pinned OTLP revision" }
@@ -51,6 +53,7 @@ errors:
   - { code: telemetry_incomplete, status: 409, retryable: true, class: state, stage: domain_state, message: "the requested range has recorded gaps and completeness was required" }
   - { code: unsupported_export_signal, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "that signal cannot be exported in the requested format" }
   - { code: invalid_query, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the observation query exceeded its structural bounds" }
+  - { code: telemetry_query_budget_exhausted, status: 409, retryable: false, class: quota, stage: domain_state, message: "the observation query exhausted its scan budget before it could make progress", remedy: "narrow the time range, add an indexed predicate, or request an export" }
   - { code: invalid_metric_aggregation, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the metric aggregation is not computable over the selection" }
   - { code: invalid_network_policy, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the requested network policy is not permitted" }
   - { code: unsupported_package_ecosystem, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "that package ecosystem is not supported" }
