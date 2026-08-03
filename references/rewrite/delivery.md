@@ -190,7 +190,7 @@ That red state names missing work; it is not a release receipt.
 All manifests carry ownership metadata. `aex-live-model-catalog` names
 `brain-mux` as its deployable: the catalogue is loaded and enforced inside that
 runtime rather than shipped as a standalone service. The former reference to a
-nonexistent `release/artifact-metadata.toml` is removed, so the live companion
+nonexistent artifact-metadata manifest is removed, so the live companion
 has a real started-artifact subject and `graph verify` no longer reports
 `aex-metadata-missing-deployable`.
 
