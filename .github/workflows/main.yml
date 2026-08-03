@@ -108,8 +108,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      attestations: read
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out the exact public source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
@@ -170,8 +172,10 @@ jobs:
           mkdir public-inputs
           acquire() {
             local uri=$1 digest=$2 size=$3 destination=$4
-            curl --fail --location --proto '=https' --tlsv1.2 --max-filesize "$size" \
-              --output "$destination" "$uri"
+            local asset=${uri##*/}
+            [[ "$asset" == "$(basename "$destination")" ]]
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" --dir "$(dirname "$destination")"
             [[ "$(stat -c '%s' "$destination")" == "$size" ]]
             [[ "sha256:$(sha256sum "$destination" | cut -d' ' -f1)" == "$digest" ]]
             # The source-policy scanner reserves the literal retired runner
@@ -196,26 +200,44 @@ jobs:
           observed_tool_version=$(public-inputs/aex-release-tool --version | awk '{print $2}')
           [[ "$observed_tool_version" == "$RELEASE_TOOL_VERSION" ]]
 
-      - name: Require complete composition evidence
+      - name: Require certified artifact evidence
         run: |
           set -euo pipefail
           shopt -s nullglob
-          status=0
-          if [ ! -f handoff/composition-inputs.json ]; then
-            echo "::error title=Composition inputs missing::No producer emitted handoff/composition-inputs.json from authoritative public release evidence."
-            status=40
-          fi
           certified_envelopes=(
             handoff/blob/artifact-*/certified-envelope.json
             handoff/oci/oci-artifact-*/certified-envelope.json
           )
           if [ ${#certified_envelopes[@]} -eq 0 ]; then
             echo "::error title=Certified envelopes missing::No artifact certification producer emitted a certified-envelope.json; draft envelopes are not release evidence."
-            status=40
+            exit 40
           fi
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
+
+      - name: Derive authoritative composition inputs
+        env:
+          RELEASE_TOOL_VERSION: ${{ needs.build.outputs.release_tool_version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          envelope_files=(
+            handoff/blob/artifact-*/certified-envelope.json
+            handoff/oci/oci-artifact-*/certified-envelope.json
+          )
+          envelope_args=()
+          for envelope in "${envelope_files[@]}"; do
+            envelope_args+=(--envelope "$envelope")
+          done
+          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
+            manifest inputs "${envelope_args[@]}" \
+            --release-tool public-inputs/aex-release-tool \
+            --module-bundle public-inputs/terraform-modules.tar.gz \
+            --regional-tables public-inputs/regional-tables.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --release-tool-version "$RELEASE_TOOL_VERSION" \
+            --out public-inputs/composition-inputs.json
 
       - name: Assemble the complete composition handoff
         run: |
@@ -231,9 +253,61 @@ jobs:
           done
           public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
             manifest handoff "${envelope_args[@]}" \
-            --composition handoff/composition-inputs.json \
+            --composition public-inputs/composition-inputs.json \
             --manifest-out public-inputs/composition-manifest.json \
             --store-out public-inputs/artifact-store.json
+
+      - name: Attest the composition manifest
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: public-inputs/composition-manifest.json
+
+      - name: Attest the artifact store
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: public-inputs/artifact-store.json
+
+      - name: Publish the complete immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          expected_tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          [[ "$RELEASE_TAG" == "$expected_tag" ]]
+          release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,assets)
+          [[ "$(jq -r .isDraft <<<"$release")" == "true" ]]
+          [[ "$(jq -r .isPrerelease <<<"$release")" == "true" ]]
+          for name in composition-manifest.json artifact-store.json; do
+            if jq -e --arg name "$name" '.assets[] | select(.name == $name)' <<<"$release" >/dev/null; then
+              echo "release asset $name already exists; published identities are never replaced" >&2
+              exit 21
+            fi
+          done
+          before=$(jq '.assets | length' <<<"$release")
+          gh release upload "$RELEASE_TAG" \
+            public-inputs/composition-manifest.json \
+            public-inputs/artifact-store.json \
+            --repo "$GITHUB_REPOSITORY"
+          after=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets | length')
+          [[ "$after" -eq $((before + 2)) ]]
+          mkdir public-readback
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern composition-manifest.json --pattern artifact-store.json \
+            --dir public-readback
+          cmp --silent public-inputs/composition-manifest.json \
+            public-readback/composition-manifest.json
+          cmp --silent public-inputs/artifact-store.json \
+            public-readback/artifact-store.json
+          for subject in composition-manifest.json artifact-store.json; do
+            gh attestation verify "public-readback/$subject" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
+              --source-ref refs/heads/main --source-digest "$GITHUB_SHA"
+          done
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease
 
   receipts:
     name: Checks

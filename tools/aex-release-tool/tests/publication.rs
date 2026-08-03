@@ -180,7 +180,7 @@ fn blob_identity_rejects_missing_tampered_and_truncated_inputs() {
 
 fn regional_document(definitions_digest: &str) -> Vec<u8> {
     format!(
-        "{{\"schema\":\"aex.regional-tables.v1\",\"digest\":\"{definitions_digest}\",\"tables\":[{{\"table\":\"sessions\"}}]}}\n"
+        "{{\"schema\":\"aex.regional-tables.v1\",\"generation\":1,\"digest\":\"{definitions_digest}\",\"tables\":[{{\"table\":\"sessions\"}}]}}\n"
     )
     .into_bytes()
 }
@@ -199,6 +199,7 @@ fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
     assert_eq!(identity.digest, canon::digest_bytes(&bytes));
     assert_eq!(identity.size_bytes, bytes.len() as u64);
     assert_eq!(identity.definitions_digest, definitions_digest);
+    assert_eq!(identity.generation, 1);
 
     let acquired = root.path().join("acquired.json");
     fs::write(&acquired, &bytes).unwrap();
@@ -207,6 +208,7 @@ fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
         &identity.digest,
         identity.size_bytes,
         &identity.definitions_digest,
+        identity.generation,
     )
     .unwrap();
     let err = verify_regional_tables_bundle(
@@ -214,6 +216,7 @@ fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
         &identity.digest,
         identity.size_bytes,
         &format!("blake3:{}", "cd".repeat(32)),
+        identity.generation,
     )
     .unwrap_err();
     assert!(err.rules().contains(&"regional-tables-identity"));

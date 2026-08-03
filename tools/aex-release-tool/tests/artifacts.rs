@@ -128,6 +128,8 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
         trust_roots_json,
         collection_file: "release-inputs/model-catalog-collection.json".to_owned(),
         collection_sha256: digest(7),
+        tool_catalog_sha256:
+            "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
     };
     let unstamped = plan(brain).expect("ordinary plan");
     let stamped = plan_with_model_catalog(brain, Some(&inputs)).expect("release plan");
@@ -147,6 +149,10 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
     assert_eq!(
         stamped.env[MODEL_CATALOG_COLLECTION_SHA256_VAR],
         inputs.collection_sha256
+    );
+    assert_eq!(
+        stamped.env[aex_release_tool::artifact::TOOL_CATALOG_SHA256_VAR],
+        inputs.tool_catalog_sha256
     );
     assert_ne!(stamped.digest, unstamped.digest);
 }

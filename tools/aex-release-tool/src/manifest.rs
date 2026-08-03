@@ -473,6 +473,7 @@ impl CompositionManifest {
             &self.migrations.regional.bundle_digest,
             self.migrations.regional.bundle_size_bytes,
             &self.migrations.regional.definitions_digest,
+            self.migrations.regional.generation,
         )
     }
 

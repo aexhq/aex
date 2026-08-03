@@ -1,5 +1,6 @@
 {
   "schema": "aex.regional-tables.v1",
+  "generation": 1,
   "digest": "blake3:30924c7e368871d960a50513bc6ba05b0c1b3e9bcf6d68a8610c510e53303b21",
   "tables": [
     {

@@ -30,12 +30,15 @@ pub struct RegionalTablesIdentity {
     pub size_bytes: u64,
     /// BLAKE3 identity over the canonical table-definition array.
     pub definitions_digest: String,
+    /// Authored monotone regional schema generation.
+    pub generation: u32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RegionalTablesDocument {
     schema: String,
+    generation: u32,
     digest: String,
     tables: Vec<serde_json::Value>,
 }
@@ -434,19 +437,21 @@ pub fn regional_tables_bundle(root: &Path) -> Result<(Vec<u8>, RegionalTablesIde
         )
     })?;
     if document.schema != "aex.regional-tables.v1"
+        || document.generation == 0
         || document.tables.is_empty()
         || !valid_blake3(&document.digest)
     {
         return Err(ToolError::single(
             Exit::Usage,
             "regional-tables-identity",
-            "the generated regional bundle requires schema `aex.regional-tables.v1`, a non-empty table array and one lowercase BLAKE3 digest",
+            "the generated regional bundle requires schema `aex.regional-tables.v1`, a positive generation, a non-empty table array and one lowercase BLAKE3 digest",
         ));
     }
     let identity = RegionalTablesIdentity {
         digest: canon::digest_bytes(&bytes),
         size_bytes: bytes.len() as u64,
         definitions_digest: document.digest,
+        generation: document.generation,
     };
     Ok((bytes, identity))
 }
@@ -462,6 +467,7 @@ pub fn verify_regional_tables_bundle(
     digest: &str,
     size_bytes: u64,
     definitions_digest: &str,
+    generation: u32,
 ) -> Result<()> {
     let bytes = std::fs::read(path).map_err(|err| {
         ToolError::single(
@@ -499,6 +505,8 @@ pub fn verify_regional_tables_bundle(
         )
     })?;
     if document.schema != "aex.regional-tables.v1"
+        || document.generation == 0
+        || document.generation != generation
         || document.tables.is_empty()
         || !valid_blake3(&document.digest)
         || document.digest != definitions_digest

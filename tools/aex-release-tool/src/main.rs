@@ -210,6 +210,8 @@ enum ArtifactCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Print the snapshot-bound immutable tool catalogue identity.
+    ToolCatalog,
     /// Print every build recipe.
     Recipes {
         /// Restrict to one unit.
@@ -509,6 +511,39 @@ enum ManifestCommand {
         /// Where to write the unit-id-to-envelope artifact store.
         #[arg(long)]
         store_out: PathBuf,
+    },
+    /// Derive non-envelope composition identities from source and published bytes.
+    Inputs {
+        /// Certified envelope files, exactly one per registered deployable.
+        #[arg(long = "envelope")]
+        envelopes: Vec<PathBuf>,
+        /// Raw acquired release-tool executable.
+        #[arg(long)]
+        release_tool: PathBuf,
+        /// Acquired deterministic Terraform module bundle.
+        #[arg(long)]
+        module_bundle: PathBuf,
+        /// Acquired generated regional table bundle.
+        #[arg(long)]
+        regional_tables: PathBuf,
+        /// Exact GitHub `owner/repository`.
+        #[arg(long)]
+        repository: String,
+        /// Exact lowercase 40-character source commit.
+        #[arg(long)]
+        commit_sha: String,
+        /// Positive GitHub Actions run id.
+        #[arg(long)]
+        workflow_run_id: String,
+        /// Positive GitHub Actions run attempt.
+        #[arg(long)]
+        workflow_run_attempt: u64,
+        /// Version reported by the acquired release tool.
+        #[arg(long)]
+        release_tool_version: String,
+        /// Where to write canonical `composition-inputs.json`.
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Compare two compositions.
     Diff {
@@ -1074,6 +1109,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
     match command {
         ArtifactCommand::ModuleBundle { out } => run_module_bundle(cli, root, out),
         ArtifactCommand::RegionalTables { out } => run_regional_tables(cli, root, out),
+        ArtifactCommand::ToolCatalog => run_tool_catalog(cli, root),
         ArtifactCommand::Recipes { unit } => {
             let units = read_units(root)?;
             let plans = artifact::release_recipes(&units, root)?;
@@ -1154,6 +1190,18 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
         }
         ArtifactCommand::AssetName { .. } => run_artifact_asset_name(cli, root, command),
     }
+}
+
+fn run_tool_catalog(cli: &Cli, root: &Path) -> Result<()> {
+    let digest = artifact::tool_catalog_digest(root)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "schema": "aex.tool-catalog-identity.v1",
+            "digest": digest,
+            "source": "crates/aex-brain-tool-catalog/src/catalog.rs",
+        }),
+    )
 }
 
 fn run_artifact_describe(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
@@ -1637,6 +1685,38 @@ fn run_manifest_handoff(
     )
 }
 
+fn run_manifest_inputs(
+    cli: &Cli,
+    root: &Path,
+    envelope_paths: &[PathBuf],
+    files: aex_release_tool::composition_inputs::PublicInputFiles<'_>,
+    run: aex_release_tool::composition_inputs::PublicRunIdentity,
+    out: &Path,
+) -> Result<()> {
+    let envelopes = envelope_paths
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<ArtifactEnvelope>>>()?;
+    let registry = read_units(root)?;
+    let (_, authorities) =
+        aex_release_tool::composition_inputs::envelope_authorities(&registry, envelopes)?;
+    let inputs =
+        aex_release_tool::composition_inputs::produce(root, &registry, files, &run, authorities)?;
+    let digest = canon::digest_bytes(&canon::to_file_bytes(&inputs)?);
+    write_canonical(out, &inputs)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "schema": "aex.composition-inputs.v1",
+            "digest": digest,
+            "packages": inputs.packages.len(),
+            "catalogs": inputs.catalogs.len(),
+            "providers": inputs.infra.provider_versions.len(),
+            "path": out.display().to_string(),
+        }),
+    )
+}
+
 fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
     match command {
         ManifestCommand::New {
@@ -1651,6 +1731,35 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             manifest_out,
             store_out,
         } => run_manifest_handoff(cli, root, envelopes, composition, manifest_out, store_out),
+        ManifestCommand::Inputs {
+            envelopes,
+            release_tool,
+            module_bundle,
+            regional_tables,
+            repository,
+            commit_sha,
+            workflow_run_id,
+            workflow_run_attempt,
+            release_tool_version,
+            out,
+        } => run_manifest_inputs(
+            cli,
+            root,
+            envelopes,
+            aex_release_tool::composition_inputs::PublicInputFiles {
+                release_tool,
+                module_bundle,
+                regional_tables,
+            },
+            aex_release_tool::composition_inputs::PublicRunIdentity {
+                repository: repository.clone(),
+                commit_sha: commit_sha.clone(),
+                workflow_run_id: workflow_run_id.clone(),
+                workflow_run_attempt: *workflow_run_attempt,
+                release_tool_version: release_tool_version.clone(),
+            },
+            out,
+        ),
         ManifestCommand::Diff { from, to } => {
             let from: CompositionManifest = read_json(from)?;
             let to: CompositionManifest = read_json(to)?;

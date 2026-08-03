@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::canon;
@@ -77,6 +78,8 @@ pub struct ModelCatalogBuildInputs {
     pub collection_file: String,
     /// SHA-256 of the exact collection bytes.
     pub collection_sha256: String,
+    /// SHA-256 of the immutable built-in tool catalogue compiled into Brain.
+    pub tool_catalog_sha256: String,
 }
 
 /// Build-time canonical publisher trust-root-set variable.
@@ -87,6 +90,8 @@ pub const MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR: &str = "AEX_MODEL_CATALOG_TRUST_
 pub const MODEL_CATALOG_COLLECTION_FILE_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_FILE";
 /// Build-time exact collection digest variable.
 pub const MODEL_CATALOG_COLLECTION_SHA256_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
+/// Build-time exact built-in tool catalogue digest variable.
+pub const TOOL_CATALOG_SHA256_VAR: &str = "AEX_TOOL_CATALOG_SHA256";
 
 const MODEL_CATALOG_TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
 const MAX_MODEL_CATALOG_TRUST_ROOTS: usize = 8;
@@ -305,6 +310,10 @@ pub fn plan_with_model_catalog(
             MODEL_CATALOG_COLLECTION_SHA256_VAR.to_owned(),
             catalog.collection_sha256.clone(),
         );
+        build.env.insert(
+            TOOL_CATALOG_SHA256_VAR.to_owned(),
+            catalog.tool_catalog_sha256.clone(),
+        );
         build.digest = build_plan_digest(&build)?;
     }
     Ok(build)
@@ -327,25 +336,28 @@ pub fn model_catalog_inputs_from_environment(
             nonempty_environment(MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR),
             nonempty_environment(MODEL_CATALOG_COLLECTION_FILE_VAR),
             nonempty_environment(MODEL_CATALOG_COLLECTION_SHA256_VAR),
+            nonempty_environment(TOOL_CATALOG_SHA256_VAR),
         ],
     )
 }
 
 fn model_catalog_inputs(
     workspace_root: &Path,
-    bindings: [Option<String>; 4],
+    bindings: [Option<String>; 5],
 ) -> Result<Option<ModelCatalogBuildInputs>> {
     let [
         trust_roots_json,
         trust_roots_sha256,
         collection_file,
         collection_sha256,
+        tool_catalog_sha256,
     ] = bindings;
     let present = [
         trust_roots_json.is_some(),
         trust_roots_sha256.is_some(),
         collection_file.is_some(),
         collection_sha256.is_some(),
+        tool_catalog_sha256.is_some(),
     ];
     if present.iter().any(|value| *value) && !present.iter().all(|value| *value) {
         return Err(ToolError::single(
@@ -354,8 +366,9 @@ fn model_catalog_inputs(
             format!(
                 "{MODEL_CATALOG_TRUST_ROOTS_JSON_VAR}, \
                  {MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR}, \
-                 {MODEL_CATALOG_COLLECTION_FILE_VAR} and \
-                 {MODEL_CATALOG_COLLECTION_SHA256_VAR} must be supplied together"
+                 {MODEL_CATALOG_COLLECTION_FILE_VAR}, \
+                 {MODEL_CATALOG_COLLECTION_SHA256_VAR} and \
+                 {TOOL_CATALOG_SHA256_VAR} must be supplied together"
             ),
         ));
     }
@@ -364,11 +377,13 @@ fn model_catalog_inputs(
         Some(trust_roots_sha256),
         Some(collection_file),
         Some(collection_sha256),
+        Some(tool_catalog_sha256),
     ) = (
         trust_roots_json,
         trust_roots_sha256,
         collection_file,
         collection_sha256,
+        tool_catalog_sha256,
     )
     else {
         return Ok(None);
@@ -378,8 +393,20 @@ fn model_catalog_inputs(
         trust_roots_sha256,
         collection_file,
         collection_sha256,
+        tool_catalog_sha256,
     };
     validate_model_catalog_build_inputs(&inputs)?;
+    let actual_tool_catalog = tool_catalog_digest(workspace_root)?;
+    if inputs.tool_catalog_sha256 != actual_tool_catalog {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "tool-catalog-build-digest-mismatch",
+            format!(
+                "the release-bound tool catalogue is {actual_tool_catalog}, not {}",
+                inputs.tool_catalog_sha256
+            ),
+        ));
+    }
     let canonical_root = std::fs::canonicalize(workspace_root)
         .map_err(|error| io(&workspace_root.display().to_string(), &error))?;
     let logical_collection = workspace_root.join(&inputs.collection_file);
@@ -478,6 +505,7 @@ fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Resu
         MODEL_CATALOG_COLLECTION_SHA256_VAR,
         &inputs.collection_sha256,
     )?;
+    validate_sha256(TOOL_CATALOG_SHA256_VAR, &inputs.tool_catalog_sha256)?;
     if inputs.trust_roots_json.len() > MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES {
         return Err(ToolError::single(
             Exit::Usage,
@@ -543,6 +571,37 @@ fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Resu
         ));
     }
     Ok(())
+}
+
+/// Read the snapshot-bound immutable tool-catalogue digest from Brain source.
+///
+/// The catalogue crate proves in its property suite that this constant equals
+/// the SHA-256 of its canonical built-in rows. Reading the source constant here
+/// avoids coupling the small release tool to Brain's runtime dependency graph.
+///
+/// # Errors
+/// Returns a classified refusal if the source omits or ambiguously declares
+/// the snapshot identity.
+pub fn tool_catalog_digest(workspace_root: &Path) -> Result<String> {
+    let path = workspace_root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
+    let source =
+        std::fs::read_to_string(&path).map_err(|error| io(&path.display().to_string(), &error))?;
+    let pattern = Regex::new(
+        r#"(?s)pub\s+const\s+BUILTIN_CATALOG_DIGEST\s*:\s*&str\s*=\s*"(sha256:[0-9a-f]{64})"\s*;"#,
+    )
+    .expect("static tool catalogue identity regex");
+    let digests = pattern
+        .captures_iter(&source)
+        .map(|capture| capture[1].to_owned())
+        .collect::<Vec<_>>();
+    if digests.len() != 1 {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "tool-catalog-snapshot-ambiguous",
+            "Brain source must declare exactly one lowercase snapshot-bound tool catalogue digest",
+        ));
+    }
+    Ok(digests[0].clone())
 }
 
 fn validate_workspace_relative_path(path: &str) -> Result<()> {
@@ -1770,17 +1829,29 @@ alarm_spec = "regional-session-api"
         .expect("canonical trust roots")
     }
 
-    fn bindings(root: &std::path::Path) -> [Option<String>; 4] {
+    fn bindings(root: &std::path::Path) -> [Option<String>; 5] {
         let relative = "release-inputs/catalog.json";
         let collection = root.join(relative);
         std::fs::create_dir_all(collection.parent().expect("collection parent")).unwrap();
         std::fs::write(&collection, b"signed collection").unwrap();
+        let catalog_source = root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
+        std::fs::create_dir_all(catalog_source.parent().expect("catalog parent")).unwrap();
+        std::fs::write(
+            catalog_source,
+            "pub const BUILTIN_CATALOG_DIGEST: &str = \
+             \"sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec\";",
+        )
+        .unwrap();
         let roots = trust_roots();
         [
             Some(roots.clone()),
             Some(canon::digest_bytes(roots.as_bytes())),
             Some(relative.to_owned()),
             Some(canon::digest_bytes(b"signed collection")),
+            Some(
+                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
+                    .to_owned(),
+            ),
         ]
     }
 
@@ -1834,7 +1905,7 @@ alarm_spec = "regional-session-api"
     fn partial_and_digest_mismatched_release_inputs_fail_closed() {
         let temp = tempfile::tempdir().unwrap();
         let roots = trust_roots();
-        let error = model_catalog_inputs(temp.path(), [Some(roots), None, None, None])
+        let error = model_catalog_inputs(temp.path(), [Some(roots), None, None, None, None])
             .expect_err("partial inputs must fail");
         assert_eq!(error.rules(), vec!["model-catalog-build-binding-partial"]);
 
@@ -1898,6 +1969,8 @@ alarm_spec = "regional-session-api"
             trust_roots_json: unsorted,
             collection_file: "release-inputs/catalog.json".to_owned(),
             collection_sha256: canon::digest_bytes(b"signed collection"),
+            tool_catalog_sha256:
+                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
         };
         let error = plan_with_model_catalog(&brain_unit(), Some(&inputs))
             .expect_err("unsorted roots must fail");
@@ -1908,6 +1981,8 @@ alarm_spec = "regional-session-api"
             trust_roots_json: format!("{roots}\n"),
             collection_file: "release-inputs/catalog.json".to_owned(),
             collection_sha256: canon::digest_bytes(b"signed collection"),
+            tool_catalog_sha256:
+                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
         };
         let error = plan_with_model_catalog(&brain_unit(), Some(&noncanonical))
             .expect_err("trailing bytes must fail");

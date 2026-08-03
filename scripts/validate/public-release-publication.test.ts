@@ -53,10 +53,7 @@ describe("public main-push publication", () => {
     expect(source).toContain('if [ "$oci_count" -ne 5 ]');
     expect(source).toContain("push-by-digest=true");
     expect(source).toContain("subject-digest: ${{ steps.publish_oci.outputs.digest }}");
-    expect(source).toContain("gh release edit \"$tag\" --repo \"$GITHUB_REPOSITORY\" --draft=false --prerelease");
-    expect(source.indexOf("gh release upload \"$tag\"")).toBeLessThan(
-      source.indexOf("gh release edit \"$tag\"")
-    );
+    expect(source).not.toContain("gh release edit \"$tag\"");
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
     expect(source).toContain("secrets.AEX_GHCR_VISIBILITY_BOOTSTRAP");
     expect(read(".github/workflows/main.yml")).toContain('"--deny-${denied_runner_class}-runners"');
@@ -71,11 +68,14 @@ describe("public main-push publication", () => {
     expect(source).toContain("dist/regional-tables.json");
   });
 
-  test("composition handoff refuses missing inputs and draft envelopes", () => {
+  test("composition handoff derives inputs and publishes only after certified envelopes", () => {
     const source = read(".github/workflows/main.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
     const evidence = workflow.jobs.manifest.steps.find(
-      (step: { readonly name?: string }) => step.name === "Require complete composition evidence"
+      (step: { readonly name?: string }) => step.name === "Require certified artifact evidence"
+    );
+    const produce = workflow.jobs.manifest.steps.find(
+      (step: { readonly name?: string }) => step.name === "Derive authoritative composition inputs"
     );
     const assemble = workflow.jobs.manifest.steps.find(
       (step: { readonly name?: string }) => step.name === "Assemble the complete composition handoff"
@@ -84,12 +84,14 @@ describe("public main-push publication", () => {
     expect(source).toContain("REGIONAL_TABLES_DEFINITIONS_DIGEST");
     expect(source).toContain("pattern: artifact-*");
     expect(source).toContain("pattern: oci-artifact-*");
-    expect(evidence?.run).toContain("if [ ! -f handoff/composition-inputs.json ]");
-    expect(evidence?.run).toContain("status=40");
     expect(evidence?.run).toContain("certified-envelope.json");
     expect(evidence?.run).toContain("draft envelopes are not release evidence");
+    expect(produce?.run).toContain("manifest inputs");
+    expect(produce?.run).toContain("--repository \"$GITHUB_REPOSITORY\"");
+    expect(produce?.run).toContain("--commit-sha \"$GITHUB_SHA\"");
+    expect(produce?.run).toContain("--out public-inputs/composition-inputs.json");
     expect(source).toContain("manifest handoff");
-    expect(source).toContain("--composition handoff/composition-inputs.json");
+    expect(source).toContain("--composition public-inputs/composition-inputs.json");
     expect(read("tools/aex-release-tool/src/main.rs")).toContain(
       '"handoff-composition-inputs-missing"'
     );
@@ -97,5 +99,18 @@ describe("public main-push publication", () => {
     expect(assemble?.run).not.toContain("draft-envelope.json");
     expect(source).toContain("--manifest-out public-inputs/composition-manifest.json");
     expect(source).toContain("--store-out public-inputs/artifact-store.json");
+    expect(workflow.jobs.manifest.permissions).toEqual({
+      contents: "write",
+      "id-token": "write",
+      attestations: "write",
+      "artifact-metadata": "write"
+    });
+    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(2);
+    expect(source).toContain("gh release upload \"$RELEASE_TAG\"");
+    expect(source).toContain("gh release edit \"$RELEASE_TAG\"");
+    expect(source.indexOf("gh release upload \"$RELEASE_TAG\"")).toBeLessThan(
+      source.indexOf("gh release edit \"$RELEASE_TAG\"")
+    );
+    expect(source).not.toContain("--clobber");
   });
 });

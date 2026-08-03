@@ -20,9 +20,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
-    Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Composition, Identities,
-    Inputs, Licenses, Location, Media, Output, Provenance, ReceiptRef, Retention, Signature,
-    Source, Target, Toolchain, UnitIdentity, Vulnerabilities, Workflow,
+    Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Catalogs, Composition,
+    Identities, Inputs, Licenses, Location, MODEL_CATALOG_COLLECTION_SHA256_VAR, Media, Output,
+    Provenance, ReceiptRef, Retention, Signature, Source, TOOL_CATALOG_SHA256_VAR, Target,
+    Toolchain, UnitIdentity, Vulnerabilities, Workflow,
 };
 use crate::error::{Result, io};
 use crate::graph::inputs::Unit;
@@ -377,7 +378,14 @@ fn build_envelope(
             config_schema_version: build.unit.config_schema_version,
             config_env_namespace: Some(build.unit.config_env_namespace.clone()),
             migration: None,
-            catalogs: None,
+            catalogs: (build.unit.id == "brain-mux").then(|| Catalogs {
+                model: build
+                    .plan
+                    .env
+                    .get(MODEL_CATALOG_COLLECTION_SHA256_VAR)
+                    .cloned(),
+                tool: build.plan.env.get(TOOL_CATALOG_SHA256_VAR).cloned(),
+            }),
         },
         composition: Composition {
             minimum: Vec::new(),

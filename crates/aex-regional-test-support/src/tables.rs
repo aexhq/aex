@@ -23,6 +23,13 @@ pub const TABLE_SCHEMA: &str = "aex.regional-table.v1";
 /// The schema identifier the generated bundle declares.
 pub const BUNDLE_SCHEMA: &str = "aex.regional-tables.v1";
 
+/// Monotone generation of the regional table contract.
+///
+/// This is the first prelaunch generation. Increment it only when a new
+/// generated table contract must not be admitted as the same regional schema
+/// generation as its predecessor.
+pub const BUNDLE_GENERATION: u32 = 1;
+
 /// Why a table definition could not be read, validated or bundled.
 #[derive(Debug, thiserror::Error)]
 pub enum TableError {
@@ -292,6 +299,8 @@ pub struct TableDefinition {
 pub struct TableBundle {
     /// Bundle schema identifier.
     pub schema: String,
+    /// Authored monotone regional schema generation.
+    pub generation: u32,
     /// `blake3:<64 hex>` over the rendered table array.
     pub digest: String,
     /// Every table, ordered by logical name.
@@ -526,6 +535,7 @@ pub fn bundle(tables: Vec<TableDefinition>) -> TableBundle {
     let digest = blake3::hash(body.as_bytes());
     TableBundle {
         schema: BUNDLE_SCHEMA.to_owned(),
+        generation: BUNDLE_GENERATION,
         digest: format!("blake3:{}", hex::encode(digest.as_bytes())),
         tables,
     }
@@ -984,6 +994,7 @@ mod tests {
     fn the_bundle_digest_is_stable_across_two_builds() {
         let first = rebuild().expect("the bundle rebuilds");
         let second = rebuild().expect("the bundle rebuilds");
+        assert_eq!(first.generation, 1);
         assert_eq!(first.digest, second.digest);
         assert!(first.digest.starts_with("blake3:"));
         assert_eq!(first.digest.len(), "blake3:".len() + 64);

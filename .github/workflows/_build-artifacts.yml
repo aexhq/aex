@@ -140,6 +140,15 @@ jobs:
             artifact oci-source-clean \
             --out "$RELEASE_DIR/source-clean-before-plan.json"
 
+      - name: Bind the immutable Brain tool catalogue
+        if: ${{ matrix.name == 'brain-mux' }}
+        run: |
+          set -euo pipefail
+          identity=$(cargo run --locked --release -p aex-release-tool -- \
+            artifact tool-catalog)
+          digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$identity")
+          echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
+
       - name: Print the recipe
         id: recipe
         env:
@@ -755,7 +764,7 @@ jobs:
         with:
           subject-path: dist/regional-tables.json
 
-      - name: Create immutable public prerelease
+      - name: Create immutable draft release candidate
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -792,7 +801,6 @@ jobs:
             --json assets --jq '.assets | length')
           expected_count=$((3 + blob_count))
           [[ "$observed_count" -eq "$expected_count" ]]
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
           echo "release_tool_uri=$base/aex-release-tool" >> "$GITHUB_OUTPUT"
