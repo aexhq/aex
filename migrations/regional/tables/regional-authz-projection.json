@@ -29,7 +29,7 @@
     "appliesTo": [],
     "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
   },
-  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "key_revocation", "feed_frontier"],
+  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "key_revocation", "feed_frontier"],
   "iam": [
     {
       "role": "central-control-worker",
@@ -49,9 +49,9 @@
     },
     {
       "role": "regional-capacity-controller",
-      "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
+      "actions": ["dynamodb:TransactWriteItems"],
       "resources": ["table"],
-      "itemTypes": ["workspace_limit"],
+      "itemTypes": ["workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle"],
       "condition": {
         "operator": "ForAllValues:StringLike",
         "key": "dynamodb:LeadingKeys",

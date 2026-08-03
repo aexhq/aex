@@ -21,6 +21,7 @@ use axum::routing::{MethodFilter, on};
 
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
+use aex_regional_http::capacity::CapacityProjection;
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::AdmissionRequest;
 #[cfg(not(test))]
@@ -49,6 +50,7 @@ pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalObservation;
 pub type Edge = RegionalEdge<
     LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
+    CapacityProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 

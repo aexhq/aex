@@ -237,6 +237,7 @@ fn context(request_id: RequestId, route_id: RouteId, if_match: Option<ETag>) -> 
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 1_048_576,
         },

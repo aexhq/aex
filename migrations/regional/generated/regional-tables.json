@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:30924c7e368871d960a50513bc6ba05b0c1b3e9bcf6d68a8610c510e53303b21",
+  "digest": "blake3:6df06d40a65cda62fa699f670fb315d8556e5738f1e9233940ff0066ea7a8ef1",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -450,6 +450,8 @@
         "workspace_placement",
         "workspace_profile",
         "workspace_limit",
+        "workspace_limit_bundle_head",
+        "workspace_limit_bundle",
         "key_revocation",
         "feed_frontier"
       ],
@@ -490,14 +492,15 @@
         {
           "role": "regional-capacity-controller",
           "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:PutItem"
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
           ],
           "itemTypes": [
-            "workspace_limit"
+            "workspace_limit",
+            "workspace_limit_bundle_head",
+            "workspace_limit_bundle"
           ],
           "condition": {
             "operator": "ForAllValues:StringLike",
@@ -582,6 +585,78 @@
       "tags": {
         "aex:component": "authz-projection",
         "aex:data-class": "projection",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-capacity-authority",
+      "owner": "regional-stores",
+      "purpose": "Durable per-workspace shared-safety capacity authority. One complete workspace_capacity row carries the current defaults revision/digest, monotonic authority revision and regional capacity fence; immutable capacity_audit rows retain every committed decision identity. The controller atomically writes this authority together with the complete public effective-limit projection.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAuthority": "regional-capacity",
+        "rationale": "Capacity decisions are a regional authority with a distinct write role and recovery boundary; they must not share the session or authorization-projection key authority."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [],
+      "stream": {
+        "enabled": false,
+        "viewType": "NONE",
+        "consumers": [],
+        "rationale": "Capacity commands are explicit direct invokes and publish their serving projection in the same transaction; there is no asynchronous second writer to catch up."
+      },
+      "timeToLive": {
+        "enabled": false,
+        "attribute": "",
+        "appliesTo": [],
+        "rationale": "An expired authority or audit row would either fail every request or erase the evidence for an override, so neither family is TTL data."
+      },
+      "itemTypes": [
+        "workspace_capacity",
+        "capacity_audit"
+      ],
+      "iam": [
+        {
+          "role": "regional-capacity-controller",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "WS#*"
+            ]
+          }
+        }
+      ],
+      "tags": {
+        "aex:component": "capacity",
+        "aex:data-class": "authority",
         "aex:plane": "regional"
       }
     },

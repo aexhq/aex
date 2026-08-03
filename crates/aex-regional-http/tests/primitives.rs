@@ -95,6 +95,7 @@ fn request_context() -> RequestContext {
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 8 * 1024 * 1024,
         },

@@ -1,0 +1,46 @@
+{
+  "schema": "aex.regional-table.v1",
+  "table": "regional-capacity-authority",
+  "owner": "regional-stores",
+  "purpose": "Durable per-workspace shared-safety capacity authority. One complete workspace_capacity row carries the current defaults revision/digest, monotonic authority revision and regional capacity fence; immutable capacity_audit rows retain every committed decision identity. The controller atomically writes this authority together with the complete public effective-limit projection.",
+  "billingMode": "PAY_PER_REQUEST",
+  "deletionProtection": true,
+  "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
+  "serverSideEncryption": {
+    "type": "KMS",
+    "keyAuthority": "regional-capacity",
+    "rationale": "Capacity decisions are a regional authority with a distinct write role and recovery boundary; they must not share the session or authorization-projection key authority."
+  },
+  "attributes": [
+    { "name": "pk", "type": "S" },
+    { "name": "sk", "type": "S" }
+  ],
+  "keySchema": { "partition": "pk", "sort": "sk" },
+  "globalSecondaryIndexes": [],
+  "stream": {
+    "enabled": false,
+    "viewType": "NONE",
+    "consumers": [],
+    "rationale": "Capacity commands are explicit direct invokes and publish their serving projection in the same transaction; there is no asynchronous second writer to catch up."
+  },
+  "timeToLive": {
+    "enabled": false,
+    "attribute": "",
+    "appliesTo": [],
+    "rationale": "An expired authority or audit row would either fail every request or erase the evidence for an override, so neither family is TTL data."
+  },
+  "itemTypes": ["workspace_capacity", "capacity_audit"],
+  "iam": [
+    {
+      "role": "regional-capacity-controller",
+      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
+      "resources": ["table"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["WS#*"]
+      }
+    }
+  ],
+  "tags": { "aex:plane": "regional", "aex:component": "capacity", "aex:data-class": "authority" }
+}

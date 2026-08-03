@@ -29,6 +29,9 @@ pub type Edge = RegionalEdge<
     aex_regional_http::authz::RegionalProjection<
         aex_session_dynamodb::projection::ProjectionReader,
     >,
+    aex_regional_http::capacity::CapacityProjection<
+        aex_session_dynamodb::projection::ProjectionReader,
+    >,
     SystemClock,
 >;
 

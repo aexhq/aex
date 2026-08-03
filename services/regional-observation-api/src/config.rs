@@ -239,6 +239,7 @@ impl Config {
     pub fn effective_limits(&self) -> aex_regional_http::context::EffectiveLimits {
         aex_regional_http::context::EffectiveLimits {
             json_body_bytes: aex_wire::dispatch::RequestLimits::DEFAULT_JSON_BODY_BYTES,
+            otlp_body_bytes: aex_wire::dispatch::RequestLimits::DEFAULT_OTLP_BODY_BYTES,
             query_page_items: self.budget.max_returned as usize,
             query_page_bytes: usize::try_from(self.budget.max_bytes_read).unwrap_or(usize::MAX),
         }
