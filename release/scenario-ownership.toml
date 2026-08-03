@@ -57,7 +57,11 @@ observes = ["artifact:central-authz"]
 [[scenario]]
 id = "SC-CONTROL-WORKSPACE"
 owner = "central-identity"
-observes = ["artifact:central-control-api", "artifact:central-control-worker"]
+observes = [
+  "artifact:central-control-api",
+  "artifact:central-control-worker",
+  "artifact:regional-capacity-controller",
+]
 
 [scenario.prd]
 rule = "deployable_write"

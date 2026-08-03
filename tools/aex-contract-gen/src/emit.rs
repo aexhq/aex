@@ -990,7 +990,17 @@ fn rust_limits(ir: &ContractIr, digest: &str) -> String {
             .map(|dimension| quote(dimension))
             .collect::<Vec<_>>()
             .join(", ");
-        source.arm(12, &row.variant, &format!("&[{dimensions}]"));
+        let value = format!("&[{dimensions}]");
+        let line_width = 12 + "Self::".len() + row.variant.len() + " => ".len() + value.len() + 1;
+        if line_width <= 100 {
+            source.arm(12, &row.variant, &value);
+        } else {
+            source.line(&format!("            Self::{} => &[", row.variant));
+            for dimension in &row.dimensions {
+                source.line(&format!("                {},", quote(dimension)));
+            }
+            source.line("            ],");
+        }
     }
     source.line("        }");
     source.line("    }");

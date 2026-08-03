@@ -8,12 +8,12 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 44,
+    "awaiting_owner": 45,
     "capacity_gates": 19,
-    "live_targets": 35,
-    "packages": 144,
-    "seams_claimed": 33,
-    "seams_declared": 35,
+    "live_targets": 36,
+    "packages": 147,
+    "seams_claimed": 32,
+    "seams_declared": 34,
     "workloads": 8
   },
   "packages": {
@@ -480,6 +480,47 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
+    "crates/aex-capacity-dynamodb": {
+      "name": "aex-capacity-dynamodb",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-stores",
+        "role": "adapter",
+        "artifact": "none",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.condition",
+          "aws.iam.denial"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "concurrency",
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {
+          "defaults": "unit",
+          "model": "unit",
+          "store": "unit"
+        },
+        "not_applicable": {
+          "integration": "the transaction request and ambiguity resolver use deterministic SDK replay; the workspace has no approved DynamoDB Local harness",
+          "live_suite": "the adapter is exercised through regional-capacity-controller's live companion"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "crates/aex-central-http": {
       "name": "aex-central-http",
       "kind": "cargo",
@@ -598,7 +639,6 @@
         ],
         "seams": [
           "aws.s3.conditional_put",
-          "aws.s3.bounded_get",
           "aws.s3.multipart",
           "aws.s3.unversioned_delete",
           "aws.s3.presigned_expiry",
@@ -3704,6 +3744,41 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
+    "tests/live/aex-live-regional-capacity-controller": {
+      "name": "aex-live-regional-capacity-controller",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "regional-capacity-controller",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "iam",
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "live evidence requires the private regional deployment composition"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
+    },
     "tests/live/aex-live-regional-control": {
       "name": "aex-live-regional-control",
       "kind": "cargo",
@@ -3910,7 +3985,6 @@
           "aws.dynamodb.ttl",
           "aws.iam.denial",
           "aws.kms.encryption_context",
-          "aws.s3.bounded_get",
           "aws.s3.conditional_put",
           "aws.s3.multipart",
           "aws.s3.presigned_expiry",
@@ -4880,6 +4954,45 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
+    "workers/regional-capacity-controller": {
+      "name": "regional-capacity-controller",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "deployable",
+        "artifact": "lambda_zip",
+        "deployable": "regional-capacity-controller",
+        "live_suite": "aex-live-regional-capacity-controller",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.transact_write",
+          "aws.lambda.microvm",
+          "aws.iam.denial"
+        ],
+        "security_tier": "authority",
+        "risk": [
+          "iam",
+          "concurrency"
+        ],
+        "scenarios": [],
+        "targets": {
+          "composition": "unit"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "workers/regional-control": {
       "name": "regional-control",
       "kind": "cargo",
@@ -5214,6 +5327,7 @@
     "aex-live-observation-export-task",
     "aex-live-observation-reconciler",
     "aex-live-provider-cost-reconciler",
+    "aex-live-regional-capacity-controller",
     "aex-live-regional-control",
     "aex-live-regional-observation-api",
     "aex-live-regional-otlp",
@@ -5276,6 +5390,7 @@
     ],
     "aws.dynamodb.transact_write": [
       "aex-live-brain-mux",
+      "aex-live-regional-capacity-controller",
       "aex-live-regional-observation-api",
       "aex-live-regional-otlp",
       "aex-live-regional-session-api",
@@ -5312,6 +5427,7 @@
       "aex-live-observation-export-task",
       "aex-live-observation-reconciler",
       "aex-live-provider-cost-reconciler",
+      "aex-live-regional-capacity-controller",
       "aex-live-regional-control",
       "aex-live-regional-observation-api",
       "aex-live-regional-otlp",
@@ -5353,9 +5469,6 @@
       "aex-live-finance-settlement-worker",
       "aex-live-provider-cost-reconciler",
       "aex-live-usage-receipt-dispatcher"
-    ],
-    "aws.s3.bounded_get": [
-      "aex-live-regional-session-api"
     ],
     "aws.s3.conditional_put": [
       "aex-live-brain-mux",

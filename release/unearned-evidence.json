@@ -176,6 +176,13 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "live evidence requires the private regional deployment composition"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-observation-api",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -904,6 +911,20 @@
   },
   {
     "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-control",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -1249,6 +1270,20 @@
     "reason_class": "requires_deployment",
     "subject": "workers/provider-cost-reconciler",
     "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "workers/regional-capacity-controller",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -1471,6 +1506,27 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "crates/aex-capacity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-capacity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-capacity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "crates/aex-central-runtime",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
@@ -1489,13 +1545,6 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-content-aws",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -2766,6 +2815,20 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-control",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -2945,13 +3008,6 @@
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -3393,6 +3449,27 @@
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "workers/regional-capacity-controller",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
