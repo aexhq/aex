@@ -6,6 +6,7 @@ import {
   classifyStripeFailure,
   providerRequestOptions,
 } from "../src/edge.js";
+import { paymentResultFromFailure } from "../src/handler.js";
 
 describe("pinned Stripe boundary", () => {
   test("pins the API and disables hidden SDK retries", () => {
@@ -22,7 +23,40 @@ describe("pinned Stripe boundary", () => {
     expect(classifyStripeFailure({ statusCode: 503, requestId: "req_1" })).toEqual({
       outcome: "indeterminate",
       reason: "provider_5xx",
+      status: 503,
       providerRequestId: "req_1",
+    });
+  });
+
+  test("maps provider observations onto the exact Rust PaymentResult shape", () => {
+    expect(
+      paymentResultFromFailure("eff_1", {
+        outcome: "rejected",
+        code: "card_declined",
+        declineCode: "insufficient_funds",
+        errorType: "StripeCardError",
+        apiVersion: STRIPE_API_VERSION,
+      }),
+    ).toEqual({
+      outcome: "failed",
+      effect: "eff_1",
+      failure: {
+        class: "card_declined",
+        providerCode: "card_declined",
+        declineCode: "insufficient_funds",
+        retryable: false,
+      },
+    });
+    expect(
+      paymentResultFromFailure("eff_1", {
+        outcome: "indeterminate",
+        reason: "provider_5xx",
+        status: 502,
+      }),
+    ).toEqual({
+      outcome: "unknown",
+      effect: "eff_1",
+      evidence: { evidence: "server_error", status: 502 },
     });
   });
 

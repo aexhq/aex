@@ -3916,11 +3916,15 @@ name = "finance-reconcile"
 version = "0.1.0"
 dependencies = [
  "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-telemetry",
  "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
  "async-trait",
  "aws-config",
+ "aws-sdk-lambda",
  "aws-sdk-rdsdata",
  "aws-sdk-sns",
  "lambda_runtime",

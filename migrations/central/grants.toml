@@ -262,6 +262,7 @@ tables = [
   "finance.journal_posting:SELECT,INSERT",
   "finance.provider_effect:SELECT,UPDATE",
   "finance.provider_event_inbox:SELECT",
+  "finance.reconcile_cursor:SELECT,INSERT,UPDATE,DELETE",
   "finance.receipt_outbox:SELECT,UPDATE",
   "finance.statement:SELECT,INSERT,UPDATE",
 ]

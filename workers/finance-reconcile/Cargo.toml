@@ -37,12 +37,15 @@ path = "src/main.rs"
 
 [dependencies]
 aex-finance-domain = { path = "../../crates/aex-finance-domain" }
+aex-payment-contracts = { path = "../../crates/aex-payment-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
 async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-rdsdata.workspace = true
+aws-sdk-lambda.workspace = true
 aws-sdk-sns.workspace = true
 lambda_runtime.workspace = true
 parking_lot.workspace = true
@@ -54,6 +57,7 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 proptest.workspace = true
 toml.workspace = true
 

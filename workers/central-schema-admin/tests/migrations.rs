@@ -140,7 +140,7 @@ async fn an_out_of_order_release_is_refused_before_it_applies_anything() {
     let error = expect_applied_head(&mut connection, 20_260_801_000_700)
         .await
         .expect_err("an empty database is not at the expected head");
-    assert!(error.to_string().contains("20260801000700"));
+    assert!(error.to_string().contains("20260801000800"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

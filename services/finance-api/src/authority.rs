@@ -201,6 +201,17 @@ pub trait BillingAuthority: Send + Sync + 'static {
         deadline_millis: i64,
     ) -> Result<EffectPreparation, AuthorityError>;
 
+    /// Binds the complete admitted command to its already-durable effect.
+    ///
+    /// The provider is never contacted until the exact envelope and
+    /// idempotency key it received can be replayed after a lost response.
+    async fn bind_effect_command(
+        &self,
+        effect: EffectId,
+        intent_hash: [u8; 32],
+        envelope: &PaymentCommandEnvelope,
+    ) -> Result<(), AuthorityError>;
+
     /// Records the provider's answer to a dispatched effect.
     ///
     /// An indeterminate answer is recorded as `outcome_unknown`; this call has

@@ -519,7 +519,7 @@ mod tests {
     fn bundle_is_linear_and_every_header_parses() {
         let path = bundle_path();
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
-        assert_eq!(bundle.head(), 20_260_801_000_700);
+        assert_eq!(bundle.head(), 20_260_801_000_800);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -531,6 +531,7 @@ mod tests {
                 20_260_801_000_500,
                 20_260_801_000_600,
                 20_260_801_000_700,
+                20_260_801_000_800,
             ]
         );
         assert!(
