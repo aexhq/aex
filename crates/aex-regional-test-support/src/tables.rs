@@ -602,6 +602,7 @@ mod tests {
             vec![
                 "observation-authority",
                 "regional-authz-projection",
+                "regional-capacity-authority",
                 "regional-content",
                 "regional-registry",
                 "regional-secret-custody",
@@ -885,7 +886,7 @@ mod tests {
             assert!(
                 writer.actions.iter().all(|action| matches!(
                     action.as_str(),
-                    "dynamodb:GetItem" | "dynamodb:PutItem"
+                    "dynamodb:GetItem" | "dynamodb:PutItem" | "dynamodb:TransactWriteItems"
                 )),
                 "{} holds a broad action: {:?}",
                 writer.role,
@@ -931,7 +932,14 @@ mod tests {
             .iter()
             .find(|grant| grant.role == "regional-capacity-controller")
             .expect("regional capacity owns workspace limits");
-        assert_eq!(capacity.item_types, ["workspace_limit"]);
+        assert_eq!(
+            capacity.item_types,
+            [
+                "workspace_limit",
+                "workspace_limit_bundle_head",
+                "workspace_limit_bundle"
+            ]
+        );
         assert_eq!(
             capacity
                 .condition
@@ -940,6 +948,41 @@ mod tests {
                 .values,
             ["LIMIT#*"]
         );
+    }
+
+    #[test]
+    fn capacity_authority_has_one_key_scoped_transactional_writer() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "regional-capacity-authority")
+            .expect("the capacity authority is declared");
+
+        assert_eq!(
+            table.server_side_encryption.key_authority,
+            "regional-capacity"
+        );
+        assert_eq!(table.item_types, ["workspace_capacity", "capacity_audit"]);
+        assert!(table.global_secondary_indexes.is_empty());
+        assert!(!table.stream.enabled);
+        assert!(!table.time_to_live.enabled);
+        assert_eq!(table.iam.len(), 1);
+
+        let writer = &table.iam[0];
+        assert_eq!(writer.role, "regional-capacity-controller");
+        assert_eq!(
+            writer.actions,
+            ["dynamodb:GetItem", "dynamodb:TransactWriteItems"]
+        );
+        assert_eq!(writer.resources, ["table"]);
+        assert_eq!(writer.item_types, ["workspace_capacity", "capacity_audit"]);
+        let condition = writer
+            .condition
+            .as_ref()
+            .expect("capacity authority writes are key restricted");
+        assert_eq!(condition.operator, "ForAllValues:StringLike");
+        assert_eq!(condition.key, "dynamodb:LeadingKeys");
+        assert_eq!(condition.values, ["WS#*"]);
     }
 
     #[test]

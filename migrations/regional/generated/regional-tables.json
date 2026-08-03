@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:6df06d40a65cda62fa699f670fb315d8556e5738f1e9233940ff0066ea7a8ef1",
+  "digest": "blake3:a3cf22679373a3f6e7478f580eaa818dd9f2ef0e0d554f1d4c804eb101e802bb",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -644,6 +644,10 @@
           ],
           "resources": [
             "table"
+          ],
+          "itemTypes": [
+            "workspace_capacity",
+            "capacity_audit"
           ],
           "condition": {
             "operator": "ForAllValues:StringLike",
