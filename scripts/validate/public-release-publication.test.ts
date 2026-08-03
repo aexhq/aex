@@ -71,21 +71,31 @@ describe("public main-push publication", () => {
     expect(source).toContain("dist/regional-tables.json");
   });
 
-  test("composition handoff verifies exact public inputs and every envelope", () => {
+  test("composition handoff refuses missing inputs and draft envelopes", () => {
     const source = read(".github/workflows/main.yml");
+    const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
+    const evidence = workflow.jobs.manifest.steps.find(
+      (step: { readonly name?: string }) => step.name === "Require complete composition evidence"
+    );
+    const assemble = workflow.jobs.manifest.steps.find(
+      (step: { readonly name?: string }) => step.name === "Assemble the complete composition handoff"
+    );
     expect(source).toContain("public-inputs/regional-tables.json");
     expect(source).toContain("REGIONAL_TABLES_DEFINITIONS_DIGEST");
     expect(source).toContain("pattern: artifact-*");
     expect(source).toContain("pattern: oci-artifact-*");
+    expect(evidence?.run).toContain("if [ ! -f handoff/composition-inputs.json ]");
+    expect(evidence?.run).toContain("status=40");
+    expect(evidence?.run).toContain("certified-envelope.json");
+    expect(evidence?.run).toContain("draft envelopes are not release evidence");
     expect(source).toContain("manifest handoff");
     expect(source).toContain("--composition handoff/composition-inputs.json");
-    expect(source.match(/handoff\/composition-inputs\.json/g)).toHaveLength(1);
     expect(read("tools/aex-release-tool/src/main.rs")).toContain(
       '"handoff-composition-inputs-missing"'
     );
+    expect(assemble?.run).toContain("certified-envelope.json");
+    expect(assemble?.run).not.toContain("draft-envelope.json");
     expect(source).toContain("--manifest-out public-inputs/composition-manifest.json");
     expect(source).toContain("--store-out public-inputs/artifact-store.json");
-    expect(source).not.toContain("complete unit envelopes are not yet published");
-    expect(source).not.toContain("exit 40");
   });
 });

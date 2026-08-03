@@ -388,11 +388,62 @@ to fabricate them from.
    rather than reporting a green sweep that removed nothing. The engine, the
    guard, the order and the report are complete; the adapter is one
    `Reclaimer` implementation away.
-7. **Live publication.** Public publish steps in `main.yml` refuse with a stated
-   reason and a classified exit code rather than pretending. Public release-tool,
-   module-bundle and manifest publication plus GitHub attestations are still
-   absent; private acquisition therefore has no valid input it can accept yet.
-   Hosted planning and apply are private responsibilities.
+
+7. **Complete composition handoff.** Public release-tool, module-bundle and
+   regional-table publication plus GitHub attestations are wired. Unit builders
+   still emit only `draft-envelope.json`, no producer emits
+   `handoff/composition-inputs.json`, and no job publishes or attests the
+   composition manifest. `main.yml` now refuses those two missing inputs with
+   exit `40` and passes only `certified-envelope.json` to `manifest handoff`;
+   a draft can no longer reach handoff merely because it has the expected file
+   name. Hosted planning and apply remain private responsibilities.
+
+### 4.1 Exact composition-handoff blocker at `a0d6b762`
+
+`CompositionInputs` is not a convenient summary that may be reconstructed from
+plausible values. Each member must come from the producer that earned it. This
+is the authority map for the first public Rust-native candidate:
+
+| Input                 | Existing authority                                                                                                         | Candidate status                                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `contractDigest`      | `api/generated/bundle.lock.json`, checked by `aex-contract-gen`                                                            | Available.                                                                                                                                                               |
+| `source`              | `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`, cross-checked against the unique release tag  | Available only inside the publishing workflow.                                                                                                                           |
+| `releaseTool`         | Rebuilt deterministic executable plus digest, size, version, HTTPS release URI and verified GitHub attestation             | Available.                                                                                                                                                               |
+| `packages`            | Registry version, integrity and provenance from the package publisher                                                      | No package-publication identity producer exists. An empty map must not be used to hide a package the composition needs.                                                  |
+| `migrations.central`  | Canonical `migrations/central/bundle.lock.json` and the certified `central-schema-admin` envelope                          | The lock and head exist; the bundle digest and certified admin-image binding are not emitted together.                                                                   |
+| `migrations.regional` | Published `regional-tables.json` transport identity plus an authored monotone table generation                             | Digest, size, URI and decoded-definition digest exist; no release generation authority exists.                                                                           |
+| `infra`               | Published module-bundle identity plus one exact Terraform/provider lock closure                                            | Module identity exists. Terraform `1.14.0` is repeated in workflow/config, and provider locks are distributed; no single verified closure is emitted.                    |
+| `catalogs`            | Signed catalogue publication identities carried by certified runtime envelopes                                             | Build variables bind the model collection, but envelope `identities.catalogs` is still absent and no tool-catalogue publication identity exists.                         |
+| `policy`              | Canonical digest producers for the artifact and freshness policies, the pinned Rust channel, and the source-policy version | Source files exist, but no command emits and verifies the complete policy identity.                                                                                      |
+| unit envelopes        | `artifact certify` over immutable readback, GitHub provenance, real scanner outputs and artifact-bound passing receipts    | The workflow uploads only drafts. Required deny, SBOM, licence, vulnerability, package-integrity, determinism and other per-unit receipts are not all produced or bound. |
+| manifest publication  | Exact manifest bytes, HTTPS release asset identity and GitHub attestation under the workflow the private verifier trusts   | Absent. The current `main.yml` job would not satisfy a verifier pinned to `_build-artifacts.yml`.                                                                        |
+
+The smallest honest completion sequence is:
+
+1. Make the validation lanes earn every receipt class in `release/units.toml`.
+   Download those receipts in the artifact workflow, bind each to the computed
+   artifact subject, publish/read back the bytes, and run `artifact certify`.
+   Upload exactly one `certified-envelope.json` per registered unit.
+2. Add one release-tool subcommand that emits `CompositionInputs` from the
+   exact workflow identity and verified public-input document, while reading
+   repository authorities for the contract, central migration lock and policy.
+   It must require, not default, the regional generation, package publication
+   identities, catalogue identities and Terraform/provider closure.
+3. Give the regional-table generator an authored monotone release generation;
+   add a single Terraform/provider closure producer; propagate signed model and
+   tool catalogue identities into certified envelopes; and either wire real
+   package publication evidence or explicitly decide that packages are outside
+   the hosted composition contract.
+4. Split `_build-artifacts.yml` into publish, certify and compose jobs. Keep the
+   release draft until all certified envelopes exist; then generate inputs,
+   run `manifest handoff`, attest the manifest and artifact store, upload both
+   without replacement, anonymously read them back, and only then expose the
+   prerelease. This keeps the manifest attestation under the reusable workflow
+   identity the hosted consumer verifies.
+5. Expose the manifest URI, blob digest, size, `releaseId` and attestation
+   locator as reusable-workflow outputs. Private binding and root-input files
+   remain private, separately reviewed inputs; the public workflow must never
+   manufacture them.
 
 The reusable Rust lane also owns one feature-specific target that an ordinary
 package build cannot discover: whenever `aex-session-dynamodb` is selected it
@@ -447,10 +498,11 @@ regional capacity producer.
    `declares-policy-or-rate-logic`) are declared in the policy and not
    implemented; they are content predicates rather than path globs. The corpus
    test skips them explicitly rather than counting them as covered.
-9. **Public release inputs are not published or attested.** `_build-artifacts.yml`
-   does not yet emit the Linux x86_64 release tool, Terraform module bundle and
-   composition-manifest blobs with exact byte identities and GitHub attestations.
-   Until it does, private immutable acquisition must fail.
+9. **The composition manifest is not published or attested.** The raw Linux
+   x86_64 release tool, Terraform module bundle and regional-table bundle now
+   have exact byte identities and GitHub attestations. Certified unit envelopes,
+   authoritative `CompositionInputs`, and the resulting manifest/store do not.
+   Until all three producers land, private immutable acquisition must fail.
 10. **Private roots still use sibling public-module paths.** A hosted plan may
     satisfy those paths only from the verified module bundle extracted at the
     fixed path recorded in its saved-plan envelope—never by checking out public

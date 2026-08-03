@@ -196,13 +196,34 @@ jobs:
           observed_tool_version=$(public-inputs/aex-release-tool --version | awk '{print $2}')
           [[ "$observed_tool_version" == "$RELEASE_TOOL_VERSION" ]]
 
+      - name: Require complete composition evidence
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          status=0
+          if [ ! -f handoff/composition-inputs.json ]; then
+            echo "::error title=Composition inputs missing::No producer emitted handoff/composition-inputs.json from authoritative public release evidence."
+            status=40
+          fi
+          certified_envelopes=(
+            handoff/blob/artifact-*/certified-envelope.json
+            handoff/oci/oci-artifact-*/certified-envelope.json
+          )
+          if [ ${#certified_envelopes[@]} -eq 0 ]; then
+            echo "::error title=Certified envelopes missing::No artifact certification producer emitted a certified-envelope.json; draft envelopes are not release evidence."
+            status=40
+          fi
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+
       - name: Assemble the complete composition handoff
         run: |
           set -euo pipefail
           shopt -s nullglob
           envelope_files=(
-            handoff/blob/artifact-*/draft-envelope.json
-            handoff/oci/oci-artifact-*/draft-envelope.json
+            handoff/blob/artifact-*/certified-envelope.json
+            handoff/oci/oci-artifact-*/certified-envelope.json
           )
           envelope_args=()
           for envelope in "${envelope_files[@]}"; do
