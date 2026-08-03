@@ -54,9 +54,13 @@ pub struct CertificationFiles<'a> {
     pub sbom: &'a Path,
     /// Full licence inventory emitted by the passing licence scan.
     pub license_inventory: &'a Path,
+    /// Full vulnerability verdict emitted by the passing artifact scan.
+    pub vulnerability_verdict: &'a Path,
     /// Downloaded GitHub attestation bundle whose verification produced the
     /// provenance claim.
     pub provenance_bundle: &'a Path,
+    /// Verified `cosign sign-blob` bundle for the downloadable Rust binary.
+    pub signature_bundle: Option<&'a Path>,
 }
 
 /// Fill an unearned local draft from immutable CI evidence and verify the
@@ -117,11 +121,22 @@ pub fn certify(
             .get("specVersion")
             .and_then(serde_json::Value::as_str)
             == Some("1.6");
-    if component_count == 0 || !cyclonedx_16 {
+    let sbom_subject_bound = sbom_value
+        .pointer("/metadata/properties")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|properties| {
+            properties.iter().any(|property| {
+                property.get("name").and_then(serde_json::Value::as_str)
+                    == Some("aex:artifactSubjectDigest")
+                    && property.get("value").and_then(serde_json::Value::as_str)
+                        == Some(draft.artifact_subject_digest.as_str())
+            })
+        });
+    if component_count == 0 || !cyclonedx_16 || !sbom_subject_bound {
         return Err(ToolError::single(
             Exit::SupplyChainDenied,
             "certify-sbom-empty",
-            "the supplied SBOM must be a CycloneDX 1.6 document with at least one component",
+            "the supplied SBOM must be non-empty CycloneDX 1.6 bound to the exact artifact subject",
         ));
     }
     let sbom_digest = canon::digest_bytes(&sbom_bytes);
@@ -146,6 +161,18 @@ pub fn certify(
     }
 
     let license_bytes = read(files.license_inventory, "certify-license-inventory-missing")?;
+    let vulnerability_bytes = read(
+        files.vulnerability_verdict,
+        "certify-vulnerability-verdict-missing",
+    )?;
+    validate_supply_documents(
+        unit,
+        &draft,
+        &claims.licenses,
+        &claims.vulnerabilities,
+        &license_bytes,
+        &vulnerability_bytes,
+    )?;
     let provenance_bytes = read(files.provenance_bundle, "certify-provenance-bundle-missing")?;
 
     draft.source.workflow = claims.workflow.clone();
@@ -216,7 +243,7 @@ pub fn certify(
         ));
     }
 
-    validate_signature(unit, &claims.signature)?;
+    let signature = validate_signature(unit, claims.signature, files.signature_bundle)?;
     if !valid_sha256(&licenses.policy_digest)
         || licenses.verdict != "allowed"
         || !licenses.denials.is_empty()
@@ -241,11 +268,95 @@ pub fn certify(
     draft.licenses = licenses;
     draft.vulnerabilities = claims.vulnerabilities;
     draft.provenance = provenance;
-    draft.signature = claims.signature;
+    draft.signature = signature;
     draft.receipts = receipt_refs;
     let certified = draft.seal()?;
     certified.verify(files.artifact, unit.kind == "rust-binary")?;
     Ok(certified)
+}
+
+fn validate_supply_documents(
+    unit: &Unit,
+    draft: &ArtifactEnvelope,
+    licenses: &Licenses,
+    vulnerabilities: &Vulnerabilities,
+    license_bytes: &[u8],
+    vulnerability_bytes: &[u8],
+) -> Result<()> {
+    let license: serde_json::Value = serde_json::from_slice(license_bytes).map_err(|err| {
+        ToolError::single(
+            Exit::SupplyChainDenied,
+            "certify-license-inventory-json",
+            format!("the license inventory is not JSON: {err}"),
+        )
+    })?;
+    let components = license
+        .get("components")
+        .and_then(serde_json::Value::as_array);
+    let license_bound = license.get("schema").and_then(serde_json::Value::as_str)
+        == Some("aex.license-inventory.v1")
+        && license.get("unit").and_then(serde_json::Value::as_str) == Some(unit.id.as_str())
+        && license
+            .get("artifactSubjectDigest")
+            .and_then(serde_json::Value::as_str)
+            == Some(draft.artifact_subject_digest.as_str())
+        && license
+            .get("policyDigest")
+            .and_then(serde_json::Value::as_str)
+            == Some(licenses.policy_digest.as_str())
+        && components.is_some_and(|rows| {
+            !rows.is_empty()
+                && rows.iter().all(|row| {
+                    row.get("denied")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(Vec::is_empty)
+                })
+        });
+    if !license_bound {
+        return Err(ToolError::single(
+            Exit::SupplyChainDenied,
+            "certify-license-inventory-binding",
+            "the complete allowed license inventory must bind the exact unit, artifact subject, and policy",
+        ));
+    }
+
+    let verdict: serde_json::Value =
+        serde_json::from_slice(vulnerability_bytes).map_err(|err| {
+            ToolError::single(
+                Exit::SupplyChainDenied,
+                "certify-vulnerability-verdict-json",
+                format!("the vulnerability verdict is not JSON: {err}"),
+            )
+        })?;
+    let vulnerability_bound = verdict.get("schema").and_then(serde_json::Value::as_str)
+        == Some("aex.vulnerability-verdict.v1")
+        && verdict.get("unit").and_then(serde_json::Value::as_str) == Some(unit.id.as_str())
+        && verdict
+            .get("artifactSubjectDigest")
+            .and_then(serde_json::Value::as_str)
+            == Some(draft.artifact_subject_digest.as_str())
+        && verdict.get("scanner").and_then(serde_json::Value::as_str)
+            == Some(vulnerabilities.scanner.as_str())
+        && verdict.get("database").and_then(serde_json::Value::as_str)
+            == Some(vulnerabilities.database.as_str())
+        && verdict.get("scannedAt").and_then(serde_json::Value::as_str)
+            == Some(vulnerabilities.scanned_at.as_str())
+        && verdict
+            .get("unapprovedCritical")
+            .and_then(serde_json::Value::as_u64)
+            == Some(u64::from(vulnerabilities.unapproved_critical))
+        && verdict
+            .get("unapprovedHigh")
+            .and_then(serde_json::Value::as_u64)
+            == Some(u64::from(vulnerabilities.unapproved_high));
+    if !vulnerability_bound {
+        return Err(ToolError::single(
+            Exit::SupplyChainDenied,
+            "certify-vulnerability-verdict-binding",
+            "the vulnerability verdict must bind the exact unit, artifact subject, scanner, database, scan time, and severity counts",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
@@ -426,20 +537,55 @@ pub(crate) fn validate_available_receipts(
     Ok((refs, missing))
 }
 
-fn validate_signature(unit: &Unit, signature: &Signature) -> Result<()> {
+fn validate_signature(
+    unit: &Unit,
+    mut signature: Signature,
+    signature_bundle: Option<&Path>,
+) -> Result<Signature> {
     let valid = if unit.kind == "rust-binary" {
+        let bundle = signature_bundle.ok_or_else(|| {
+            ToolError::single(
+                Exit::ProvenanceMissing,
+                "certify-signature-bundle",
+                "a downloadable Rust binary requires its verified Sigstore bundle",
+            )
+        })?;
+        let bytes = read(bundle, "certify-signature-bundle")?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|err| {
+            ToolError::single(
+                Exit::ProvenanceMissing,
+                "certify-signature-bundle",
+                format!(
+                    "`{}` is not a Sigstore JSON bundle: {err}",
+                    bundle.display()
+                ),
+            )
+        })?;
+        signature.bundle_digest = Some(canon::digest_bytes(&bytes));
         signature.present
             && signature.kind == "sigstore-cosign"
             && signature.key_id.as_deref().is_some_and(|id| !id.is_empty())
+            && value.get("mediaType").and_then(serde_json::Value::as_str)
+                == Some("application/vnd.dev.sigstore.bundle.v0.3+json")
             && signature.bundle_digest.as_deref().is_some_and(valid_sha256)
     } else {
+        if signature_bundle.is_some() {
+            return Err(ToolError::single(
+                Exit::ProvenanceMissing,
+                "certify-signature-bundle",
+                format!(
+                    "unit kind `{}` does not accept a detached signature",
+                    unit.kind
+                ),
+            ));
+        }
         !signature.present
             && signature.kind == "none"
             && signature.key_id.is_none()
             && signature.bundle_digest.is_none()
     };
     if valid {
-        Ok(())
+        Ok(signature)
     } else {
         Err(ToolError::single(
             Exit::ProvenanceMissing,

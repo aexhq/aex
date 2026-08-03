@@ -696,6 +696,106 @@ pub fn new_command_receipt(context: RunContext, summary: CargoCommandSummary) ->
     .seal()
 }
 
+/// One machine-readable check emitted only after its named producer ran.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CheckResult {
+    /// Stable check identity within the producer.
+    pub id: String,
+    /// `passed` or `failed`; no skipped/unknown state is evidence.
+    pub status: String,
+}
+
+/// Closed report consumed by [`new_check_receipt`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CheckReport {
+    /// `aex.check-report.v1`.
+    pub schema: String,
+    /// Exact producer and version, for example `syft 1.50.0`.
+    pub producer: String,
+    /// Checks the producer actually completed.
+    pub checks: Vec<CheckResult>,
+}
+
+/// Build a receipt from a closed machine-readable check report.
+///
+/// The report, rather than the workflow context, supplies the collected and
+/// passing counters. Empty, duplicate, unknown or partial check sets are
+/// refused, and the declared inventory must match exactly.
+///
+/// # Errors
+/// Returns [`Exit::EvidenceUnsound`] for a malformed or partial report and
+/// propagates canonicalization failures from sealing.
+pub fn new_check_receipt(context: RunContext, report: &CheckReport) -> Result<Receipt> {
+    let mut violations = Vec::new();
+    if report.schema != "aex.check-report.v1" || report.producer.trim().is_empty() {
+        violations.push(Violation::new(
+            "check-report-identity",
+            "a check report requires schema `aex.check-report.v1` and an exact producer identity",
+        ));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut passed = 0_u64;
+    let mut failed = 0_u64;
+    for check in &report.checks {
+        if check.id.trim().is_empty() || !ids.insert(check.id.as_str()) {
+            violations.push(Violation::new(
+                "check-report-inventory",
+                "check ids must be non-empty and unique",
+            ));
+        }
+        match check.status.as_str() {
+            "passed" => passed += 1,
+            "failed" => failed += 1,
+            other => violations.push(Violation::new(
+                "check-report-status",
+                format!("check `{}` has unsupported status `{other}`", check.id),
+            )),
+        }
+    }
+    let collected = report.checks.len() as u64;
+    if collected == 0 || context.declared != collected {
+        violations.push(Violation::new(
+            "check-report-inventory",
+            format!(
+                "receipt `{}` declared {} check(s), but the producer reported {collected}",
+                context.receipt_id, context.declared
+            ),
+        ));
+    }
+    if !violations.is_empty() {
+        return Err(ToolError::many(Exit::EvidenceUnsound, violations));
+    }
+    Receipt {
+        schema: "aex.evidence-receipt.v1".to_owned(),
+        receipt_digest: "sha256:0".to_owned(),
+        receipt_id: context.receipt_id,
+        class: context.class,
+        layer: context.layer,
+        lane: context.lane,
+        concerns: context.concerns,
+        source: context.source,
+        inputs: context.inputs,
+        subject: context.subject,
+        selection: context.selection,
+        inventory: Inventory {
+            declared: context.declared,
+            collected,
+            passed,
+            failed,
+            ..Inventory::default()
+        },
+        failures: Vec::new(),
+        attachments: Vec::new(),
+        data: context.data,
+        started_at: context.started_at,
+        completed_at: context.completed_at,
+        conclusion: if failed == 0 { "passed" } else { "failed" }.to_owned(),
+    }
+    .seal()
+}
+
 /// Hash a file and record it on a receipt, then reseal.
 ///
 /// The digest is computed here rather than accepted as an argument, because an
@@ -1245,6 +1345,58 @@ mod tests {
                 .unwrap_err();
         assert_eq!(err.exit.code(), 41);
         assert!(err.rules().contains(&"command-inventory-invalid"));
+    }
+
+    #[test]
+    fn a_check_receipt_counts_the_closed_producer_report() {
+        let report = super::CheckReport {
+            schema: "aex.check-report.v1".to_owned(),
+            producer: "syft 1.50.0".to_owned(),
+            checks: vec![
+                super::CheckResult {
+                    id: "cyclonedx-1.6".to_owned(),
+                    status: "passed".to_owned(),
+                },
+                super::CheckResult {
+                    id: "artifact-subject-bound".to_owned(),
+                    status: "passed".to_owned(),
+                },
+            ],
+        };
+        let built = super::new_check_receipt(context(2), &report).unwrap();
+        assert_eq!(built.inventory.collected, 2);
+        assert_eq!(built.inventory.passed, 2);
+        assert_eq!(built.conclusion, "passed");
+        built.verify().unwrap();
+    }
+
+    #[test]
+    fn a_check_report_cannot_hide_empty_duplicate_or_unknown_results() {
+        let empty = super::CheckReport {
+            schema: "aex.check-report.v1".to_owned(),
+            producer: "grype 0.116.1".to_owned(),
+            checks: Vec::new(),
+        };
+        let err = super::new_check_receipt(context(1), &empty).unwrap_err();
+        assert!(err.rules().contains(&"check-report-inventory"));
+
+        let invalid = super::CheckReport {
+            schema: "aex.check-report.v1".to_owned(),
+            producer: "grype 0.116.1".to_owned(),
+            checks: vec![
+                super::CheckResult {
+                    id: "advisories".to_owned(),
+                    status: "passed".to_owned(),
+                },
+                super::CheckResult {
+                    id: "advisories".to_owned(),
+                    status: "skipped".to_owned(),
+                },
+            ],
+        };
+        let err = super::new_check_receipt(context(2), &invalid).unwrap_err();
+        assert!(err.rules().contains(&"check-report-inventory"));
+        assert!(err.rules().contains(&"check-report-status"));
     }
 
     fn context(declared: u64) -> super::RunContext {

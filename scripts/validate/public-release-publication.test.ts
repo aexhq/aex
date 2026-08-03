@@ -47,16 +47,16 @@ describe("public main-push publication", () => {
     const source = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly on: any; readonly jobs: Record<string, any> };
     const job = workflow.jobs.public_release_inputs;
-    const deferral = job.steps.find(
+    const certification = job.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Bind earned receipts and record every certification deferral"
+        step.name === "Produce artifact-bound supply-chain evidence and certify every unit"
     );
-    const deferralUpload = job.steps.find(
-      (step: { readonly name?: string }) => step.name === "Upload exact certification deferrals"
+    const certifiedUpload = job.steps.find(
+      (step: { readonly name?: string }) => step.name === "Upload the exact certified artifact inventory"
     );
     const blobReadback = job.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Read back and verify every published blob unit"
+        step.name === "Read back and verify every published unit and auxiliary asset"
     );
 
     expect(job.permissions).toEqual({
@@ -100,11 +100,14 @@ describe("public main-push publication", () => {
     expect(source).toContain("Download every same-run validation receipt");
     expect(source).toContain("find validation-receipts -type f -name '*.json' -print0");
     expect(source).not.toContain("merge-multiple: true");
-    expect(deferral?.run).toContain("evidence bind-artifact");
-    expect(deferral?.run).toContain("artifact defer-certification");
-    expect(deferral?.run).toContain('test "$deferral_count" -eq "${#drafts[@]}"');
-    expect(deferralUpload?.with.name).toBe("certification-deferrals");
-    expect(deferralUpload?.with["if-no-files-found"]).toBe("error");
+    expect(certification?.run).toContain("syft scan");
+    expect(certification?.run).toContain("grype");
+    expect(certification?.run).toContain("evidence new-check");
+    expect(certification?.run).toContain("evidence bind-artifact");
+    expect(certification?.run).toContain("artifact certify");
+    expect(certification?.run).not.toContain("artifact defer-certification");
+    expect(certifiedUpload?.with.name).toBe("certified-envelopes");
+    expect(certifiedUpload?.with["if-no-files-found"]).toBe("error");
     expect(blobReadback?.run).toContain("gh release download");
     expect(blobReadback?.run).toContain("cmp --silent");
     expect(blobReadback?.run).toContain("gh attestation verify");
@@ -129,12 +132,11 @@ describe("public main-push publication", () => {
     );
     expect(source).toContain("public-inputs/regional-tables.json");
     expect(source).toContain("REGIONAL_TABLES_DEFINITIONS_DIGEST");
-    expect(source).toContain("pattern: artifact-*");
-    expect(source).toContain("pattern: oci-artifact-*");
-    expect(source).toContain("Download exact certification deferrals");
+    expect(source).toContain("Download the exact certified artifact inventory");
+    expect(source).toContain("name: certified-envelopes");
     expect(evidence?.run).toContain("certified-envelope.json");
     expect(evidence?.run).toContain("artifact certification-inventory");
-    expect(evidence?.run).toContain("--deferred");
+    expect(evidence?.run).not.toContain("--deferred");
     expect(evidence?.run).toContain('--repository "$GITHUB_REPOSITORY"');
     expect(evidence?.run).toContain('--commit-sha "$GITHUB_SHA"');
     expect(evidence?.run).not.toContain("draft-envelope.json");

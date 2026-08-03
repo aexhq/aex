@@ -437,9 +437,15 @@ enum ArtifactCommand {
         /// Complete licence inventory from the passing scan.
         #[arg(long)]
         license_inventory: PathBuf,
+        /// Complete vulnerability verdict from the passing artifact scan.
+        #[arg(long)]
+        vulnerability_verdict: PathBuf,
         /// Official GitHub attestation bundle.
         #[arg(long)]
         provenance_bundle: PathBuf,
+        /// Verified Sigstore blob-signature bundle, required for `rust-binary`.
+        #[arg(long)]
+        signature_bundle: Option<PathBuf>,
         /// Passing evidence receipts, repeated.
         #[arg(long = "receipt")]
         receipts: Vec<PathBuf>,
@@ -680,6 +686,18 @@ enum EvidenceCommand {
         /// Cargo output produced with `--message-format=json`.
         #[arg(long)]
         messages: PathBuf,
+        /// Where to write the receipt.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Build a receipt from a closed machine-readable check report.
+    NewCheck {
+        /// The check context: identity, source, selection and hygiene.
+        #[arg(long)]
+        context: PathBuf,
+        /// Closed report emitted after the named checks completed.
+        #[arg(long)]
+        report: PathBuf,
         /// Where to write the receipt.
         #[arg(long)]
         out: PathBuf,
@@ -1449,7 +1467,9 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         file,
         sbom,
         license_inventory,
+        vulnerability_verdict,
         provenance_bundle,
+        signature_bundle,
         receipts,
         out,
     } = command
@@ -1477,7 +1497,9 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
             artifact: file.as_deref(),
             sbom,
             license_inventory,
+            vulnerability_verdict,
             provenance_bundle,
+            signature_bundle: signature_bundle.as_deref(),
         },
         &receipts,
         &freshness,
@@ -2016,6 +2038,25 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                 .map_err(|err| io(&messages.display().to_string(), &err))?;
             let summary = evidence::parse_cargo_messages(&messages)?;
             let receipt = evidence::new_command_receipt(context, summary)?;
+            write_canonical(out, &receipt)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "receiptId": receipt.receipt_id,
+                    "receiptDigest": receipt.receipt_digest,
+                    "conclusion": receipt.conclusion,
+                    "inventory": receipt.inventory,
+                }),
+            )
+        }
+        EvidenceCommand::NewCheck {
+            context,
+            report,
+            out,
+        } => {
+            let context: evidence::RunContext = read_json(context)?;
+            let report: evidence::CheckReport = read_json(report)?;
+            let receipt = evidence::new_check_receipt(context, &report)?;
             write_canonical(out, &receipt)?;
             emit(
                 cli,

@@ -110,6 +110,19 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      - name: Typecheck the selected package
+        env:
+          RECEIPT_DIR: target/aex-evidence/node/${{ matrix.partition }}
+          SELECTED_PACKAGE_DIR: ${{ matrix.directory }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECEIPT_DIR"
+          date --utc +'%Y-%m-%dT%H:%M:%SZ' > "$RECEIPT_DIR/lint-started-at.txt"
+          bun run --cwd "$SELECTED_PACKAGE_DIR" typecheck 2>&1 | tee "$RECEIPT_DIR/typecheck.log"
+          jq -n '{schema:"aex.check-report.v1",producer:"TypeScript 5.8.3",checks:[
+            {id:"selected-package-typecheck",status:"passed"}
+          ]}' > "$RECEIPT_DIR/lint-report.json"
+
       # Bun has no non-executing test-list command. A first complete, unfiltered
       # JUnit run is therefore the runner-produced declaration. The evidence
       # run below repeats the same package without filters, and evidence verify
@@ -265,11 +278,80 @@ jobs:
           cargo run --locked --release -p aex-release-tool -- evidence verify \
             --receipt "$RECEIPT_DIR/receipt.json"
 
+      - name: Build and verify semantic and lint receipts
+        env:
+          CALLER_JOB: ${{ inputs.job_name }}
+          RECEIPT_DIR: target/aex-evidence/node/${{ matrix.partition }}
+          SELECTED_PACKAGE: ${{ matrix.name }}
+          SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+          lint_started_at=$(<"$RECEIPT_DIR/lint-started-at.txt")
+          jq \
+            --arg receiptId "rc_${RECEIPT_LANE}_node_lint_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${{ matrix.partition }}" \
+            --arg startedAt "$lint_started_at" \
+            --arg completedAt "$completed_at" \
+            '.receiptId=$receiptId | .class="lint" | .layer="unit" |
+             .concerns=[] | .declared=1 | .startedAt=$startedAt | .completedAt=$completedAt' \
+            "$RECEIPT_DIR/context.json" > "$RECEIPT_DIR/lint-context.json"
+          cargo run --locked --release -p aex-release-tool -- evidence new-check \
+            --context "$RECEIPT_DIR/lint-context.json" \
+            --report "$RECEIPT_DIR/lint-report.json" \
+            --out "$RECEIPT_DIR/receipt-lint.json"
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
+            --receipt "$RECEIPT_DIR/receipt-lint.json" --kind log \
+            --file "$RECEIPT_DIR/typecheck.log" \
+            --uri "artifact://lint-${RECEIPT_LANE}-node-${{ matrix.partition }}/typecheck.log"
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
+            --receipt "$RECEIPT_DIR/receipt-lint.json"
+
+          mapfile -t producers < <(
+            jq -c --arg package "$SELECTED_PACKAGE" \
+              '.producers[] | select(.package == $package)' release/semantic-receipts.json
+          )
+          for producer in "${producers[@]}"; do
+            unit=$(jq -er .unit <<<"$producer")
+            class=$(jq -er .class <<<"$producer")
+            layer=$(jq -er .layer <<<"$producer")
+            filterset=$(jq -er '.filterset | select(. == "all()")' <<<"$producer")
+            jq -e --arg unit "$unit" 'index($unit) != null' \
+              <<<"$SELECTED_UNITS_JSON" >/dev/null
+            output="$RECEIPT_DIR/receipt-semantic-$unit-$class.json"
+            jq \
+              --arg receiptId "rc_${RECEIPT_LANE}_node_${class}_${unit}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
+              --arg class "$class" --arg layer "$layer" --arg unit "$unit" \
+              --arg filterset "$filterset" --arg completedAt "$completed_at" \
+              '.receiptId=$receiptId | .class=$class | .layer=$layer |
+               .concerns=[$class] | .subject.unitIds=[$unit] |
+               .selection.filterset=$filterset | .selection.partition=null |
+               .completedAt=$completedAt' \
+              "$RECEIPT_DIR/context.json" > "$RECEIPT_DIR/context-semantic-$unit-$class.json"
+            cargo run --locked --release -p aex-release-tool -- evidence new \
+              --context "$RECEIPT_DIR/context-semantic-$unit-$class.json" \
+              --junit "$RECEIPT_DIR/junit.xml" --out "$output"
+            cargo run --locked --release -p aex-release-tool -- evidence attach \
+              --receipt "$output" --kind junit --file "$RECEIPT_DIR/junit.xml" \
+              --uri "artifact://junit-${RECEIPT_LANE}-node-${class}/junit.xml"
+            cargo run --locked --release -p aex-release-tool -- evidence verify \
+              --receipt "$output"
+          done
+
       - name: Upload the unit receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: receipt-${{ inputs.lane }}-node-${{ matrix.partition }}
           path: target/aex-evidence/node/${{ matrix.partition }}/receipt.json
+          if-no-files-found: error
+
+      - name: Upload lint and semantic receipts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: receipt-${{ inputs.lane }}-node-support-${{ matrix.partition }}
+          path: |
+            target/aex-evidence/node/${{ matrix.partition }}/receipt-lint.json
+            target/aex-evidence/node/${{ matrix.partition }}/receipt-semantic-*.json
           if-no-files-found: error
 
       - name: Upload the test evidence

@@ -293,6 +293,12 @@ jobs:
             artifact oci-compare \
             --first "$RELEASE_DIR/identity-1.json" \
             --second "$RELEASE_DIR/identity-2.json"
+          jq -n \
+            --arg producer "aex-release-tool $(cargo run --locked --release -p aex-release-tool -- --version | awk '{print $2}')" \
+            '{schema:"aex.check-report.v1",producer:$producer,checks:[
+              {id:"independent-oci-builds-match",status:"passed"},
+              {id:"inspected-manifest-digests-match",status:"passed"}
+            ]}' > "$RELEASE_DIR/package-integrity-report.json"
 
       - name: Build
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -320,6 +326,34 @@ jobs:
             artifact package --unit "${{ matrix.name }}" \
             --input "$input" \
             --out "$RELEASE_DIR/artifact.bin"
+          kind=$(jq -er .kind "$RELEASE_DIR/recipe.json")
+          determinism_check=()
+          if [[ "$kind" == "rust-binary" || "$kind" == "microvm-image" ]]; then
+            [[ "$input" == target/* && "$input" != target/ ]]
+            first_input="$RELEASE_DIR/first-build-input"
+            test ! -e "$first_input"
+            mv -- "$input" "$first_input"
+            python3 -c "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+              "$RELEASE_DIR/recipe.json"
+            test -e "$input"
+            determinism_check+=(--argjson deterministic true)
+          else
+            determinism_check+=(--argjson deterministic false)
+          fi
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact package --unit "${{ matrix.name }}" \
+            --input "$input" \
+            --out "$RELEASE_DIR/artifact.check.bin"
+          cmp --silent "$RELEASE_DIR/artifact.bin" "$RELEASE_DIR/artifact.check.bin"
+          rm "$RELEASE_DIR/artifact.check.bin"
+          jq -n \
+            --arg producer "aex-release-tool $(cargo run --locked --release -p aex-release-tool -- --version | awk '{print $2}')" \
+            "${determinism_check[@]}" \
+            '{schema:"aex.check-report.v1",producer:$producer,checks:[
+              {id:"independent-packages-byte-identical",status:"passed"},
+              {id:"authoritative-build-input-packaged",status:"passed"}
+            ] + (if $deterministic then [{id:"authoritative-build-rerun-byte-identical",status:"passed"}] else [] end)}' \
+            > "$RELEASE_DIR/package-integrity-report.json"
 
       - name: Describe the locally earned artifact identity
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -354,6 +388,51 @@ jobs:
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
         with:
           subject-path: ${{ env.RELEASE_DIR }}/artifact.bin
+
+      - name: Preserve exact blob provenance evidence
+        if: ${{ inputs.publish && !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          BUNDLE_PATH: ${{ steps.attest_unit.outputs.bundle-path }}
+          ATTESTATION_URL: ${{ steps.attest_unit.outputs['attestation-url'] }}
+        run: |
+          set -euo pipefail
+          test -s "$BUNDLE_PATH"
+          test -n "$ATTESTATION_URL"
+          cp "$BUNDLE_PATH" "$RELEASE_DIR/provenance.sigstore.json"
+          jq -n \
+            --arg uri "$ATTESTATION_URL" \
+            --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
+            '{predicateType:"https://slsa.dev/provenance/v1",uri:$uri,builderId:$builderId,attested:true}' \
+            > "$RELEASE_DIR/provenance-claims.json"
+
+      - name: Install the pinned hands-agent signing client
+        if: ${{ inputs.publish && matrix.name == 'hands-agent' }}
+        run: |
+          set -euo pipefail
+          install_root="$RUNNER_TEMP/aex-cosign"
+          mkdir -p "$install_root"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$install_root/cosign" \
+            https://github.com/sigstore/cosign/releases/download/v3.1.2/cosign-linux-amd64
+          echo "f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf  $install_root/cosign" \
+            | sha256sum --check --strict
+          chmod 0755 "$install_root/cosign"
+          [[ "$("$install_root/cosign" version --json | jq -er .gitVersion)" == "v3.1.2" ]]
+          echo "$install_root" >> "$GITHUB_PATH"
+
+      - name: Sign and verify the exact hands-agent bytes
+        if: ${{ inputs.publish && matrix.name == 'hands-agent' }}
+        run: |
+          set -euo pipefail
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/main.yml@refs/heads/main"
+          cosign sign-blob --yes \
+            --bundle "$RELEASE_DIR/signature.sigstore.json" \
+            "$RELEASE_DIR/artifact.bin"
+          cosign verify-blob \
+            --bundle "$RELEASE_DIR/signature.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$RELEASE_DIR/artifact.bin"
 
       - name: Require a public GHCR package or explicit bootstrap authority
         if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -525,6 +604,12 @@ jobs:
             --job-name "${{ matrix.name }}" \
             --builder-id "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
             --out "$RELEASE_DIR/oci-publication.json"
+          cp "$BUNDLE_PATH" "$RELEASE_DIR/provenance.sigstore.json"
+          jq -n \
+            --arg uri "${{ steps.attest_oci.outputs['attestation-url'] }}" \
+            --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
+            '{predicateType:"https://slsa.dev/provenance/v1",uri:$uri,builderId:$builderId,attested:true}' \
+            > "$RELEASE_DIR/provenance-claims.json"
 
       - name: Upload the packaged bytes
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -535,6 +620,25 @@ jobs:
             ${{ env.RELEASE_DIR }}/artifact.bin
             ${{ env.RELEASE_DIR }}/draft-envelope.json
             ${{ env.RELEASE_DIR }}/unearned.json
+            ${{ env.RELEASE_DIR }}/package-integrity-report.json
+          if-no-files-found: error
+
+      - name: Upload blob publication evidence
+        if: ${{ inputs.publish && !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: publication-${{ matrix.name }}
+          path: |
+            ${{ env.RELEASE_DIR }}/provenance.sigstore.json
+            ${{ env.RELEASE_DIR }}/provenance-claims.json
+          if-no-files-found: error
+
+      - name: Upload hands-agent signature evidence
+        if: ${{ inputs.publish && matrix.name == 'hands-agent' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: signature-${{ matrix.name }}
+          path: ${{ env.RELEASE_DIR }}/signature.sigstore.json
           if-no-files-found: error
 
       - name: Upload reproducible OCI build evidence
@@ -553,6 +657,15 @@ jobs:
             ${{ env.RELEASE_DIR }}/unearned.json
             ${{ env.RELEASE_DIR }}/oci-toolchain.json
             ${{ env.RELEASE_DIR }}/source-clean-before-plan.json
+            ${{ env.RELEASE_DIR }}/package-integrity-report.json
+          if-no-files-found: error
+
+      - name: Upload OCI publication evidence
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: publication-${{ matrix.name }}
+          path: |
             ${{ env.RELEASE_DIR }}/source-clean-before-push.json
             ${{ env.RELEASE_DIR }}/source-clean-before-attestation.json
             ${{ env.RELEASE_DIR }}/visibility-before-push.json
@@ -560,7 +673,8 @@ jobs:
             ${{ env.RELEASE_DIR }}/oci-publication.json
             ${{ env.RELEASE_DIR }}/readback-manifest.json
             ${{ env.RELEASE_DIR }}/verified-provenance.json
-            ${{ steps.attest_oci.outputs.bundle-path }}
+            ${{ env.RELEASE_DIR }}/provenance.sigstore.json
+            ${{ env.RELEASE_DIR }}/provenance-claims.json
           if-no-files-found: error
 
   public_release_inputs:
@@ -613,7 +727,31 @@ jobs:
       - name: Install supply-chain scanners
         uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+          fallback: none
+
+      - name: Install and verify exact artifact scanners
+        run: |
+          set -euo pipefail
+          scanner_root="$RUNNER_TEMP/aex-artifact-scanners"
+          mkdir -p "$scanner_root/syft" "$scanner_root/grype" "$scanner_root/bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$scanner_root/syft.tar.gz" \
+            https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz
+          echo "bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788  $scanner_root/syft.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "$scanner_root/syft.tar.gz" -C "$scanner_root/syft"
+          install -m 0755 "$scanner_root/syft/syft" "$scanner_root/bin/syft"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$scanner_root/grype.tar.gz" \
+            https://github.com/anchore/grype/releases/download/v0.116.1/grype_0.116.1_linux_amd64.tar.gz
+          echo "0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458  $scanner_root/grype.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "$scanner_root/grype.tar.gz" -C "$scanner_root/grype"
+          install -m 0755 "$scanner_root/grype/grype" "$scanner_root/bin/grype"
+          [[ "$("$scanner_root/bin/syft" version -o json | jq -er .version)" == "1.50.0" ]]
+          [[ "$("$scanner_root/bin/grype" version -o json | jq -er .version)" == "0.116.1" ]]
+          echo "$scanner_root/bin" >> "$GITHUB_PATH"
 
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
@@ -623,8 +761,15 @@ jobs:
       - name: Audit the exact Rust and TypeScript lockfiles once
         run: |
           set -euo pipefail
-          cargo deny --all-features check
-          bun audit
+          mkdir -p dist/global-evidence
+          cargo deny --all-features check 2>&1 | tee dist/global-evidence/cargo-deny.log
+          cargo audit --deny warnings 2>&1 | tee dist/global-evidence/cargo-audit.log
+          bun audit 2>&1 | tee dist/global-evidence/bun-audit.log
+          jq -n '{schema:"aex.check-report.v1",producer:"cargo-deny 0.20.2",checks:[
+            {id:"licenses",status:"passed"},
+            {id:"bans",status:"passed"},
+            {id:"sources",status:"passed"}
+          ]}' > dist/global-evidence/deny-report.json
 
       - name: Download every packaged blob unit
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -637,6 +782,18 @@ jobs:
         with:
           pattern: oci-artifact-*
           path: oci-units
+
+      - name: Download every publication evidence bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: publication-*
+          path: publication-units
+
+      - name: Download the required hands-agent signature
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: signature-hands-agent
+          path: signature-units/hands-agent
 
       - name: Download every same-run validation receipt
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -675,10 +832,10 @@ jobs:
           cmp dist/terraform-modules.tar.gz dist/terraform-modules.check.tar.gz
           rm dist/terraform-modules.check.tar.gz
 
-      - name: Bind earned receipts and record every certification deferral
+      - name: Produce artifact-bound supply-chain evidence and certify every unit
         run: |
           set -euo pipefail
-          mkdir -p dist/bound-receipts dist/certification-deferrals
+          mkdir -p dist/bound-receipts dist/certified dist/unit-assets dist/aux-assets
           shopt -s nullglob
           mapfile -d '' receipts < <(
             find validation-receipts -type f -name '*.json' -print0 | sort -z
@@ -687,46 +844,173 @@ jobs:
             packaged-units/artifact-*/draft-envelope.json
             oci-units/oci-artifact-*/draft-envelope.json
           )
+          test "${#drafts[@]}" -eq 39
+          tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
+          builder="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"
+
+          bun -e '
+            const parsed = Bun.TOML.parse(await Bun.file("release/units.toml").text());
+            const rows = Object.fromEntries(parsed.unit.map((row) => [row.id, row.required_receipts]));
+            await Bun.write("dist/unit-required-receipts.json", JSON.stringify(rows, null, 2) + "\n");
+          '
+
+          new_bound_check_receipt() {
+            local unit=$1 class=$2 report=$3 attachment=$4 draft=$5 output=$6
+            local now declared context unbound
+            now=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+            declared=$(jq -er '.checks | length | select(. > 0)' "$report")
+            context="${output%.json}.context.json"
+            unbound="${output%.json}.unbound.json"
+            jq -n \
+              --arg receiptId "rc_main_artifact_${class}_${unit}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
+              --arg class "$class" --arg repository "$GITHUB_REPOSITORY" \
+              --arg commitSha "$GITHUB_SHA" --arg workflowRunId "$GITHUB_RUN_ID" \
+              --argjson runAttempt "$GITHUB_RUN_ATTEMPT" --arg unit "$unit" \
+              --arg builderId "$builder" --argjson declared "$declared" --arg now "$now" \
+              '{receiptId:$receiptId,class:$class,layer:"unit",lane:"main",concerns:[],
+                declared:$declared,
+                source:{repository:$repository,commitSha:$commitSha,treeClean:true,
+                  workflowRunId:$workflowRunId,runAttempt:$runAttempt,
+                  jobName:"Public release inputs",builderId:$builderId},
+                inputs:{},subject:{unitIds:[$unit]},
+                selection:{mode:"full",filterset:"exact-artifact",packages:[]},
+                data:{residue:"none",secretCanaryObserved:false},
+                startedAt:$now,completedAt:$now}' > "$context"
+            dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet evidence new-check \
+              --context "$context" --report "$report" --out "$unbound"
+            dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet evidence attach \
+              --receipt "$unbound" --kind producer-report --file "$attachment" \
+              --uri "artifact://artifact-evidence-$unit/$class-producer.json"
+            dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet evidence bind-artifact \
+              --receipt "$unbound" --envelope "$draft" --out "$output"
+          }
+
           for draft in "${drafts[@]}"; do
             unit=$(jq -er .unit.id "$draft")
+            kind=$(jq -er .unit.kind "$draft")
             directory=${draft%/draft-envelope.json}
+            publication="publication-units/publication-$unit"
             bound_directory="dist/bound-receipts/$unit"
-            mkdir -p "$bound_directory"
+            certified_directory="dist/certified/$unit"
+            evidence_directory="$certified_directory/evidence"
+            mkdir -p "$bound_directory" "$evidence_directory"
+            required=$(jq -cer --arg unit "$unit" '.[$unit] | select(type == "array")' \
+              dist/unit-required-receipts.json)
+
             receipt_args=()
             for receipt in "${receipts[@]}"; do
-              if jq -e --arg unit "$unit" '.subject.unitIds | index($unit) != null' \
+              class=$(jq -er .class "$receipt")
+              if jq -e --arg unit "$unit" --arg class "$class" --argjson required "$required" \
+                '(.subject.unitIds | index($unit) != null) and
+                 ($required | index($class) != null)' \
                 "$receipt" >/dev/null; then
-                class=$(jq -er .class "$receipt")
                 bound="$bound_directory/$class.json"
                 test ! -e "$bound"
                 dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
-                  evidence bind-artifact \
-                  --receipt "$receipt" \
-                  --envelope "$draft" \
-                  --out "$bound"
+                  evidence bind-artifact --receipt "$receipt" --envelope "$draft" --out "$bound"
                 receipt_args+=(--receipt "$bound")
               fi
             done
-            dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
-              artifact defer-certification \
-              --draft "$draft" \
-              --unearned "$directory/unearned.json" \
-              "${receipt_args[@]}" \
-              --workflow-run-id "$GITHUB_RUN_ID" \
-              --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
-              --job-name "$unit" \
-              --builder-id "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
-              --out "dist/certification-deferrals/$unit.json"
-          done
-          test "${#drafts[@]}" -gt 0
-          deferral_count=$(find dist/certification-deferrals -maxdepth 1 -type f -name '*.json' | wc -l)
-          test "$deferral_count" -eq "${#drafts[@]}"
 
-      - name: Upload exact certification deferrals
+            if [[ "$kind" == rust-oci-* ]]; then
+              publication_claim="$publication/oci-publication.json"
+              scan_target=$(jq -er '.location.uri | sub("^oci://"; "registry:")' "$publication_claim")
+              artifact_args=()
+              location=$(jq -c .location "$publication_claim")
+            else
+              artifact="$directory/artifact.bin"
+              scan_target="$artifact"
+              asset_metadata=$(dist/aex-release-tool artifact asset-name --unit "$unit" --file "$artifact")
+              asset=$(jq -er .asset <<<"$asset_metadata")
+              cp "$artifact" "dist/unit-assets/$asset"
+              artifact_args=(--file "$artifact")
+              location=$(jq -cn --arg uri "$release_base/$asset" \
+                '{kind:"github-release",uri:$uri,immutable:true}')
+            fi
+
+            syft scan "$scan_target" -o cyclonedx-json@1.6 > "$evidence_directory/raw-sbom.cdx.json"
+            grype "sbom:$evidence_directory/raw-sbom.cdx.json" \
+              -o json --fail-on high > "$evidence_directory/grype.json"
+            scanned_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+            bun scripts/cicd/artifact-supply-chain.ts \
+              --raw-sbom "$evidence_directory/raw-sbom.cdx.json" \
+              --draft "$draft" --grype "$evidence_directory/grype.json" \
+              --deny-policy deny.toml --syft-version 1.50.0 --grype-version 0.116.1 \
+              --scanned-at "$scanned_at" --out-dir "$evidence_directory"
+
+            for class in sbom license vulnerability; do
+              report="$evidence_directory/report-$class.json"
+              case "$class" in
+                sbom) attachment="$evidence_directory/sbom.cdx.json" ;;
+                license) attachment="$evidence_directory/license-inventory.json" ;;
+                vulnerability) attachment="$evidence_directory/vulnerability-verdict.json" ;;
+              esac
+              bound="$bound_directory/$class.json"
+              new_bound_check_receipt "$unit" "$class" "$report" "$attachment" "$draft" "$bound"
+              receipt_args+=(--receipt "$bound")
+            done
+            if jq -e 'index("deny") != null' <<<"$required" >/dev/null; then
+              bound="$bound_directory/deny.json"
+              new_bound_check_receipt "$unit" deny dist/global-evidence/deny-report.json \
+                dist/global-evidence/cargo-deny.log "$draft" "$bound"
+              receipt_args+=(--receipt "$bound")
+            fi
+            for class in package-integrity determinism; do
+              if jq -e --arg class "$class" 'index($class) != null' <<<"$required" >/dev/null; then
+                bound="$bound_directory/$class.json"
+                new_bound_check_receipt "$unit" "$class" "$directory/package-integrity-report.json" \
+                  "$directory/package-integrity-report.json" "$draft" "$bound"
+                receipt_args+=(--receipt "$bound")
+              fi
+            done
+
+            sbom_digest=$(sha256sum "$evidence_directory/sbom.cdx.json" | cut -d' ' -f1)
+            sbom_asset="sbom-$unit-$sbom_digest.cdx.json"
+            cp "$evidence_directory/sbom.cdx.json" "dist/aux-assets/$sbom_asset"
+            signature='{ "present": false, "kind": "none" }'
+            signature_args=()
+            if [[ "$unit" == hands-agent ]]; then
+              signature_bundle="signature-units/hands-agent/signature.sigstore.json"
+              signature_digest=$(sha256sum "$signature_bundle" | cut -d' ' -f1)
+              signature_asset="signature-$unit-$signature_digest.sigstore.json"
+              cp "$signature_bundle" "dist/aux-assets/$signature_asset"
+              signature=$(jq -cn --arg keyId \
+                "https://github.com/$GITHUB_REPOSITORY/.github/workflows/main.yml@refs/heads/main" \
+                '{present:true,kind:"sigstore-cosign",keyId:$keyId}')
+              signature_args=(--signature-bundle "$signature_bundle")
+            fi
+            jq -n \
+              --arg repository "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF" \
+              --arg runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+              --arg unit "$unit" --arg builderId "$builder" \
+              --arg sbomUri "$release_base/$sbom_asset" \
+              --argjson location "$location" --argjson signature "$signature" \
+              --slurpfile supply "$evidence_directory/supply-chain-claims.json" \
+              --slurpfile provenance "$publication/provenance-claims.json" \
+              '{workflow:{repository:$repository,ref:$ref,path:".github/workflows/_build-artifacts.yml",
+                  runId:$runId,runAttempt:$runAttempt,jobName:$unit,builderId:$builderId},
+                location:$location,sbomFormat:"cyclonedx-1.6",sbomUri:$sbomUri,
+                licenses:$supply[0].licenses,vulnerabilities:$supply[0].vulnerabilities,
+                provenance:$provenance[0],signature:$signature}' \
+              > "$evidence_directory/certification-claims.json"
+            dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet artifact certify \
+              --draft "$draft" --claims "$evidence_directory/certification-claims.json" \
+              "${artifact_args[@]}" --sbom "$evidence_directory/sbom.cdx.json" \
+              --license-inventory "$evidence_directory/license-inventory.json" \
+              --vulnerability-verdict "$evidence_directory/vulnerability-verdict.json" \
+              --provenance-bundle "$publication/provenance.sigstore.json" \
+              "${signature_args[@]}" "${receipt_args[@]}" \
+              --out "$certified_directory/certified-envelope.json"
+          done
+          certified_count=$(find dist/certified -type f -name certified-envelope.json | wc -l)
+          test "$certified_count" -eq "${#drafts[@]}"
+
+      - name: Upload the exact certified artifact inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: certification-deferrals
-          path: dist/certification-deferrals/*.json
+          name: certified-envelopes
+          path: dist/certified
           if-no-files-found: error
 
       - name: Validate regional table definitions twice and prove byte identity
@@ -768,10 +1052,9 @@ jobs:
           echo "regional_tables_size_bytes=$regional_size" >> "$GITHUB_OUTPUT"
           echo "regional_tables_definitions_digest=$regional_definitions_digest" >> "$GITHUB_OUTPUT"
 
-      - name: Name every blob from its unit and real byte digest
+      - name: Verify every content-addressed unit and auxiliary asset
         run: |
           set -euo pipefail
-          mkdir -p dist/unit-assets
           blob_count=0
           shopt -s nullglob
           for directory in packaged-units/artifact-*; do
@@ -780,18 +1063,17 @@ jobs:
             test -f "$file"
             metadata=$(dist/aex-release-tool artifact asset-name --unit "$unit" --file "$file")
             asset=$(jq -er .asset <<<"$metadata")
-            test ! -e "dist/unit-assets/$asset"
-            cp "$file" "dist/unit-assets/$asset"
+            cmp --silent "$file" "dist/unit-assets/$asset"
             blob_count=$((blob_count + 1))
           done
           oci_count=0
           for identity in oci-units/oci-artifact-*/identity-1.json; do
             jq -e '.schema == "aex.oci-image-identity.v1" and (.unit | length > 0) and (.outputDigest | test("^sha256:[0-9a-f]{64}$"))' \
               "$identity" >/dev/null
-            directory=${identity%/identity-1.json}
+            unit=$(jq -er .unit "$identity")
             jq -e --arg digest "$(jq -er .outputDigest "$identity")" \
               '.schema == "aex.oci-publication.v1" and .image.outputDigest == $digest and .location.immutable == true and (.provenance.bundleDigest | test("^sha256:[0-9a-f]{64}$")) and (.provenance.verificationResultDigest | test("^sha256:[0-9a-f]{64}$"))' \
-              "$directory/oci-publication.json" >/dev/null
+              "publication-units/publication-$unit/oci-publication.json" >/dev/null
             oci_count=$((oci_count + 1))
           done
           if [ "$oci_count" -ne 5 ]; then
@@ -803,8 +1085,11 @@ jobs:
             echo "unit inventory accounted for $total entries, expected exactly 39" >&2
             exit 30
           fi
+          aux_count=$(find dist/aux-assets -maxdepth 1 -type f | wc -l)
+          [[ "$aux_count" -eq 40 ]]
           echo "blob_count=$blob_count" >> "$GITHUB_ENV"
           echo "oci_count=$oci_count" >> "$GITHUB_ENV"
+          echo "aux_count=$aux_count" >> "$GITHUB_ENV"
 
       - name: Attest raw release tool provenance
         id: attest_release_tool
@@ -850,6 +1135,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY"
           shopt -s nullglob
           unit_assets=(dist/unit-assets/*)
+          aux_assets=(dist/aux-assets/*)
           if [ ${#unit_assets[@]} -ne "$blob_count" ]; then
             echo "named ${#unit_assets[@]} unit assets, expected $blob_count" >&2
             exit 30
@@ -857,9 +1143,14 @@ jobs:
           if [ ${#unit_assets[@]} -gt 0 ]; then
             gh release upload "$tag" "${unit_assets[@]}" --repo "$GITHUB_REPOSITORY"
           fi
+          if [ ${#aux_assets[@]} -ne "$aux_count" ]; then
+            echo "named ${#aux_assets[@]} auxiliary assets, expected $aux_count" >&2
+            exit 30
+          fi
+          gh release upload "$tag" "${aux_assets[@]}" --repo "$GITHUB_REPOSITORY"
           observed_count=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '.assets | length')
-          expected_count=$((3 + blob_count))
+          expected_count=$((3 + blob_count + aux_count))
           [[ "$observed_count" -eq "$expected_count" ]]
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
@@ -867,13 +1158,13 @@ jobs:
           echo "module_bundle_uri=$base/terraform-modules.tar.gz" >> "$GITHUB_OUTPUT"
           echo "regional_tables_uri=$base/regional-tables.json" >> "$GITHUB_OUTPUT"
 
-      - name: Read back and verify every published blob unit
+      - name: Read back and verify every published unit and auxiliary asset
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.publish.outputs.release_tag }}
         run: |
           set -euo pipefail
-          mkdir -p dist/unit-readback
+          mkdir -p dist/unit-readback dist/aux-readback
           shopt -s nullglob
           local_assets=(dist/unit-assets/*)
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
@@ -890,6 +1181,14 @@ jobs:
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml" \
               --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
               "--deny-${denied_runner_class}-runners"
+          done
+          local_aux=(dist/aux-assets/*)
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'sbom-*' --pattern 'signature-*' --dir dist/aux-readback
+          readback_aux=(dist/aux-readback/*)
+          [[ "${#readback_aux[@]}" -eq "${#local_aux[@]}" ]]
+          for local_asset in "${local_aux[@]}"; do
+            cmp --silent "$local_asset" "dist/aux-readback/${local_asset##*/}"
           done
 
       - name: Record provenance outputs

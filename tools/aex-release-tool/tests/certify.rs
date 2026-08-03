@@ -60,6 +60,7 @@ struct Fixture {
     artifact: std::path::PathBuf,
     sbom: std::path::PathBuf,
     licenses: std::path::PathBuf,
+    vulnerabilities: std::path::PathBuf,
     provenance: std::path::PathBuf,
     receipts: Vec<Receipt>,
 }
@@ -159,7 +160,18 @@ impl Fixture {
         let sbom = temp.path().join("unit.cdx.json");
         std::fs::write(
             &sbom,
-            br#"{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"name":"aex-wire"}]}"#,
+            serde_json::to_vec(&serde_json::json!({
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "metadata": {
+                    "properties": [{
+                        "name": "aex:artifactSubjectDigest",
+                        "value": draft.artifact_subject_digest,
+                    }],
+                },
+                "components": [{"name": "aex-wire"}],
+            }))
+            .unwrap(),
         )
         .unwrap();
         let sbom_digest = aex_release_tool::canon::digest_bytes(&std::fs::read(&sbom).unwrap());
@@ -177,7 +189,40 @@ impl Fixture {
         )
         .unwrap();
         let licenses = temp.path().join("licenses.json");
-        std::fs::write(&licenses, br#"{"allowed":["Apache-2.0"]}"#).unwrap();
+        std::fs::write(
+            &licenses,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "aex.license-inventory.v1",
+                "unit": unit.id.clone(),
+                "artifactSubjectDigest": draft.artifact_subject_digest.clone(),
+                "policyDigest": claims.licenses.policy_digest.clone(),
+                "components": [{
+                    "name": "aex-wire",
+                    "version": "0.1.0",
+                    "licenses": ["Apache-2.0"],
+                    "denied": [],
+                }],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let vulnerabilities = temp.path().join("vulnerabilities.json");
+        std::fs::write(
+            &vulnerabilities,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "aex.vulnerability-verdict.v1",
+                "unit": unit.id.clone(),
+                "artifactSubjectDigest": draft.artifact_subject_digest.clone(),
+                "scanner": claims.vulnerabilities.scanner.clone(),
+                "database": claims.vulnerabilities.database.clone(),
+                "scannedAt": claims.vulnerabilities.scanned_at.clone(),
+                "unapprovedCritical": claims.vulnerabilities.unapproved_critical,
+                "unapprovedHigh": claims.vulnerabilities.unapproved_high,
+                "matches": 0,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let provenance = temp.path().join("attestation.json");
         std::fs::write(&provenance, br#"{"verificationMaterial":{}}"#).unwrap();
         let receipts = unit
@@ -193,6 +238,7 @@ impl Fixture {
             artifact,
             sbom,
             licenses,
+            vulnerabilities,
             provenance,
             receipts,
         }
@@ -209,7 +255,9 @@ impl Fixture {
                 artifact: Some(&self.artifact),
                 sbom: &self.sbom,
                 license_inventory: &self.licenses,
+                vulnerability_verdict: &self.vulnerabilities,
                 provenance_bundle: &self.provenance,
+                signature_bundle: None,
             },
             &self.receipts,
             &freshness(),
@@ -376,6 +424,32 @@ fn certification_refuses_an_empty_sbom_and_mutable_or_wrong_host_location() {
         .replace("github.com", "example.com");
     let err = fixture.certify().unwrap_err();
     assert!(err.rules().contains(&"envelope-github-release-location"));
+}
+
+#[test]
+fn certification_refuses_supply_documents_for_another_subject_or_scan() {
+    let fixture = Fixture::new();
+    let mut license: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.licenses).unwrap()).unwrap();
+    license["artifactSubjectDigest"] = serde_json::json!(digest(0x71));
+    std::fs::write(&fixture.licenses, serde_json::to_vec(&license).unwrap()).unwrap();
+    let err = fixture.certify().unwrap_err();
+    assert!(err.rules().contains(&"certify-license-inventory-binding"));
+
+    let fixture = Fixture::new();
+    let mut verdict: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.vulnerabilities).unwrap()).unwrap();
+    verdict["database"] = serde_json::json!("unidentified-database");
+    std::fs::write(
+        &fixture.vulnerabilities,
+        serde_json::to_vec(&verdict).unwrap(),
+    )
+    .unwrap();
+    let err = fixture.certify().unwrap_err();
+    assert!(
+        err.rules()
+            .contains(&"certify-vulnerability-verdict-binding")
+    );
 }
 
 #[test]

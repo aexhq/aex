@@ -185,23 +185,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download blob envelope candidates
+      - name: Download the exact certified artifact inventory
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          pattern: artifact-*
-          path: handoff/blob
-
-      - name: Download OCI envelope candidates
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          pattern: oci-artifact-*
-          path: handoff/oci
-
-      - name: Download exact certification deferrals
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: certification-deferrals
-          path: handoff/deferrals
+          name: certified-envelopes
+          path: handoff/certified
 
       - name: Re-acquire and verify public release inputs
         env:
@@ -277,17 +265,10 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          certified_envelopes=(
-            handoff/blob/artifact-*/certified-envelope.json
-            handoff/oci/oci-artifact-*/certified-envelope.json
-          )
-          deferrals=(handoff/deferrals/*.json)
+          certified_envelopes=(handoff/certified/*/certified-envelope.json)
           args=()
           for envelope in "${certified_envelopes[@]}"; do
             args+=(--envelope "$envelope")
-          done
-          for deferred in "${deferrals[@]}"; do
-            args+=(--deferred "$deferred")
           done
           public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
             artifact certification-inventory "${args[@]}" \
@@ -303,10 +284,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          envelope_files=(
-            handoff/blob/artifact-*/certified-envelope.json
-            handoff/oci/oci-artifact-*/certified-envelope.json
-          )
+          envelope_files=(handoff/certified/*/certified-envelope.json)
           envelope_args=()
           for envelope in "${envelope_files[@]}"; do
             envelope_args+=(--envelope "$envelope")
@@ -327,10 +305,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          envelope_files=(
-            handoff/blob/artifact-*/certified-envelope.json
-            handoff/oci/oci-artifact-*/certified-envelope.json
-          )
+          envelope_files=(handoff/certified/*/certified-envelope.json)
           envelope_args=()
           for envelope in "${envelope_files[@]}"; do
             envelope_args+=(--envelope "$envelope")

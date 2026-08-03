@@ -49,6 +49,18 @@ The sole manual publication setup is the one-time, fail-closed
 only digest-addressed package content; normal publication never changes package
 visibility.
 
+## Main-push artifact evidence
+
+Pull requests build and package candidates without publishing. The protected
+main workflow additionally preserves exact GitHub provenance, runs the pinned
+artifact scanners, publishes content-addressed unit/SBOM/signature assets, and
+certifies all 39 deployable rows before composition. `release/units.toml`
+declares the required receipt classes and `release/semantic-receipts.json`
+declares the real package selections for semantic classes. These registries
+must stay exhaustive together. A missing producer, missing receipt, empty SBOM,
+license denial, high/critical advisory, package mismatch, or provenance failure
+is a failed main push, not a certification deferral.
+
 ## Live user tests
 
 Strict v1 has one execution path. `apps/user-tests/scenarios.ts` is the typed

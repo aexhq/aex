@@ -332,6 +332,78 @@ jobs:
           cargo run --locked --release -p aex-release-tool -- evidence verify \
             --receipt "$RECEIPT_DIR/receipt.json"
 
+      - name: Build and verify declared semantic receipts
+        env:
+          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
+          SELECTED_PACKAGE: ${{ matrix.name }}
+          SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+          NEXTEST_PROFILE: ${{ inputs.profile }}
+        run: |
+          set -euo pipefail
+          mapfile -t producers < <(
+            jq -c --arg package "$SELECTED_PACKAGE" \
+              '.producers[] | select(.package == $package)' release/semantic-receipts.json
+          )
+          for producer in "${producers[@]}"; do
+            unit=$(jq -er .unit <<<"$producer")
+            class=$(jq -er .class <<<"$producer")
+            layer=$(jq -er .layer <<<"$producer")
+            filterset=$(jq -er .filterset <<<"$producer")
+            jq -e --arg unit "$unit" 'index($unit) != null' \
+              <<<"$SELECTED_UNITS_JSON" >/dev/null
+            started_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+            list="$RECEIPT_DIR/nextest-list.json"
+            junit="target/nextest/$NEXTEST_PROFILE/junit.xml"
+            declared=$(jq -er .declared "$RECEIPT_DIR/inventory.json")
+            if [[ "$filterset" != "all()" ]]; then
+              profile="$NEXTEST_PROFILE"
+              feature_args=()
+              if jq -e '.features != null' <<<"$producer" >/dev/null; then
+                profile=integration
+                features=$(jq -er '.features | join(",")' <<<"$producer")
+                feature_args+=(--features "$features")
+              fi
+              key=$(printf '%s-%s' "$unit" "$class" | tr -c 'A-Za-z0-9._-' '-')
+              list="$RECEIPT_DIR/nextest-list-$key.json"
+              cargo nextest list --locked --profile "$profile" \
+                -p "$SELECTED_PACKAGE" --all-targets "${feature_args[@]}" \
+                -E "$filterset" --message-format json > "$list"
+              cargo nextest run --locked --profile "$profile" \
+                -p "$SELECTED_PACKAGE" "${feature_args[@]}" \
+                -E "$filterset" --no-tests=fail
+              junit="target/nextest/$profile/junit.xml"
+              declared=$(jq -er '[."rust-suites"[].testcases | length] | add | select(. > 0)' "$list")
+            fi
+            completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+            output="$RECEIPT_DIR/receipt-semantic-$unit-$class.json"
+            context="$RECEIPT_DIR/context-semantic-$unit-$class.json"
+            jq \
+              --arg receiptId "rc_${RECEIPT_LANE}_rust_${class}_${unit}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
+              --arg class "$class" \
+              --arg layer "$layer" \
+              --arg unit "$unit" \
+              --arg filterset "$filterset" \
+              --argjson declared "$declared" \
+              --arg startedAt "$started_at" \
+              --arg completedAt "$completed_at" \
+              '.receiptId=$receiptId | .class=$class | .layer=$layer |
+               .concerns=[$class] | .declared=$declared | .subject.unitIds=[$unit] |
+               .selection.filterset=$filterset | .selection.partition=null |
+               .startedAt=$startedAt | .completedAt=$completedAt' \
+              "$RECEIPT_DIR/context.json" > "$context"
+            cargo run --locked --release -p aex-release-tool -- evidence new \
+              --context "$context" --junit "$junit" --out "$output"
+            cargo run --locked --release -p aex-release-tool -- evidence attach \
+              --receipt "$output" --kind junit --file "$junit" \
+              --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${class}/junit.xml"
+            cargo run --locked --release -p aex-release-tool -- evidence attach \
+              --receipt "$output" --kind nextest-list --file "$list" \
+              --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${class}/nextest-list.json"
+            cargo run --locked --release -p aex-release-tool -- evidence verify \
+              --receipt "$output"
+          done
+
       - name: Upload the unit receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
@@ -344,6 +416,14 @@ jobs:
         with:
           name: receipt-${{ inputs.lane }}-rust-lint-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json
+          if-no-files-found: error
+
+      - name: Upload semantic receipts
+        if: ${{ hashFiles(format('target/aex-evidence/{0}/receipt-semantic-*.json', matrix.name)) != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: receipt-${{ inputs.lane }}-rust-semantic-${{ matrix.name }}-${{ matrix.partition }}
+          path: target/aex-evidence/${{ matrix.name }}/receipt-semantic-*.json
           if-no-files-found: error
 
       - name: Upload the lint evidence
