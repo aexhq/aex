@@ -31,12 +31,12 @@
     "typecheck": "bun run generate && bun run source && tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "4.3.0",
+    "@tailwindcss/postcss": "4.3.3",
     "@types/mdx": "^2.0.13",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
-    "postcss": "8.5.6",
-    "tailwindcss": "4.3.0",
-    "typedoc": "^0.28.19"
+    "postcss": "8.5.25",
+    "tailwindcss": "4.3.3",
+    "typedoc": "^0.28.20"
   }
 }
