@@ -43,6 +43,7 @@ aex-brain-tool-catalog = { path = "../../crates/aex-brain-tool-catalog" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-sqs.workspace = true
+futures.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,

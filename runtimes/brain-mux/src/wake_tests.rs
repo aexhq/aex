@@ -25,7 +25,8 @@ use aex_brain_application::ports::{
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp, WakeId,
+    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
+    WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
@@ -352,6 +353,176 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
     assert_eq!(report.driven, COUNT);
     assert_eq!(provider.maximum.load(Ordering::SeqCst), COUNT);
     assert_eq!(provider.active.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Debug)]
+struct RefillProvider {
+    slow: AgentKey,
+    recovered: AgentKey,
+    slow_started: AtomicBool,
+    recovered_started: AtomicBool,
+    active: AtomicUsize,
+    maximum: AtomicUsize,
+}
+
+impl ProviderPort for RefillProvider {
+    fn dispatch<'a>(
+        &'a self,
+        ticket: &'a DispatchTicket,
+        _request: &'a CanonicalModelRequest,
+        _budget: &'a StreamBudget,
+        _preview: &'a dyn PreviewSink,
+        cancel: &'a CancelToken,
+    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
+        let key = ticket.key();
+        let mut entered = false;
+        Box::pin(core::future::poll_fn(move |context| {
+            if !entered {
+                entered = true;
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.maximum.fetch_max(active, Ordering::SeqCst);
+                if key == self.slow {
+                    self.slow_started.store(true, Ordering::SeqCst);
+                }
+                if key == self.recovered {
+                    self.recovered_started.store(true, Ordering::SeqCst);
+                }
+            }
+            if key == self.slow && !cancel.is_cancelled() {
+                context.waker().wake_by_ref();
+                return core::task::Poll::Pending;
+            }
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            core::task::Poll::Ready(Ok(produced()))
+        }))
+    }
+
+    fn resolve_unknown<'a>(
+        &'a self,
+        _identity: &'a DurableEffect,
+        _evidence: &'a DispatchEvidence,
+    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
+        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
+    }
+}
+
+/// A pending provider occupies one aggregate slot, not the whole receive loop. A completed
+/// sibling refills the other slot and recovers a subsequently persisted lost hint while the
+/// first effect is still live. Drain then cancels that structured child and joins the set.
+#[tokio::test(flavor = "current_thread")]
+async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_live() {
+    const CAP: usize = 2;
+    let slow = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4010)));
+    let fast = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4011)));
+    let recovered = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4012)));
+    let log = Arc::new(Recorder::default());
+    let clock = Arc::new(FixedClock::at(START));
+    let queue = Arc::new(MemoryQueue::new(Arc::clone(&log)));
+    let store = Arc::new(MemoryStore::new(
+        Arc::clone(&clock),
+        Arc::clone(&queue),
+        Arc::clone(&log),
+    ));
+    for key in [slow, fast, recovered] {
+        store.seed(key, history());
+    }
+    for (key, id, work) in [(slow, 0x6100, "wrk-slow"), (fast, 0x6101, "wrk-fast")] {
+        let mut wake = wake_for(key, work);
+        wake.id = WakeId(Uuid::from_u128(id));
+        queue.project(wake);
+    }
+
+    let provider = Arc::new(RefillProvider {
+        slow,
+        recovered,
+        slow_started: AtomicBool::new(false),
+        recovered_started: AtomicBool::new(false),
+        active: AtomicUsize::new(0),
+        maximum: AtomicUsize::new(0),
+    });
+    let drain = Arc::new(DrainGate::new());
+    let ports = Ports {
+        journal: Arc::clone(&store) as Arc<_>,
+        effects: Arc::clone(&store) as Arc<_>,
+        leases: Arc::clone(&store) as Arc<_>,
+        wakes: Arc::clone(&queue) as Arc<_>,
+        provider: Arc::clone(&provider) as Arc<_>,
+        tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
+        hands: Arc::new(AbsentHands),
+        catalog: Arc::new(FixedCatalog::with_model(capability())),
+        clock,
+        ids: Arc::new(CountingIds::new()),
+    };
+    let admission = Arc::new(Admission::new(
+        AdmissionBounds {
+            target: u32::try_from(CAP).expect("the test cap fits u32"),
+            safety_cap: u32::try_from(CAP).expect("the test cap fits u32"),
+            offered_ceiling: 4,
+        },
+        Arc::new(PermitSet::new(BTreeMap::from([(
+            PermitKind::Activation,
+            u64::try_from(CAP).expect("the test cap fits u64"),
+        )]))),
+        Arc::clone(&drain),
+    ));
+    let mut policy = ActivationPolicy::default();
+    policy.receive_batch = 1;
+    policy.max_concurrent_drives = 1;
+    policy.due_shards = 1;
+    policy.due_scan_shards_per_pass = 1;
+    policy.due_scan_page = 1;
+    policy.due_scan_interval = core::time::Duration::ZERO;
+    let pump = WakeLoop::new(
+        Activation::new(
+            ports,
+            policy,
+            Arc::new(ActivationRegistry::new()),
+            Arc::clone(&drain),
+        ),
+        Arc::new(MuxAdmission::new(admission, bound())),
+    );
+    let scheduler = tokio::spawn(crate::run_wake_scheduler(
+        pump,
+        Arc::clone(&drain),
+        CAP,
+        |_| {},
+    ));
+
+    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+        while !provider.slow_started.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the slow provider starts");
+
+    let mut lost_hint = wake_for(recovered, "wrk-recovered");
+    lost_hint.id = WakeId(Uuid::from_u128(0x6102));
+    lost_hint.due = Some(Timestamp::from_millis(START));
+    queue.persist(lost_hint, WorkShard(0));
+
+    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+        while !provider.recovered_started.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("a refilled lane recovers the lost hint while its sibling is pending");
+    assert_eq!(provider.maximum.load(Ordering::SeqCst), CAP);
+    assert_eq!(
+        provider.active.load(Ordering::SeqCst),
+        1,
+        "only the deliberately slow dispatch remains"
+    );
+    assert!(!scheduler.is_finished());
+
+    drain.start_drain();
+    tokio::time::timeout(core::time::Duration::from_secs(1), scheduler)
+        .await
+        .expect("drain settles and joins every scheduler lane")
+        .expect("the scheduler task does not panic");
+    assert_eq!(provider.active.load(Ordering::SeqCst), 0);
+    assert!(drain.is_quiesced());
 }
 
 /// A draining task takes nothing off the queue, whatever else it is doing.

@@ -479,6 +479,16 @@ impl WakeLoop {
         &self.activation
     }
 
+    /// Whether the composition currently permits another receive scope.
+    ///
+    /// A process-level scheduler uses this before adding a long-poll lane. [`poll_once`](Self::poll_once)
+    /// repeats the check, so a drain or admission change between this observation and the
+    /// first poll still fails closed without touching the queue.
+    #[must_use]
+    pub fn receiving_allowed(&self) -> bool {
+        self.admission.should_receive()
+    }
+
     /// Receives one batch and drives it.
     ///
     /// Returns an empty report without touching the queue when the task is draining or is

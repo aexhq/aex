@@ -310,30 +310,109 @@ async fn pump(
         &config.work_table,
     )
     .await;
+    let mut policy = aex_brain_application::activation::ActivationPolicy::default();
+    let aggregate_cap = policy.max_concurrent_drives.max(1);
+    // One receive scope owns one activation slot. Keeping the lane width at one lets the
+    // outer scheduler refill a completed slot while an unrelated provider remains pending,
+    // without multiplying the process-wide cap through nested batch concurrency.
+    policy.receive_batch = 1;
+    policy.max_concurrent_drives = 1;
     let pump = wake::wake_loop(
         wake::unavailable_ports(store, queue),
-        aex_brain_application::activation::ActivationPolicy::default(),
+        policy,
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
         wake::Bindings::unavailable(),
     );
-    while !composition.drain.is_draining() {
-        match pump.poll_once().await {
+    run_wake_scheduler(
+        pump,
+        std::sync::Arc::clone(&composition.drain),
+        aggregate_cap,
+        |result| match result {
             Ok(report) => {
-                emit_due_isolations(&telemetry, &config, &report);
-                if report.received == 0 {
-                    // Nothing to do, and nothing to receive while a binding is unsatisfied.
-                    // The tick makes drain observable without a second channel.
-                    tokio::time::sleep(compose::REACTOR_TICK).await;
-                }
+                emit_due_isolations(&telemetry, &config, report);
             }
             Err(error) => {
                 eprintln!("brain-mux: the wake loop refused: {error}");
-                tokio::time::sleep(compose::REACTOR_TICK).await;
             }
+        },
+    )
+    .await;
+}
+
+/// Continuously refills independently progressing receive scopes under one aggregate cap.
+///
+/// Each scope is a structured child future rather than a spawned task. The pump join owns
+/// the whole set, so cooperative drain polls admitted activations to settlement and hard
+/// abort drops every remaining receive or effect future before exit can be reported.
+async fn run_wake_scheduler<F>(
+    pump: aex_brain_application::activation::WakeLoop,
+    drain: std::sync::Arc<aex_brain_application::kernel::DrainGate>,
+    aggregate_cap: usize,
+    mut observe: F,
+) where
+    F: FnMut(
+        &Result<
+            aex_brain_application::activation::PollReport,
+            aex_brain_application::activation::ActivationError,
+        >,
+    ),
+{
+    use futures::stream::{FuturesUnordered, StreamExt as _};
+
+    assert_eq!(
+        pump.activation().policy().max_concurrent_drives,
+        1,
+        "each scheduler lane must own exactly one drive slot"
+    );
+    let aggregate_cap = aggregate_cap.max(1);
+    let mut passes = FuturesUnordered::new();
+    loop {
+        while !drain.is_draining() && pump.receiving_allowed() && passes.len() < aggregate_cap {
+            passes.push(poll_after(&pump, core::time::Duration::ZERO));
+        }
+
+        if passes.is_empty() {
+            if drain.is_draining() {
+                break;
+            }
+            // Bindings or admission currently refuse new receive scopes. Polling at the
+            // reactor cadence makes a later capacity change and drain observable without a
+            // busy loop or a second notification channel.
+            tokio::time::sleep(compose::REACTOR_TICK).await;
+            continue;
+        }
+
+        let result = passes
+            .next()
+            .await
+            .expect("a non-empty scheduler has one receive scope");
+        let retry_delay = match &result {
+            Ok(report) if report.received > 0 => core::time::Duration::ZERO,
+            Ok(_) | Err(_) => compose::REACTOR_TICK,
+        };
+        observe(&result);
+
+        // A failed or empty lane backs off independently. Other lanes remain polled, so
+        // one queue refusal cannot stall unrelated effects or the due-recovery cadence.
+        if !drain.is_draining() && pump.receiving_allowed() {
+            passes.push(poll_after(&pump, retry_delay));
         }
     }
+}
+
+async fn poll_after(
+    pump: &aex_brain_application::activation::WakeLoop,
+    delay: core::time::Duration,
+) -> Result<
+    aex_brain_application::activation::PollReport,
+    aex_brain_application::activation::ActivationError,
+> {
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    pump.poll_once().await
 }
 
 fn emit_due_isolations(

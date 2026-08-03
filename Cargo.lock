@@ -2756,6 +2756,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
+ "futures",
  "thiserror",
  "time",
  "tokio",
