@@ -24,6 +24,11 @@ pub struct CapacityDefaults {
 
 impl CapacityDefaults {
     /// Returns one default, which is always present after validation.
+    ///
+    /// # Panics
+    ///
+    /// Only if a caller manually constructs this public record without every
+    /// registered limit. [`canonical_defaults`] always establishes the invariant.
     #[must_use]
     pub fn value(&self, id: LimitId) -> &LimitValue {
         self.values
@@ -116,7 +121,7 @@ fn parse(input: &str) -> Result<CapacityDefaults, DefaultsError> {
                 expected.as_str()
             )));
         }
-        values.insert(expected, value(expected, row.value)?);
+        values.insert(expected, value(expected, &row.value)?);
     }
 
     Ok(CapacityDefaults {
@@ -126,10 +131,10 @@ fn parse(input: &str) -> Result<CapacityDefaults, DefaultsError> {
     })
 }
 
-fn value(id: LimitId, raw: serde_json::Value) -> Result<LimitValue, DefaultsError> {
+fn value(id: LimitId, raw: &serde_json::Value) -> Result<LimitValue, DefaultsError> {
     match id.shape() {
         LimitShape::Scalar => {
-            let number = positive(id, &raw)?;
+            let number = positive(id, raw)?;
             Ok(LimitValue::Scalar(LimitScalarValue {
                 value: DecimalU128::new(u128::from(number)),
             }))

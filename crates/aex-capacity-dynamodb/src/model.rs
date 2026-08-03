@@ -112,6 +112,11 @@ pub struct CapacityState {
 
 impl CapacityState {
     /// Projects the complete public records in registry order.
+    ///
+    /// # Panics
+    ///
+    /// Only if a caller manually constructs an incomplete state. Every state
+    /// returned by [`plan_capacity_change`] is complete.
     #[must_use]
     pub fn projected_limits(&self) -> Vec<EffectiveWorkspaceLimit> {
         LimitId::ALL
@@ -217,54 +222,30 @@ pub fn plan_capacity_change(
     now: Timestamp,
 ) -> Result<PlannedCapacity, CapacityError> {
     let workspace = command.workspace();
-    let (mut overrides, current_revision, current_fence) = match (current, command) {
-        (None, CapacityCommand::Bootstrap { .. }) => (BTreeMap::new(), 0, 0),
-        (None, _) => return Err(CapacityError::Missing),
-        (Some(state), CapacityCommand::Bootstrap { .. }) => {
-            if state.last_command == *command {
+    let (mut overrides, current_revision, current_fence) =
+        match prepare_current(current, defaults, command)? {
+            PreparedCurrent::Replay(state) => {
                 return Ok(PlannedCapacity {
-                    state: state.clone(),
+                    state,
                     changed: false,
                 });
             }
-            return Err(CapacityError::AlreadyExists);
-        }
-        (Some(state), _) => {
-            if state.workspace_id != workspace {
-                return Err(CapacityError::Missing);
-            }
-            if defaults.revision < state.defaults_revision {
-                return Err(CapacityError::DefaultsRegression {
-                    current: state.defaults_revision,
-                    attempted: defaults.revision,
-                });
-            }
-            if defaults.revision == state.defaults_revision
-                && defaults.digest != state.defaults_digest
-            {
-                return Err(CapacityError::DefaultsDigest {
-                    revision: defaults.revision,
-                    expected: state.defaults_digest.clone(),
-                    actual: defaults.digest.clone(),
-                });
-            }
-            (
-                state.overrides.clone(),
-                state.revision,
-                state.capacity_fence,
-            )
-        }
-    };
+            PreparedCurrent::Continue {
+                overrides,
+                revision,
+                capacity_fence,
+            } => (overrides, revision, capacity_fence),
+        };
 
     let (change, approval_id, next_fence, expected) = command_parts(command);
     if let Some(expected) = expected
         && expected != current_revision
     {
-        if current.is_some_and(|state| exact_command_replay(state, command, expected)) {
+        if let Some(state) = current
+            && exact_command_replay(state, command, expected)
+        {
             return Ok(PlannedCapacity {
-                state: current
-                    .expect("an override replay has current state")
-                    .clone(),
+                state: state.clone(),
                 changed: false,
             });
         }
@@ -298,10 +279,9 @@ pub fn plan_capacity_change(
         || override_changed
         || current.is_some_and(|state| state.defaults_revision != defaults.revision);
     if !changed {
+        let state = current.ok_or(CapacityError::Missing)?.clone();
         return Ok(PlannedCapacity {
-            state: current
-                .expect("an unchanged transition has current state")
-                .clone(),
+            state,
             changed: false,
         });
     }
@@ -327,10 +307,10 @@ pub fn plan_capacity_change(
             revision,
             defaults_revision: defaults.revision,
             defaults_digest: defaults.digest.clone(),
-            capacity_fence: if !override_changed {
-                current_fence
-            } else {
+            capacity_fence: if override_changed {
                 next_fence
+            } else {
+                current_fence
             },
             overrides,
             effective,
@@ -339,6 +319,61 @@ pub fn plan_capacity_change(
             last_command: command.clone(),
         },
         changed: true,
+    })
+}
+
+enum PreparedCurrent {
+    Replay(CapacityState),
+    Continue {
+        overrides: BTreeMap<LimitId, LimitValue>,
+        revision: u64,
+        capacity_fence: u64,
+    },
+}
+
+fn prepare_current(
+    current: Option<&CapacityState>,
+    defaults: &CapacityDefaults,
+    command: &CapacityCommand,
+) -> Result<PreparedCurrent, CapacityError> {
+    let Some(state) = current else {
+        return if matches!(command, CapacityCommand::Bootstrap { .. }) {
+            Ok(PreparedCurrent::Continue {
+                overrides: BTreeMap::new(),
+                revision: 0,
+                capacity_fence: 0,
+            })
+        } else {
+            Err(CapacityError::Missing)
+        };
+    };
+    if matches!(command, CapacityCommand::Bootstrap { .. }) {
+        return if state.last_command == *command {
+            Ok(PreparedCurrent::Replay(state.clone()))
+        } else {
+            Err(CapacityError::AlreadyExists)
+        };
+    }
+    if state.workspace_id != command.workspace() {
+        return Err(CapacityError::Missing);
+    }
+    if defaults.revision < state.defaults_revision {
+        return Err(CapacityError::DefaultsRegression {
+            current: state.defaults_revision,
+            attempted: defaults.revision,
+        });
+    }
+    if defaults.revision == state.defaults_revision && defaults.digest != state.defaults_digest {
+        return Err(CapacityError::DefaultsDigest {
+            revision: defaults.revision,
+            expected: state.defaults_digest.clone(),
+            actual: defaults.digest.clone(),
+        });
+    }
+    Ok(PreparedCurrent::Continue {
+        overrides: state.overrides.clone(),
+        revision: state.revision,
+        capacity_fence: state.capacity_fence,
     })
 }
 
