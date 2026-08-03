@@ -1690,7 +1690,7 @@ fn run_manifest_inputs(
     root: &Path,
     envelope_paths: &[PathBuf],
     files: aex_release_tool::composition_inputs::PublicInputFiles<'_>,
-    run: aex_release_tool::composition_inputs::PublicRunIdentity,
+    run: &aex_release_tool::composition_inputs::PublicRunIdentity,
     out: &Path,
 ) -> Result<()> {
     let envelopes = envelope_paths
@@ -1701,7 +1701,7 @@ fn run_manifest_inputs(
     let (_, authorities) =
         aex_release_tool::composition_inputs::envelope_authorities(&registry, envelopes)?;
     let inputs =
-        aex_release_tool::composition_inputs::produce(root, &registry, files, &run, authorities)?;
+        aex_release_tool::composition_inputs::produce(root, &registry, files, run, authorities)?;
     let digest = canon::digest_bytes(&canon::to_file_bytes(&inputs)?);
     write_canonical(out, &inputs)?;
     emit(
@@ -1714,6 +1714,43 @@ fn run_manifest_inputs(
             "providers": inputs.infra.provider_versions.len(),
             "path": out.display().to_string(),
         }),
+    )
+}
+
+fn run_manifest_inputs_command(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
+    let ManifestCommand::Inputs {
+        envelopes,
+        release_tool,
+        module_bundle,
+        regional_tables,
+        repository,
+        commit_sha,
+        workflow_run_id,
+        workflow_run_attempt,
+        release_tool_version,
+        out,
+    } = command
+    else {
+        unreachable!("manifest inputs command arm only");
+    };
+    let run = aex_release_tool::composition_inputs::PublicRunIdentity {
+        repository: repository.clone(),
+        commit_sha: commit_sha.clone(),
+        workflow_run_id: workflow_run_id.clone(),
+        workflow_run_attempt: *workflow_run_attempt,
+        release_tool_version: release_tool_version.clone(),
+    };
+    run_manifest_inputs(
+        cli,
+        root,
+        envelopes,
+        aex_release_tool::composition_inputs::PublicInputFiles {
+            release_tool,
+            module_bundle,
+            regional_tables,
+        },
+        &run,
+        out,
     )
 }
 
@@ -1731,35 +1768,7 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             manifest_out,
             store_out,
         } => run_manifest_handoff(cli, root, envelopes, composition, manifest_out, store_out),
-        ManifestCommand::Inputs {
-            envelopes,
-            release_tool,
-            module_bundle,
-            regional_tables,
-            repository,
-            commit_sha,
-            workflow_run_id,
-            workflow_run_attempt,
-            release_tool_version,
-            out,
-        } => run_manifest_inputs(
-            cli,
-            root,
-            envelopes,
-            aex_release_tool::composition_inputs::PublicInputFiles {
-                release_tool,
-                module_bundle,
-                regional_tables,
-            },
-            aex_release_tool::composition_inputs::PublicRunIdentity {
-                repository: repository.clone(),
-                commit_sha: commit_sha.clone(),
-                workflow_run_id: workflow_run_id.clone(),
-                workflow_run_attempt: *workflow_run_attempt,
-                release_tool_version: release_tool_version.clone(),
-            },
-            out,
-        ),
+        ManifestCommand::Inputs { .. } => run_manifest_inputs_command(cli, root, command),
         ManifestCommand::Diff { from, to } => {
             let from: CompositionManifest = read_json(from)?;
             let to: CompositionManifest = read_json(to)?;

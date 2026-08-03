@@ -582,6 +582,10 @@ fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Resu
 /// # Errors
 /// Returns a classified refusal if the source omits or ambiguously declares
 /// the snapshot identity.
+///
+/// # Panics
+/// The regular expression is a compile-time constant; construction can only
+/// fail if this source is changed to contain an invalid expression.
 pub fn tool_catalog_digest(workspace_root: &Path) -> Result<String> {
     let path = workspace_root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
     let source =
