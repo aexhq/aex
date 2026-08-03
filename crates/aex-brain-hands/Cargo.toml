@@ -30,15 +30,17 @@ targets = "the `brain-core` stream places this crate's evidence in inline unit m
 aex-brain-application = { path = "../aex-brain-application" }
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-hands-agent = { path = "../aex-hands-agent" }
+aex-hands-control-aws = { path = "../aex-hands-control-aws" }
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-hands-tools = { path = "../aex-hands-tools" }
 aex-runtime-control = { path = "../aex-runtime-control" }
 aex-wire = { path = "../aex-wire" }
 blake3.workspace = true
+reqwest.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 uuid.workspace = true
