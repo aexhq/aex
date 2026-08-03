@@ -1795,9 +1795,9 @@ mod tests {
     use aex_runtime_control::store::{
         GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
         LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan,
-        LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter, PageBudget,
-        RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
-        UsageOutboxEntry,
+        LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter, OperationAdmissionPlan,
+        OperationSettlementPlan, PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
+        RuntimeStoreError, StoreFuture, UsageOutboxEntry,
     };
     use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
     use aex_usage_domain::fact::{FactDraft, FactKind};
@@ -1982,6 +1982,37 @@ mod tests {
             let revision = head.revision;
             drop(state);
             Box::pin(async move { Ok(GenerationCommit { head, revision }) })
+        }
+
+        fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()> {
+            let mut state = self.lock();
+            if let Some(view) = state.view.as_mut() {
+                view.head.open_operations = plan.open_operations;
+                view.head.revision = plan.next_revision;
+                view.head.last_busy_at = plan.last_busy_at;
+                view.head.idle_since = None;
+            }
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.revision = plan.next_revision;
+            }
+            Box::pin(async { Ok(()) })
+        }
+
+        fn settle_operation<'a>(
+            &'a self,
+            plan: &'a OperationSettlementPlan,
+        ) -> StoreFuture<'a, ()> {
+            let mut state = self.lock();
+            if let Some(view) = state.view.as_mut() {
+                view.head.open_operations = plan.open_operations;
+                view.head.revision = plan.next_revision;
+                view.head.last_busy_at = plan.last_busy_at;
+                view.head.idle_since = (plan.open_operations == 0).then_some(plan.last_busy_at);
+            }
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.revision = plan.next_revision;
+            }
+            Box::pin(async { Ok(()) })
         }
 
         fn record_intent<'a>(

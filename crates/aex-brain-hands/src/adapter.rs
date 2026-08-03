@@ -29,6 +29,9 @@ use aex_runtime_control::generation::{
     AdmissionRefused, GenerationHead, GenerationState, Revision, TransportMode,
 };
 use aex_runtime_control::lifecycle::client_token;
+pub use aex_runtime_control::store::{
+    OperationAdmissionPlan as AdmitPlan, OperationSettlementPlan as SettlePlan,
+};
 use aex_wire::ids::GenerationId;
 use aex_wire::types::{ComputeSize, Timestamp};
 
@@ -170,22 +173,6 @@ pub const fn launch_backoff_ms(attempt: u32) -> u64 {
 /// Admission precedes dispatch and settlement follows the Brain journal commit, so
 /// an increment-then-crash leaves an **over**-count, never an under-count. That is
 /// the safe direction: an over-count only makes the system less eager to suspend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AdmitPlan {
-    /// Which generation.
-    pub generation: GenerationId,
-    /// The fence the caller presented.
-    pub fence: Fence,
-    /// The revision the write is conditional on.
-    pub expected_revision: Revision,
-    /// The open count the write lands.
-    pub open_operations: u32,
-    /// The revision the write lands.
-    pub next_revision: Revision,
-    /// The busy instant the write lands.
-    pub last_busy_at: Timestamp,
-}
-
 /// Builds the admission write.
 ///
 /// # Errors
@@ -211,18 +198,6 @@ pub fn admit(
 }
 
 /// The conditional write that settles one operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SettlePlan {
-    /// Which generation.
-    pub generation: GenerationId,
-    /// The open count the write lands.
-    pub open_operations: u32,
-    /// The revision the write lands.
-    pub next_revision: Revision,
-    /// The busy instant the write lands.
-    pub last_busy_at: Timestamp,
-}
-
 /// Builds the settlement write.
 ///
 /// Deliberately not conditional on the fence: settlement must land even after a
@@ -233,6 +208,7 @@ pub fn settle(head: &GenerationHead, now: Timestamp) -> SettlePlan {
     let (open_operations, next_revision, last_busy_at) = head.settle(now);
     SettlePlan {
         generation: head.generation,
+        expected_revision: head.revision,
         open_operations,
         next_revision,
         last_busy_at,
@@ -508,6 +484,25 @@ mod tests {
         let plan = settle(&advanced, at(5_000));
         assert_eq!(plan.open_operations, 0);
         assert_eq!(plan.next_revision, Revision::new(12));
+    }
+
+    #[test]
+    fn concurrent_settlements_cas_the_revision_and_recompute_the_count() {
+        let observed = head(GenerationState::Running, 2);
+        let first = settle(&observed, at(5_000));
+        let racing = settle(&observed, at(5_001));
+        assert_eq!(first.expected_revision, Revision::new(11));
+        assert_eq!(racing.expected_revision, Revision::new(11));
+
+        // Only one revision-11 plan can commit. The loser reloads the committed
+        // head and recomputes instead of writing its stale count of one again.
+        let mut after_first = observed;
+        after_first.open_operations = first.open_operations;
+        after_first.revision = first.next_revision;
+        let retried = settle(&after_first, at(5_002));
+        assert_eq!(retried.expected_revision, Revision::new(12));
+        assert_eq!(retried.next_revision, Revision::new(13));
+        assert_eq!(retried.open_operations, 0);
     }
 
     #[test]

@@ -211,6 +211,42 @@ pub struct GenerationCommit {
     pub revision: Revision,
 }
 
+/// One conditional increment of the authoritative open-operation count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationAdmissionPlan {
+    /// The exact generation admitting work.
+    pub generation: GenerationId,
+    /// The lifecycle fence presented by Brain.
+    pub fence: Fence,
+    /// The head revision Brain read.
+    pub expected_revision: Revision,
+    /// The count after admission.
+    pub open_operations: u32,
+    /// The revision after admission.
+    pub next_revision: Revision,
+    /// The authoritative busy instant.
+    pub last_busy_at: Timestamp,
+}
+
+/// One conditional decrement of the authoritative open-operation count.
+///
+/// Settlement is revision-conditional but deliberately not fence-conditional:
+/// lifecycle may advance the fence while an admitted operation is completing.
+/// A revision race reloads and recomputes rather than losing a decrement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationSettlementPlan {
+    /// The exact generation settling work.
+    pub generation: GenerationId,
+    /// The head revision Brain read.
+    pub expected_revision: Revision,
+    /// The count after settlement.
+    pub open_operations: u32,
+    /// The revision after settlement.
+    pub next_revision: Revision,
+    /// The authoritative busy instant.
+    pub last_busy_at: Timestamp,
+}
+
 /// A lifecycle intent to record **before** the provider call, in the same
 /// conditional write that takes the fence.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -445,6 +481,14 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
         &'a self,
         plan: &'a GenerationPlan,
     ) -> StoreFuture<'a, GenerationCommit>;
+
+    /// Atomically admits one Hands operation against running state, exact fence,
+    /// and exact revision, advancing the session pointer revision with the head.
+    fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()>;
+
+    /// Atomically settles one Hands operation against only the exact revision,
+    /// advancing the session pointer revision with the head.
+    fn settle_operation<'a>(&'a self, plan: &'a OperationSettlementPlan) -> StoreFuture<'a, ()>;
 
     /// Records a lifecycle intent before the provider call.
     fn record_intent<'a>(

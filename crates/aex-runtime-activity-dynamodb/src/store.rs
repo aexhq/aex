@@ -12,8 +12,9 @@ use aex_runtime_control::store::{
     GenerationCommit, GenerationPlan, GenerationPointer, GenerationView,
     IdleProbe as CanonicalIdleProbe, LifecycleIntentCommit, LifecycleIntentPlan,
     LifecycleReceipt as CanonicalReceipt, LifecycleReceiptPlan, LifecycleReconcilePlan,
-    LifecycleRequestPlan, PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage,
-    RuntimeShard, RuntimeStoreError, StoreFuture, UsageOutboxEntry,
+    LifecycleRequestPlan, OperationAdmissionPlan, OperationSettlementPlan,
+    PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
+    RuntimeStoreError, StoreFuture, UsageOutboxEntry,
 };
 use aex_session_dynamodb::attr::{Item, ItemBuilder, PK, SK, n, s, stamp};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
@@ -365,6 +366,134 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 head: generation_view(persisted).head,
                 revision: next_revision,
             })
+        })
+    }
+
+    fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if plan.open_operations == 0 || plan.next_revision != plan.expected_revision.next() {
+                return Err(malformed(
+                    "an operation admission plan is internally inconsistent",
+                ));
+            }
+            let row = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            let expected_open = plan.open_operations - 1;
+            let target = keys::head_for_generation(plan.generation);
+            let head = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression(
+                    "generationId = :generation AND #state = :running AND fence = :fence AND revision = :expectedRevision AND openOperations = :expectedOpen",
+                )
+                .update_expression(
+                    "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, updatedAt = :at REMOVE idleSince",
+                )
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":running", s(keys::state_str(GenerationState::Running)))
+                .expression_attribute_values(":fence", n(plan.fence.0))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":expectedOpen", n(u64::from(expected_open)))
+                .expression_attribute_values(":open", n(u64::from(plan.open_operations)))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let current = keys::current(row.session);
+            let pointer = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&current.pk, &current.sk)))
+                .condition_expression(
+                    "generationId = :generation AND fence = :fence AND revision = :expectedRevision",
+                )
+                .update_expression("SET revision = :nextRevision, updatedAt = :at")
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":fence", n(plan.fence.0))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            self.transact(
+                vec![
+                    TransactWriteItem::builder().update(head).build(),
+                    TransactWriteItem::builder().update(pointer).build(),
+                ],
+                transaction_token(
+                    "operation-admit",
+                    plan.generation,
+                    &plan.expected_revision.value().to_string(),
+                ),
+            )
+            .await
+        })
+    }
+
+    fn settle_operation<'a>(&'a self, plan: &'a OperationSettlementPlan) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if plan.next_revision != plan.expected_revision.next() {
+                return Err(malformed(
+                    "an operation settlement plan is internally inconsistent",
+                ));
+            }
+            let row = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            let expected_open = plan
+                .open_operations
+                .checked_add(1)
+                .ok_or_else(|| malformed("an operation settlement count cannot exceed u32"))?;
+            let target = keys::head_for_generation(plan.generation);
+            let update = if plan.open_operations == 0 {
+                "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, idleSince = :at, updatedAt = :at"
+            } else {
+                "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, updatedAt = :at REMOVE idleSince"
+            };
+            let head = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression(
+                    "generationId = :generation AND revision = :expectedRevision AND openOperations = :expectedOpen",
+                )
+                .update_expression(update)
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":expectedOpen", n(u64::from(expected_open)))
+                .expression_attribute_values(":open", n(u64::from(plan.open_operations)))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let current = keys::current(row.session);
+            let pointer = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&current.pk, &current.sk)))
+                .condition_expression("generationId = :generation AND revision = :expectedRevision")
+                .update_expression("SET revision = :nextRevision, updatedAt = :at")
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            self.transact(
+                vec![
+                    TransactWriteItem::builder().update(head).build(),
+                    TransactWriteItem::builder().update(pointer).build(),
+                ],
+                transaction_token(
+                    "operation-settle",
+                    plan.generation,
+                    &plan.expected_revision.value().to_string(),
+                ),
+            )
+            .await
         })
     }
 
