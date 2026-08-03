@@ -211,7 +211,10 @@ fn validate_authorities(
             "composition-tool-catalog-mismatch",
             format!(
                 "the certified brain-mux tool catalogue is `{}`, not source-bound `{source_tool_catalog}`",
-                authorities.catalogs.get("tool").map_or("<missing>", String::as_str)
+                authorities
+                    .catalogs
+                    .get("tool")
+                    .map_or("<missing>", String::as_str)
             ),
         ));
     }

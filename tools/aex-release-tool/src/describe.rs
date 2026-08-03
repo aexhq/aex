@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use crate::artifact::{
     Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Catalogs, Composition,
     Identities, Inputs, Licenses, Location, MODEL_CATALOG_COLLECTION_SHA256_VAR, Media,
-    MigrationIdentity, Output, Provenance, ReceiptRef, Retention, Signature, Source, Target,
-    Toolchain, UnitIdentity, Vulnerabilities, Workflow, TOOL_CATALOG_SHA256_VAR,
+    MigrationIdentity, Output, Provenance, ReceiptRef, Retention, Signature, Source,
+    TOOL_CATALOG_SHA256_VAR, Target, Toolchain, UnitIdentity, Vulnerabilities, Workflow,
 };
 use crate::error::{Exit, Result, ToolError, io};
 use crate::graph::inputs::Unit;
