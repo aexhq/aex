@@ -1,4 +1,3 @@
-import { describe, expect, test } from "bun:test";
 import {
   readRepoFile,
   readWorkflow,
@@ -132,5 +131,67 @@ describe("workflow evidence producers", () => {
     expect(source).toContain("node_matrix:");
     expect(source).toContain("has_node:");
     expect(workflowStep(job, "Node matrix").run).toContain("--kind node");
+  });
+
+  test("the Terraform lane derives and verifies a receipt from one real test run", () => {
+    const source = readRepoFile(".github/workflows/_terraform-lane.yml");
+    const workflow = readWorkflow(".github/workflows/_terraform-lane.yml");
+    const job = workflowJob(workflow, "terraform");
+    const workflowCall = workflowTriggers(workflow).workflow_call as {
+      readonly inputs: Readonly<Record<string, { readonly required?: boolean }>>;
+    };
+
+    expect(workflowCall.inputs.job_name?.required).toBeTrue();
+    expect(workflowCall.inputs.selection_mode?.required).toBeTrue();
+    expect(stepIndex(job, "Record the test identity")).toBeLessThan(
+      stepIndex(job, "Test against mocked providers")
+    );
+    expect(stepIndex(job, "Test against mocked providers")).toBeLessThan(
+      stepIndex(job, "Prove the complete test inventory")
+    );
+    expect(stepIndex(job, "Prove the complete test inventory")).toBeLessThan(
+      stepIndex(job, "Build and verify the Terraform receipt")
+    );
+    expect(workflowStep(job, "Test against mocked providers").run).toContain(
+      "terraform test -json"
+    );
+    expect(workflowStep(job, "Test against mocked providers").run).toContain("-junit-xml=");
+    expect(workflowStep(job, "Prove the complete test inventory").run).toContain(
+      'type == "test_abstract"'
+    );
+    expect(workflowStep(job, "Prove the complete test inventory").run).toContain(
+      'test_run.progress == "complete"'
+    );
+    expect(workflowStep(job, "Prove the complete test inventory").run).toContain(
+      'type == "test_summary"'
+    );
+    expect(workflowStep(job, "Prove the complete test inventory").run).toContain(
+      'type == "test_cleanup"'
+    );
+    expect(workflowStep(job, "Build and verify the Terraform receipt").run).toContain(
+      "aex-release-tool -- evidence new"
+    );
+    expect(workflowStep(job, "Build and verify the Terraform receipt").run).toContain(
+      "aex-release-tool -- evidence verify"
+    );
+    expect(source).toContain("commitSha: $commitSha");
+    expect(source).toContain("workflowRunId: $workflowRunId");
+    expect(source).toContain("runAttempt: $runAttempt");
+    expect(source).toContain("TERRAFORM_NODE: ${{ matrix.id }}");
+    expect(source).toContain("jobName: $jobName");
+  });
+
+  test("every Terraform caller supplies its aggregate job id and routing mode", () => {
+    const cases = [
+      [".github/workflows/pr.yml", "terraform", "affected"],
+      [".github/workflows/main.yml", "terraform", "full"]
+    ] as const;
+
+    for (const [path, jobId, mode] of cases) {
+      const job = workflowJob(readWorkflow(path), jobId);
+      const inputs = job.with as Readonly<Record<string, unknown>>;
+      expect(inputs.job_name).toBe(jobId);
+      expect(inputs.selection_mode).toBe(mode);
+    }
   });
 });

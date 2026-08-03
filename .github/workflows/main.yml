@@ -76,6 +76,8 @@ jobs:
       matrix: ${{ needs.route.outputs.terraform_matrix }}
       mode: static
       lane: main
+      job_name: terraform
+      selection_mode: full
 
   build:
     name: Build and publish

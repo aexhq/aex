@@ -126,6 +126,8 @@ jobs:
       matrix: ${{ needs.route.outputs.terraform_matrix }}
       mode: static
       lane: pr
+      job_name: terraform
+      selection_mode: affected
 
   artifacts:
     name: Artifacts
