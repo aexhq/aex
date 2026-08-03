@@ -20,6 +20,7 @@
 
 mod execute;
 mod host;
+mod image;
 mod serve;
 
 use std::sync::Arc;
@@ -159,6 +160,7 @@ pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, RunError> {
         journal,
         executor,
         agent_build(),
+        Arc::new(image::HostImageValidator::guest()),
     )))
 }
 

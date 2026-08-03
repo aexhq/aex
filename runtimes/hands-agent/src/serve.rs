@@ -30,6 +30,7 @@ use axum::routing::{get, post};
 use tokio::sync::RwLock;
 
 use crate::execute::{Dispatch, Executor};
+use crate::image::ImageValidator;
 
 /// The internal liveness path.
 pub const HEALTHZ_PATH: &str = "/internal/healthz";
@@ -62,17 +63,25 @@ pub struct Guest {
     bound: RwLock<Option<Bound>>,
     /// The first eight bytes of this agent binary's `blake3`.
     agent_build: [u8; 8],
+    /// The real rootfs and package validator used by the provider build hooks.
+    image: Arc<dyn ImageValidator>,
 }
 
 impl Guest {
     /// Composes a guest over a journal and a dispatcher.
     #[must_use]
-    pub fn new(journal: Journal, executor: Executor, agent_build: [u8; 8]) -> Self {
+    pub fn new(
+        journal: Journal,
+        executor: Executor,
+        agent_build: [u8; 8],
+        image: Arc<dyn ImageValidator>,
+    ) -> Self {
         Self {
             journal,
             executor,
             bound: RwLock::new(None),
             agent_build,
+            image,
         }
     }
 
@@ -228,17 +237,23 @@ async fn hook_handler(
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
         },
         LifecycleHook::Ready | LifecycleHook::Validate => {
-            // Build hooks. The rootfs contract and the package lockfile are the
-            // image's own assertions; the agent answers that it is the binary the
-            // image contract names and that its journal root exists.
-            if guest.journal.root().exists() {
-                (StatusCode::OK, "ok").into_response()
-            } else {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "the journal root is absent",
+            let image = Arc::clone(&guest.image);
+            let checked = tokio::task::spawn_blocking(move || match hook {
+                LifecycleHook::Ready => image.ready(),
+                LifecycleHook::Validate => image.validate(),
+                _ => unreachable!("the match arm admits only image build hooks"),
+            })
+            .await;
+            match checked {
+                Ok(Ok(())) => (StatusCode::OK, "ok").into_response(),
+                Ok(Err(error)) => {
+                    (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response()
+                }
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the image validator did not join: {error}"),
                 )
-                    .into_response()
+                    .into_response(),
             }
         }
     }
@@ -454,6 +469,7 @@ mod tests {
     use super::{Guest, HEALTHZ_PATH, READYZ_PATH, router};
     use crate::execute::Executor;
     use crate::host::{OutputSink, Runner, Started};
+    use crate::image::{ImageError, ImageValidator};
     use aex_hands_agent::boot::{RunHook, RunHookBounds};
     use aex_hands_agent::journal::Journal;
     use aex_hands_agent::wire::{
@@ -472,6 +488,19 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use std::sync::{Arc, Mutex};
     use tower::ServiceExt as _;
+
+    #[derive(Debug)]
+    struct ValidImage;
+
+    impl ImageValidator for ValidImage {
+        fn ready(&self) -> Result<(), ImageError> {
+            Ok(())
+        }
+
+        fn validate(&self) -> Result<(), ImageError> {
+            Ok(())
+        }
+    }
 
     fn generation() -> GenerationId {
         GenerationId::from_uuid7(Uuid7::compose(9, [4; 10]))
@@ -548,7 +577,12 @@ mod tests {
     fn guest(dir: &std::path::Path, runner: Arc<FakeRunner>) -> Arc<Guest> {
         let journal = Journal::open(dir).expect("the journal tree is created");
         let executor = Executor::new(runner, GuestRoot::workspace());
-        Arc::new(Guest::new(journal, executor, [1, 2, 3, 4, 5, 6, 7, 8]))
+        Arc::new(Guest::new(
+            journal,
+            executor,
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            Arc::new(ValidImage),
+        ))
     }
 
     fn framed(verb: Verb, payload: &[u8], fence: Fence) -> Vec<u8> {

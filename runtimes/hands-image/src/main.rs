@@ -42,7 +42,10 @@ enum Command {
         out: PathBuf,
         /// The cross-built guest binary to stage.
         #[arg(long)]
-        agent: Option<PathBuf>,
+        agent: PathBuf,
+        /// The `CycloneDX` inventory for the staged guest binary.
+        #[arg(long)]
+        agent_sbom: PathBuf,
     },
     /// Writes the build context and runs a local container build.
     ///
@@ -57,6 +60,9 @@ enum Command {
         /// The cross-built guest binary to stage.
         #[arg(long)]
         agent: PathBuf,
+        /// The `CycloneDX` inventory for the staged guest binary.
+        #[arg(long)]
+        agent_sbom: PathBuf,
     },
     /// Prints the `CreateMicrovmImage` inputs for one variant.
     Publish {
@@ -110,6 +116,9 @@ enum RunError {
     /// The local container build failed.
     #[error("the local build failed: {0}")]
     Build(String),
+    /// A reused context could smuggle stale files into the service artifact.
+    #[error("the build-context directory is not empty: {}", .0.display())]
+    OutputNotEmpty(PathBuf),
 }
 
 /// Wraps an I/O error with the path that produced it.
@@ -121,26 +130,22 @@ fn io_at(path: &Path) -> impl FnOnce(std::io::Error) -> RunError + use<'_> {
 }
 
 /// Writes the build context for one variant.
-fn write_context(variant: &Variant, out: &Path, agent: Option<&Path>) -> Result<PathBuf, RunError> {
+fn write_context(
+    variant: &Variant,
+    out: &Path,
+    agent: &Path,
+    agent_sbom: &Path,
+) -> Result<PathBuf, RunError> {
     std::fs::create_dir_all(out).map_err(io_at(out))?;
-    let sbom = out.join("sbom");
-    std::fs::create_dir_all(&sbom).map_err(io_at(&sbom))?;
-    for entry in build::SBOM_LAYOUT {
-        let path = sbom.join(entry.name);
-        if !path.exists() {
-            // A placeholder that states what belongs there, so a build that has not
-            // run the SBOM generators produces an image whose inventory says it is
-            // absent rather than an image with no inventory at all.
-            std::fs::write(&path, format!("{}\n", entry.records)).map_err(io_at(&path))?;
-        }
+    let mut existing = std::fs::read_dir(out).map_err(io_at(out))?;
+    if existing.next().transpose().map_err(io_at(out))?.is_some() {
+        return Err(RunError::OutputNotEmpty(out.to_path_buf()));
     }
-    let containerfile = out.join("Containerfile");
-    std::fs::write(&containerfile, build::containerfile(variant)).map_err(io_at(&containerfile))?;
-    if let Some(agent) = agent {
-        let staged = out.join("hands-agent");
-        std::fs::copy(agent, &staged).map_err(io_at(agent))?;
-    }
-    Ok(containerfile)
+    let dockerfile = out.join("Dockerfile");
+    std::fs::write(&dockerfile, build::containerfile(variant)).map_err(io_at(&dockerfile))?;
+    std::fs::copy(agent, out.join("hands-agent")).map_err(io_at(agent))?;
+    std::fs::copy(agent_sbom, out.join("agent.cdx.json")).map_err(io_at(agent_sbom))?;
+    Ok(dockerfile)
 }
 
 /// Runs the whole tool.
@@ -150,9 +155,10 @@ fn run(cli: &Cli) -> Result<(), RunError> {
             variant,
             out,
             agent,
+            agent_sbom,
         } => {
             let variant = Variant::parse(variant).map_err(RunError::Variant)?;
-            let written = write_context(&variant, out, agent.as_deref())?;
+            let written = write_context(&variant, out, agent, agent_sbom)?;
             println!("{}", written.display());
             for input in build::build_inputs(&variant) {
                 println!("{input}");
@@ -163,9 +169,10 @@ fn run(cli: &Cli) -> Result<(), RunError> {
             variant,
             out,
             agent,
+            agent_sbom,
         } => {
             let variant = Variant::parse(variant).map_err(RunError::Variant)?;
-            write_context(&variant, out, Some(agent))?;
+            write_context(&variant, out, agent, agent_sbom)?;
             let status = std::process::Command::new("docker")
                 .args([
                     "buildx",
@@ -175,7 +182,7 @@ fn run(cli: &Cli) -> Result<(), RunError> {
                     "--load",
                     "--file",
                 ])
-                .arg(out.join("Containerfile"))
+                .arg(out.join("Dockerfile"))
                 .arg("--tag")
                 .arg(variant.tag())
                 .arg(out)
@@ -221,7 +228,10 @@ fn validate(lock: &Path, observed: &Path) -> Result<(), RunError> {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect();
-        match locked.matches(&installed) {
+        locked
+            .validate()
+            .map_err(|reason| RunError::Lock(reason.to_owned()))?;
+        match locked.compare(&installed) {
             verdict @ image::LockVerdict::Match => {
                 println!(
                     "{} {} package(s) match",
@@ -273,37 +283,77 @@ mod tests {
     use crate::build::Variant;
     use clap::Parser as _;
 
+    fn inputs(root: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let agent = root.join("source-hands-agent");
+        let sbom = root.join("source-agent.cdx.json");
+        std::fs::write(&agent, b"ELF fixture").expect("agent fixture");
+        std::fs::write(&sbom, br#"{"bomFormat":"CycloneDX"}"#).expect("SBOM fixture");
+        (agent, sbom)
+    }
+
     #[test]
-    fn the_context_carries_the_containerfile_and_the_three_sbom_files() {
+    fn the_context_carries_the_dockerfile_agent_and_source_sbom() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let variant = Variant::parse("2gb-browser").expect("an offered variant");
-        let written = write_context(&variant, dir.path(), None).expect("the context is written");
+        let (agent, sbom) = inputs(dir.path());
+        let context = dir.path().join("context");
+        let written =
+            write_context(&variant, &context, &agent, &sbom).expect("the context is written");
         assert!(written.exists());
+        assert_eq!(
+            written.file_name().and_then(|name| name.to_str()),
+            Some("Dockerfile")
+        );
         let generated = std::fs::read_to_string(&written).expect("it reads back");
         assert!(generated.contains("chromium-headless"));
-        for entry in crate::build::SBOM_LAYOUT {
-            assert!(
-                dir.path().join("sbom").join(entry.name).exists(),
-                "the image ships no `{}`, so the inventory is unreadable from inside the VM",
-                entry.name
-            );
-        }
+        assert!(context.join("hands-agent").is_file());
+        assert!(context.join("agent.cdx.json").is_file());
+        assert!(generated.contains("image.lock.json"));
+        assert!(generated.contains("rpm-nevra.txt"));
     }
 
     #[test]
     fn a_second_context_write_is_byte_identical() {
         // The AEX half of the build is reproducible, and this is the cheapest place
-        // the claim can be falsified: the generated Containerfile is derived from
+        // the claim can be falsified: the generated Dockerfile is derived from
         // constants only, so two writes must not differ.
         let variant = Variant::parse("1gb").expect("an offered variant");
         let first = tempfile::tempdir().expect("a temporary directory");
         let second = tempfile::tempdir().expect("a temporary directory");
-        let left = write_context(&variant, first.path(), None).expect("written");
-        let right = write_context(&variant, second.path(), None).expect("written");
+        let (first_agent, first_sbom) = inputs(first.path());
+        let (second_agent, second_sbom) = inputs(second.path());
+        let left = write_context(
+            &variant,
+            &first.path().join("context"),
+            &first_agent,
+            &first_sbom,
+        )
+        .expect("written");
+        let right = write_context(
+            &variant,
+            &second.path().join("context"),
+            &second_agent,
+            &second_sbom,
+        )
+        .expect("written");
         assert_eq!(
             std::fs::read(&left).expect("it reads back"),
             std::fs::read(&right).expect("it reads back")
         );
+    }
+
+    #[test]
+    fn a_reused_nonempty_context_is_refused() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let variant = Variant::parse("1gb").expect("an offered variant");
+        let (agent, sbom) = inputs(dir.path());
+        let context = dir.path().join("context");
+        std::fs::create_dir(&context).expect("context directory");
+        std::fs::write(context.join("stale-secret"), b"must not be packaged").expect("stale file");
+        assert!(matches!(
+            write_context(&variant, &context, &agent, &sbom),
+            Err(RunError::OutputNotEmpty(path)) if path == context
+        ));
     }
 
     #[test]
@@ -312,7 +362,7 @@ mod tests {
         let lock = dir.path().join("image.lock.json");
         std::fs::write(
             &lock,
-            r#"{"version":1,"containerBase":"x","packages":[{"name":"bash","nevra":"bash-0:5.2.15-1.amzn2023.aarch64"}]}"#,
+            r#"{"schema":"aex.hands-image-lock.v1","containerBase":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","packages":["bash-0:5.2.15-1.amzn2023.aarch64"]}"#,
         )
         .expect("the lockfile is written");
 
@@ -360,6 +410,10 @@ mod tests {
             "16gb",
             "--out",
             &dir.path().join("context").to_string_lossy(),
+            "--agent",
+            &dir.path().join("missing-agent").to_string_lossy(),
+            "--agent-sbom",
+            &dir.path().join("missing-sbom").to_string_lossy(),
         ]);
         assert!(matches!(run(&cli), Err(RunError::Variant(_))));
         assert!(
