@@ -14,6 +14,7 @@ pub mod control;
 pub mod drain;
 pub mod health;
 pub mod measure;
+pub mod release_catalog;
 pub mod runtime;
 pub mod scale;
 pub mod wake;
@@ -351,7 +352,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         config.placement_region(),
         &config.credential_cache_partition(),
     );
-    let (provider, bindings): (
+    let (provider, mut bindings): (
         std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
         wake::Bindings,
     ) = match provider {
@@ -364,6 +365,8 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             )
         }
     };
+
+    let catalog = bind_release_catalog(&mut bindings)?;
 
     // The process configuration parsed, but production authorities did not all bind. Do
     // not translate "the binary started" into "secret bindings validated": readiness must
@@ -384,10 +387,13 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             std::sync::Arc::clone(&composition),
             config.clone(),
             telemetry.clone(),
-            aws.store,
-            aws.queue,
-            provider,
-            bindings,
+            PumpPorts {
+                store: aws.store,
+                queue: aws.queue,
+                provider,
+                catalog,
+                bindings,
+            },
         ));
         wait_for_shutdown().await;
         let stages = drain_sequence(&composition, pump).await;
@@ -403,20 +409,51 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
     Ok(())
 }
 
+fn bind_release_catalog(
+    bindings: &mut wake::Bindings,
+) -> Result<std::sync::Arc<dyn aex_brain_application::ports::CatalogPort>, RunError> {
+    // Catalog authority is build/release scoped, never tenant or runtime-env
+    // scoped. The exact collection and bounded publisher trust-root set are
+    // compiled together and the entire retained chain verifies before lookup.
+    let now = aex_wire::types::Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
+        .map_err(|error| RunError::Runtime {
+        reason: format!("the startup clock is outside the catalog timestamp range: {error}"),
+    })?;
+    match release_catalog::load(now) {
+        Ok(catalog) => {
+            *bindings = bindings.with_catalog_capability(catalog.is_service_capable());
+            Ok(std::sync::Arc::new(catalog))
+        }
+        Err(error @ release_catalog::ReleaseCatalogError::NoActiveModels) => {
+            eprintln!("brain-mux: production catalog binding unavailable: {error}");
+            *bindings = bindings.with_catalog_capability(false);
+            Ok(std::sync::Arc::new(wake::AbsentCatalog))
+        }
+        Err(error) => {
+            eprintln!("brain-mux: production catalog binding unavailable: {error}");
+            Ok(std::sync::Arc::new(wake::AbsentCatalog))
+        }
+    }
+}
+
+struct PumpPorts {
+    store: std::sync::Arc<aex_brain_store_aws::BrainStore>,
+    queue: std::sync::Arc<aex_brain_store_aws::SqsWakeQueue>,
+    provider: std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+    catalog: std::sync::Arc<dyn aex_brain_application::ports::CatalogPort>,
+    bindings: wake::Bindings,
+}
+
 /// Receives wakes and drives them until drain starts.
 ///
 /// The loop asks admission before every receive, and admission is false while any binding is
-/// unsatisfied. Production provider, catalog, tool-executor, and Hands-runtime peers are
-/// still absent, so the newly bound store remains idle rather than taking work that cannot
-/// complete.
+/// unsatisfied. Any absent or service-incapable catalog, tool executor, or Hands-runtime peer
+/// keeps the newly bound store idle rather than taking work that cannot complete.
 async fn pump(
     composition: std::sync::Arc<compose::Composition>,
     config: Config,
     telemetry: aex_platform_telemetry::Handle,
-    store: std::sync::Arc<aex_brain_store_aws::BrainStore>,
-    queue: std::sync::Arc<aex_brain_store_aws::SqsWakeQueue>,
-    provider: std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
-    bindings: wake::Bindings,
+    ports: PumpPorts,
 ) {
     let mut policy = aex_brain_application::activation::ActivationPolicy::default();
     let aggregate_cap = policy.max_concurrent_drives.max(1);
@@ -426,12 +463,12 @@ async fn pump(
     policy.receive_batch = 1;
     policy.max_concurrent_drives = 1;
     let pump = wake::wake_loop(
-        wake::partial_ports(store, queue, provider),
+        wake::partial_ports_with_catalog(ports.store, ports.queue, ports.provider, ports.catalog),
         policy,
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
-        bindings,
+        ports.bindings,
     );
     run_wake_scheduler(
         pump,

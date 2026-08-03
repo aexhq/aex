@@ -104,10 +104,19 @@ jobs:
 
       - name: Print the recipe
         id: recipe
+        env:
+          AEX_MODEL_CATALOG_TRUST_ROOTS_JSON: ${{ vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON }}
+          AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256: ${{ vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256 }}
+          AEX_MODEL_CATALOG_COLLECTION_FILE: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_FILE }}
+          AEX_MODEL_CATALOG_COLLECTION_SHA256: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_SHA256 }}
         run: |
           set -euo pipefail
+          required=()
+          if [ "${{ inputs.publish }}" = "true" ] && [ "${{ matrix.name }}" = "brain-mux" ]; then
+            required+=(--require-model-catalog)
+          fi
           cargo run --locked --release -p aex-release-tool -- \
-            artifact plan --unit "${{ matrix.name }}" | tee recipe.json
+            artifact plan --unit "${{ matrix.name }}" "${required[@]}" | tee recipe.json
 
       - name: Install TypeScript dependencies
         run: |
@@ -125,7 +134,7 @@ jobs:
           # The recipe is the authority for the argv. Reading it here rather
           # than restating the command keeps the envelope's `buildCommand` and
           # what actually ran from drifting apart.
-          python3 -c "import json,subprocess,sys; argv=json.load(open('recipe.json'))['argv']; sys.exit(subprocess.call(argv))"
+          python3 -c "import json,os,subprocess,sys; recipe=json.load(open('recipe.json')); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))"
 
       - name: Package
         run: |

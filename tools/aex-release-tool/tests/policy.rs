@@ -180,6 +180,24 @@ fn every_shipped_workflow_passes_the_structural_gates() {
 }
 
 #[test]
+fn protected_brain_publication_requires_catalog_preflight_before_build() {
+    let workflow =
+        std::fs::read_to_string(repo_root().join(".github/workflows/_build-artifacts.yml"))
+            .expect("artifact workflow");
+    let preflight = workflow
+        .find("--require-model-catalog")
+        .expect("protected catalog preflight");
+    let build = workflow.find("- name: Build").expect("build step");
+    assert!(
+        preflight < build,
+        "catalog preflight must run before compilation"
+    );
+    assert!(workflow.contains("inputs.publish"));
+    assert!(workflow.contains("matrix.name }}\" = \"brain-mux"));
+    assert!(workflow.contains("env.update(recipe['env'])"));
+}
+
+#[test]
 fn a_self_hosted_runner_label_is_rejected() {
     // The label does not fail the run: the job queues for a runner that will
     // never appear and is discarded a day later with no error anywhere.

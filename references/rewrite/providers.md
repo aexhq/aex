@@ -76,7 +76,7 @@ The launch document ships every `(provider, model)` pair `Staged`, so a fresh
 | `adapter` | the `ProviderAdapter` trait, `DialectState`, `RequestBuildError`, `FrameOutcome`, `FrameDecodeError` |
 | `openai` `anthropic` `deepseek` `zai` `moonshotai` `google` | the six dialect adapters |
 | `build_identity` | one compile-time source-tree identity for the complete six-adapter build; runtime environment variables cannot relabel it |
-| `catalog_port` | bounded signed-envelope loading into an immutable content-addressed revision cache |
+| `catalog_port` | bounded signed-collection loading into an immutable content-addressed revision cache, with explicit still-live session-pin coverage |
 | `router` | the total six-provider route, credential affinity/revocation, isolated pool, in-call retry, bounded stream, durable response-start evidence, sealing and receipt |
 
 Three properties are structural rather than conventional:
@@ -114,6 +114,24 @@ Three properties are structural rather than conventional:
   decrypted-key and HTTP-pool entries. DynamoDB cannot transact with an external
   provider; a revocation that commits after this read may race with the already
   in-flight attempt, while the next attempt must fail closed.
+- **Catalog startup verifies a collection, not merely its newest head.** The
+  release supplies an oldest-to-newest contiguous chain plus a sorted unique
+  list produced by exact still-live session-retention accounting. Aggregate
+  bytes, revision count, envelope bytes, signatures, content addresses, chain,
+  adapter identity and every `Active` receipt gate must all pass before the
+  immutable synchronous lookup cache exists. Every declared live pin must be
+  present; the loader never guesses a retention window or accepts last-N.
+- **Signature verification is all-supplied strict.** An envelope needs at least
+  one signature, and every supplied signature must be unique, bounded, trusted
+  and valid. A valid trusted signature cannot hide an unknown or bad extra in
+  either order. Release rotation is an overlapping, sorted, unique 1–8-key
+  compiled trust-root set that can verify old live-pin artifacts and the new
+  head together; it is not an any-valid relaxation.
+- **The adapter identity is source-derived for every build.** The gateway build
+  script hashes the complete recursively sorted Rust source tree with explicit
+  path/content length framing and asserts all six provider modules are in
+  scope. Runtime environment cannot relabel it, and the catalog receipt must
+  name that exact digest.
 
 ### `aex-brain-provider-custody`
 
@@ -140,7 +158,6 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 
 | Gap | How it is handled |
 | --- | --- |
-| Release injection of the whole-tree adapter digest | Per-module identities were removed. `build_identity` accepts only the compile-time `AEX_PROVIDER_ADAPTER_SOURCE_DIGEST` stamp and both catalog loading and router construction refuse a missing or malformed stamp. The release/conformance builder still has to calculate and inject the same digest. |
 | `anthropic.rs` pins an offline P-256 public key and signature in its test module | `openai.rs` was migrated to `fixture::qualified`; `anthropic.rs` still loads a signed fixture document, which breaks loudly (`"re-sign it if the document shape changed"`) if `document.rs` or `fixture::entry` moves. Migrating it is a mechanical follow-up now that `fixture::qualified` exists. |
 | Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter follows the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`. Probe P-01 settles it before any Z.AI pair can go `Active`; until then every Z.AI entry is `Staged`, so nothing dispatches. |
 | `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these six dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
@@ -149,7 +166,7 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 | Provider credential registration | The existing `pcr_` row is a reference to one workspace-secret generation. Exact provider-qualified reads, mutable binding/secret revalidation, and KMS reveal are composed through `aex-brain-provider-custody`; registration remains unmounted because the request has no decided workspace-secret name/collision contract and the active wrapped branch key is not exposed by a port. There is **no** plaintext-from-environment path — not disabled, absent. |
 | `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all six. Implemented, not stubbed: no provider in this set documents a result lookup for a completed streaming generation. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
 | Brain session credential pin | Complete for runtime: `ResolvedAgentConfig` journals a required four-scalar `SessionCredentialPin`, `ProviderPort` requires it, and `DispatchTicket` carries workspace plus organization authority. Revision and generation are non-zero at construction and serde boundaries; epoch zero remains the valid initial epoch. Missing prelaunch pins fail decode; mismatched scope, revision, generation, provider, context digest, binding state, or revocation epoch fails before the next provider send. Session-create admission still has to mint the pin from an explicit credential selection. |
-| Signed catalog startup composition | `VerifiedCatalogPort` verifies bounded content-addressed envelopes, compiled trust keys, chain/time gates, adapter source identity, and Active receipts. `brain-mux` still binds `AbsentCatalog`: no real publisher public key is compiled into the release and no signed content-addressed envelope is supplied. An empty or invented key would be fake trust evidence, so readiness stays false. |
+| Real production catalog release inputs | `brain-mux` now composes a verified immutable collection when its exact canonical trust-root set and signed collection are build-bound with independent SHA-256 digests. The release plan records those values using a stable workspace-relative collection path; runtime environment is never consulted. Ordinary local builds carry an exact blocker and stay unready. Protected publication invokes the required-input preflight before compilation. This repository still has no real publisher set or signed collection, and the launch catalog has no `Active` entry, so publication/readiness correctly remain blocked rather than inventing authority. |
 | Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |
 | `trybuild` type-level leak test | The workspace has no `trybuild` dependency. The same property is asserted by construction — `ProviderApiKey` implements none of `Clone`, `Debug`, `Display`, `Serialize`, `Deref`, and `WireRequest` has no field that can hold one — plus runtime cases over `Debug` output, error bodies and receipts. Adding `trybuild` is a workspace-manifest change and belongs to whoever owns that decision. |
 | `miri` over the `credential` module | Not run: the module contains no `unsafe` and the crate forbids it, so `miri` would add build time without a proposition to test. |

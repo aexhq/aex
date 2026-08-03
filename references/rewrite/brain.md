@@ -512,7 +512,7 @@ and none of it is attributed.
 
 | Deferred | Unblocked by |
 | --- | --- |
-| `ProviderPort` and `CatalogPort` implementations | the gateway still restates its own port over `aex_model_catalog::canonical` types and publishes no composed router; the catalog publishes `ModelEntry`/`QualifiedModel`, not Brain's `ModelCapability` |
+| Complete production peer set | provider custody/router and the signed immutable catalog collection are composed; concrete tool executors and the Hands runtime backend remain absent, so readiness and receive admission remain closed |
 | Concrete Hands runtime backend | `aex-brain-hands::HandsAdapter` now implements `HandsPort` and enforces response generation equality, but no crate implements its `HandsBackend` over the runtime-activity store plus authenticated guest transport |
 | A `ToolExecutor` for any route | `aex-brain-managed-web` and `aex-brain-mcp` implement none, so the composed router is linked with zero executors and refuses by its own typed error |
 | The recovery controller's `RetrySameEffect` on a *dispatched* effect | nothing moves a dispatched effect back to `prepared`, so the arm is a named refusal. Unreachable for the classes this loop prepares, which a test asserts |
@@ -542,10 +542,12 @@ The physical recount contract is therefore closed:
 
 `brain-mux` exposes `ProductionPeers`, whose constructor requires provider, tool, catalog and
 Hands backend peers together and wraps the Hands backend in
-`aex_brain_hands::HandsAdapter`. The current executable deliberately uses
-`unavailable_ports`; readiness names all four missing peer implementations and receives no
-work. It must not be switched to `production_ports` until the provider router, catalog
-projection, tool executors and concrete Hands backend exist.
+`aex_brain_hands::HandsAdapter`. The current executable composes the real provider router and,
+only when the complete build-bound collection verifies and contains an `Active` model, the
+immutable catalog port. The collection covers every still-live session pin explicitly; it is
+not newest-only or last-N. Missing real publisher roots/artifacts, any invalid revision, or a
+cryptographically valid zero-`Active` collection leaves the catalog binding unready. Tool
+executors and the concrete Hands backend are still absent, so the process receives no work.
 
 ### 15. Third-pass gate output
 

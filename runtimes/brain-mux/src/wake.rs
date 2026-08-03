@@ -63,6 +63,10 @@ pub const PROVIDER_ABSENT: &str =
 pub const CATALOG_ABSENT: &str = "no content-addressed signed model catalog and compiled trust \
                                   root were bound at startup";
 
+/// Why a verified collection still cannot serve wakes.
+pub const CATALOG_NO_ACTIVE_MODELS: &str =
+    "the signed model catalog collection contains no Active serviceable model";
+
 /// Why tool execution is not bound.
 pub const TOOL_EXECUTORS_ABSENT: &str = "aex-brain-managed-web and aex-brain-mcp do not implement \
                                         aex-brain-tool-catalog::router::ToolExecutor";
@@ -487,6 +491,21 @@ impl Bindings {
         }
     }
 
+    /// Applies the catalog's verified service capability to this binding set.
+    ///
+    /// Signature validity alone is not readiness: a zero-Active collection
+    /// would make every model wake fail after receipt. Admission remains closed
+    /// instead, so Brain never consumes work it cannot route.
+    #[must_use]
+    pub const fn with_catalog_capability(mut self, service_capable: bool) -> Self {
+        self.catalog = if service_capable {
+            BindingState::Ready
+        } else {
+            BindingState::Unavailable(CATALOG_NO_ACTIVE_MODELS)
+        };
+        self
+    }
+
     /// Fully injected production ports.
     #[must_use]
     pub const fn production() -> Self {
@@ -661,6 +680,18 @@ pub fn partial_ports(
     wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
     provider: Arc<dyn ProviderPort>,
 ) -> Ports {
+    partial_ports_with_catalog(store, wakes, provider, Arc::new(AbsentCatalog))
+}
+
+/// Composes a real provider and verified immutable catalog while unrelated
+/// peer ports remain explicitly absent.
+#[must_use]
+pub fn partial_ports_with_catalog(
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    provider: Arc<dyn ProviderPort>,
+    catalog: Arc<dyn CatalogPort>,
+) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
@@ -671,7 +702,7 @@ pub fn partial_ports(
         // yet, so it refuses by its own typed error rather than by one invented here.
         tools: Arc::new(aex_brain_tool_catalog::router::CompositeToolRouter::new()),
         hands: Arc::new(AbsentHands),
-        catalog: Arc::new(AbsentCatalog),
+        catalog,
         clock: Arc::new(SystemClock::new()),
         ids: Arc::new(ProcessIds),
     }
@@ -717,8 +748,8 @@ pub fn wake_loop(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, MuxAdmission, PROVIDER_ABSENT,
-        ProcessIds, STORE_UNBOUND, SystemClock, UnboundStore,
+        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
+        MuxAdmission, PROVIDER_ABSENT, ProcessIds, STORE_UNBOUND, SystemClock, UnboundStore,
     };
     use crate::admission::{Admission, AdmissionBounds};
     use aex_brain_application::activation::{AdmissionControl, AdmissionDecision};
@@ -814,6 +845,36 @@ mod tests {
         assert_eq!(missing.len(), 3);
         assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
+    }
+
+    #[test]
+    fn a_verified_zero_active_collection_keeps_admission_and_readiness_closed() {
+        let bindings = Bindings::provider_ready().with_catalog_capability(false);
+        assert!(!bindings.complete());
+        assert_eq!(
+            bindings.catalog,
+            super::BindingState::Unavailable(CATALOG_NO_ACTIVE_MODELS)
+        );
+        assert!(bindings.unsatisfied().contains(&CATALOG_NO_ACTIVE_MODELS));
+
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([(
+            PermitKind::Activation,
+            1_u64,
+        )])));
+        let drain = Arc::new(DrainGate::new());
+        let admission = Arc::new(Admission::new(
+            AdmissionBounds {
+                target: 1,
+                safety_cap: 1,
+                offered_ceiling: 1,
+            },
+            permits,
+            drain,
+        ));
+        assert!(
+            !MuxAdmission::new(admission, bindings).should_receive(),
+            "Brain must not consume a wake that every model lookup can only fail"
+        );
     }
 
     /// Two claim attempts by one task must be distinguishable, so the owner token is fresh

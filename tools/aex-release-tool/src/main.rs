@@ -212,6 +212,9 @@ enum ArtifactCommand {
         /// The unit.
         #[arg(long)]
         unit: String,
+        /// Refuse an unbound brain-mux before any build is invoked.
+        #[arg(long)]
+        require_model_catalog: bool,
     },
     /// Package a built input deterministically.
     Package {
@@ -841,22 +844,17 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
         ArtifactCommand::ModuleBundle { out } => run_module_bundle(cli, root, out),
         ArtifactCommand::Recipes { unit } => {
             let units = read_units(root)?;
-            let plans = artifact::recipes(&units)?;
+            let plans = artifact::release_recipes(&units, root)?;
             let selected: Vec<_> = plans
                 .into_iter()
                 .filter(|plan| unit.as_ref().is_none_or(|id| &plan.unit == id))
                 .collect();
             emit(cli, &selected)
         }
-        ArtifactCommand::Plan { unit } => {
-            let units = read_units(root)?;
-            let found = units
-                .units
-                .iter()
-                .find(|candidate| &candidate.id == unit)
-                .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-            emit(cli, &artifact::plan(found)?)
-        }
+        ArtifactCommand::Plan {
+            unit,
+            require_model_catalog,
+        } => run_artifact_plan(cli, root, unit, *require_model_catalog),
         ArtifactCommand::Package {
             unit,
             input,
@@ -949,6 +947,26 @@ fn run_module_bundle(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
     )
 }
 
+fn run_artifact_plan(
+    cli: &Cli,
+    root: &Path,
+    unit: &str,
+    require_model_catalog: bool,
+) -> Result<()> {
+    let units = read_units(root)?;
+    let found = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == unit)
+        .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+    let plan = if require_model_catalog {
+        artifact::publication_plan(found, root)?
+    } else {
+        artifact::release_plan(found, root)?
+    };
+    emit(cli, &plan)
+}
+
 /// Assemble an envelope for a unit built on this machine.
 ///
 /// Everything the tree can establish is read from it; the ledger the call
@@ -971,7 +989,7 @@ fn run_describe(
         .iter()
         .find(|candidate| candidate.id == unit)
         .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-    let plan = artifact::plan(found)?;
+    let plan = artifact::release_plan(found, root)?;
     let inputs = GraphInputs::load(root)?;
     let built = verify::build(&inputs)?;
     let local = describe::LocalBuild {

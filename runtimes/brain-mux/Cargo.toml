@@ -69,3 +69,10 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sign
 # The engine's own in-memory ports, so the composition is asserted against exactly the
 # behaviour the activation is asserted against rather than a second set of fixtures.
 aex-brain-application = { path = "../../crates/aex-brain-application", features = ["testing"] }
+
+[build-dependencies]
+hex.workspace = true
+p256.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
