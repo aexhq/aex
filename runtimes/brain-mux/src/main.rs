@@ -41,6 +41,10 @@ pub struct Config {
     pub wake_queue_url: String,
     /// The `regional-work` table the due backstop reads.
     pub work_table: String,
+    /// The regional custody table holding provider bindings and sealed generations.
+    pub secret_custody_table: String,
+    /// The exact KMS root key ARN wrapping workspace branch keys.
+    pub secret_kms_key_arn: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
 }
@@ -97,6 +101,10 @@ pub const RESOURCE_VAR: &str = "AEX_BRAIN_JOURNAL_TABLE";
 pub const WAKE_QUEUE_VAR: &str = "AEX_BRAIN_WAKE_QUEUE_URL";
 /// Environment variable naming the `regional-work` table the due backstop reads.
 pub const WORK_TABLE_VAR: &str = "AEX_WORK_TABLE";
+/// Environment variable naming the regional secret-custody table.
+pub const SECRET_CUSTODY_TABLE_VAR: &str = "AEX_SECRET_CUSTODY_TABLE";
+/// Environment variable naming the root KMS key for workspace branch keys.
+pub const SECRET_KMS_KEY_ARN_VAR: &str = "AEX_SECRET_KMS_KEY_ARN";
 /// Environment variable naming maximum concurrently active activations for one task.
 pub const BUDGET_VAR: &str = "AEX_MAX_ACTIVE_ACTIVATIONS";
 
@@ -135,9 +143,21 @@ impl Config {
             });
         }
         let region = required(&lookup, REGION_VAR)?;
+        if !aex_wire::types::Region::ALL
+            .iter()
+            .any(|candidate| candidate.as_str() == region)
+        {
+            return Err(ConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("unsupported regional placement `{region}`"),
+            });
+        }
         let resource = required(&lookup, RESOURCE_VAR)?;
         let wake_queue_url = required(&lookup, WAKE_QUEUE_VAR)?;
         let work_table = required(&lookup, WORK_TABLE_VAR)?;
+        let secret_custody_table = required(&lookup, SECRET_CUSTODY_TABLE_VAR)?;
+        let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
+        validate_kms_arn(&secret_kms_key_arn, &region)?;
         let raw_budget = required(&lookup, BUDGET_VAR)?;
         let budget = raw_budget
             .parse::<u32>()
@@ -157,7 +177,65 @@ impl Config {
             resource,
             wake_queue_url,
             work_table,
+            secret_custody_table,
+            secret_kms_key_arn,
             budget,
+        })
+    }
+
+    /// The typed plane bound into every provider-key encryption context.
+    #[must_use]
+    pub fn secret_plane(&self) -> aex_secret_domain::context::Plane {
+        match self.plane.as_str() {
+            "dev" => aex_secret_domain::context::Plane::Dev,
+            "prd" => aex_secret_domain::context::Plane::Prd,
+            _ => unreachable!("configuration admitted only the closed plane set"),
+        }
+    }
+
+    /// The typed region bound into every provider-key encryption context.
+    #[must_use]
+    pub fn placement_region(&self) -> aex_wire::types::Region {
+        aex_wire::types::Region::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == self.region)
+            .unwrap_or_else(|| unreachable!("configuration admitted only the closed region set"))
+    }
+
+    /// The role/process partition for the zeroizing branch-key cache.
+    #[must_use]
+    pub fn credential_cache_partition(&self) -> String {
+        format!(
+            "{}:{}:brain-mux:{}",
+            self.plane,
+            self.region,
+            std::process::id()
+        )
+    }
+}
+
+fn validate_kms_arn(value: &str, region: &str) -> Result<(), ConfigError> {
+    let parts = value.splitn(6, ':').collect::<Vec<_>>();
+    let expected_partition = if region.starts_with("cn-") {
+        "aws-cn"
+    } else if region.starts_with("us-gov-") {
+        "aws-us-gov"
+    } else {
+        "aws"
+    };
+    let valid = matches!(parts.as_slice(), ["arn", partition, "kms", found_region, account, resource]
+        if *partition == expected_partition
+            && *found_region == region
+            && account.len() == 12
+            && account.bytes().all(|byte| byte.is_ascii_digit())
+            && resource.starts_with("key/")
+            && resource.len() > "key/".len());
+    if valid {
+        Ok(())
+    } else {
+        Err(ConfigError::Invalid {
+            name: SECRET_KMS_KEY_ARN_VAR,
+            reason: format!("expected a KMS key ARN in `{region}`"),
         })
     }
 }
@@ -255,18 +333,44 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
+    // One SDK configuration feeds the store, queue, exact credential directory,
+    // and KMS decryptor. Provider composition is per-request tenant scoped; no
+    // workspace state is installed on the process.
+    let aws = main_runtime.block_on(wake::aws_bindings(
+        &config.region,
+        &config.wake_queue_url,
+        &config.resource,
+        &config.work_table,
+    ));
+    let provider = wake::provider_binding(
+        &aws.sdk,
+        std::sync::Arc::clone(&aws.store),
+        &config.secret_custody_table,
+        &config.secret_kms_key_arn,
+        config.secret_plane(),
+        config.placement_region(),
+        &config.credential_cache_partition(),
+    );
+    let (provider, bindings): (
+        std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+        wake::Bindings,
+    ) = match provider {
+        Ok(provider) => (provider, wake::Bindings::provider_ready()),
+        Err(error) => {
+            eprintln!("brain-mux: production provider binding unavailable: {error}");
+            (
+                std::sync::Arc::new(wake::AbsentProvider),
+                wake::Bindings::unavailable(),
+            )
+        }
+    };
+
     // The process configuration parsed, but production authorities did not all bind. Do
     // not translate "the binary started" into "secret bindings validated": readiness must
-    // remain false until the immutable provider credential pin, regional custody, signed
-    // catalog/trust root, tool executors and Hands backend actually exist.
+    // remain false until the signed catalog/trust root, tool executors and Hands backend
+    // actually exist. Provider pin/custody/KMS composition is independently reported above.
     composition.health.schema_matched();
-    // Provider, catalog, tool-executor and Hands-runtime peers remain unproved and are not
-    // claimed. `Bindings::unavailable` names each one rather than collapsing them to a bare
-    // false.
-    let bindings = wake::Bindings::unavailable();
-    if let Err(error) = aex_brain_provider_gateway::build_identity::adapter_source_digest() {
-        eprintln!("brain-mux: production binding unavailable: {error}");
-    }
+    // Every peer that remains unproved is named rather than collapsed to a bare false.
     for reason in bindings.unsatisfied() {
         eprintln!("brain-mux: production binding unavailable: {reason}");
     }
@@ -280,6 +384,10 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             std::sync::Arc::clone(&composition),
             config.clone(),
             telemetry.clone(),
+            aws.store,
+            aws.queue,
+            provider,
+            bindings,
         ));
         wait_for_shutdown().await;
         let stages = drain_sequence(&composition, pump).await;
@@ -305,14 +413,11 @@ async fn pump(
     composition: std::sync::Arc<compose::Composition>,
     config: Config,
     telemetry: aex_platform_telemetry::Handle,
+    store: std::sync::Arc<aex_brain_store_aws::BrainStore>,
+    queue: std::sync::Arc<aex_brain_store_aws::SqsWakeQueue>,
+    provider: std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+    bindings: wake::Bindings,
 ) {
-    let (store, queue) = wake::aws_bindings(
-        &config.region,
-        &config.wake_queue_url,
-        &config.resource,
-        &config.work_table,
-    )
-    .await;
     let mut policy = aex_brain_application::activation::ActivationPolicy::default();
     let aggregate_cap = policy.max_concurrent_drives.max(1);
     // One receive scope owns one activation slot. Keeping the lane width at one lets the
@@ -321,12 +426,12 @@ async fn pump(
     policy.receive_batch = 1;
     policy.max_concurrent_drives = 1;
     let pump = wake::wake_loop(
-        wake::unavailable_ports(store, queue),
+        wake::partial_ports(store, queue, provider),
         policy,
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
-        wake::Bindings::unavailable(),
+        bindings,
     );
     run_wake_scheduler(
         pump,
@@ -667,8 +772,9 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR, WAKE_QUEUE_VAR,
-        WORK_TABLE_VAR, emit_due_isolations,
+        BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR,
+        SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR,
+        emit_due_isolations,
     };
     use aex_brain_application::activation::PollReport;
     use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
@@ -685,6 +791,14 @@ mod tests {
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake".to_owned(),
             ),
             (WORK_TABLE_VAR, "aex-regional-work-fixture".to_owned()),
+            (
+                SECRET_CUSTODY_TABLE_VAR,
+                "aex-regional-secret-custody-fixture".to_owned(),
+            ),
+            (
+                SECRET_KMS_KEY_ARN_VAR,
+                "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
+            ),
             (BUDGET_VAR, "8".to_owned()),
         ])
     }
@@ -715,6 +829,8 @@ mod tests {
             RESOURCE_VAR,
             WAKE_QUEUE_VAR,
             WORK_TABLE_VAR,
+            SECRET_CUSTODY_TABLE_VAR,
+            SECRET_KMS_KEY_ARN_VAR,
             BUDGET_VAR,
         ] {
             let mut vars = complete();
@@ -752,6 +868,35 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn rejects_a_region_outside_the_closed_placement_set() {
+        let mut vars = complete();
+        vars.insert(REGION_VAR, "eu-central-1".to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: REGION_VAR,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_kms_key_from_another_region() {
+        let mut vars = complete();
+        vars.insert(
+            SECRET_KMS_KEY_ARN_VAR,
+            "arn:aws:kms:us-east-1:123456789012:key/fixture".to_owned(),
+        );
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: SECRET_KMS_KEY_ARN_VAR,
+                ..
+            })
+        ));
     }
 
     #[test]

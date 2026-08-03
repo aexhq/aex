@@ -1368,6 +1368,7 @@ impl Session<'_> {
             .provider
             .dispatch(
                 &ticket,
+                config.credential,
                 &request,
                 &self.stream_budget(deadline),
                 &NullPreviewSink,

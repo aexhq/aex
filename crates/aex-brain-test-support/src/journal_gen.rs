@@ -126,6 +126,12 @@ pub fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
         catalog_pin: model.catalog(),
         provider: ProviderId::Deepseek,
+        credential: aex_brain_domain::wire_pending::SessionCredentialPin {
+            binding: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            revision: core::num::NonZeroU64::MIN,
+            generation: core::num::NonZeroU64::MIN,
+            revocation_epoch: 0,
+        },
         model: model.model().clone(),
         system: None,
         tool_manifest_digests: vec![ContentHash::of(b"fixture-tools")],

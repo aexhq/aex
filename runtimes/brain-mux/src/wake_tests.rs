@@ -67,6 +67,13 @@ fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
         catalog_pin: capability().catalog(),
         provider: ProviderId::Deepseek,
+        credential: aex_brain_domain::wire_pending::SessionCredentialPin::new(
+            ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            1,
+            1,
+            0,
+        )
+        .expect("non-zero fixture pin"),
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
@@ -282,6 +289,7 @@ impl ProviderPort for ConcurrentProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -435,6 +443,7 @@ impl ProviderPort for RefillProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -700,6 +709,7 @@ impl ProviderPort for PendingProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,

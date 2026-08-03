@@ -85,19 +85,25 @@ impl ProviderRouter {
         self.pool.close(&|_| true);
     }
 
+    fn invalidate_binding(
+        &self,
+        ticket: &DispatchTicket,
+        binding: &crate::credential::ProviderCredentialBinding,
+    ) {
+        let _ = self.cache.invalidate(ticket.workspace(), binding.id);
+        self.pool.close(&|key| {
+            key.organization == ticket.organization()
+                && key.workspace == ticket.workspace()
+                && key.credential_binding == binding.id
+                && key.credential_generation == binding.generation
+        });
+    }
+
     /// Dispatches with the immutable credential binding a session admitted.
-    ///
-    /// This is the complete transport path waiting behind the Brain session
-    /// contract. The current `ProviderPort` request does not carry this pin, so
-    /// its implementation below fails closed before reaching this method.
     ///
     /// # Errors
     ///
     /// Returns a typed provider dispatch failure with an exact send proof.
-    #[allow(
-        dead_code,
-        reason = "the complete transport is intentionally unreachable until the public Brain session contract carries its immutable credential pin"
-    )]
     #[allow(
         clippy::too_many_lines,
         reason = "the linear send-proof state machine is kept together so every await and retry visibly preserves its dispatch proof"
@@ -126,36 +132,21 @@ impl ProviderRouter {
 
         let provider = request.selection.provider();
         let binding = await_pre_send(
-            self.directory
-                .resolve(ticket.workspace(), provider, Some(pin.binding)),
+            self.directory.resolve(
+                ticket.organization(),
+                ticket.workspace(),
+                provider,
+                Some(pin.binding),
+            ),
             &budget,
             started_steady,
             cancel,
         )
         .await?;
         validate_binding(ticket, provider, pin, &binding)?;
-        let current_epoch = await_pre_send(
-            self.directory.current_epoch(ticket.workspace(), binding.id),
-            &budget,
-            started_steady,
-            cancel,
-        )
-        .await?;
-        if current_epoch != pin.epoch_at_admission || current_epoch != binding.revocation_epoch {
-            self.cache.invalidate(ticket.workspace(), binding.id);
-            self.pool.close(&|key| {
-                key.workspace == ticket.workspace()
-                    && key.credential_binding == binding.id
-                    && key.credential_generation == binding.generation
-            });
-            return Err(credential_error(CredentialResolveError::Revoked {
-                admitted: pin.epoch_at_admission,
-                current: current_epoch,
-            }));
-        }
-
         let key = await_pre_send(
-            self.cache.decrypt(&binding, self.decryptor.as_ref()),
+            self.cache
+                .decrypt(&binding, self.decryptor.as_ref(), started),
             &budget,
             started_steady,
             cancel,
@@ -166,6 +157,7 @@ impl ProviderRouter {
             .acquire(
                 &IsolationKey {
                     origin: request.selection.endpoint(),
+                    organization: ticket.organization(),
                     workspace: ticket.workspace(),
                     credential_binding: binding.id,
                     credential_revision: binding.revision,
@@ -189,6 +181,11 @@ impl ProviderRouter {
         let mut attempt = 0_u16;
         loop {
             attempt = attempt.saturating_add(1);
+            let prior_proof = if attempt == 1 {
+                DispatchProof::NotSent
+            } else {
+                DispatchProof::ResponseStarted
+            };
             if cancel.is_cancelled() {
                 return Err(error(
                     if attempt == 1 {
@@ -207,6 +204,29 @@ impl ProviderRouter {
                     ProviderFailureKind::Cancelled,
                     "dispatch was cancelled before send",
                 ));
+            }
+            // This is deliberately the last authority I/O before the external
+            // send, and it runs again for every retry. No database transaction
+            // can be atomic with provider I/O; this narrows the unavoidable
+            // TOCTOU window to local request assembly and socket submission.
+            let current_epoch = match await_send_fence(
+                self.directory.revalidate(&binding),
+                &budget,
+                started_steady,
+                cancel,
+                prior_proof,
+            )
+            .await
+            {
+                Ok(epoch) => epoch,
+                Err(failure) => {
+                    self.invalidate_binding(ticket, &binding);
+                    return Err(failure);
+                }
+            };
+            if let Err(failure) = validate_current_epoch(pin, &binding, current_epoch) {
+                self.invalidate_binding(ticket, &binding);
+                return Err(credential_error_with_proof(failure, prior_proof));
             }
             let mut send = SendState::new();
             let response = tokio::time::timeout(
@@ -527,20 +547,14 @@ impl ProviderRouter {
 impl ProviderPort for ProviderRouter {
     fn dispatch<'a>(
         &'a self,
-        _ticket: &'a DispatchTicket,
-        _request: &'a aex_model_catalog::canonical::CanonicalModelRequest,
-        _budget: &'a PortStreamBudget,
-        _preview: &'a dyn PreviewSink,
-        _cancel: &'a CancelToken,
+        ticket: &'a DispatchTicket,
+        credential: SessionCredentialPin,
+        request: &'a aex_model_catalog::canonical::CanonicalModelRequest,
+        budget: &'a PortStreamBudget,
+        preview: &'a dyn PreviewSink,
+        cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
-        Box::pin(async {
-            Err(error(
-                DispatchStage::PreDispatch,
-                DispatchProof::NotSent,
-                ProviderFailureKind::InvalidRequest,
-                "the Brain session contract carries no immutable provider credential pin",
-            ))
-        })
+        Box::pin(self.dispatch_pinned(ticket, credential, request, budget, preview, cancel))
     }
 
     fn resolve_unknown<'a>(
@@ -609,10 +623,17 @@ fn validate_binding(
     pin: SessionCredentialPin,
     binding: &crate::credential::ProviderCredentialBinding,
 ) -> Result<(), ProviderDispatchError> {
-    if binding.workspace != ticket.workspace() {
+    if binding.workspace != ticket.workspace()
+        || binding.context.workspace != ticket.workspace()
+        || binding.context.organization != ticket.organization()
+        || binding.context.generation != binding.generation
+    {
         return Err(credential_error(CredentialResolveError::NotFound {
             requested: Some(pin.binding),
         }));
+    }
+    if binding.context.digest() != binding.context_digest {
+        return Err(credential_error(CredentialResolveError::DecryptFailed));
     }
     if binding.id != pin.binding {
         return Err(credential_error(CredentialResolveError::NotFound {
@@ -625,7 +646,7 @@ fn validate_binding(
             requested: provider,
         }));
     }
-    if binding.revision != pin.revision || binding.generation != pin.generation {
+    if binding.revision.0 != pin.revision.get() || binding.generation.0 != pin.generation.get() {
         return Err(credential_error(CredentialResolveError::NotFound {
             requested: Some(pin.binding),
         }));
@@ -633,11 +654,23 @@ fn validate_binding(
     match binding.state {
         BindingState::Ready => Ok(()),
         BindingState::Revoked => Err(credential_error(CredentialResolveError::Revoked {
-            admitted: pin.epoch_at_admission,
+            admitted: crate::wire_pending::RevocationEpoch(pin.revocation_epoch),
             current: binding.revocation_epoch,
         })),
         BindingState::Deleted => Err(credential_error(CredentialResolveError::Deleted)),
     }
+}
+
+fn validate_current_epoch(
+    pin: SessionCredentialPin,
+    binding: &crate::credential::ProviderCredentialBinding,
+    current: crate::wire_pending::RevocationEpoch,
+) -> Result<(), CredentialResolveError> {
+    let admitted = crate::wire_pending::RevocationEpoch(pin.revocation_epoch);
+    if current != admitted || current != binding.revocation_epoch {
+        return Err(CredentialResolveError::Revoked { admitted, current });
+    }
+    Ok(())
 }
 
 fn gateway_budget(
@@ -716,6 +749,51 @@ where
                         after: budget.total_deadline,
                     },
                     DispatchProof::NotSent,
+                ));
+            }
+            () = tokio::time::sleep(Duration::from_millis(25)) => {}
+        }
+    }
+}
+
+/// Awaits the mutable credential fence immediately before an upstream send.
+/// `prior_proof` preserves the fact that a previous in-call retry attempt may
+/// already have received a response.
+async fn await_send_fence<T, F>(
+    future: F,
+    budget: &StreamBudget,
+    started: Instant,
+    cancel: &CancelToken,
+    prior_proof: DispatchProof,
+) -> Result<T, ProviderDispatchError>
+where
+    F: Future<Output = Result<T, CredentialResolveError>>,
+{
+    tokio::pin!(future);
+    loop {
+        if cancel.is_cancelled() {
+            return Err(error(
+                if prior_proof == DispatchProof::NotSent {
+                    DispatchStage::PreDispatch
+                } else {
+                    DispatchStage::Terminal
+                },
+                prior_proof,
+                ProviderFailureKind::Cancelled,
+                "dispatch was cancelled while revalidating provider credentials",
+            ));
+        }
+        let left = remaining(budget, started, prior_proof)?;
+        tokio::select! {
+            result = &mut future => {
+                return result.map_err(|failure| credential_error_with_proof(failure, prior_proof));
+            }
+            () = tokio::time::sleep(left) => {
+                return Err(budget_error(
+                    BudgetOverrun::TotalDeadline {
+                        after: budget.total_deadline,
+                    },
+                    prior_proof,
                 ));
             }
             () = tokio::time::sleep(Duration::from_millis(25)) => {}
@@ -866,6 +944,17 @@ fn build_error(failure: RequestBuildError) -> ProviderDispatchError {
     reason = "this conversion is a direct map_err adapter"
 )]
 fn credential_error(failure: CredentialResolveError) -> ProviderDispatchError {
+    credential_error_with_proof(failure, DispatchProof::NotSent)
+}
+
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "this conversion consumes the error into a redacted dispatch diagnostic"
+)]
+fn credential_error_with_proof(
+    failure: CredentialResolveError,
+    proof: DispatchProof,
+) -> ProviderDispatchError {
     let kind = match &failure {
         CredentialResolveError::Transport => ProviderFailureKind::Transport,
         CredentialResolveError::RegistrationAuthorityUnavailable
@@ -878,8 +967,12 @@ fn credential_error(failure: CredentialResolveError) -> ProviderDispatchError {
         | CredentialResolveError::DecryptFailed => ProviderFailureKind::Authentication,
     };
     error(
-        DispatchStage::PreDispatch,
-        DispatchProof::NotSent,
+        if proof == DispatchProof::NotSent {
+            DispatchStage::PreDispatch
+        } else {
+            DispatchStage::Terminal
+        },
+        proof,
         kind,
         &failure.to_string(),
     )
@@ -989,18 +1082,138 @@ fn error(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use aex_brain_application::ports::CancelToken;
+    use aex_brain_application::ports::{CancelToken, DispatchTicket, FenceGuard};
     use aex_brain_domain::effect::DispatchProof;
+    use aex_brain_domain::ids::{
+        AgentId, AgentKey, AgentRevision, CancelEpoch, EffectId, Fence, OwnerToken, SessionId,
+        Timestamp,
+    };
+    use aex_brain_domain::wire_pending::SessionCredentialPin;
     use aex_model_catalog::ProviderFailureKind;
+    use aex_secret_domain::context::Plane;
+    use aex_secret_domain::{
+        CiphertextRef, EncryptionContext, RevocationEpoch, SecretName, SourceGeneration,
+    };
+    use aex_wire::ids::{
+        OrganizationId, PrefixedId as _, ProviderCredentialId, Uuid7, WorkspaceId,
+    };
+    use aex_wire::provider::ProviderId;
+    use aex_wire::types::Region;
+    use uuid::Uuid;
 
     use crate::budget::StreamBudget;
-    use crate::credential::CredentialResolveError;
+    use crate::credential::{
+        BindingState, CredentialResolveError, CredentialRevision, ProviderCredentialBinding,
+    };
+
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]))
+    }
+
+    fn organization(seed: u8) -> OrganizationId {
+        OrganizationId::from_uuid7(Uuid7::compose(1, [seed; 10]))
+    }
+
+    fn credential() -> ProviderCredentialId {
+        ProviderCredentialId::from_uuid7(Uuid7::compose(1, [3; 10]))
+    }
+
+    fn pin(epoch: u64) -> SessionCredentialPin {
+        SessionCredentialPin::new(credential(), 2, 3, epoch).expect("non-zero fixture pin")
+    }
+
+    fn ticket(organization: OrganizationId) -> DispatchTicket {
+        let guard = FenceGuard::new(
+            AgentKey::new(SessionId(Uuid::from_u128(1)), AgentId(Uuid::from_u128(2))),
+            OwnerToken(Uuid::from_u128(3)),
+            Fence(1),
+            AgentRevision(1),
+            None,
+            CancelEpoch::ZERO,
+            CancelToken::new(),
+        );
+        DispatchTicket::mint(
+            &guard,
+            workspace(),
+            organization,
+            EffectId([4; 16]),
+            1,
+            Timestamp(0),
+        )
+    }
+
+    fn binding(organization: OrganizationId, epoch: u64) -> ProviderCredentialBinding {
+        let context = EncryptionContext {
+            plane: Plane::Dev,
+            region: Region::EuWest1,
+            organization,
+            workspace: workspace(),
+            name: SecretName::parse("provider-key").expect("name"),
+            generation: SourceGeneration(3),
+            custody_revision: None,
+        };
+        ProviderCredentialBinding {
+            id: credential(),
+            workspace: workspace(),
+            provider: ProviderId::Openai,
+            revision: CredentialRevision(2),
+            generation: SourceGeneration(3),
+            revocation_epoch: RevocationEpoch(epoch),
+            is_default: false,
+            state: BindingState::Ready,
+            ciphertext: CiphertextRef {
+                key_generation: 1,
+                wrapped_key: vec![1; 32],
+                nonce: Vec::new(),
+                ciphertext: vec![2; 32],
+            },
+            context_digest: context.digest(),
+            context,
+        }
+    }
 
     #[test]
     fn all_six_providers_have_one_direct_adapter() {
         for provider in aex_wire::provider::ProviderId::ALL.iter().copied() {
             assert_eq!(super::adapter(provider).provider(), provider);
         }
+    }
+
+    #[test]
+    fn organization_scope_mismatch_is_rejected_before_provider_io() {
+        let error = super::validate_binding(
+            &ticket(organization(5)),
+            ProviderId::Openai,
+            pin(7),
+            &binding(organization(6), 7),
+        )
+        .expect_err("another organization's ciphertext context must be refused");
+        assert_eq!(error.proof, DispatchProof::NotSent);
+        assert_eq!(error.kind, ProviderFailureKind::Authentication);
+    }
+
+    #[test]
+    fn a_revocation_observed_after_directory_resolution_wins_the_race() {
+        let resolved = binding(organization(5), 7);
+        let error = super::validate_current_epoch(pin(7), &resolved, RevocationEpoch(8))
+            .expect_err("the second authority read observed revocation");
+        assert_eq!(
+            error,
+            CredentialResolveError::Revoked {
+                admitted: RevocationEpoch(7),
+                current: RevocationEpoch(8),
+            }
+        );
+    }
+
+    #[test]
+    fn exact_pin_and_revalidated_epoch_are_admitted() {
+        let authority = organization(5);
+        let resolved = binding(authority, 7);
+        super::validate_binding(&ticket(authority), ProviderId::Openai, pin(7), &resolved)
+            .expect("the immutable scope matches");
+        super::validate_current_epoch(pin(7), &resolved, RevocationEpoch(7))
+            .expect("the epoch did not move");
     }
 
     #[tokio::test]
@@ -1035,6 +1248,26 @@ mod tests {
                 .expect_err("cancellation must stop the authority wait");
         assert_eq!(error.proof, DispatchProof::NotSent);
         assert_eq!(error.kind, ProviderFailureKind::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_retry_fence_failure_preserves_the_prior_response_proof() {
+        let error = super::await_send_fence(
+            async {
+                Err::<(), _>(CredentialResolveError::Revoked {
+                    admitted: RevocationEpoch(7),
+                    current: RevocationEpoch(8),
+                })
+            },
+            &StreamBudget::default(),
+            Instant::now(),
+            &CancelToken::new(),
+            DispatchProof::ResponseStarted,
+        )
+        .await
+        .expect_err("a retry revalidation must fail closed");
+        assert_eq!(error.proof, DispatchProof::ResponseStarted);
+        assert_eq!(error.kind, ProviderFailureKind::Authentication);
     }
 
     #[test]

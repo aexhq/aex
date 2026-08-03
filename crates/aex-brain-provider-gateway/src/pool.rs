@@ -6,12 +6,13 @@
 //! credential cannot keep one alive.
 
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use aex_model_catalog::CatalogRevision;
 use aex_model_catalog::document::EndpointPin;
-use aex_wire::ids::{ProviderCredentialId, WorkspaceId};
+use aex_wire::ids::{OrganizationId, ProviderCredentialId, WorkspaceId};
 
 use crate::budget::StreamBudget;
 use crate::credential::CredentialRevision;
@@ -25,6 +26,7 @@ pub const CAPACITY: usize = 512;
 pub const POOL_MAX_IDLE_PER_HOST: usize = 8;
 /// In-flight requests permitted per isolation key.
 pub const INFLIGHT_PER_KEY: usize = 64;
+const POOL_SHARDS: usize = 16;
 
 /// What makes two dispatches able to share a connection.
 ///
@@ -38,6 +40,9 @@ pub const INFLIGHT_PER_KEY: usize = 64;
 pub struct IsolationKey {
     /// The compiled origin.
     pub origin: EndpointPin,
+    /// The tenant authority. Workspace ids are globally unique; carrying the
+    /// organization too makes that isolation invariant explicit in the pool.
+    pub organization: OrganizationId,
     /// The owning workspace.
     pub workspace: WorkspaceId,
     /// The exact provider-credential binding.
@@ -82,8 +87,7 @@ pub enum PoolError {
 /// The client pool.
 #[derive(Debug)]
 pub struct ClientPool {
-    entries: Mutex<HashMap<IsolationKey, Entry>>,
-    capacity: usize,
+    shards: Vec<PoolShard>,
     idle_eviction: Duration,
     draining: std::sync::atomic::AtomicBool,
 }
@@ -92,6 +96,12 @@ pub struct ClientPool {
 struct Entry {
     client: Arc<PooledClient>,
     last_used: Instant,
+}
+
+#[derive(Debug)]
+struct PoolShard {
+    entries: Mutex<HashMap<IsolationKey, Entry>>,
+    capacity: usize,
 }
 
 impl Default for ClientPool {
@@ -104,9 +114,16 @@ impl ClientPool {
     /// Builds a pool with an explicit capacity and idle window.
     #[must_use]
     pub fn new(capacity: usize, idle_eviction: Duration) -> Self {
+        let shard_count = capacity.clamp(1, POOL_SHARDS);
+        let base_capacity = capacity / shard_count;
+        let remainder = capacity % shard_count;
         Self {
-            entries: Mutex::new(HashMap::new()),
-            capacity,
+            shards: (0..shard_count)
+                .map(|index| PoolShard {
+                    entries: Mutex::new(HashMap::new()),
+                    capacity: base_capacity + usize::from(index < remainder),
+                })
+                .collect(),
             idle_eviction,
             draining: std::sync::atomic::AtomicBool::new(false),
         }
@@ -126,16 +143,44 @@ impl ClientPool {
         if self.draining.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(PoolError::Draining);
         }
-        let mut entries = self.entries.lock().map_err(|_| PoolError::ClientBuild {
+        let shard = self.shard(key);
+        if shard.capacity == 0 {
+            return Err(PoolError::ClientBuild {
+                reason: "the pool has zero capacity",
+            });
+        }
+        {
+            let mut entries = shard.entries.lock().map_err(|_| PoolError::ClientBuild {
+                reason: "the pool lock was poisoned",
+            })?;
+            entries.retain(|_, entry| entry.last_used.elapsed() < self.idle_eviction);
+            if let Some(entry) = entries.get_mut(key) {
+                entry.last_used = Instant::now();
+                return Ok(Arc::clone(&entry.client));
+            }
+        }
+
+        // Client construction performs TLS/configuration work. Keep it outside
+        // the shard lock so an unrelated cold key in the same shard cannot
+        // stall hot acquisitions. A concurrent builder may win; the second
+        // locked check below then drops this unused client safely.
+        let candidate = Arc::new(PooledClient {
+            http: build_client(budget)?,
+            inflight: Arc::new(tokio::sync::Semaphore::new(INFLIGHT_PER_KEY)),
+            created_at: Instant::now(),
+        });
+        if self.draining.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(PoolError::Draining);
+        }
+        let mut entries = shard.entries.lock().map_err(|_| PoolError::ClientBuild {
             reason: "the pool lock was poisoned",
         })?;
         entries.retain(|_, entry| entry.last_used.elapsed() < self.idle_eviction);
-
         if let Some(entry) = entries.get_mut(key) {
             entry.last_used = Instant::now();
             return Ok(Arc::clone(&entry.client));
         }
-        if entries.len() >= self.capacity
+        if entries.len() >= shard.capacity
             && let Some(oldest) = entries
                 .iter()
                 .min_by_key(|(_, entry)| entry.last_used)
@@ -143,19 +188,14 @@ impl ClientPool {
         {
             entries.remove(&oldest);
         }
-        let client = Arc::new(PooledClient {
-            http: build_client(budget)?,
-            inflight: Arc::new(tokio::sync::Semaphore::new(INFLIGHT_PER_KEY)),
-            created_at: Instant::now(),
-        });
         entries.insert(
             *key,
             Entry {
-                client: Arc::clone(&client),
+                client: Arc::clone(&candidate),
                 last_used: Instant::now(),
             },
         );
-        Ok(client)
+        Ok(candidate)
     }
 
     /// Drops every client whose key matches. Returns how many were dropped.
@@ -163,12 +203,17 @@ impl ClientPool {
     /// Called on revocation and on catalog activation, so a stale credential
     /// generation cannot keep a warm TLS session.
     pub fn close(&self, predicate: &dyn Fn(&IsolationKey) -> bool) -> usize {
-        let Ok(mut entries) = self.entries.lock() else {
-            return 0;
-        };
-        let before = entries.len();
-        entries.retain(|key, _| !predicate(key));
-        before - entries.len()
+        self.shards
+            .iter()
+            .map(|shard| {
+                let Ok(mut entries) = shard.entries.lock() else {
+                    return 0;
+                };
+                let before = entries.len();
+                entries.retain(|key, _| !predicate(key));
+                before - entries.len()
+            })
+            .sum()
     }
 
     /// Refuses further acquisition.
@@ -180,13 +225,24 @@ impl ClientPool {
     /// How many clients are warm.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.entries.lock().map_or(0, |entries| entries.len())
+        self.shards
+            .iter()
+            .map(|shard| shard.entries.lock().map_or(0, |entries| entries.len()))
+            .sum()
     }
 
     /// Whether no client is warm.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    fn shard(&self, key: &IsolationKey) -> &PoolShard {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let shard_count = u64::try_from(self.shards.len()).expect("at most sixteen shards");
+        let index = usize::try_from(hasher.finish() % shard_count).expect("index is below sixteen");
+        &self.shards[index]
     }
 }
 
@@ -221,7 +277,7 @@ mod tests {
     use aex_model_catalog::CatalogRevision;
     use aex_model_catalog::document::EndpointPin;
     use aex_model_catalog::primitives::Blake3Digest;
-    use aex_wire::ids::{PrefixedId, ProviderCredentialId, WorkspaceId};
+    use aex_wire::ids::{OrganizationId, PrefixedId, ProviderCredentialId, WorkspaceId};
 
     use super::{ClientPool, IsolationKey, PoolError};
     use crate::budget::StreamBudget;
@@ -236,6 +292,10 @@ mod tests {
         ProviderCredentialId::from_uuid7(aex_wire::Uuid7::compose(2, [seed; 10]))
     }
 
+    fn organization(seed: u8) -> OrganizationId {
+        OrganizationId::from_uuid7(aex_wire::Uuid7::compose(1, [seed; 10]))
+    }
+
     fn key(
         workspace_seed: u8,
         binding_seed: u8,
@@ -245,6 +305,7 @@ mod tests {
     ) -> IsolationKey {
         IsolationKey {
             origin: EndpointPin::OpenAiApi,
+            organization: organization(workspace_seed),
             workspace: workspace(workspace_seed),
             credential_binding: credential(binding_seed),
             credential_revision: CredentialRevision(revision),
@@ -284,6 +345,18 @@ mod tests {
             );
         }
         assert_eq!(pool.len(), 6);
+    }
+
+    #[test]
+    fn two_organizations_never_share_a_client() {
+        let pool = ClientPool::default();
+        let budget = StreamBudget::default();
+        let first_key = key(1, 1, 1, 1, "a");
+        let mut second_key = first_key;
+        second_key.organization = organization(9);
+        let first = pool.acquire(&first_key, &budget).expect("first");
+        let second = pool.acquire(&second_key, &budget).expect("second");
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
     }
 
     #[test]

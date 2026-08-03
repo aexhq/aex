@@ -7,7 +7,7 @@ use aex_brain_domain::ids::{
     AgentKey, AgentRevision, CancelEpoch, EffectId, Fence, JournalSeq, OwnerToken, Timestamp,
 };
 use aex_model_catalog::canonical::PreviewFrame;
-use aex_wire::ids::WorkspaceId;
+use aex_wire::ids::{OrganizationId, WorkspaceId};
 
 /// Proof that the holder claimed an agent and has not been fenced out.
 ///
@@ -138,6 +138,7 @@ pub struct DispatchTicket {
     key: AgentKey,
     at: Timestamp,
     workspace: WorkspaceId,
+    organization: OrganizationId,
 }
 
 impl DispatchTicket {
@@ -149,6 +150,7 @@ impl DispatchTicket {
     pub const fn mint(
         guard: &FenceGuard,
         workspace: WorkspaceId,
+        organization: OrganizationId,
         effect: EffectId,
         attempt: u16,
         at: Timestamp,
@@ -160,6 +162,7 @@ impl DispatchTicket {
             key: guard.key,
             at,
             workspace,
+            organization,
         }
     }
 
@@ -197,6 +200,12 @@ impl DispatchTicket {
     #[must_use]
     pub const fn workspace(&self) -> WorkspaceId {
         self.workspace
+    }
+
+    /// The organization whose KMS encryption context this dispatch may use.
+    #[must_use]
+    pub const fn organization(&self) -> OrganizationId {
+        self.organization
     }
 
     /// Checks that this ticket belongs to `effect`.
@@ -312,7 +321,7 @@ mod tests {
     };
     use aex_brain_domain::wire_pending::PreviewFrame;
     use aex_model_catalog::BoundedString;
-    use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::ids::{OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
     use uuid::Uuid;
 
     fn guard() -> FenceGuard {
@@ -354,12 +363,21 @@ mod tests {
     fn a_ticket_carries_the_fence_it_was_minted_under() {
         let guard = guard();
         let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10]));
-        let ticket = DispatchTicket::mint(&guard, workspace, EffectId([1; 16]), 2, Timestamp(10));
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(1, [9; 10]));
+        let ticket = DispatchTicket::mint(
+            &guard,
+            workspace,
+            organization,
+            EffectId([1; 16]),
+            2,
+            Timestamp(10),
+        );
         assert_eq!(ticket.fence(), Fence(4));
         assert_eq!(ticket.attempt(), 2);
         assert_eq!(ticket.key(), guard.key());
         assert_eq!(ticket.issued_at(), Timestamp(10));
         assert_eq!(ticket.workspace(), workspace);
+        assert_eq!(ticket.organization(), organization);
     }
 
     #[test]
@@ -367,6 +385,7 @@ mod tests {
         let ticket = DispatchTicket::mint(
             &guard(),
             WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            OrganizationId::from_uuid7(Uuid7::compose(1, [9; 10])),
             EffectId([1; 16]),
             1,
             Timestamp(0),

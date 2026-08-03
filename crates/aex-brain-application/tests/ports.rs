@@ -29,18 +29,28 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig,
+    CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig, SessionCredentialPin,
 };
 use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice};
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, fixture};
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7, WorkspaceId};
+use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7, WorkspaceId};
 use std::sync::Mutex;
 use uuid::Uuid;
 
 fn generation(seed: u8) -> GenerationId {
     GenerationId::from_uuid7(Uuid7::compose(1, [seed; 10]))
+}
+
+fn credential() -> SessionCredentialPin {
+    SessionCredentialPin::new(
+        ProviderCredentialId::from_uuid7(Uuid7::compose(1, [7; 10])),
+        1,
+        1,
+        0,
+    )
+    .expect("non-zero fixture pin")
 }
 
 fn guard() -> FenceGuard {
@@ -59,6 +69,7 @@ fn ticket(effect: EffectId) -> DispatchTicket {
     DispatchTicket::mint(
         &guard(),
         WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
+        aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [9; 10])),
         effect,
         1,
         Timestamp(0),
@@ -75,6 +86,7 @@ impl ProviderPort for RecordingProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -307,6 +319,7 @@ fn every_port_is_dyn_compatible() {
     );
     let outcome = block_on(provider.dispatch(
         &ticket(effect),
+        credential(),
         &request(),
         &budget(),
         &NullPreviewSink,
@@ -342,6 +355,7 @@ fn a_dispatch_carries_the_ticket_it_was_authorized_by() {
     let effect = EffectId([9; 16]);
     let _ = block_on(provider.dispatch(
         &ticket(effect),
+        credential(),
         &request(),
         &budget(),
         &NullPreviewSink,

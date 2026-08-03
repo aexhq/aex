@@ -213,6 +213,29 @@ impl CustodyStore {
         &self.table
     }
 
+    /// Reads one provider binding by its complete `DynamoDB` key.
+    ///
+    /// Brain dispatch already knows the provider from its immutable session
+    /// configuration. Preserving it here turns the hot-path lookup into one
+    /// strongly consistent point read instead of probing the six-provider
+    /// directory.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport, key, or decode failure.
+    pub async fn load_provider_credential_for_provider(
+        &self,
+        workspace: WorkspaceId,
+        provider: aex_wire::models::ProviderId,
+        credential: ProviderCredentialId,
+    ) -> Result<Option<ProviderCredential>, StoreError> {
+        let target = keys::provider_credential(workspace, provider.as_str(), credential)?;
+        match self.get(&target.pk, &target.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(codec::decode_provider_credential(&item, workspace)?)),
+        }
+    }
+
     async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
@@ -375,9 +398,11 @@ impl SecretCustodyStore for CustodyStore {
         // names a suffix rather than a key. Six providers is a closed set, so the
         // read is six bounded point reads and never a scan.
         for provider in aex_wire::models::ProviderId::ALL {
-            let target = keys::provider_credential(workspace, provider.as_str(), credential)?;
-            if let Some(item) = self.get(&target.pk, &target.sk).await? {
-                return Ok(Some(codec::decode_provider_credential(&item, workspace)?));
+            if let Some(binding) = self
+                .load_provider_credential_for_provider(workspace, *provider, credential)
+                .await?
+            {
+                return Ok(Some(binding));
             }
         }
         Ok(None)

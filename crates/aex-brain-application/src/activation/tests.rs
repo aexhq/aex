@@ -86,6 +86,13 @@ fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
         catalog_pin: pin(),
         provider: ProviderId::Deepseek,
+        credential: aex_brain_domain::wire_pending::SessionCredentialPin::new(
+            ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            1,
+            1,
+            0,
+        )
+        .expect("non-zero fixture pin"),
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
@@ -357,6 +364,7 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     );
     assert_eq!(harness.store.finish(key()), Some(FinishReason::Completed));
     assert_eq!(harness.provider.dispatched().len(), 1);
+    assert_eq!(harness.provider.credentials(), vec![config().credential]);
     let requests = harness.provider.requests();
     assert_eq!(requests.len(), 1);
     assert!(requests[0].hash_is_consistent().expect("canonical request"));
@@ -1170,6 +1178,7 @@ impl ProviderPort for GatedProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -1219,6 +1228,7 @@ impl ProviderPort for CancelAwareProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -1256,6 +1266,7 @@ impl ProviderPort for DrainOnFirstNotSent {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,

@@ -35,15 +35,20 @@ path = "src/main.rs"
 aex-brain-application = { path = "../../crates/aex-brain-application" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
+aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
 aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
 aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
+aex-secret-aws = { path = "../../crates/aex-secret-aws" }
+aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
+aex-secret-domain = { path = "../../crates/aex-secret-domain" }
 # The composed `ToolPort`. It is linked with no executor registered, because nothing
 # implements `ToolExecutor` yet; the router then refuses by its own typed error
 # rather than by one invented in this composition.
 aex-brain-tool-catalog = { path = "../../crates/aex-brain-tool-catalog" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
+aws-sdk-kms.workspace = true
 aws-sdk-sqs.workspace = true
 futures.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }

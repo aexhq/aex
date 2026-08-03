@@ -232,11 +232,17 @@ impl BranchKeyCache {
         self.entries.lock().expect("the cache lock").clear();
     }
 
-    fn slot(&self, branch_key_id: &str, version: [u8; KEY_VERSION_BYTES]) -> String {
+    fn slot(
+        &self,
+        branch_key_id: &str,
+        version: [u8; KEY_VERSION_BYTES],
+        context_digest: [u8; 32],
+    ) -> String {
         format!(
-            "{}|{branch_key_id}|{}",
+            "{}|{branch_key_id}|{}|{}",
             self.partition,
-            hex::encode(version)
+            hex::encode(version),
+            hex::encode(context_digest)
         )
     }
 
@@ -250,9 +256,10 @@ impl BranchKeyCache {
         &self,
         branch_key_id: &str,
         version: [u8; KEY_VERSION_BYTES],
+        context_digest: [u8; 32],
         now: Timestamp,
     ) -> Option<BranchKeyMaterial> {
-        let slot = self.slot(branch_key_id, version);
+        let slot = self.slot(branch_key_id, version, context_digest);
         let mut entries = self.entries.lock().expect("the cache lock");
         match entries.get(&slot) {
             Some(entry) if entry.expires_at_millis > now.unix_millis() => {
@@ -273,8 +280,8 @@ impl BranchKeyCache {
     /// # Panics
     ///
     /// As [`BranchKeyCache::len`].
-    pub fn put(&self, material: BranchKeyMaterial, now: Timestamp) {
-        let slot = self.slot(&material.branch_key_id, material.version);
+    pub fn put(&self, material: BranchKeyMaterial, context_digest: [u8; 32], now: Timestamp) {
+        let slot = self.slot(&material.branch_key_id, material.version, context_digest);
         let mut entries = self.entries.lock().expect("the cache lock");
         if entries.len() >= self.capacity && !entries.contains_key(&slot) {
             // The bound is what matters, not which entry goes: the thing being
@@ -319,16 +326,16 @@ mod tests {
     #[test]
     fn material_is_returned_until_it_expires_and_never_after() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         assert!(
             cache
-                .get("wsp_1", [1; KEY_VERSION_BYTES], at(1_000))
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [1; 32], at(1_000))
                 .is_some()
         );
         let ttl = i64::try_from(CACHE_TTL.as_millis()).expect("600 seconds");
         assert!(
             cache
-                .get("wsp_1", [1; KEY_VERSION_BYTES], at(ttl + 1))
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [1; 32], at(ttl + 1),)
                 .is_none(),
             "expired material must not be served"
         );
@@ -339,9 +346,11 @@ mod tests {
     fn two_roles_in_one_process_never_share_an_entry() {
         let first = BranchKeyCache::new("role-a");
         let second = BranchKeyCache::new("role-b");
-        first.put(material("wsp_1"), at(0));
+        first.put(material("wsp_1"), [1; 32], at(0));
         assert!(
-            second.get("wsp_1", [1; KEY_VERSION_BYTES], at(0)).is_none(),
+            second
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [1; 32], at(0))
+                .is_none(),
             "a role that may decrypt must not warm a cache another role reads"
         );
     }
@@ -349,10 +358,24 @@ mod tests {
     #[test]
     fn a_new_key_version_is_a_different_entry() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         assert!(
-            cache.get("wsp_1", [2; KEY_VERSION_BYTES], at(0)).is_none(),
+            cache
+                .get("wsp_1", [2; KEY_VERSION_BYTES], [1; 32], at(0))
+                .is_none(),
             "rotation must not be served stale material"
+        );
+    }
+
+    #[test]
+    fn the_same_wrapped_key_under_another_context_is_a_cache_miss() {
+        let cache = BranchKeyCache::new("role-a");
+        cache.put(material("wsp_1"), [1; 32], at(0));
+        assert!(
+            cache
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [2; 32], at(0))
+                .is_none(),
+            "a cached KMS decrypt must not bypass exact encryption-context equality"
         );
     }
 
@@ -360,7 +383,7 @@ mod tests {
     fn the_cache_is_bounded_however_many_workspaces_pass_through_it() {
         let cache = BranchKeyCache::with_capacity("role-a", 4, Duration::from_mins(10));
         for index in 0..64 {
-            cache.put(material(&format!("wsp_{index}")), at(0));
+            cache.put(material(&format!("wsp_{index}")), [1; 32], at(0));
         }
         assert!(cache.len() <= 4, "{} entries", cache.len());
         assert_eq!(CACHE_CAPACITY, 256);
@@ -369,7 +392,7 @@ mod tests {
     #[test]
     fn clearing_drops_every_entry() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         cache.clear();
         assert!(cache.is_empty());
     }
@@ -377,7 +400,7 @@ mod tests {
     #[test]
     fn the_cache_never_prints_the_material_it_holds() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         let printed = format!("{cache:?}");
         assert!(printed.contains("<redacted>"), "{printed}");
     }

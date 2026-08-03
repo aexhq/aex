@@ -166,7 +166,8 @@ impl EnvelopeCrypto {
         // function of the context: a caller cannot select another tenant's key
         // by asking for it.
         let branch_key_id = context.workspace.to_string();
-        if let Some(cached) = self.cache.get(&branch_key_id, version, now) {
+        let context_digest = context::context_digest(context);
+        if let Some(cached) = self.cache.get(&branch_key_id, version, context_digest, now) {
             return Ok(cached);
         }
         let material = self
@@ -178,7 +179,7 @@ impl EnvelopeCrypto {
                 &context::kms_pairs(context),
             )
             .await?;
-        self.cache.put(material.clone(), now);
+        self.cache.put(material.clone(), context_digest, now);
         Ok(material)
     }
 }

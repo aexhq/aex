@@ -280,6 +280,7 @@ pub enum ProviderScript {
 pub struct ScriptedProvider {
     script: Mutex<VecDeque<ProviderScript>>,
     dispatched: Mutex<Vec<(EffectId, Fence, u16)>>,
+    credentials: Mutex<Vec<aex_brain_domain::wire_pending::SessionCredentialPin>>,
     requests: Mutex<Vec<CanonicalModelRequest>>,
 }
 
@@ -290,6 +291,7 @@ impl ScriptedProvider {
         Self {
             script: Mutex::new(script.into_iter().collect()),
             dispatched: Mutex::new(Vec::new()),
+            credentials: Mutex::new(Vec::new()),
             requests: Mutex::new(Vec::new()),
         }
     }
@@ -305,18 +307,29 @@ impl ScriptedProvider {
     pub fn requests(&self) -> Vec<CanonicalModelRequest> {
         self.requests.lock().expect("not poisoned").clone()
     }
+
+    /// Every immutable credential pin it was asked to dispatch under.
+    #[must_use]
+    pub fn credentials(&self) -> Vec<aex_brain_domain::wire_pending::SessionCredentialPin> {
+        self.credentials.lock().expect("not poisoned").clone()
+    }
 }
 
 impl ProviderPort for ScriptedProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
+        credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
         Box::pin(async move {
+            self.credentials
+                .lock()
+                .expect("not poisoned")
+                .push(credential);
             self.requests
                 .lock()
                 .expect("not poisoned")
@@ -1186,6 +1199,7 @@ impl EffectStore for MemoryStore {
             Ok(DispatchTicket::mint(
                 guard,
                 authority.workspace,
+                authority.organization,
                 *effect,
                 attempt,
                 at,

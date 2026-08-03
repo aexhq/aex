@@ -4,12 +4,9 @@
 //! concepts are imported from their owning crates; this module no longer
 //! restates them.
 
-use aex_model_catalog::BoundedString;
-use aex_wire::CanonicalJson;
-use aex_wire::ids::{ProviderCredentialId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
-pub use aex_secret_domain::{RevocationEpoch, SourceGeneration};
+pub use aex_secret_domain::{CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration};
 
 pub use aex_brain_application::ports::{
     BoxFuture, CancelToken, DispatchTicket, PreviewSink, ProviderDispatchError, ProviderOutcome,
@@ -63,21 +60,3 @@ impl ReservationSet {
             .sum()
     }
 }
-
-/// A pointer to stored ciphertext. Never plaintext or ciphertext bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct CiphertextRef(pub BoundedString<256>);
-
-/// Temporary closed decrypt context until provider registration can bind the
-/// decided secret-domain encryption context.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EncryptionContext {
-    /// The binding workspace.
-    pub workspace: WorkspaceId,
-    /// Further canonical binding members.
-    pub extra: CanonicalJson,
-}
-
-/// A stable provider-credential binding id: the `pcr_` record.
-pub type BindingId = ProviderCredentialId;

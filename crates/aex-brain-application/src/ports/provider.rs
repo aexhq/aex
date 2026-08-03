@@ -3,6 +3,7 @@
 use super::BoxFuture;
 use super::proof::{CancelToken, DispatchTicket, PreviewSink, StreamBudget};
 use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage};
+use aex_brain_domain::wire_pending::SessionCredentialPin;
 use aex_model_catalog::ProviderRequestId;
 use aex_model_catalog::canonical::{
     CanonicalModelRequest, CompleteAssistantMessage, NormalizedUsage, ProviderReceipt,
@@ -19,6 +20,10 @@ pub use aex_model_catalog::{ProviderFailureClass, ProviderFailureKind, RedactedD
 pub trait ProviderPort: Send + Sync + 'static {
     /// Dispatches `request` and streams it to completion.
     ///
+    /// `credential` is immutable session journal state. Implementations must
+    /// resolve that exact binding and never substitute a current workspace
+    /// default.
+    ///
     /// The ticket is the proof that the durable `dispatch_started` write already committed.
     /// An implementation must not send a byte before it holds one, and must never send a
     /// second generation after an ambiguous send or an accepted generation. A verified
@@ -27,6 +32,7 @@ pub trait ProviderPort: Send + Sync + 'static {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
+        credential: SessionCredentialPin,
         request: &'a CanonicalModelRequest,
         budget: &'a StreamBudget,
         preview: &'a dyn PreviewSink,

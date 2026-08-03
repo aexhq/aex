@@ -320,6 +320,7 @@ impl EffectStore for BrainStore {
             Ok(DispatchTicket::mint(
                 guard,
                 authority.workspace,
+                authority.organization,
                 *id,
                 attempt,
                 at,

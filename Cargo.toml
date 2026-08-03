@@ -17,6 +17,7 @@ members = [
     "crates/aex-brain-hands",
     "crates/aex-brain-managed-web",
     "crates/aex-brain-mcp",
+    "crates/aex-brain-provider-custody",
     "crates/aex-brain-provider-gateway",
     "crates/aex-brain-store-aws",
     "crates/aex-brain-test-support",

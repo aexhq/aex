@@ -97,6 +97,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-brain-provider-custody"
+version = "0.1.0"
+dependencies = [
+ "aex-brain-application",
+ "aex-brain-provider-gateway",
+ "aex-secret-aws",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-domain",
+ "aex-wire",
+ "async-trait",
+ "futures",
+ "tokio",
+]
+
+[[package]]
 name = "aex-brain-provider-gateway"
 version = "0.1.0"
 dependencies = [
@@ -117,6 +132,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
  "wiremock",
  "zeroize",
 ]
@@ -2760,17 +2776,22 @@ dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
  "aex-brain-hands",
+ "aex-brain-provider-custody",
  "aex-brain-provider-gateway",
  "aex-brain-store-aws",
  "aex-brain-tool-catalog",
  "aex-model-catalog",
  "aex-platform-telemetry",
+ "aex-secret-aws",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-domain",
  "aex-telemetry-schema",
  "aex-usage-application",
  "aex-usage-domain",
  "aex-wire",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-kms",
  "aws-sdk-sqs",
  "futures",
  "thiserror",

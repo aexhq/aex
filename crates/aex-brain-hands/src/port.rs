@@ -199,6 +199,7 @@ mod tests {
         DispatchTicket::mint(
             &guard,
             WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [9; 10])),
             EffectId([7; 16]),
             1,
             Timestamp::from_millis(0),

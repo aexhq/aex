@@ -12,7 +12,7 @@
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
 //! | `ToolPort` | injected production router, or explicit unavailable composition | managed-web and MCP do not yet implement `ToolExecutor` |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
-//! | `ProviderPort` | [`AbsentProvider`] | the six-adapter gateway is implemented, but a Brain session carries no immutable credential pin and regional custody cannot mint a binding yet |
+//! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
 //! | `CatalogPort` | [`AbsentCatalog`] | the verified loader exists, but startup has no content-addressed envelope or compiled trust root to bind |
 //! | `HandsPort` | [`aex_brain_hands::HandsAdapter`] in production injection | the adapter is real; no concrete guest transport/runtime backend exists yet |
 //!
@@ -56,9 +56,8 @@ use std::sync::Arc;
 pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
 
 /// Why the provider is not bound.
-pub const PROVIDER_ABSENT: &str = "the Brain session contract carries no immutable provider \
-                                   credential pin, and regional secret custody cannot yet mint \
-                                   the provider credential record";
+pub const PROVIDER_ABSENT: &str =
+    "the provider gateway could not bind its build-stamped adapter source identity";
 
 /// Why the catalog is not bound.
 pub const CATALOG_ABSENT: &str = "no content-addressed signed model catalog and compiled trust \
@@ -304,6 +303,7 @@ impl ProviderPort for AbsentProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -475,6 +475,18 @@ impl Bindings {
         }
     }
 
+    /// Provider custody and transport are real; unrelated launch peers remain absent.
+    #[must_use]
+    pub const fn provider_ready() -> Self {
+        Self {
+            store: BindingState::Ready,
+            provider: BindingState::Ready,
+            catalog: BindingState::Unavailable(CATALOG_ABSENT),
+            tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
+            hands: BindingState::Unavailable(HANDS_ABSENT),
+        }
+    }
+
     /// Fully injected production ports.
     #[must_use]
     pub const fn production() -> Self {
@@ -553,16 +565,23 @@ impl core::fmt::Debug for ProductionPeers {
     }
 }
 
+/// Real AWS clients shared by store, queue, provider custody, and KMS composition.
+pub struct AwsBindings {
+    /// Session-authority store.
+    pub store: Arc<aex_brain_store_aws::BrainStore>,
+    /// Wake delivery and due backstop.
+    pub queue: Arc<aex_brain_store_aws::SqsWakeQueue>,
+    /// The one SDK configuration all clients in this task derive from.
+    pub sdk: aws_config::SdkConfig,
+}
+
 /// Binds the real store and queue adapters through one `AWS` configuration.
 pub async fn aws_bindings(
     region: &str,
     queue_url: &str,
     session_table: &str,
     work_table: &str,
-) -> (
-    Arc<aex_brain_store_aws::BrainStore>,
-    Arc<aex_brain_store_aws::SqsWakeQueue>,
-) {
+) -> AwsBindings {
     let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_sdk_dynamodb::config::Region::new(region.to_owned()))
         .load()
@@ -580,7 +599,50 @@ pub async fn aws_bindings(
         queue_url.to_owned(),
         aex_brain_store_aws::DueScan::new(dynamodb, work_table.to_owned()),
     ));
-    (store, queue)
+    AwsBindings {
+        store,
+        queue,
+        sdk: aws,
+    }
+}
+
+/// Binds exact regional custody plus KMS reveal into the six-provider router.
+///
+/// # Errors
+///
+/// The build-stamped adapter identity must be valid before this port can exist.
+pub fn provider_binding(
+    aws: &aws_config::SdkConfig,
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    custody_table: &str,
+    kms_key_arn: &str,
+    plane: aex_secret_domain::context::Plane,
+    region: aex_wire::types::Region,
+    cache_partition: &str,
+) -> Result<
+    Arc<dyn ProviderPort>,
+    aex_brain_provider_gateway::build_identity::AdapterBuildIdentityError,
+> {
+    let custody = Arc::new(aex_secret_custody_dynamodb::CustodyStore::new(
+        aws_sdk_dynamodb::Client::new(aws),
+        custody_table.to_owned(),
+    ));
+    let crypto = Arc::new(aex_secret_aws::EnvelopeCrypto::new(
+        Box::new(aex_secret_aws::KmsBranchKeys::new(
+            aws_sdk_kms::Client::new(aws),
+            kms_key_arn.to_owned(),
+        )),
+        cache_partition.to_owned(),
+    ));
+    let authority = Arc::new(aex_brain_provider_custody::CredentialAuthority::new(
+        custody, crypto, plane, region,
+    ));
+    let router = aex_brain_provider_gateway::router::ProviderRouter::from_build(
+        Arc::clone(&authority) as Arc<_>,
+        authority,
+        store,
+    )?;
+    Ok(Arc::new(router))
 }
 
 /// Fail-closed ports for a task whose production peers are not composed yet.
@@ -589,12 +651,22 @@ pub fn unavailable_ports(
     store: Arc<aex_brain_store_aws::BrainStore>,
     wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
 ) -> Ports {
+    partial_ports(store, wakes, Arc::new(AbsentProvider))
+}
+
+/// Composes a real provider while unrelated peer ports remain explicitly absent.
+#[must_use]
+pub fn partial_ports(
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    provider: Arc<dyn ProviderPort>,
+) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
-        provider: Arc::new(AbsentProvider),
+        provider,
         // The real router. It holds no executor because nothing implements `ToolExecutor`
         // yet, so it refuses by its own typed error rather than by one invented here.
         tools: Arc::new(aex_brain_tool_catalog::router::CompositeToolRouter::new()),
@@ -704,7 +776,7 @@ mod tests {
     fn the_absent_provider_proves_nothing_was_sent() {
         let ports: &dyn aex_brain_application::ports::ProviderPort = &AbsentProvider;
         let _ = ports;
-        assert!(PROVIDER_ABSENT.contains("immutable provider credential pin"));
+        assert!(PROVIDER_ABSENT.contains("build-stamped adapter source identity"));
     }
 
     /// The safe answer to "can this be resumed?" is "no", so an unknown pin still answers
@@ -721,7 +793,7 @@ mod tests {
         assert!(CATALOG_ABSENT.contains("signed model catalog"));
     }
 
-    /// The store is bound, while all four absent production peers remain named blockers.
+    /// Each partial composition names only the peers it truly lacks.
     #[test]
     fn a_deployed_task_binds_the_store_and_names_the_remaining_peers() {
         let bindings = Bindings::unavailable();
@@ -734,6 +806,13 @@ mod tests {
         assert!(missing.contains(&CATALOG_ABSENT));
         assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
         assert!(missing.contains(&super::HANDS_ABSENT));
+
+        let with_provider = Bindings::provider_ready();
+        assert!(!with_provider.complete());
+        assert!(with_provider.provider.is_ready());
+        let missing = with_provider.unsatisfied();
+        assert_eq!(missing.len(), 3);
+        assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
     }
 
