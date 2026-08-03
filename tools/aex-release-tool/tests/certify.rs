@@ -8,8 +8,9 @@ use aex_release_tool::artifact::{
     Licenses, Location, Provenance, Signature, Toolchain, Vulnerabilities, Workflow, plan,
 };
 use aex_release_tool::canon;
+use aex_release_tool::certification::{ExpectedSource, defer, inventory};
 use aex_release_tool::certify::{CertificationClaims, CertificationFiles, certify};
-use aex_release_tool::describe::{LocalBuild, describe};
+use aex_release_tool::describe::{LocalBuild, UnearnedField, describe};
 use aex_release_tool::evidence::{FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::{Unit, Units};
 use common::docs::{BUILDER, digest, sha1, valid_receipt};
@@ -375,4 +376,166 @@ fn certification_refuses_an_empty_sbom_and_mutable_or_wrong_host_location() {
         .replace("github.com", "example.com");
     let err = fixture.certify().unwrap_err();
     assert!(err.rules().contains(&"envelope-github-release-location"));
+}
+
+#[test]
+fn a_deferral_binds_exact_available_receipts_and_names_every_missing_class() {
+    let fixture = Fixture::new();
+    let available: Vec<Receipt> = fixture
+        .receipts
+        .iter()
+        .filter(|receipt| matches!(receipt.class.as_str(), "unit" | "lint"))
+        .cloned()
+        .collect();
+    let unearned = vec![UnearnedField {
+        pointer: "/sbom".to_owned(),
+        reason: "no SBOM producer ran".to_owned(),
+    }];
+    let deferral = defer(
+        &fixture.draft,
+        &fixture.unit,
+        fixture.claims.workflow.clone(),
+        unearned,
+        &available,
+        &freshness(),
+    )
+    .unwrap();
+
+    deferral.verify().unwrap();
+    assert_eq!(
+        deferral
+            .available_receipts
+            .iter()
+            .map(|receipt| receipt.class.as_str())
+            .collect::<Vec<_>>(),
+        vec!["lint", "unit"]
+    );
+    assert!(deferral.missing_receipts.contains(&"sbom".to_owned()));
+    assert!(deferral.missing_receipts.contains(&"contract".to_owned()));
+    assert!(!deferral.missing_receipts.contains(&"unit".to_owned()));
+}
+
+#[test]
+fn a_deferral_cannot_hide_a_certifiable_artifact_or_survive_tampering() {
+    let mut fixture = Fixture::new();
+    fixture.unit.required_receipts = fixture
+        .receipts
+        .iter()
+        .map(|receipt| receipt.class.clone())
+        .collect();
+    let err = defer(
+        &fixture.draft,
+        &fixture.unit,
+        fixture.claims.workflow.clone(),
+        Vec::new(),
+        &fixture.receipts,
+        &freshness(),
+    )
+    .unwrap_err();
+    assert!(err.rules().contains(&"certification-deferral-no-blocker"));
+
+    let mut deferral = defer(
+        &fixture.draft,
+        &fixture.unit,
+        fixture.claims.workflow.clone(),
+        vec![UnearnedField {
+            pointer: "/provenance".to_owned(),
+            reason: "attestation has not been issued".to_owned(),
+        }],
+        &fixture.receipts,
+        &freshness(),
+    )
+    .unwrap();
+    deferral.artifact_digest = digest(0x44);
+    let err = deferral.verify().unwrap_err();
+    assert!(
+        err.rules()
+            .contains(&"certification-deferral-digest-mismatch")
+    );
+}
+
+#[test]
+fn inventory_accounts_for_deferrals_but_never_promotes_them() {
+    let fixture = Fixture::new();
+    let commit_sha = sha1();
+    let deferral = defer(
+        &fixture.draft,
+        &fixture.unit,
+        fixture.claims.workflow.clone(),
+        vec![UnearnedField {
+            pointer: "/sbom".to_owned(),
+            reason: "no SBOM producer ran".to_owned(),
+        }],
+        &fixture.receipts[..1],
+        &freshness(),
+    )
+    .unwrap();
+    let registry = Units {
+        schema: "aex.units.v1".to_owned(),
+        units: vec![fixture.unit.clone()],
+    };
+    let report = inventory(
+        &registry,
+        &[],
+        &[deferral],
+        &ExpectedSource {
+            repository: "aexhq/aex",
+            commit_sha: &commit_sha,
+            run_id: "123",
+            run_attempt: 1,
+        },
+    )
+    .unwrap();
+    let err = report.blocking_error().unwrap();
+    assert_eq!(err.exit, aex_release_tool::error::Exit::EvidenceMissing);
+    assert!(err.rules().contains(&"artifact-certification-deferred"));
+
+    let mut incomplete = defer(
+        &fixture.draft,
+        &fixture.unit,
+        fixture.claims.workflow.clone(),
+        Vec::new(),
+        &fixture.receipts[..1],
+        &freshness(),
+    )
+    .unwrap();
+    incomplete.missing_receipts.pop();
+    let incomplete = incomplete.seal().unwrap();
+    let err = inventory(
+        &registry,
+        &[],
+        &[incomplete],
+        &ExpectedSource {
+            repository: "aexhq/aex",
+            commit_sha: &commit_sha,
+            run_id: "123",
+            run_attempt: 1,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.rules()
+            .contains(&"certification-deferral-missing-receipts")
+    );
+}
+
+#[test]
+fn inventory_rejects_draft_envelopes_and_disposition_holes() {
+    let fixture = Fixture::new();
+    let commit_sha = sha1();
+    let registry = Units {
+        schema: "aex.units.v1".to_owned(),
+        units: vec![fixture.unit.clone()],
+    };
+    let expected = ExpectedSource {
+        repository: "aexhq/aex",
+        commit_sha: &commit_sha,
+        run_id: "123",
+        run_attempt: 1,
+    };
+    let err = inventory(&registry, &[fixture.draft], &[], &expected).unwrap_err();
+    assert!(err.rules().contains(&"envelope-mutable-location"));
+
+    let err = inventory(&registry, &[], &[], &expected).unwrap_err();
+    assert!(err.rules().contains(&"certification-inventory-hole"));
 }

@@ -162,6 +162,18 @@ jobs:
     name: Manifest
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      manifest_uri: ${{ steps.publish_handoff.outputs.manifest_uri }}
+      manifest_digest: ${{ steps.handoff_identities.outputs.manifest_digest }}
+      manifest_size_bytes: ${{ steps.handoff_identities.outputs.manifest_size_bytes }}
+      release_id: ${{ steps.handoff_identities.outputs.release_id }}
+      manifest_attestation_id: ${{ steps.attest_manifest.outputs['attestation-id'] }}
+      manifest_attestation_url: ${{ steps.attest_manifest.outputs['attestation-url'] }}
+      artifact_store_uri: ${{ steps.publish_handoff.outputs.artifact_store_uri }}
+      artifact_store_digest: ${{ steps.handoff_identities.outputs.artifact_store_digest }}
+      artifact_store_size_bytes: ${{ steps.handoff_identities.outputs.artifact_store_size_bytes }}
+      artifact_store_attestation_id: ${{ steps.attest_artifact_store.outputs['attestation-id'] }}
+      artifact_store_attestation_url: ${{ steps.attest_artifact_store.outputs['attestation-url'] }}
     permissions:
       contents: write
       id-token: write
@@ -184,6 +196,12 @@ jobs:
         with:
           pattern: oci-artifact-*
           path: handoff/oci
+
+      - name: Download exact certification deferrals
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: certification-deferrals
+          path: handoff/deferrals
 
       - name: Re-acquire and verify public release inputs
         env:
@@ -255,7 +273,7 @@ jobs:
           observed_tool_version=$(public-inputs/aex-release-tool --version | awk '{print $2}')
           [[ "$observed_tool_version" == "$RELEASE_TOOL_VERSION" ]]
 
-      - name: Require certified artifact evidence
+      - name: Require an exhaustive certified artifact inventory
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -263,10 +281,21 @@ jobs:
             handoff/blob/artifact-*/certified-envelope.json
             handoff/oci/oci-artifact-*/certified-envelope.json
           )
-          if [ ${#certified_envelopes[@]} -eq 0 ]; then
-            echo "::error title=Certified envelopes missing::No artifact certification producer emitted a certified-envelope.json; draft envelopes are not release evidence."
-            exit 40
-          fi
+          deferrals=(handoff/deferrals/*.json)
+          args=()
+          for envelope in "${certified_envelopes[@]}"; do
+            args+=(--envelope "$envelope")
+          done
+          for deferred in "${deferrals[@]}"; do
+            args+=(--deferred "$deferred")
+          done
+          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
+            artifact certification-inventory "${args[@]}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --out public-inputs/certification-inventory.json
 
       - name: Derive authoritative composition inputs
         env:
@@ -312,20 +341,48 @@ jobs:
             --manifest-out public-inputs/composition-manifest.json \
             --store-out public-inputs/artifact-store.json
 
+      - name: Record exact composition handoff identities
+        id: handoff_identities
+        run: |
+          set -euo pipefail
+          manifest=public-inputs/composition-manifest.json
+          store=public-inputs/artifact-store.json
+          release_id=$(jq -er '.releaseId | select(test("^sha256:[0-9a-f]{64}$"))' "$manifest")
+          manifest_digest="sha256:$(sha256sum "$manifest" | cut -d' ' -f1)"
+          store_digest="sha256:$(sha256sum "$store" | cut -d' ' -f1)"
+          manifest_size=$(stat -c '%s' "$manifest")
+          store_size=$(stat -c '%s' "$store")
+          [[ "$manifest_size" =~ ^[1-9][0-9]*$ ]]
+          [[ "$store_size" =~ ^[1-9][0-9]*$ ]]
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "manifest_digest=$manifest_digest" >> "$GITHUB_OUTPUT"
+          echo "manifest_size_bytes=$manifest_size" >> "$GITHUB_OUTPUT"
+          echo "artifact_store_digest=$store_digest" >> "$GITHUB_OUTPUT"
+          echo "artifact_store_size_bytes=$store_size" >> "$GITHUB_OUTPUT"
+
       - name: Attest the composition manifest
+        id: attest_manifest
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
         with:
           subject-path: public-inputs/composition-manifest.json
 
       - name: Attest the artifact store
+        id: attest_artifact_store
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
         with:
           subject-path: public-inputs/artifact-store.json
 
       - name: Publish the complete immutable prerelease
+        id: publish_handoff
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          MANIFEST_BUNDLE: ${{ steps.attest_manifest.outputs.bundle-path }}
+          ARTIFACT_STORE_BUNDLE: ${{ steps.attest_artifact_store.outputs.bundle-path }}
+          MANIFEST_DIGEST: ${{ steps.handoff_identities.outputs.manifest_digest }}
+          MANIFEST_SIZE_BYTES: ${{ steps.handoff_identities.outputs.manifest_size_bytes }}
+          ARTIFACT_STORE_DIGEST: ${{ steps.handoff_identities.outputs.artifact_store_digest }}
+          ARTIFACT_STORE_SIZE_BYTES: ${{ steps.handoff_identities.outputs.artifact_store_size_bytes }}
         run: |
           set -euo pipefail
           expected_tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
@@ -356,13 +413,30 @@ jobs:
             public-readback/composition-manifest.json
           cmp --silent public-inputs/artifact-store.json \
             public-readback/artifact-store.json
-          for subject in composition-manifest.json artifact-store.json; do
-            gh attestation verify "public-readback/$subject" --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
-              --source-ref refs/heads/main --source-digest "$GITHUB_SHA"
-          done
+          [[ "sha256:$(sha256sum public-readback/composition-manifest.json | cut -d' ' -f1)" == "$MANIFEST_DIGEST" ]]
+          [[ "$(stat -c '%s' public-readback/composition-manifest.json)" == "$MANIFEST_SIZE_BYTES" ]]
+          [[ "sha256:$(sha256sum public-readback/artifact-store.json | cut -d' ' -f1)" == "$ARTIFACT_STORE_DIGEST" ]]
+          [[ "$(stat -c '%s' public-readback/artifact-store.json)" == "$ARTIFACT_STORE_SIZE_BYTES" ]]
+          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+            manifest validate --file public-readback/composition-manifest.json \
+            --strict-environment-scan
+          denied_runner_class=self
+          denied_runner_class+="-hosted"
+          gh attestation verify public-readback/composition-manifest.json \
+            --repo "$GITHUB_REPOSITORY" --bundle "$MANIFEST_BUNDLE" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
+            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
+            "--deny-${denied_runner_class}-runners"
+          gh attestation verify public-readback/artifact-store.json \
+            --repo "$GITHUB_REPOSITORY" --bundle "$ARTIFACT_STORE_BUNDLE" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
+            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
+            "--deny-${denied_runner_class}-runners"
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --draft=false --prerelease
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$RELEASE_TAG"
+          echo "manifest_uri=$base/composition-manifest.json" >> "$GITHUB_OUTPUT"
+          echo "artifact_store_uri=$base/artifact-store.json" >> "$GITHUB_OUTPUT"
 
   receipts:
     name: Checks

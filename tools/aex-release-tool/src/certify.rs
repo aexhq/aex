@@ -158,7 +158,7 @@ pub fn certify(
             "applying certification claims changed the artifact subject identity",
         ));
     }
-    let receipt_refs = validate_receipts(
+    let (receipt_refs, missing_receipts) = validate_available_receipts(
         &draft,
         unit,
         &claims.workflow,
@@ -166,6 +166,20 @@ pub fn certify(
         receipts,
         freshness,
     )?;
+    if !missing_receipts.is_empty() {
+        return Err(ToolError::many(
+            Exit::EvidenceMissing,
+            missing_receipts
+                .into_iter()
+                .map(|required| {
+                    Violation::new(
+                        "certify-receipt-missing",
+                        format!("unit `{}` requires a passing `{required}` receipt", unit.id),
+                    )
+                })
+                .collect(),
+        ));
+    }
     let mut licenses = claims.licenses;
     licenses.inventory_digest = Some(canon::digest_bytes(&license_bytes));
     let mut provenance = claims.provenance;
@@ -234,9 +248,19 @@ pub fn certify(
     Ok(certified)
 }
 
-fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
+pub(crate) fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
     let mut violations = Vec::new();
     let recomputed_subject = draft.compute_artifact_subject_digest()?;
+    let resealed = draft.clone().seal()?;
+    if draft.envelope_digest != resealed.envelope_digest {
+        violations.push(Violation::new(
+            "certify-draft-envelope-digest-mismatch",
+            format!(
+                "draft envelopeDigest `{}` does not match the canonical document `{}`",
+                draft.envelope_digest, resealed.envelope_digest
+            ),
+        ));
+    }
     if draft.artifact_subject_digest != recomputed_subject {
         violations.push(Violation::new(
             "certify-artifact-subject-mismatch",
@@ -281,7 +305,7 @@ fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
     }
 }
 
-fn validate_workflow(draft: &ArtifactEnvelope, workflow: &Workflow) -> Result<()> {
+pub(crate) fn validate_workflow(draft: &ArtifactEnvelope, workflow: &Workflow) -> Result<()> {
     let positive_run = !workflow.run_id.is_empty()
         && !workflow.run_id.starts_with('0')
         && workflow.run_id.bytes().all(|byte| byte.is_ascii_digit());
@@ -302,14 +326,14 @@ fn validate_workflow(draft: &ArtifactEnvelope, workflow: &Workflow) -> Result<()
     Ok(())
 }
 
-fn validate_receipts(
+pub(crate) fn validate_available_receipts(
     draft: &ArtifactEnvelope,
     unit: &Unit,
     workflow: &Workflow,
     artifact_subject_digest: &str,
     receipts: &[Receipt],
     freshness: &FreshnessPolicy,
-) -> Result<Vec<ReceiptRef>> {
+) -> Result<(Vec<ReceiptRef>, Vec<String>)> {
     let mut by_class = BTreeMap::new();
     let mut violations = Vec::new();
     for receipt in receipts {
@@ -376,18 +400,16 @@ fn validate_receipts(
             ));
         }
     }
-    for required in &unit.required_receipts {
-        if !by_class.contains_key(required) {
-            violations.push(Violation::new(
-                "certify-receipt-missing",
-                format!("unit `{}` requires a passing `{required}` receipt", unit.id),
-            ));
-        }
-    }
     if !violations.is_empty() {
         return Err(ToolError::many(Exit::EvidenceMissing, violations));
     }
-    Ok(by_class
+    let missing = unit
+        .required_receipts
+        .iter()
+        .filter(|required| !by_class.contains_key(required.as_str()))
+        .cloned()
+        .collect();
+    let refs = by_class
         .into_values()
         .map(|receipt| ReceiptRef {
             class: receipt.class.clone(),
@@ -400,7 +422,8 @@ fn validate_receipts(
             },
             conclusion: receipt.conclusion.clone(),
         })
-        .collect())
+        .collect();
+    Ok((refs, missing))
 }
 
 fn validate_signature(unit: &Unit, signature: &Signature) -> Result<()> {

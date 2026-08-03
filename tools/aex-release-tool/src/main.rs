@@ -447,6 +447,57 @@ enum ArtifactCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Record exact evidence gaps without minting a weaker envelope.
+    DeferCertification {
+        /// Local draft emitted by `artifact describe`.
+        #[arg(long)]
+        draft: PathBuf,
+        /// Unearned-field ledger emitted beside the draft.
+        #[arg(long)]
+        unearned: PathBuf,
+        /// Passing same-run receipts already bound to the artifact, repeated.
+        #[arg(long = "receipt")]
+        receipts: Vec<PathBuf>,
+        /// Positive protected workflow run id.
+        #[arg(long)]
+        workflow_run_id: String,
+        /// Positive protected workflow run attempt.
+        #[arg(long)]
+        workflow_run_attempt: u32,
+        /// Artifact-builder matrix job name.
+        #[arg(long)]
+        job_name: String,
+        /// Protected workflow builder identity.
+        #[arg(long)]
+        builder_id: String,
+        /// Where to write the canonical deferral.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Exhaustively account for certified and explicitly deferred units.
+    CertificationInventory {
+        /// Certified envelope files, repeated.
+        #[arg(long = "envelope")]
+        envelopes: Vec<PathBuf>,
+        /// Certification deferral files, repeated.
+        #[arg(long = "deferred")]
+        deferrals: Vec<PathBuf>,
+        /// Exact GitHub `owner/repository`.
+        #[arg(long)]
+        repository: String,
+        /// Exact lowercase 40-character source commit.
+        #[arg(long)]
+        commit_sha: String,
+        /// Positive GitHub Actions run id.
+        #[arg(long)]
+        workflow_run_id: String,
+        /// Positive GitHub Actions run attempt.
+        #[arg(long)]
+        workflow_run_attempt: u32,
+        /// Where to write the inventory before deferred units fail the gate.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Verify an envelope, and optionally the bytes it describes.
     Verify {
         /// The envelope.
@@ -1172,6 +1223,12 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
         | ArtifactCommand::OciVisibility { .. }) => run_artifact_oci(cli, root, command),
         ArtifactCommand::Describe { .. } => run_artifact_describe(cli, root, command),
         ArtifactCommand::Certify { .. } => run_artifact_certify(cli, root, command),
+        ArtifactCommand::DeferCertification { .. } => {
+            run_artifact_defer_certification(cli, root, command)
+        }
+        ArtifactCommand::CertificationInventory { .. } => {
+            run_artifact_certification_inventory(cli, root, command)
+        }
         ArtifactCommand::Verify {
             envelope,
             file,
@@ -1436,6 +1493,103 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
             "location": envelope.output.location,
         }),
     )
+}
+
+fn run_artifact_defer_certification(
+    cli: &Cli,
+    root: &Path,
+    command: &ArtifactCommand,
+) -> Result<()> {
+    let ArtifactCommand::DeferCertification {
+        draft,
+        unearned,
+        receipts,
+        workflow_run_id,
+        workflow_run_attempt,
+        job_name,
+        builder_id,
+        out,
+    } = command
+    else {
+        return Err(usage(
+            "internal artifact certification-deferral dispatch mismatch",
+        ));
+    };
+    let draft: ArtifactEnvelope = read_json(draft)?;
+    let units = read_units(root)?;
+    let unit = units
+        .units
+        .iter()
+        .find(|candidate| candidate.id == draft.unit.id)
+        .ok_or_else(|| usage(format!("`{}` is not in release/units.toml", draft.unit.id)))?;
+    let unearned = read_json(unearned)?;
+    let receipts = receipts
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<_>>>()?;
+    let freshness: FreshnessPolicy = read_toml(&root.join("release/policy/freshness.toml"))?;
+    let workflow = aex_release_tool::artifact::Workflow {
+        repository: draft.source.repository.clone(),
+        r#ref: "refs/heads/main".to_owned(),
+        path: ".github/workflows/_build-artifacts.yml".to_owned(),
+        run_id: workflow_run_id.clone(),
+        run_attempt: *workflow_run_attempt,
+        job_name: job_name.clone(),
+        builder_id: builder_id.clone(),
+    };
+    let deferral = aex_release_tool::certification::defer(
+        &draft, unit, workflow, unearned, &receipts, &freshness,
+    )?;
+    write_canonical(out, &deferral)?;
+    emit(cli, &deferral)
+}
+
+fn run_artifact_certification_inventory(
+    cli: &Cli,
+    root: &Path,
+    command: &ArtifactCommand,
+) -> Result<()> {
+    let ArtifactCommand::CertificationInventory {
+        envelopes,
+        deferrals,
+        repository,
+        commit_sha,
+        workflow_run_id,
+        workflow_run_attempt,
+        out,
+    } = command
+    else {
+        return Err(usage(
+            "internal artifact certification-inventory dispatch mismatch",
+        ));
+    };
+    let registry = read_units(root)?;
+    let envelopes = envelopes
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<_>>>()?;
+    let deferrals = deferrals
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<_>>>()?;
+    let report = aex_release_tool::certification::inventory(
+        &registry,
+        &envelopes,
+        &deferrals,
+        &aex_release_tool::certification::ExpectedSource {
+            repository,
+            commit_sha,
+            run_id: workflow_run_id,
+            run_attempt: *workflow_run_attempt,
+        },
+    )?;
+    write_canonical(out, &report)?;
+    emit(cli, &report)?;
+    if let Some(error) = report.blocking_error() {
+        Err(error)
+    } else {
+        Ok(())
+    }
 }
 
 fn run_artifact_asset_name(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {

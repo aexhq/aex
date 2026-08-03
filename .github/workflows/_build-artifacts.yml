@@ -638,6 +638,12 @@ jobs:
           pattern: oci-artifact-*
           path: oci-units
 
+      - name: Download every same-run validation receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: receipt-main-*
+          path: validation-receipts
+
       - name: Build twice and prove byte determinism
         env:
           CARGO_INCREMENTAL: "0"
@@ -668,6 +674,59 @@ jobs:
             artifact module-bundle --out dist/terraform-modules.check.tar.gz
           cmp dist/terraform-modules.tar.gz dist/terraform-modules.check.tar.gz
           rm dist/terraform-modules.check.tar.gz
+
+      - name: Bind earned receipts and record every certification deferral
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bound-receipts dist/certification-deferrals
+          shopt -s nullglob
+          mapfile -d '' receipts < <(
+            find validation-receipts -type f -name '*.json' -print0 | sort -z
+          )
+          drafts=(
+            packaged-units/artifact-*/draft-envelope.json
+            oci-units/oci-artifact-*/draft-envelope.json
+          )
+          for draft in "${drafts[@]}"; do
+            unit=$(jq -er .unit.id "$draft")
+            directory=${draft%/draft-envelope.json}
+            bound_directory="dist/bound-receipts/$unit"
+            mkdir -p "$bound_directory"
+            receipt_args=()
+            for receipt in "${receipts[@]}"; do
+              if jq -e --arg unit "$unit" '.subject.unitIds | index($unit) != null' \
+                "$receipt" >/dev/null; then
+                class=$(jq -er .class "$receipt")
+                bound="$bound_directory/$class.json"
+                test ! -e "$bound"
+                dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+                  evidence bind-artifact \
+                  --receipt "$receipt" \
+                  --envelope "$draft" \
+                  --out "$bound"
+                receipt_args+=(--receipt "$bound")
+              fi
+            done
+            dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+              artifact defer-certification \
+              --draft "$draft" \
+              --unearned "$directory/unearned.json" \
+              "${receipt_args[@]}" \
+              --workflow-run-id "$GITHUB_RUN_ID" \
+              --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --job-name "$unit" \
+              --builder-id "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
+              --out "dist/certification-deferrals/$unit.json"
+          done
+          test "${#drafts[@]}" -eq 38
+          test "$(find dist/certification-deferrals -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 38
+
+      - name: Upload exact certification deferrals
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: certification-deferrals
+          path: dist/certification-deferrals/*.json
+          if-no-files-found: error
 
       - name: Validate regional table definitions twice and prove byte identity
         run: |
@@ -806,6 +865,31 @@ jobs:
           echo "release_tool_uri=$base/aex-release-tool" >> "$GITHUB_OUTPUT"
           echo "module_bundle_uri=$base/terraform-modules.tar.gz" >> "$GITHUB_OUTPUT"
           echo "regional_tables_uri=$base/regional-tables.json" >> "$GITHUB_OUTPUT"
+
+      - name: Read back and verify every published blob unit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.publish.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/unit-readback
+          shopt -s nullglob
+          local_assets=(dist/unit-assets/*)
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'unit-*' --dir dist/unit-readback
+          readback_assets=(dist/unit-readback/*)
+          [[ "${#readback_assets[@]}" -eq "${#local_assets[@]}" ]]
+          denied_runner_class=self
+          denied_runner_class+="-hosted"
+          for local_asset in "${local_assets[@]}"; do
+            name=${local_asset##*/}
+            readback="dist/unit-readback/$name"
+            cmp --silent "$local_asset" "$readback"
+            gh attestation verify "$readback" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml" \
+              --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
+              "--deny-${denied_runner_class}-runners"
+          done
 
       - name: Record provenance outputs
         env:
