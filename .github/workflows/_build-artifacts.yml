@@ -799,8 +799,8 @@ jobs:
             exit 30
           fi
           total=$((blob_count + oci_count))
-          if [ "$total" -ne 38 ]; then
-            echo "unit inventory accounted for $total entries, expected exactly 38" >&2
+          if [ "$total" -ne 39 ]; then
+            echo "unit inventory accounted for $total entries, expected exactly 39" >&2
             exit 30
           fi
           echo "blob_count=$blob_count" >> "$GITHUB_ENV"

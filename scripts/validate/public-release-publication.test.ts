@@ -80,7 +80,7 @@ describe("public main-push publication", () => {
     expect(source).toContain("--draft --prerelease");
     expect(source).not.toContain("--clobber");
     expect(source.match(/gh release create/g)).toHaveLength(1);
-    expect(source).toContain('if [ "$total" -ne 38 ]');
+    expect(source).toContain('if [ "$total" -ne 39 ]');
     expect(source).toContain('if [ "$oci_count" -ne 5 ]');
     expect(source).toContain("push-by-digest=true");
     expect(source).toContain("subject-digest: ${{ steps.publish_oci.outputs.digest }}");

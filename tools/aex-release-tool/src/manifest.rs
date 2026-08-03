@@ -291,6 +291,7 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "session-operation-worker",
             "runtime-control-worker",
             "content-lifecycle-worker",
+            "regional-capacity-controller",
             "observation-reconciler",
             "observation-export-launcher",
             "observation-export-task",

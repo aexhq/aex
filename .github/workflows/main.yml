@@ -29,7 +29,7 @@ jobs:
     with:
       # Until immutable predecessor-manifest carry-forward exists, a protected
       # main publication must rebuild the complete registry. An affected-only
-      # matrix cannot mint a first complete 38-unit composition.
+      # matrix cannot mint a first complete 39-unit composition.
       mode: full
       lane: main
       base_sha: ${{ github.event.before }}
