@@ -114,6 +114,8 @@ fn run_terminal_reason_total() {
             error: aex_session_domain::DomainError {
                 code: ErrorCode::InternalError,
                 message: "failed".to_owned(),
+                detail: None,
+                retryable: false,
             },
         },
         RunOutcome::TimedOut {
@@ -1029,6 +1031,7 @@ fn clone_independence_and_conservation() {
             source: source.id,
             target: id::<SessionId>(70),
             operation: id::<OperationId>(71),
+            source_persist_revision: source.persist_revision,
             files,
             credentials: CloneCredentials::Copy,
         };

@@ -10,6 +10,8 @@ use aex_secret_domain::CloneCredentials;
 use aex_wire::ids::{OperationId, SessionId};
 use aex_wire::types::Timestamp;
 
+use crate::ids::PersistRevision;
+
 /// Where a session came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lineage {
@@ -35,6 +37,8 @@ pub struct Origin {
     pub session: SessionId,
     /// The operation that made the clone.
     pub operation: OperationId,
+    /// The source persist revision captured by the clone.
+    pub source_persist_revision: PersistRevision,
     /// Which files the clone took.
     pub files: CloneFiles,
     /// When it was made.
@@ -74,6 +78,8 @@ pub struct CloneRequest {
     pub target: SessionId,
     /// The operation making the clone.
     pub operation: OperationId,
+    /// The source persist revision captured with the request.
+    pub source_persist_revision: PersistRevision,
     /// Which files.
     pub files: CloneFiles,
     /// Which credentials.
@@ -114,6 +120,7 @@ pub fn plan_clone(
             origin: Some(Origin {
                 session: request.source,
                 operation: request.operation,
+                source_persist_revision: request.source_persist_revision,
                 files: request.files,
                 cloned_at: now,
             }),
@@ -161,6 +168,7 @@ mod tests {
             source: SessionId::from_uuid7(Uuid7::compose(1, [1; 10])),
             target: SessionId::from_uuid7(Uuid7::compose(1, [2; 10])),
             operation: OperationId::from_uuid7(Uuid7::compose(1, [3; 10])),
+            source_persist_revision: crate::PersistRevision(7),
             files,
             credentials: CloneCredentials::Copy,
         }

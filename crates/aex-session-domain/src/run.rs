@@ -9,7 +9,8 @@
 use std::num::NonZeroU64;
 
 use aex_operation_domain::DeletionState;
-use aex_wire::ids::{GenerationId, MessageId, OperationId, RunId, SessionId};
+use aex_wire::CanonicalJson;
+use aex_wire::ids::{GenerationId, MessageId, OperationId, RunId, SessionId, TelemetryGapId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::{CancellationEpoch, EffectId, ReservationId};
@@ -53,6 +54,10 @@ pub struct DomainError {
     pub code: aex_wire::error::ErrorCode,
     /// A human-readable summary. Never carries a secret or a body.
     pub message: String,
+    /// Typed customer-safe detail, when the domain produced it.
+    pub detail: Option<CanonicalJson>,
+    /// Whether retrying the same run step is permitted.
+    pub retryable: bool,
 }
 
 /// How a run ended.
@@ -129,6 +134,13 @@ pub struct Run {
     pub terminal_at: Option<Timestamp>,
     /// How it ended.
     pub outcome: Option<RunOutcome>,
+    /// Whether the observation authority has proved that no telemetry gap
+    /// belongs to this run. `None` means that authority has not settled yet.
+    pub telemetry_complete: Option<bool>,
+    /// The gaps the observation authority has attached to this run. `None`
+    /// means the observation projection has not settled yet; an empty vector is
+    /// an explicit settled observation.
+    pub telemetry_gaps: Option<Vec<TelemetryGapId>>,
 }
 
 /// What a run transition changes.
@@ -227,6 +239,8 @@ pub fn queue(
             started_at: None,
             terminal_at: None,
             outcome: None,
+            telemetry_complete: None,
+            telemetry_gaps: None,
         },
         changed: true,
     })

@@ -10,10 +10,12 @@ use aex_content_domain::{ContentDigest, ContentRoot};
 use aex_internal_contracts::journal::JournalEntryKind;
 use aex_operation_domain::DeletionGuard;
 use aex_secret_domain::CustodyRevision;
+use aex_wire::CanonicalJson;
 use aex_wire::ids::{
     AgentId, GenerationId, MessageId, OrganizationId, PrefixedId, RunId, SessionId, ToolCallId,
     Uuid7, WorkspaceId,
 };
+use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 
 use crate::agent::{AgentControl, AgentKind, AgentStatus, MaterializedState, OpenEffectSet};
@@ -27,7 +29,7 @@ use crate::journal::{AuthorityFact, JournalBody, JournalEntry};
 use crate::lineage::Lineage;
 use crate::message::{Message, MessageRole, MessageState};
 use crate::run::{Run, RunOutcome, RunStatus};
-use crate::session::{ResolvedConfigDigest, Session, SessionStatus, WorkAdmission};
+use crate::session::{ResolvedConfigAuthority, Session, SessionStatus, WorkAdmission};
 use crate::terminal::TerminalAttempt;
 
 /// A deterministic instant.
@@ -80,9 +82,38 @@ pub fn materialized_state() -> MaterializedState {
 }
 
 /// An idle, live session.
+///
+/// # Panics
+///
+/// Panics if the compile-time canonical fixture and its derived projections
+/// disagree. That is a test-authoring defect, not a runtime input path.
 #[must_use]
 pub fn session_fixture() -> Session {
     let id_value: SessionId = id(1);
+    let resolved = ResolvedConfigAuthority::new(
+        CanonicalJson::parse(
+            r#"{
+                "approvalPolicy":{"mode":"allow_all"},
+                "compute":{
+                    "baseline":{"memoryMiB":1024,"vcpus":1.0},
+                    "endpointBandwidthMBps":100,
+                    "maxConcurrentConnections":64,
+                    "maxDiskGiB":20,
+                    "peak":{"memoryMiB":2048,"vcpus":2.0},
+                    "size":"1gb"
+                },
+                "model":"gpt-test",
+                "network":{"hands":{"mode":"none"}},
+                "packages":[],
+                "provider":"openai",
+                "registered":{}
+            }"#,
+        )
+        .expect("canonical fixture config"),
+        ProviderId::Openai,
+        "gpt-test".to_owned(),
+    )
+    .expect("matching fixture projections");
     Session {
         id: id_value,
         workspace: id::<WorkspaceId>(2),
@@ -102,8 +133,10 @@ pub fn session_fixture() -> Session {
         last_persisted_at: None,
         custody_revision: CustodyRevision::FIRST,
         lineage: Lineage::ROOT,
-        resolved: ResolvedConfigDigest([9; 32]),
+        resolved,
+        metadata: None,
         created_at: moment(0),
+        updated_at: moment(0),
     }
 }
 
@@ -194,6 +227,8 @@ pub fn running_session() -> (Session, Run, AgentControl, Message) {
         started_at: Some(moment(1)),
         terminal_at: None,
         outcome: None,
+        telemetry_complete: None,
+        telemetry_gaps: None,
     };
     let message = Message {
         id: id::<MessageId>(8),
