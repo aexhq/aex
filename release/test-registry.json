@@ -12,8 +12,8 @@
     "capacity_gates": 19,
     "live_targets": 35,
     "packages": 144,
-    "seams_claimed": 32,
-    "seams_declared": 34,
+    "seams_claimed": 33,
+    "seams_declared": 35,
     "workloads": 8
   },
   "packages": {
@@ -195,7 +195,8 @@
           "mutation": "unit",
           "planner": "unit",
           "properties": "unit",
-          "recovery": "unit"
+          "recovery": "unit",
+          "snapshot": "unit"
         },
         "not_applicable": {
           "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
@@ -403,8 +404,7 @@
         ],
         "seams": [
           "aws.dynamodb.transact_write",
-          "aws.dynamodb.condition",
-          "aws.s3.conditional_put"
+          "aws.dynamodb.condition"
         ],
         "security_tier": "authority",
         "risk": [
@@ -598,6 +598,7 @@
         ],
         "seams": [
           "aws.s3.conditional_put",
+          "aws.s3.bounded_get",
           "aws.s3.multipart",
           "aws.s3.unversioned_delete",
           "aws.s3.presigned_expiry",
@@ -3909,6 +3910,7 @@
           "aws.dynamodb.ttl",
           "aws.iam.denial",
           "aws.kms.encryption_context",
+          "aws.s3.bounded_get",
           "aws.s3.conditional_put",
           "aws.s3.multipart",
           "aws.s3.presigned_expiry",
@@ -4427,6 +4429,7 @@
         "scenarios": [],
         "targets": {
           "artifacts": "unit",
+          "certify": "unit",
           "contracts": "unit",
           "evidence": "unit",
           "failing_fixtures": "unit",
@@ -4434,6 +4437,7 @@
           "janitor": "unit",
           "migration": "unit",
           "monotonicity": "unit",
+          "oci": "unit",
           "policy": "unit",
           "private_path": "unit",
           "publication": "unit",
@@ -5349,6 +5353,9 @@
       "aex-live-finance-settlement-worker",
       "aex-live-provider-cost-reconciler",
       "aex-live-usage-receipt-dispatcher"
+    ],
+    "aws.s3.bounded_get": [
+      "aex-live-regional-session-api"
     ],
     "aws.s3.conditional_put": [
       "aex-live-brain-mux",

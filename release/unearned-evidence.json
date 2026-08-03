@@ -1471,13 +1471,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-store-aws",
-    "owner": "brain-core",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "crates/aex-central-runtime",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
@@ -1496,6 +1489,13 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -2945,6 +2945,13 @@
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

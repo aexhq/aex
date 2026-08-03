@@ -67,6 +67,12 @@ requires_live = true
 local = "MinIO If-None-Match conditional create"
 live_only = "bucket-policy denial of an unconditional put"
 
+[seam."aws.s3.bounded_get"]
+proves_locally = "partial"
+requires_live = true
+local = "request shape, pre-collection Content-Length admission, and exact metadata/length/SHA-256 verification"
+live_only = "S3 response streaming and truncation behaviour under the production task memory envelope"
+
 [seam."aws.s3.multipart"]
 proves_locally = "partial"
 requires_live = true
