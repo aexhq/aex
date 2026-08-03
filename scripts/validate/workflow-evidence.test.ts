@@ -19,6 +19,27 @@ describe("workflow evidence producers", () => {
     expect(workflowCall.inputs.job_name?.required).toBeTrue();
     expect(workflowCall.inputs.selection_mode?.required).toBeTrue();
     expect(stepIndex(job, "Record the declared test inventory")).toBeLessThan(stepIndex(job, "Test"));
+    expect(stepIndex(job, "Record the receipt source identity")).toBeLessThan(
+      stepIndex(job, "Clippy")
+    );
+    expect(stepIndex(job, "Clippy")).toBeLessThan(
+      stepIndex(job, "Build and verify the lint receipt")
+    );
+    expect(workflowStep(job, "Clippy").run).toContain("--message-format=json");
+    expect(workflowStep(job, "Clippy").run).toContain("clippy.json");
+    expect(workflowStep(job, "Clippy").run).not.toContain("2>&1");
+    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+      "aex-release-tool -- evidence new-cargo"
+    );
+    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+      "aex-release-tool -- evidence attach"
+    );
+    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+      "aex-release-tool -- evidence verify"
+    );
+    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+      "artifact://lint-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
+    );
     expect(stepIndex(job, "Test")).toBeLessThan(stepIndex(job, "Prove the no-skip inventory"));
     expect(stepIndex(job, "Prove the no-skip inventory")).toBeLessThan(
       stepIndex(job, "Build and verify the unit receipt")
@@ -40,8 +61,20 @@ describe("workflow evidence producers", () => {
     expect(source).toContain("runAttempt: $runAttempt");
     expect(source).toContain("subject: {unitIds: $unitIds}");
     expect(source).toContain("SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}");
+    expect(source).toContain('class: "lint"');
+    expect(source).toContain('packages: [$package]');
+    expect(source).toContain(
+      "LINT_RECEIPT: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json"
+    );
+    expect(source).toContain("name: receipt-${{ inputs.lane }}-rust-lint-");
+    expect(source).toContain("name: lint-${{ inputs.lane }}-${{ matrix.name }}-");
     expect(source).toContain("name: receipt-${{ inputs.lane }}-rust-");
     expect(source).not.toContain("composition-inputs");
+    expect(source).not.toContain('class: "deny"');
+    expect(source).not.toContain('class: "sbom"');
+    expect(source).not.toContain('class: "license"');
+    expect(source).not.toContain('class: "vulnerability"');
+    expect(source).not.toContain('class: "package-integrity"');
   });
 
   test("every Rust caller supplies its aggregate job id and routing mode", () => {

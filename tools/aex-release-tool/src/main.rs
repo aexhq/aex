@@ -586,6 +586,18 @@ enum EvidenceCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Build a command receipt from Cargo's JSON message stream.
+    NewCargo {
+        /// The command context: identity, source, selection and hygiene.
+        #[arg(long)]
+        context: PathBuf,
+        /// Cargo output produced with `--message-format=json`.
+        #[arg(long)]
+        messages: PathBuf,
+        /// Where to write the receipt.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Hash a file and record it on a receipt.
     Attach {
         /// The receipt.
@@ -1696,6 +1708,27 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
             let xml = std::fs::read_to_string(junit)
                 .map_err(|err| io(&junit.display().to_string(), &err))?;
             let receipt = evidence::new_receipt(context, &evidence::parse_junit(&xml))?;
+            write_canonical(out, &receipt)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "receiptId": receipt.receipt_id,
+                    "receiptDigest": receipt.receipt_digest,
+                    "conclusion": receipt.conclusion,
+                    "inventory": receipt.inventory,
+                }),
+            )
+        }
+        EvidenceCommand::NewCargo {
+            context,
+            messages,
+            out,
+        } => {
+            let context: evidence::RunContext = read_json(context)?;
+            let messages = std::fs::read_to_string(messages)
+                .map_err(|err| io(&messages.display().to_string(), &err))?;
+            let summary = evidence::parse_cargo_messages(&messages)?;
+            let receipt = evidence::new_command_receipt(context, summary)?;
             write_canonical(out, &receipt)?;
             emit(
                 cli,
