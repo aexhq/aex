@@ -87,11 +87,14 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
+      packages: write
     uses: ./.github/workflows/_build-artifacts.yml
     with:
       matrix: ${{ needs.route.outputs.artifact_matrix }}
       lane: main
       publish: true
+      bootstrap_oci_visibility: ${{ vars.AEX_GHCR_VISIBILITY_BOOTSTRAP == 'requested-v1' }}
+    secrets: inherit
 
   manifest:
     name: Manifest

@@ -203,7 +203,9 @@ fn validate_oci_identity(build: &LocalBuild<'_>, bytes: &[u8]) -> Result<()> {
         && identity.source.repository == build.repository
         && identity.source.commit_sha == build.commit_sha
         && Some(&identity.base_image) == expected_base.as_ref()
-        && identity.recipe_digest == build.plan.digest
+        && identity.build_plan_digest == build.plan.digest
+        && identity.recipe_digest == identity.toolchain.recipe_digest(build.plan)?
+        && identity.toolchain_digest == identity.toolchain.digest()?
         && identity.output_digest == identity.manifest.digest
         && identity.manifest.size_bytes == bytes.len() as u64
         && identity.manifest.digest == crate::canon::digest_bytes(bytes);
@@ -323,7 +325,10 @@ fn build_envelope(
                     .clone()
                     .unwrap_or_else(|| build.plan.argv.clone()),
                 env: build.plan.env.clone(),
-                digest: build.plan.digest.clone(),
+                digest: oci.map_or_else(
+                    || build.plan.digest.clone(),
+                    |image| image.recipe_digest.clone(),
+                ),
             },
             input_closure_digest: closure_digest,
             input_closure_count: Some(build.closure.len() as u64),
@@ -333,7 +338,7 @@ fn build_envelope(
                     digest: digest.to_owned(),
                 })
             }),
-            build_args: BTreeMap::new(),
+            build_args: oci.map_or_else(BTreeMap::new, |image| image.toolchain.build_args()),
             source_date_epoch: Some(0),
         },
         output: Output {

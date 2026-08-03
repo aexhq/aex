@@ -23,6 +23,15 @@ on:
         type: boolean
         required: false
         default: false
+      bootstrap_oci_visibility:
+        description: Explicit one-time request to create missing private GHCR unit packages.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      AEX_GHCR_VISIBILITY_BOOTSTRAP:
+        description: Protected second authority for the one-time GHCR namespace bootstrap.
+        required: false
     outputs:
       release_tag:
         description: Unique non-overwriting public prerelease tag.
@@ -121,7 +130,15 @@ jobs:
       - name: Install the cross-compiler and packagers
         uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
         with:
-          tool: cargo-lambda,cargo-zigbuild,cargo-auditable
+          tool: cargo-lambda,cargo-auditable
+
+      - name: Verify clean source before planning and building
+        run: |
+          set -euo pipefail
+          mkdir -p "$RELEASE_DIR"
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-source-clean \
+            --out "$RELEASE_DIR/source-clean-before-plan.json"
 
       - name: Print the recipe
         id: recipe
@@ -150,6 +167,59 @@ jobs:
         with:
           version: v0.34.1
           driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+
+      - name: Install and verify the pinned OCI producer toolchain
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/aex-oci-tools"
+          mkdir -p "$tool_root/bin" "$tool_root/zig" "$tool_root/cargo-zigbuild"
+
+          zig_archive="$tool_root/zig-x86_64-linux-0.15.2.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$zig_archive" \
+            https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $zig_archive" \
+            | sha256sum --check --strict
+          tar -xJf "$zig_archive" --strip-components=1 -C "$tool_root/zig"
+          install -m 0755 "$tool_root/zig/zig" "$tool_root/bin/zig"
+          echo "2858dc89dbbfdd08cceda1b841e7fd0a793a1a67b49f150bc3d0d1de44ed7f51  $tool_root/bin/zig" \
+            | sha256sum --check --strict
+          [[ "$("$tool_root/bin/zig" version)" == "0.15.2" ]]
+
+          cargo_zigbuild_archive="$tool_root/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$cargo_zigbuild_archive" \
+            https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.3/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz
+          echo "6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190  $cargo_zigbuild_archive" \
+            | sha256sum --check --strict
+          tar -xJf "$cargo_zigbuild_archive" -C "$tool_root/cargo-zigbuild"
+          install -m 0755 \
+            "$tool_root/cargo-zigbuild/cargo-zigbuild-x86_64-unknown-linux-gnu/cargo-zigbuild" \
+            "$tool_root/bin/cargo-zigbuild"
+          echo "c3a62288419645c4172ba8bda7f6af6ef24df8a2cc264a401e4c4373e22649cf  $tool_root/bin/cargo-zigbuild" \
+            | sha256sum --check --strict
+          [[ "$("$tool_root/bin/cargo-zigbuild" --version)" == "cargo-zigbuild 0.22.3" ]]
+
+          buildx_binary="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"
+          test -x "$buildx_binary"
+          echo "f1332ddb9010bd0b72628266c3a906d9a6979848033df4c8d9bd2cd113bae12b  $buildx_binary" \
+            | sha256sum --check --strict
+          docker buildx version | grep -F 'v0.34.1'
+          [[ "$(jq -er 'if length == 1 then .[0].buildkit else error("expected one BuildKit node") end' <<<"$BUILDX_NODES")" == "v0.30.0" ]]
+          buildkit_node=$(jq -er '.[0].name' <<<"$BUILDX_NODES")
+          buildkit_container="buildx_buildkit_${buildkit_node}"
+          [[ "$(docker inspect --format '{{.Config.Image}}' "$buildkit_container")" == \
+            "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f" ]]
+          echo "$tool_root/bin" >> "$GITHUB_PATH"
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-toolchain \
+            --buildx-binary "$buildx_binary" \
+            --zig-binary "$tool_root/bin/zig" \
+            --cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild" \
+            --out "$RELEASE_DIR/oci-toolchain.json"
 
       - name: Install TypeScript dependencies
         run: |
@@ -182,7 +252,8 @@ jobs:
               --context "$RELEASE_DIR/context-$attempt" \
               --out "$RELEASE_DIR/binding-$attempt.json" \
               --repository "$GITHUB_REPOSITORY" \
-              --commit-sha "$GITHUB_SHA"
+              --commit-sha "$GITHUB_SHA" \
+              --toolchain "$RELEASE_DIR/oci-toolchain.json"
           done
 
       - name: Build and inspect two independent OCI layouts
@@ -275,6 +346,41 @@ jobs:
         with:
           subject-path: ${{ env.RELEASE_DIR }}/artifact.bin
 
+      - name: Require a public GHCR package or explicit bootstrap authority
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_AUTHORITY: ${{ secrets.AEX_GHCR_VISIBILITY_BOOTSTRAP }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "aexhq/aex" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          unit=$(jq -er .unit "$RELEASE_DIR/identity-1.json")
+          endpoint="https://api.github.com/orgs/aexhq/packages/container/aex-units%2F${unit}"
+          status=$(curl --silent --show-error --output "$RELEASE_DIR/ghcr-package-before.json" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$endpoint")
+          case "$status" in
+            200) visibility=$(jq -er .visibility "$RELEASE_DIR/ghcr-package-before.json") ;;
+            404) visibility=missing ;;
+            *) echo "GitHub package read failed with HTTP $status" >&2; exit 22 ;;
+          esac
+          bootstrap=()
+          if [[ "${{ inputs.bootstrap_oci_visibility }}" == "true" ]]; then
+            test -n "$BOOTSTRAP_AUTHORITY"
+            bootstrap+=(--bootstrap-authorized)
+          fi
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-visibility \
+            --identity "$RELEASE_DIR/identity-1.json" \
+            --visibility "$visibility" \
+            --phase before-push \
+            "${bootstrap[@]}" \
+            --out "$RELEASE_DIR/visibility-before-push.json"
+
       - name: Authenticate to GHCR without minting a mutable tag
         if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         env:
@@ -291,6 +397,9 @@ jobs:
           set -euo pipefail
           image_repository=$(jq -er .imageRepository "$RELEASE_DIR/identity-1.json")
           expected_digest=$(jq -er .outputDigest "$RELEASE_DIR/identity-1.json")
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-source-clean \
+            --out "$RELEASE_DIR/source-clean-before-push.json"
           docker buildx build \
             --builder "${{ steps.buildx.outputs.name }}" \
             --platform linux/arm64 \
@@ -306,6 +415,47 @@ jobs:
           [[ "$pushed_digest" == "$expected_digest" ]]
           echo "image_repository=$image_repository" >> "$GITHUB_OUTPUT"
           echo "digest=$pushed_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Fail closed until the bootstrap package is public
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_AUTHORITY: ${{ secrets.AEX_GHCR_VISIBILITY_BOOTSTRAP }}
+        run: |
+          set -euo pipefail
+          unit=$(jq -er .unit "$RELEASE_DIR/identity-1.json")
+          endpoint="https://api.github.com/orgs/aexhq/packages/container/aex-units%2F${unit}"
+          status=$(curl --silent --show-error --output "$RELEASE_DIR/ghcr-package-after.json" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$endpoint")
+          case "$status" in
+            200) visibility=$(jq -er .visibility "$RELEASE_DIR/ghcr-package-after.json") ;;
+            404) visibility=missing ;;
+            *) echo "GitHub package read failed with HTTP $status" >&2; exit 22 ;;
+          esac
+          bootstrap=()
+          if [[ "${{ inputs.bootstrap_oci_visibility }}" == "true" ]]; then
+            test -n "$BOOTSTRAP_AUTHORITY"
+            bootstrap+=(--bootstrap-authorized)
+          fi
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-visibility \
+            --identity "$RELEASE_DIR/identity-1.json" \
+            --visibility "$visibility" \
+            --phase after-push \
+            "${bootstrap[@]}" \
+            --out "$RELEASE_DIR/visibility-after-push.json"
+
+      - name: Reverify clean source immediately before OCI attestation
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-source-clean \
+            --out "$RELEASE_DIR/source-clean-before-attestation.json"
 
       - name: Attest the immutable OCI digest
         if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -356,6 +506,8 @@ jobs:
             --manifest "$RELEASE_DIR/readback-manifest.json" \
             --config-digest "$config_digest" \
             --binary "$RELEASE_DIR/readback-elf" \
+            --verified-provenance "$RELEASE_DIR/verified-provenance.json" \
+            --provenance-bundle "$BUNDLE_PATH" \
             --workflow-repository "$GITHUB_REPOSITORY" \
             --workflow-ref "$GITHUB_REF" \
             --workflow-path .github/workflows/_build-artifacts.yml \
@@ -377,7 +529,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload reproducible OCI build evidence
-        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        if: ${{ always() && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: oci-artifact-${{ matrix.name }}
@@ -390,6 +542,12 @@ jobs:
             ${{ env.RELEASE_DIR }}/manifest-2.json
             ${{ env.RELEASE_DIR }}/draft-envelope.json
             ${{ env.RELEASE_DIR }}/unearned.json
+            ${{ env.RELEASE_DIR }}/oci-toolchain.json
+            ${{ env.RELEASE_DIR }}/source-clean-before-plan.json
+            ${{ env.RELEASE_DIR }}/source-clean-before-push.json
+            ${{ env.RELEASE_DIR }}/source-clean-before-attestation.json
+            ${{ env.RELEASE_DIR }}/visibility-before-push.json
+            ${{ env.RELEASE_DIR }}/visibility-after-push.json
             ${{ env.RELEASE_DIR }}/oci-publication.json
             ${{ env.RELEASE_DIR }}/readback-manifest.json
             ${{ env.RELEASE_DIR }}/verified-provenance.json
@@ -561,6 +719,10 @@ jobs:
           for identity in oci-units/oci-artifact-*/identity-1.json; do
             jq -e '.schema == "aex.oci-image-identity.v1" and (.unit | length > 0) and (.outputDigest | test("^sha256:[0-9a-f]{64}$"))' \
               "$identity" >/dev/null
+            directory=${identity%/identity-1.json}
+            jq -e --arg digest "$(jq -er .outputDigest "$identity")" \
+              '.schema == "aex.oci-publication.v1" and .image.outputDigest == $digest and .location.immutable == true and (.provenance.bundleDigest | test("^sha256:[0-9a-f]{64}$")) and (.provenance.verificationResultDigest | test("^sha256:[0-9a-f]{64}$"))' \
+              "$directory/oci-publication.json" >/dev/null
             oci_count=$((oci_count + 1))
           done
           if [ "$oci_count" -ne 5 ]; then

@@ -30,6 +30,7 @@ executable sources.
 | Non-negotiable rules and public boundary | [`rules.md`](rules.md) |
 | Package and path ownership | [`repo.md`](repo.md) |
 | Development, testing, and release routing | [`develop.md`](develop.md) |
+| One-time public GHCR namespace bootstrap | [`ghcr-visibility-bootstrap.md`](ghcr-visibility-bootstrap.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |

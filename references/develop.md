@@ -14,6 +14,7 @@ related:
   - references/rules.md
   - references/repo.md
   - references/contributing.md
+  - references/ghcr-visibility-bootstrap.md
 ---
 
 # Public repository development
@@ -42,6 +43,11 @@ Never call the remote dev plane `local`. Keep real values in gitignored
 5. For docs changes, regenerate and validate the public docs surface.
 6. For release changes, verify workflow/candidate integrity tests; do not
    publish or promote manually outside the approved workflows.
+
+The sole manual publication setup is the one-time, fail-closed
+[`GHCR public namespace bootstrap`](ghcr-visibility-bootstrap.md). It creates
+only digest-addressed package content; normal publication never changes package
+visibility.
 
 ## Live user tests
 

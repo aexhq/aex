@@ -1,196 +1,20 @@
 //! Reproducible OCI producer, registry-readback and workflow contract tests.
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
-use std::path::{Path, PathBuf};
 
-use aex_release_tool::artifact::{self, BuildPlan};
+use aex_release_tool::artifact;
 use aex_release_tool::canon;
-use aex_release_tool::graph::inputs::{Unit, Units};
+use aex_release_tool::graph::inputs::Units;
 use aex_release_tool::oci::{
-    OciSource, OciWorkflowRun, inspect_layout, prepare_context, verify_readback,
-    verify_reproducible,
+    OciPackageVisibility, OciVisibilityPhase, decide_visibility, inspect_layout, pinned_toolchain,
+    prepare_context, verify_readback, verify_reproducible,
 };
-use flate2::{Compression, GzBuilder};
-use tempfile::TempDir;
 
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("repository root")
-}
-
-fn shipped_unit(id: &str) -> Unit {
-    let text = std::fs::read_to_string(repository_root().join("release/units.toml"))
-        .expect("release/units.toml");
-    let units: Units = toml::from_str(&text).expect("unit registry");
-    units
-        .units
-        .into_iter()
-        .find(|unit| unit.id == id)
-        .expect("registered OCI unit")
-}
-
-fn fake_aarch64_elf(marker: u8) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 64];
-    bytes[..4].copy_from_slice(b"\x7fELF");
-    bytes[4] = 2;
-    bytes[5] = 1;
-    bytes[6] = 1;
-    bytes[16..18].copy_from_slice(&2_u16.to_le_bytes());
-    bytes[18..20].copy_from_slice(&183_u16.to_le_bytes());
-    bytes.push(marker);
-    bytes
-}
-
-fn source() -> OciSource {
-    OciSource {
-        repository: "aexhq/aex".to_owned(),
-        commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-    }
-}
-
-fn workflow() -> OciWorkflowRun {
-    OciWorkflowRun {
-        repository: "aexhq/aex".to_owned(),
-        r#ref: "refs/heads/main".to_owned(),
-        path: ".github/workflows/_build-artifacts.yml".to_owned(),
-        run_id: "987654321".to_owned(),
-        run_attempt: 2,
-        job_name: "brain-mux".to_owned(),
-        builder_id:
-            "https://github.com/aexhq/aex/.github/workflows/_build-artifacts.yml@refs/heads/main"
-                .to_owned(),
-    }
-}
-
-fn prepared(
-    temp: &TempDir,
-    marker: u8,
-) -> (
-    Unit,
-    BuildPlan,
-    PathBuf,
-    aex_release_tool::oci::OciBuildBinding,
-) {
-    let unit = shipped_unit("brain-mux");
-    let plan = artifact::plan(&unit).expect("build plan");
-    let binary = temp.path().join(format!("brain-mux-{marker}"));
-    std::fs::write(&binary, fake_aarch64_elf(marker)).expect("ELF fixture");
-    let context = temp.path().join(format!("context-{marker}"));
-    let binding =
-        prepare_context(&unit, &plan, &binary, &context, source()).expect("prepared OCI context");
-    (unit, plan, context, binding)
-}
-
-fn append_tar_file(out: &mut Vec<u8>, name: &str, body: &[u8], mode: u32) {
-    let mut header = [0_u8; 512];
-    header[..name.len()].copy_from_slice(name.as_bytes());
-    write_octal(&mut header[100..108], u64::from(mode));
-    write_octal(&mut header[108..116], 0);
-    write_octal(&mut header[116..124], 0);
-    write_octal(&mut header[124..136], body.len() as u64);
-    write_octal(&mut header[136..148], 0);
-    header[148..156].fill(b' ');
-    header[156] = b'0';
-    header[257..263].copy_from_slice(b"ustar\0");
-    header[263..265].copy_from_slice(b"00");
-    let checksum = header.iter().map(|byte| u64::from(*byte)).sum();
-    write_octal(&mut header[148..156], checksum);
-    out.extend_from_slice(&header);
-    out.extend_from_slice(body);
-    let padding = (512 - body.len() % 512) % 512;
-    out.resize(out.len() + padding, 0);
-}
-
-fn write_octal(field: &mut [u8], value: u64) {
-    let end = field.len() - 1;
-    let digits = format!("{value:0end$o}");
-    field[..end].copy_from_slice(digits.as_bytes());
-    field[end] = 0;
-}
-
-fn gzip_layer(binary_path: &str, binary: &[u8]) -> (Vec<u8>, String) {
-    let mut tar = Vec::new();
-    append_tar_file(&mut tar, binary_path, binary, 0o555);
-    tar.resize(tar.len() + 1024, 0);
-    let diff_id = canon::digest_bytes(&tar);
-    let mut encoder = GzBuilder::new()
-        .mtime(0)
-        .write(Vec::new(), Compression::best());
-    encoder.write_all(&tar).expect("gzip layer");
-    (encoder.finish().expect("finish gzip"), diff_id)
-}
-
-fn write_blob(layout: &Path, bytes: &[u8]) -> (String, u64) {
-    let digest = canon::digest_bytes(bytes);
-    let path = layout
-        .join("blobs/sha256")
-        .join(digest.strip_prefix("sha256:").expect("sha256"));
-    std::fs::write(path, bytes).expect("OCI blob");
-    (digest, bytes.len() as u64)
-}
-
-fn layout_for(
-    root: &Path,
-    binding: &aex_release_tool::oci::OciBuildBinding,
-    binary: &[u8],
-) -> Vec<u8> {
-    std::fs::create_dir_all(root.join("blobs/sha256")).expect("layout dirs");
-    std::fs::write(
-        root.join("oci-layout"),
-        br#"{"imageLayoutVersion":"1.0.0"}"#,
-    )
-    .expect("oci-layout");
-
-    let binary_path = format!("usr/local/bin/{}", binding.bin);
-    let (layer, diff_id) = gzip_layer(&binary_path, binary);
-    let (layer_digest, layer_size) = write_blob(root, &layer);
-    let config = serde_json::to_vec(&serde_json::json!({
-        "architecture": "arm64",
-        "config": {
-            "Cmd": [],
-            "Entrypoint": [format!("/usr/local/bin/{}", binding.bin)],
-            "Labels": binding.labels,
-        },
-        "created": "1970-01-01T00:00:00Z",
-        "history": [],
-        "os": "linux",
-        "rootfs": {"diff_ids": [diff_id], "type": "layers"},
-    }))
-    .expect("config JSON");
-    let (config_digest, config_size) = write_blob(root, &config);
-    let manifest = serde_json::to_vec(&serde_json::json!({
-        "config": {
-            "digest": config_digest,
-            "mediaType": "application/vnd.oci.image.config.v1+json",
-            "size": config_size,
-        },
-        "layers": [{
-            "digest": layer_digest,
-            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-            "size": layer_size,
-        }],
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "schemaVersion": 2,
-    }))
-    .expect("manifest JSON");
-    let (manifest_digest, manifest_size) = write_blob(root, &manifest);
-    let index = serde_json::to_vec(&serde_json::json!({
-        "manifests": [{
-            "digest": manifest_digest,
-            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "platform": {"architecture": "arm64", "os": "linux"},
-            "size": manifest_size,
-        }],
-        "mediaType": "application/vnd.oci.image.index.v1+json",
-        "schemaVersion": 2,
-    }))
-    .expect("index JSON");
-    std::fs::write(root.join("index.json"), index).expect("index");
-    manifest
-}
+mod oci_support;
+use oci_support::{
+    fake_aarch64_elf, layout_for, prepared, provenance_fixture, repository_root, shipped_unit,
+    source, workflow,
+};
 
 #[test]
 fn context_is_source_stable_and_never_bakes_run_identity() {
@@ -203,6 +27,7 @@ fn context_is_source_stable_and_never_bakes_run_identity() {
         &context.join("artifact"),
         &second_context,
         source(),
+        pinned_toolchain(),
     )
     .expect("second context");
     assert_eq!(
@@ -229,8 +54,15 @@ fn context_refuses_non_oci_wrong_target_and_wrong_elf_inputs() {
     let (mut unit, plan, _, _) = prepared(&temp, 8);
     let binary = temp.path().join("wrong");
     std::fs::write(&binary, b"not an elf").unwrap();
-    let error =
-        prepare_context(&unit, &plan, &binary, &temp.path().join("bad"), source()).unwrap_err();
+    let error = prepare_context(
+        &unit,
+        &plan,
+        &binary,
+        &temp.path().join("bad"),
+        source(),
+        pinned_toolchain(),
+    )
+    .unwrap_err();
     assert_eq!(error.rules(), vec!["oci-binary-elf"]);
 
     unit.kind = "rust-binary".to_owned();
@@ -240,6 +72,7 @@ fn context_refuses_non_oci_wrong_target_and_wrong_elf_inputs() {
         &temp.path().join("context-8/artifact"),
         &temp.path().join("not-oci"),
         source(),
+        pinned_toolchain(),
     )
     .unwrap_err();
     assert_eq!(error.rules(), vec!["oci-unit-kind"]);
@@ -259,9 +92,32 @@ fn context_refuses_a_recipe_whose_recorded_digest_does_not_match_its_command() {
         &binary,
         &temp.path().join("tampered-context"),
         source(),
+        pinned_toolchain(),
     )
     .unwrap_err();
     assert_eq!(error.rules(), vec!["oci-recipe-mismatch"]);
+}
+
+#[test]
+fn context_refuses_a_declared_toolchain_that_differs_from_compiled_pins() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let unit = shipped_unit("brain-mux");
+    let plan = artifact::plan(&unit).expect("build plan");
+    let binary = temp.path().join("brain-mux");
+    std::fs::write(&binary, fake_aarch64_elf(44)).unwrap();
+    let mut toolchain = pinned_toolchain();
+    toolchain.zig.binary_digest =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
+    let error = prepare_context(
+        &unit,
+        &plan,
+        &binary,
+        &temp.path().join("drifted-context"),
+        source(),
+        toolchain,
+    )
+    .unwrap_err();
+    assert_eq!(error.rules(), vec!["oci-toolchain-pin"]);
 }
 
 #[test]
@@ -278,8 +134,15 @@ fn two_independent_layouts_have_exact_manifest_config_layer_and_elf_identity() {
     let plan = artifact::plan(&unit).unwrap();
     let independent_binary = temp.path().join("independent-elf");
     std::fs::write(&independent_binary, fake_aarch64_elf(9)).unwrap();
-    let second_binding =
-        prepare_context(&unit, &plan, &independent_binary, &second_context, source()).unwrap();
+    let second_binding = prepare_context(
+        &unit,
+        &plan,
+        &independent_binary,
+        &second_context,
+        source(),
+        pinned_toolchain(),
+    )
+    .unwrap();
     let second_layout = temp.path().join("layout-2");
     layout_for(
         &second_layout,
@@ -313,12 +176,16 @@ fn a_changed_layer_or_config_binding_is_not_reproducible() {
 
     let raw_path = temp.path().join("manifest.json");
     std::fs::write(&raw_path, first_manifest).unwrap();
+    let expected_workflow = workflow();
+    let (verified, bundle) = provenance_fixture(&temp, &first, &expected_workflow);
     let error = verify_readback(
         &first,
         &raw_path,
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         context.join("artifact").as_path(),
-        workflow(),
+        expected_workflow,
+        &verified,
+        &bundle,
     )
     .unwrap_err();
     assert!(error.rules().contains(&"oci-readback-config"));
@@ -337,12 +204,16 @@ fn registry_readback_binds_raw_descriptors_pulled_elf_and_workflow_attempt() {
     let identity = inspect_layout(&layout, &binding).unwrap();
     let manifest_path = temp.path().join("readback-manifest.json");
     std::fs::write(&manifest_path, manifest).unwrap();
+    let expected_workflow = workflow();
+    let (verified, bundle) = provenance_fixture(&temp, &identity, &expected_workflow);
     let publication = verify_readback(
         &identity,
         &manifest_path,
         &identity.config.digest,
         &context.join("artifact"),
-        workflow(),
+        expected_workflow,
+        &verified,
+        &bundle,
     )
     .expect("verified registry readback");
 
@@ -350,6 +221,11 @@ fn registry_readback_binds_raw_descriptors_pulled_elf_and_workflow_attempt() {
     assert_eq!(publication.image.output_digest, identity.output_digest);
     assert_eq!(publication.workflow.run_id, "987654321");
     assert_eq!(publication.workflow.run_attempt, 2);
+    assert_eq!(
+        publication.provenance.invocation_id,
+        "https://github.com/aexhq/aex/actions/runs/987654321/attempts/2"
+    );
+    assert!(publication.provenance.bundle_digest.starts_with("sha256:"));
     assert_eq!(
         publication.location.uri,
         format!(
@@ -361,18 +237,146 @@ fn registry_readback_binds_raw_descriptors_pulled_elf_and_workflow_attempt() {
 }
 
 #[test]
-fn workflow_has_no_oci_blocker_or_mutable_tag_publication() {
+fn verified_provenance_refuses_hostile_subject_invocation_workflow_and_bundle_inputs() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (_, _, context, binding) = prepared(&temp, 13);
+    let layout = temp.path().join("layout-hostile");
+    let manifest = layout_for(
+        &layout,
+        &binding,
+        &std::fs::read(context.join("artifact")).unwrap(),
+    );
+    let identity = inspect_layout(&layout, &binding).unwrap();
+    let manifest_path = temp.path().join("hostile-manifest.json");
+    std::fs::write(&manifest_path, manifest).unwrap();
+    let expected_workflow = workflow();
+    let (verified, bundle) = provenance_fixture(&temp, &identity, &expected_workflow);
+    let pristine: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&verified).unwrap()).unwrap();
+
+    for (name, pointer, hostile) in [
+        (
+            "subject",
+            "/0/verificationResult/statement/subject/0/name",
+            "ghcr.io/aexhq/aex-units/another-unit",
+        ),
+        (
+            "invocation",
+            "/0/verificationResult/statement/predicate/runDetails/metadata/invocationId",
+            "https://github.com/aexhq/aex/actions/runs/987654321/attempts/3",
+        ),
+        (
+            "workflow",
+            "/0/verificationResult/signature/certificate/buildSignerURI",
+            "https://github.com/aexhq/aex/.github/workflows/hostile.yml@refs/heads/main",
+        ),
+        (
+            "source",
+            "/0/verificationResult/signature/certificate/sourceRepositoryDigest",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    ] {
+        let mut document = pristine.clone();
+        *document.pointer_mut(pointer).expect("fixture pointer") =
+            serde_json::Value::String(hostile.to_owned());
+        let hostile_path = temp.path().join(format!("verified-{name}.json"));
+        std::fs::write(&hostile_path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let error = verify_readback(
+            &identity,
+            &manifest_path,
+            &identity.config.digest,
+            &context.join("artifact"),
+            expected_workflow.clone(),
+            &hostile_path,
+            &bundle,
+        )
+        .unwrap_err();
+        assert!(error.rules().contains(&"oci-provenance-binding"));
+    }
+
+    let hostile_bundle = temp.path().join("hostile-bundle.json");
+    std::fs::write(&hostile_bundle, br#"{"hostile":true}"#).unwrap();
+    let error = verify_readback(
+        &identity,
+        &manifest_path,
+        &identity.config.digest,
+        &context.join("artifact"),
+        expected_workflow,
+        &verified,
+        &hostile_bundle,
+    )
+    .unwrap_err();
+    assert!(error.rules().contains(&"oci-provenance-binding"));
+}
+
+#[test]
+fn ghcr_visibility_is_fail_closed_and_bootstrap_never_claims_to_change_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (_, _, context, binding) = prepared(&temp, 14);
+    let layout = temp.path().join("layout-visibility");
+    layout_for(
+        &layout,
+        &binding,
+        &std::fs::read(context.join("artifact")).unwrap(),
+    );
+    let identity = inspect_layout(&layout, &binding).unwrap();
+    let normal_public = decide_visibility(
+        &identity,
+        OciPackageVisibility::Public,
+        OciVisibilityPhase::BeforePush,
+        false,
+    );
+    assert_eq!(normal_public.action, "proceed");
+    assert!(normal_public.blocker.is_none());
+
+    let normal_missing = decide_visibility(
+        &identity,
+        OciPackageVisibility::Missing,
+        OciVisibilityPhase::BeforePush,
+        false,
+    );
+    assert_eq!(normal_missing.action, "blocked");
+    assert_eq!(
+        normal_missing.blocker.unwrap().code,
+        "oci-ghcr-package-missing"
+    );
+
+    let bootstrap = decide_visibility(
+        &identity,
+        OciPackageVisibility::Missing,
+        OciVisibilityPhase::BeforePush,
+        true,
+    );
+    assert_eq!(bootstrap.action, "bootstrap-push");
+    let after_private = decide_visibility(
+        &identity,
+        OciPackageVisibility::Private,
+        OciVisibilityPhase::AfterPush,
+        true,
+    );
+    assert_eq!(after_private.action, "blocked");
+    assert_eq!(
+        after_private.blocker.unwrap().code,
+        "oci-ghcr-bootstrap-awaiting-public"
+    );
+}
+
+#[test]
+fn workflow_closes_toolchain_source_visibility_and_digest_only_publication() {
     let workflow =
         std::fs::read_to_string(repository_root().join(".github/workflows/_build-artifacts.yml"))
             .expect("artifact workflow");
-    assert!(!workflow.contains("Record the explicit OCI publication blocker"));
-    assert!(!workflow.contains("blocked-unit-"));
     for required in [
         "push-by-digest=true",
         "name-canonical=true",
         "rewrite-timestamp=true",
         "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f",
         "version: v0.34.1",
+        "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239",
+        "2858dc89dbbfdd08cceda1b841e7fd0a793a1a67b49f150bc3d0d1de44ed7f51",
+        "6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190",
+        "c3a62288419645c4172ba8bda7f6af6ef24df8a2cc264a401e4c4373e22649cf",
+        "f1332ddb9010bd0b72628266c3a906d9a6979848033df4c8d9bd2cd113bae12b",
         "--platform linux/arm64",
         "actions/attest@",
         "gh attestation verify",
@@ -384,12 +388,47 @@ fn workflow_has_no_oci_blocker_or_mutable_tag_publication() {
         "artifact oci-inspect",
         "artifact oci-compare",
         "artifact oci-readback",
+        "artifact oci-toolchain",
+        "artifact oci-source-clean",
+        "artifact oci-visibility",
+        "AEX_GHCR_VISIBILITY_BOOTSTRAP",
+        "--verified-provenance",
+        "--provenance-bundle",
     ] {
         assert!(workflow.contains(required), "workflow lacks `{required}`");
     }
     assert!(
         !workflow.contains("tags:"),
         "OCI publication must not mint a tag"
+    );
+    assert!(!workflow.contains("--method PATCH"));
+    assert!(!workflow.contains("--method PUT"));
+    assert!(workflow.matches("artifact oci-source-clean").count() >= 3);
+
+    let clean_before_plan = workflow
+        .find("Verify clean source before planning and building")
+        .unwrap();
+    let plan = workflow.find("Print the recipe").unwrap();
+    let visibility = workflow
+        .find("Require a public GHCR package or explicit bootstrap authority")
+        .unwrap();
+    let authenticate = workflow
+        .find("Authenticate to GHCR without minting a mutable tag")
+        .unwrap();
+    let publish = workflow
+        .find("Publish the exact OCI manifest by digest")
+        .unwrap();
+    let clean_before_attest = workflow
+        .find("Reverify clean source immediately before OCI attestation")
+        .unwrap();
+    let attest = workflow.find("Attest the immutable OCI digest").unwrap();
+    assert!(clean_before_plan < plan);
+    assert!(visibility < authenticate && authenticate < publish);
+    assert!(clean_before_attest < attest);
+    let publish_step = &workflow[publish..clean_before_attest];
+    assert!(
+        publish_step.find("artifact oci-source-clean").unwrap()
+            < publish_step.find("docker buildx build").unwrap()
     );
 }
 

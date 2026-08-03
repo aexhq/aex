@@ -25,7 +25,9 @@ use aex_release_tool::janitor::{self, Inventory, SweepMode};
 use aex_release_tool::ledger::{self, JsonlLedger, LedgerEntry, LedgerStore, Readback};
 use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::migration;
-use aex_release_tool::oci::{self, OciBuildBinding, OciImageIdentity, OciSource, OciWorkflowRun};
+use aex_release_tool::oci::{
+    self, OciBuildBinding, OciImageIdentity, OciSource, OciToolchain, OciWorkflowRun,
+};
 use aex_release_tool::policy;
 use aex_release_tool::private_path;
 use aex_release_tool::publication;
@@ -223,6 +225,27 @@ enum ArtifactCommand {
         #[arg(long)]
         require_model_catalog: bool,
     },
+    /// Require the complete Git worktree/index/untracked set to be clean.
+    OciSourceClean {
+        /// Where to write the clean-source evidence.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Verify and record the exact installed OCI producer executables.
+    OciToolchain {
+        /// Docker Buildx executable installed by the pinned action.
+        #[arg(long)]
+        buildx_binary: PathBuf,
+        /// Zig executable extracted from the pinned official archive.
+        #[arg(long)]
+        zig_binary: PathBuf,
+        /// `cargo-zigbuild` executable extracted from its pinned release.
+        #[arg(long)]
+        cargo_zigbuild_binary: PathBuf,
+        /// Where to write the closed producer identity.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Package a built input deterministically.
     Package {
         /// The unit.
@@ -264,6 +287,9 @@ enum ArtifactCommand {
         /// Exact source commit.
         #[arg(long)]
         commit_sha: String,
+        /// Closed producer toolchain emitted by `artifact oci-toolchain`.
+        #[arg(long)]
+        toolchain: PathBuf,
     },
     /// Inspect one unpacked OCI layout and copy its exact manifest bytes.
     OciInspect {
@@ -303,6 +329,12 @@ enum ArtifactCommand {
         /// ELF copied from the pulled image.
         #[arg(long)]
         binary: PathBuf,
+        /// JSON emitted by `gh attestation verify --format json`.
+        #[arg(long)]
+        verified_provenance: PathBuf,
+        /// Exact Sigstore bundle passed to the official verifier.
+        #[arg(long)]
+        provenance_bundle: PathBuf,
         /// Publishing workflow repository.
         #[arg(long)]
         workflow_repository: String,
@@ -325,6 +357,24 @@ enum ArtifactCommand {
         #[arg(long)]
         builder_id: String,
         /// Where to write the publication record.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Decide whether GHCR visibility permits a normal or bootstrap push.
+    OciVisibility {
+        /// Expected reproducible OCI identity.
+        #[arg(long)]
+        identity: PathBuf,
+        /// `missing`, `private`, or `public` from GitHub's package-read API.
+        #[arg(long)]
+        visibility: String,
+        /// `before-push` or `after-push`.
+        #[arg(long)]
+        phase: String,
+        /// Both explicit protected bootstrap authorities were present.
+        #[arg(long)]
+        bootstrap_authorized: bool,
+        /// Where to retain the typed decision/blocker.
         #[arg(long)]
         out: PathBuf,
     },
@@ -1035,10 +1085,13 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 }),
             )
         }
-        command @ (ArtifactCommand::OciPrepare { .. }
+        command @ (ArtifactCommand::OciSourceClean { .. }
+        | ArtifactCommand::OciToolchain { .. }
+        | ArtifactCommand::OciPrepare { .. }
         | ArtifactCommand::OciInspect { .. }
         | ArtifactCommand::OciCompare { .. }
-        | ArtifactCommand::OciReadback { .. }) => run_artifact_oci(cli, root, command),
+        | ArtifactCommand::OciReadback { .. }
+        | ArtifactCommand::OciVisibility { .. }) => run_artifact_oci(cli, root, command),
         ArtifactCommand::Describe { .. } => run_artifact_describe(cli, root, command),
         ArtifactCommand::Certify { .. } => run_artifact_certify(cli, root, command),
         ArtifactCommand::Verify {
@@ -1093,6 +1146,22 @@ fn run_artifact_describe(cli: &Cli, root: &Path, command: &ArtifactCommand) -> R
 
 fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
     match command {
+        ArtifactCommand::OciSourceClean { out } => {
+            let evidence = oci::verify_clean(root)?;
+            write_canonical(out, &evidence)?;
+            emit(cli, &evidence)
+        }
+        ArtifactCommand::OciToolchain {
+            buildx_binary,
+            zig_binary,
+            cargo_zigbuild_binary,
+            out,
+        } => {
+            let toolchain =
+                oci::inspect_toolchain(buildx_binary, zig_binary, cargo_zigbuild_binary)?;
+            write_canonical(out, &toolchain)?;
+            emit(cli, &toolchain)
+        }
         ArtifactCommand::OciPrepare {
             unit,
             recipe,
@@ -1101,6 +1170,7 @@ fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result
             out,
             repository,
             commit_sha,
+            toolchain,
         } => {
             let units = read_units(root)?;
             let found = units
@@ -1109,6 +1179,7 @@ fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result
                 .find(|candidate| &candidate.id == unit)
                 .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
             let recipe: artifact::BuildPlan = read_json(recipe)?;
+            let toolchain: OciToolchain = read_json(toolchain)?;
             let binding = oci::prepare_context(
                 found,
                 &recipe,
@@ -1118,6 +1189,7 @@ fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result
                     repository: repository.clone(),
                     commit_sha: commit_sha.clone(),
                 },
+                toolchain,
             )?;
             write_canonical(out, &binding)?;
             emit(cli, &binding)
@@ -1151,40 +1223,75 @@ fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result
                 }),
             )
         }
-        ArtifactCommand::OciReadback {
-            identity,
-            manifest,
-            config_digest,
-            binary,
-            workflow_repository,
-            workflow_ref,
-            workflow_path,
-            run_id,
-            run_attempt,
-            job_name,
-            builder_id,
-            out,
-        } => {
-            let identity: OciImageIdentity = read_json(identity)?;
-            let publication = oci::verify_readback(
-                &identity,
-                manifest,
-                config_digest,
-                binary,
-                OciWorkflowRun {
-                    repository: workflow_repository.clone(),
-                    r#ref: workflow_ref.clone(),
-                    path: workflow_path.clone(),
-                    run_id: run_id.clone(),
-                    run_attempt: *run_attempt,
-                    job_name: job_name.clone(),
-                    builder_id: builder_id.clone(),
-                },
-            )?;
-            write_canonical(out, &publication)?;
-            emit(cli, &publication)
-        }
+        command @ ArtifactCommand::OciReadback { .. } => run_oci_readback(cli, command),
+        command @ ArtifactCommand::OciVisibility { .. } => run_oci_visibility(cli, command),
         _ => Err(usage("internal OCI artifact dispatch mismatch")),
+    }
+}
+
+fn run_oci_readback(cli: &Cli, command: &ArtifactCommand) -> Result<()> {
+    let ArtifactCommand::OciReadback {
+        identity,
+        manifest,
+        config_digest,
+        binary,
+        verified_provenance,
+        provenance_bundle,
+        workflow_repository,
+        workflow_ref,
+        workflow_path,
+        run_id,
+        run_attempt,
+        job_name,
+        builder_id,
+        out,
+    } = command
+    else {
+        return Err(usage("internal OCI readback dispatch mismatch"));
+    };
+    let identity: OciImageIdentity = read_json(identity)?;
+    let publication = oci::verify_readback(
+        &identity,
+        manifest,
+        config_digest,
+        binary,
+        OciWorkflowRun {
+            repository: workflow_repository.clone(),
+            r#ref: workflow_ref.clone(),
+            path: workflow_path.clone(),
+            run_id: run_id.clone(),
+            run_attempt: *run_attempt,
+            job_name: job_name.clone(),
+            builder_id: builder_id.clone(),
+        },
+        verified_provenance,
+        provenance_bundle,
+    )?;
+    write_canonical(out, &publication)?;
+    emit(cli, &publication)
+}
+
+fn run_oci_visibility(cli: &Cli, command: &ArtifactCommand) -> Result<()> {
+    let ArtifactCommand::OciVisibility {
+        identity,
+        visibility,
+        phase,
+        bootstrap_authorized,
+        out,
+    } = command
+    else {
+        return Err(usage("internal OCI visibility dispatch mismatch"));
+    };
+    let identity: OciImageIdentity = read_json(identity)?;
+    let visibility = visibility.parse().map_err(usage)?;
+    let phase = phase.parse().map_err(usage)?;
+    let decision = oci::decide_visibility(&identity, visibility, phase, *bootstrap_authorized);
+    write_canonical(out, &decision)?;
+    emit(cli, &decision)?;
+    if let Some(error) = decision.blocked_error() {
+        Err(error)
+    } else {
+        Ok(())
     }
 }
 
@@ -1348,6 +1455,10 @@ fn run_describe(
     let inputs = GraphInputs::load(root)?;
     let built = verify::build(&inputs)?;
     let oci_identity: Option<OciImageIdentity> = oci_identity.map(read_json).transpose()?;
+    let mut toolchain = local_toolchain(&found.target)?;
+    if let Some(image) = &oci_identity {
+        image.toolchain.enrich_envelope(&mut toolchain);
+    }
     let local = describe::LocalBuild {
         unit: found,
         plan: &plan,
@@ -1357,7 +1468,7 @@ fn run_describe(
         commit_sha: git_output(root, &["rev-parse", "HEAD"])?,
         tree_clean: git_output(root, &["status", "--porcelain"])?.is_empty(),
         git_ref: source_ref(root)?,
-        toolchain: local_toolchain(&found.target)?,
+        toolchain,
         lockfile_digest: file_digest(&root.join(lockfile_for(&found.kind)))?,
         contract_digest: contract_digest.to_owned(),
         actual_argv: (!ran.is_empty()).then(|| ran.to_vec()),

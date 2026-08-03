@@ -18,8 +18,12 @@ pub fn verify_readback(
     pulled_config_digest: &str,
     pulled_binary: &Path,
     workflow: OciWorkflowRun,
+    verified_provenance: &Path,
+    provenance_bundle: &Path,
 ) -> Result<OciPublication> {
     validate_workflow(expected, &workflow)?;
+    let provenance =
+        super::provenance::verify(expected, &workflow, verified_provenance, provenance_bundle)?;
     let bytes = std::fs::read(raw_manifest)
         .map_err(|error| io(&raw_manifest.display().to_string(), &error))?;
     let manifest: Manifest = parse_json(&bytes, "oci-readback-manifest-json")?;
@@ -81,6 +85,7 @@ pub fn verify_readback(
         image: expected.clone(),
         location,
         workflow,
+        provenance,
     })
 }
 

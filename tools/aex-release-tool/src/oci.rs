@@ -14,6 +14,12 @@ use crate::artifact::{BaseImage, BuildPlan, Location};
 use crate::error::{Exit, Result, ToolError, io};
 use crate::graph::inputs::Unit;
 
+pub use provenance::OciVerifiedProvenance;
+pub use toolchain::OciToolchain;
+pub use visibility::{
+    OciPackageVisibility, OciVisibilityDecision, OciVisibilityPhase, decide_visibility,
+};
+
 const SUPPORTED_TARGET: &str = "aarch64-unknown-linux-gnu.2.34";
 
 /// Source-stable public identity embedded in an image.
@@ -66,8 +72,14 @@ pub struct OciBuildBinding {
     pub base_image: BaseImage,
     /// Digest of the copied ELF.
     pub binary_digest: String,
-    /// Digest of the authoritative Cargo recipe.
+    /// Digest of the authoritative Cargo build plan.
+    pub build_plan_digest: String,
+    /// Digest of the Cargo plan plus exact OCI producer toolchain.
     pub recipe_digest: String,
+    /// Exact OCI producer toolchain.
+    pub toolchain: OciToolchain,
+    /// Digest of the exact OCI producer toolchain.
+    pub toolchain_digest: String,
     /// Source identity.
     pub source: OciSource,
     /// Source-stable image labels.
@@ -106,8 +118,14 @@ pub struct OciImageIdentity {
     pub source: OciSource,
     /// Runtime base.
     pub base_image: BaseImage,
-    /// Cargo recipe digest.
+    /// Authoritative Cargo build plan digest.
+    pub build_plan_digest: String,
+    /// Cargo plan plus exact producer toolchain digest.
     pub recipe_digest: String,
+    /// Exact OCI producer toolchain.
+    pub toolchain: OciToolchain,
+    /// Digest of the exact OCI producer toolchain.
+    pub toolchain_digest: String,
     /// Copied ELF digest.
     pub binary_digest: String,
     /// Root digest published to the registry.
@@ -132,6 +150,8 @@ pub struct OciPublication {
     pub location: Location,
     /// Workflow run that published and read back the image.
     pub workflow: OciWorkflowRun,
+    /// Cryptographically verified GitHub provenance and its evidence digests.
+    pub provenance: OciVerifiedProvenance,
 }
 
 /// Create a new minimal, deterministic image context.
@@ -149,9 +169,11 @@ pub fn prepare_context(
     binary: &Path,
     destination: &Path,
     source: OciSource,
+    toolchain: OciToolchain,
 ) -> Result<OciBuildBinding> {
     validate_unit_and_plan(unit, plan)?;
     validate_source(&source)?;
+    toolchain.validate_pins()?;
     let bin = unit.bin.as_deref().ok_or_else(|| {
         ToolError::single(
             Exit::Usage,
@@ -164,7 +186,17 @@ pub fn prepare_context(
     let base_image = parse_base_image(unit.base_image.as_deref())?;
     let binary_digest = crate::canon::digest_bytes(&bytes);
     let image_repository = crate::publication::ghcr_unit_repository(&source.repository, &unit.id)?;
-    let labels = stable_labels(unit, plan, &source, &base_image, &binary_digest);
+    let recipe_digest = toolchain.recipe_digest(plan)?;
+    let toolchain_digest = toolchain.digest()?;
+    let labels = stable_labels(
+        unit,
+        plan,
+        &source,
+        &base_image,
+        &binary_digest,
+        &recipe_digest,
+        &toolchain_digest,
+    );
     let binding = OciBuildBinding {
         schema: "aex.oci-build-binding.v1".to_owned(),
         unit: unit.id.clone(),
@@ -174,7 +206,10 @@ pub fn prepare_context(
         image_repository,
         base_image,
         binary_digest,
-        recipe_digest: plan.digest.clone(),
+        build_plan_digest: plan.digest.clone(),
+        recipe_digest,
+        toolchain,
+        toolchain_digest,
         source,
         labels,
     };
@@ -360,6 +395,8 @@ fn stable_labels(
     source: &OciSource,
     base: &BaseImage,
     binary_digest: &str,
+    recipe_digest: &str,
+    toolchain_digest: &str,
 ) -> BTreeMap<String, String> {
     BTreeMap::from([
         ("dev.aex.base-image-digest".to_owned(), base.digest.clone()),
@@ -368,8 +405,13 @@ fn stable_labels(
             unit.bin.clone().unwrap_or_default(),
         ),
         ("dev.aex.binary-digest".to_owned(), binary_digest.to_owned()),
-        ("dev.aex.recipe-digest".to_owned(), plan.digest.clone()),
+        ("dev.aex.build-plan-digest".to_owned(), plan.digest.clone()),
+        ("dev.aex.recipe-digest".to_owned(), recipe_digest.to_owned()),
         ("dev.aex.target".to_owned(), unit.target.clone()),
+        (
+            "dev.aex.toolchain-digest".to_owned(),
+            toolchain_digest.to_owned(),
+        ),
         ("dev.aex.unit".to_owned(), unit.id.clone()),
         (
             "org.opencontainers.image.revision".to_owned(),
@@ -402,10 +444,16 @@ fn dockerfile(binding: &OciBuildBinding) -> String {
 }
 
 mod layout;
+mod provenance;
 mod readback;
+mod source;
+pub mod toolchain;
+mod visibility;
 
 pub use layout::{inspect_layout, manifest_blob_path, verify_reproducible};
 pub use readback::verify_readback;
+pub use source::{OciCleanSource, verify_clean};
+pub use toolchain::{inspect as inspect_toolchain, pinned as pinned_toolchain};
 
 fn invalid(rule: &str, message: impl Into<String>) -> ToolError {
     ToolError::single(Exit::ArtifactMismatch, rule, message)
