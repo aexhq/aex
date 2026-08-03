@@ -5,13 +5,57 @@ mod common;
 use std::fs;
 use std::io::Read as _;
 
+use aex_release_tool::artifact::ArtifactEnvelope;
 use aex_release_tool::canon;
-use aex_release_tool::manifest::CompositionManifest;
+use aex_release_tool::graph::inputs::Units;
+use aex_release_tool::manifest::{CompositionInputs, CompositionManifest};
 use aex_release_tool::publication::{
     package_module_bundle_from_paths, regional_tables_bundle, verify_blob,
     verify_regional_tables_bundle,
 };
-use common::docs::valid_manifest;
+use common::docs::{valid_envelope, valid_manifest};
+
+fn handoff_registry() -> Units {
+    toml::from_str(
+        r#"
+schema = "aex.units.v1"
+
+[[unit]]
+id = "regional-session-api"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-session-api"
+bin = "regional-session-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_REGIONAL_SESSION_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "regional-session-api"
+"#,
+    )
+    .unwrap()
+}
+
+fn handoff_envelope() -> ArtifactEnvelope {
+    let mut value = valid_envelope();
+    value["identities"]["configEnvNamespace"] = serde_json::json!("AEX_REGIONAL_SESSION_");
+    serde_json::from_value::<ArtifactEnvelope>(value)
+        .unwrap()
+        .seal()
+        .unwrap()
+}
+
+fn handoff_inputs() -> CompositionInputs {
+    let mut value = valid_manifest();
+    let object = value.as_object_mut().unwrap();
+    for field in ["schema", "releaseId", "units", "order", "annotations"] {
+        object.remove(field);
+    }
+    serde_json::from_value(value).unwrap()
+}
 
 #[test]
 fn module_bundle_is_deterministic_and_rooted_at_modules() {
@@ -225,6 +269,117 @@ fn manifest_rejects_a_release_asset_uri_from_another_run() {
     let err = manifest.validate(false).unwrap_err();
     assert_eq!(err.exit.code(), 30);
     assert!(err.rules().contains(&"manifest-release-tool-uri"));
+}
+
+#[test]
+fn composition_handoff_emits_the_exact_verified_envelope_store() {
+    let envelope = handoff_envelope();
+    let store = aex_release_tool::manifest::verify_handoff_envelopes(
+        &handoff_registry(),
+        vec![envelope.clone()],
+    )
+    .unwrap();
+    let manifest = aex_release_tool::manifest::new_handoff_manifest(handoff_inputs(), &store)
+        .expect("a complete certified store must produce a strict manifest");
+
+    assert_eq!(store.len(), 1);
+    assert_eq!(
+        store["regional-session-api"].envelope_digest,
+        envelope.envelope_digest
+    );
+    assert_eq!(
+        manifest.units["regional-session-api"].envelope_digest,
+        envelope.envelope_digest
+    );
+    assert_eq!(
+        manifest.units["regional-session-api"].artifact_digest,
+        envelope.output.digest
+    );
+    manifest.validate(true).unwrap();
+}
+
+#[test]
+fn composition_handoff_reports_concrete_certification_and_receipt_gaps() {
+    let mut envelope = handoff_envelope();
+    envelope.receipts.clear();
+    envelope.output.location.immutable = false;
+    envelope = envelope.seal().unwrap();
+
+    let error =
+        aex_release_tool::manifest::verify_handoff_envelopes(&handoff_registry(), vec![envelope])
+            .expect_err("a draft cannot enter the public handoff store");
+    assert_eq!(error.exit.code(), 40);
+    assert!(error.rules().contains(&"envelope-mutable-location"));
+    assert!(error.rules().contains(&"envelope-no-receipts"));
+    assert!(error.rules().contains(&"handoff-receipt-missing"));
+    assert!(
+        error
+            .violations
+            .iter()
+            .all(|violation| violation.detail.contains("regional-session-api"))
+    );
+}
+
+#[test]
+fn composition_handoff_rejects_duplicate_and_cross_run_envelopes() {
+    let envelope = handoff_envelope();
+    let error = aex_release_tool::manifest::verify_handoff_envelopes(
+        &handoff_registry(),
+        vec![envelope.clone(), envelope.clone()],
+    )
+    .expect_err("one unit cannot have two publication identities");
+    assert_eq!(error.exit.code(), 32);
+    assert!(error.rules().contains(&"handoff-envelope-duplicate"));
+
+    let store =
+        aex_release_tool::manifest::verify_handoff_envelopes(&handoff_registry(), vec![envelope])
+            .unwrap();
+    let mut inputs = handoff_inputs();
+    inputs.source.workflow_run_id = "999".to_owned();
+    let error = aex_release_tool::manifest::new_handoff_manifest(inputs, &store)
+        .expect_err("composition inputs from another run must not cross-bind");
+    assert_eq!(error.exit.code(), 32);
+    assert!(error.rules().contains(&"handoff-source-mismatch"));
+}
+
+#[test]
+fn handoff_cli_names_missing_composition_inputs_without_writing_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("release")).unwrap();
+    fs::write(
+        root.path().join("release/units.toml"),
+        toml::to_string(&handoff_registry()).unwrap(),
+    )
+    .unwrap();
+    let envelope = root.path().join("envelope.json");
+    fs::write(
+        &envelope,
+        canon::to_file_bytes(&handoff_envelope()).unwrap(),
+    )
+    .unwrap();
+    let manifest = root.path().join("composition-manifest.json");
+    let store = root.path().join("artifact-store.json");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aex-release-tool"))
+        .arg("--root")
+        .arg(root.path())
+        .args(["manifest", "handoff", "--envelope"])
+        .arg(&envelope)
+        .arg("--composition")
+        .arg(root.path().join("missing-composition-inputs.json"))
+        .arg("--manifest-out")
+        .arg(&manifest)
+        .arg("--store-out")
+        .arg(&store)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(40));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("[handoff-composition-inputs-missing]")
+    );
+    assert!(!manifest.exists());
+    assert!(!store.exists());
 }
 
 #[test]

@@ -494,6 +494,22 @@ enum ManifestCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Verify the complete certified envelope set and emit the canonical
+    /// composition manifest plus the artifact store admission consumes.
+    Handoff {
+        /// Certified envelope files, exactly one per registered deployable.
+        #[arg(long = "envelope")]
+        envelopes: Vec<PathBuf>,
+        /// Complete non-envelope composition identities.
+        #[arg(long)]
+        composition: PathBuf,
+        /// Where to write `composition-manifest.json`.
+        #[arg(long)]
+        manifest_out: PathBuf,
+        /// Where to write the unit-id-to-envelope artifact store.
+        #[arg(long)]
+        store_out: PathBuf,
+    },
     /// Compare two compositions.
     Diff {
         /// The older manifest.
@@ -1537,6 +1553,61 @@ fn run_manifest_new(
     )
 }
 
+/// Produce the two immutable public handoff documents only after every
+/// envelope and every cross-document identity verifies.
+fn run_manifest_handoff(
+    cli: &Cli,
+    root: &Path,
+    envelope_paths: &[PathBuf],
+    composition: &Path,
+    manifest_out: &Path,
+    store_out: &Path,
+) -> Result<()> {
+    if manifest_out == store_out {
+        return Err(usage(
+            "`--manifest-out` and `--store-out` must name different files",
+        ));
+    }
+    let envelopes = envelope_paths
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<ArtifactEnvelope>>>()?;
+    let registry = read_units(root)?;
+    // Audit the envelopes first. This intentionally reports the concrete
+    // certification/receipt gaps even while the separate composition-input
+    // producer is still absent.
+    let store = aex_release_tool::manifest::verify_handoff_envelopes(&registry, envelopes)?;
+    if !composition.is_file() {
+        return Err(ToolError::single(
+            Exit::EvidenceMissing,
+            "handoff-composition-inputs-missing",
+            format!(
+                "complete composition inputs were not published at `{}`",
+                composition.display()
+            ),
+        ));
+    }
+    let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
+    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store)?;
+    let manifest_digest = canon::digest_bytes(&canon::to_file_bytes(&manifest)?);
+    let store_digest = canon::digest_bytes(&canon::to_file_bytes(&store)?);
+
+    // Nothing is written before the complete store and strict manifest have
+    // both passed. Admission consumes the store as this exact canonical map.
+    write_canonical(manifest_out, &manifest)?;
+    write_canonical(store_out, &store)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "releaseId": manifest.release_id,
+            "manifestDigest": manifest_digest,
+            "artifactStoreDigest": store_digest,
+            "units": store.len(),
+            "stages": manifest.order.len(),
+        }),
+    )
+}
+
 fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
     match command {
         ManifestCommand::New {
@@ -1545,6 +1616,12 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             unearned,
             out,
         } => run_manifest_new(cli, root, envelopes, composition, unearned.as_deref(), out),
+        ManifestCommand::Handoff {
+            envelopes,
+            composition,
+            manifest_out,
+            store_out,
+        } => run_manifest_handoff(cli, root, envelopes, composition, manifest_out, store_out),
         ManifestCommand::Diff { from, to } => {
             let from: CompositionManifest = read_json(from)?;
             let to: CompositionManifest = read_json(to)?;

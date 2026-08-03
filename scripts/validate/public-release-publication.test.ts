@@ -17,7 +17,8 @@ describe("public main-push publication", () => {
       contents: "write",
       "id-token": "write",
       attestations: "write",
-      "artifact-metadata": "write"
+      "artifact-metadata": "write",
+      packages: "write"
     });
     expect(workflow.jobs.route.with.mode).toBe("full");
   });
@@ -39,7 +40,7 @@ describe("public main-push publication", () => {
     expect(source).toContain("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld");
     expect(source).toContain("link-self-contained=yes");
     expect(source).toContain("artifact module-bundle");
-    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(4);
+    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);
     expect(source).not.toContain("actions/attest-build-provenance@");
     expect(source).toContain("outputs['attestation-id']");
     expect(source).toContain("outputs['attestation-url']");
@@ -49,17 +50,15 @@ describe("public main-push publication", () => {
     expect(source).not.toContain("--clobber");
     expect(source.match(/gh release create/g)).toHaveLength(1);
     expect(source).toContain('if [ "$total" -ne 38 ]');
-    expect(source).toContain('if [ "$blocker_count" -ne 0 ]');
-    expect(source).toContain("keeping the release draft");
+    expect(source).toContain('if [ "$oci_count" -ne 5 ]');
+    expect(source).toContain("push-by-digest=true");
+    expect(source).toContain("subject-digest: ${{ steps.publish_oci.outputs.digest }}");
     expect(source).toContain("gh release edit \"$tag\" --repo \"$GITHUB_REPOSITORY\" --draft=false --prerelease");
-    expect(source.indexOf("keeping the release draft")).toBeLessThan(
+    expect(source.indexOf("gh release upload \"$tag\"")).toBeLessThan(
       source.indexOf("gh release edit \"$tag\"")
     );
-    expect(source.indexOf("Record the explicit OCI publication blocker")).toBeLessThan(
-      source.indexOf("- name: Build")
-    );
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
-    expect(source).not.toMatch(/\bsecrets\./);
+    expect(source).toContain("secrets.AEX_GHCR_VISIBILITY_BOOTSTRAP");
     expect(read(".github/workflows/main.yml")).toContain('"--deny-${denied_runner_class}-runners"');
     expect(workflow.on.workflow_call.outputs).toHaveProperty("release_tool_digest");
     expect(workflow.on.workflow_call.outputs).toHaveProperty("module_bundle_digest");
@@ -72,11 +71,21 @@ describe("public main-push publication", () => {
     expect(source).toContain("dist/regional-tables.json");
   });
 
-  test("composition publication remains explicit and fail closed", () => {
+  test("composition handoff verifies exact public inputs and every envelope", () => {
     const source = read(".github/workflows/main.yml");
     expect(source).toContain("public-inputs/regional-tables.json");
     expect(source).toContain("REGIONAL_TABLES_DEFINITIONS_DIGEST");
-    expect(source).toContain("complete unit envelopes are not yet published");
-    expect(source).toContain("exit 40");
+    expect(source).toContain("pattern: artifact-*");
+    expect(source).toContain("pattern: oci-artifact-*");
+    expect(source).toContain("manifest handoff");
+    expect(source).toContain("--composition handoff/composition-inputs.json");
+    expect(source.match(/handoff\/composition-inputs\.json/g)).toHaveLength(1);
+    expect(read("tools/aex-release-tool/src/main.rs")).toContain(
+      '"handoff-composition-inputs-missing"'
+    );
+    expect(source).toContain("--manifest-out public-inputs/composition-manifest.json");
+    expect(source).toContain("--store-out public-inputs/artifact-store.json");
+    expect(source).not.toContain("complete unit envelopes are not yet published");
+    expect(source).not.toContain("exit 40");
   });
 });

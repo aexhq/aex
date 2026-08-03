@@ -12,7 +12,7 @@
 //! ARN or `:latest` is not a slightly worse manifest, it is a different kind of
 //! object.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -550,6 +550,214 @@ pub fn new_manifest(
         annotations: None,
     }
     .seal()
+}
+
+/// Index and verify the exact certified envelope set used by a public
+/// composition handoff.
+///
+/// Unlike [`unaccounted_units`], a handoff has no unearned escape hatch: every
+/// registered deployable must have one and only one complete envelope. The
+/// returned map is also the canonical artifact-store document consumed by
+/// hosted admission.
+///
+/// # Errors
+/// Returns [`Exit::CompositionIncompatible`] for an incomplete, duplicate or
+/// registry-inconsistent set, and [`Exit::EvidenceMissing`] when any envelope
+/// is not fully certified or lacks a receipt required by its registry row.
+pub fn verify_handoff_envelopes(
+    registry: &crate::graph::inputs::Units,
+    envelopes: Vec<crate::artifact::ArtifactEnvelope>,
+) -> Result<BTreeMap<String, crate::artifact::ArtifactEnvelope>> {
+    let registered: BTreeMap<&str, &crate::graph::inputs::Unit> = registry
+        .units
+        .iter()
+        .map(|unit| (unit.id.as_str(), unit))
+        .collect();
+    let mut indexed = BTreeMap::new();
+    let mut topology = Vec::new();
+
+    for envelope in envelopes {
+        let id = envelope.unit.id.clone();
+        if indexed.contains_key(&id) {
+            topology.push(Violation::new(
+                "handoff-envelope-duplicate",
+                format!("deployable `{id}` has more than one envelope"),
+            ));
+            continue;
+        }
+        match registered.get(id.as_str()) {
+            None => topology.push(Violation::new(
+                "handoff-envelope-unregistered",
+                format!("envelope `{id}` names no deployable in release/units.toml"),
+            )),
+            Some(unit) => {
+                let required_central_head = envelope
+                    .identities
+                    .migration
+                    .as_ref()
+                    .and_then(|migration| migration.required_central_head.as_ref());
+                if envelope.unit.kind != unit.kind
+                    || envelope.unit.plane != unit.plane
+                    || envelope.media.form != unit.form
+                    || envelope.output.target.triple != unit.target
+                    || envelope.identities.config_schema_version != unit.config_schema_version
+                    || envelope.identities.config_env_namespace.as_deref()
+                        != Some(unit.config_env_namespace.as_str())
+                    || required_central_head != unit.required_central_head.as_ref()
+                {
+                    topology.push(Violation::new(
+                        "handoff-envelope-registry-mismatch",
+                        format!(
+                            "envelope `{id}` does not exactly match its kind, plane, form, target, configuration and migration registry fields"
+                        ),
+                    ));
+                }
+            }
+        }
+        indexed.insert(id, envelope);
+    }
+
+    topology.extend(unaccounted_units(registry, &indexed, &[]));
+    if !topology.is_empty() {
+        topology.sort();
+        topology.dedup();
+        return Err(ToolError::many(Exit::CompositionIncompatible, topology));
+    }
+
+    let mut incomplete = Vec::new();
+    for (id, envelope) in &indexed {
+        let unit = registered[id.as_str()];
+        if let Err(err) = envelope.verify(None, unit.kind == "rust-binary") {
+            incomplete.extend(err.violations.into_iter().map(|violation| {
+                Violation::new(violation.rule, format!("unit `{id}`: {}", violation.detail))
+            }));
+        }
+        let carried: BTreeSet<&str> = envelope
+            .receipts
+            .iter()
+            .map(|receipt| receipt.class.as_str())
+            .collect();
+        for required in &unit.required_receipts {
+            if !carried.contains(required.as_str()) {
+                incomplete.push(Violation::new(
+                    "handoff-receipt-missing",
+                    format!("unit `{id}` requires a passing `{required}` receipt"),
+                ));
+            }
+        }
+    }
+    if !incomplete.is_empty() {
+        incomplete.sort();
+        incomplete.dedup();
+        return Err(ToolError::many(Exit::EvidenceMissing, incomplete));
+    }
+    Ok(indexed)
+}
+
+/// Bind a complete certified envelope store to the non-envelope composition
+/// inputs and produce a strict, plane-neutral manifest.
+///
+/// # Errors
+/// Returns [`Exit::CompositionIncompatible`] when the envelopes do not all
+/// name the exact public source/run, contract, toolchain, migration and
+/// catalogue identities carried by the composition inputs. Strict manifest
+/// validation errors are propagated.
+pub fn new_handoff_manifest(
+    inputs: CompositionInputs,
+    envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
+) -> Result<CompositionManifest> {
+    let mut violations = Vec::new();
+    for (id, envelope) in envelopes {
+        if envelope.source.repository != inputs.source.repository
+            || envelope.source.workflow.repository != inputs.source.repository
+            || envelope.source.commit_sha != inputs.source.commit_sha
+            || envelope.source.workflow.run_id != inputs.source.workflow_run_id
+            || u64::from(envelope.source.workflow.run_attempt) != inputs.source.workflow_run_attempt
+        {
+            violations.push(Violation::new(
+                "handoff-source-mismatch",
+                format!(
+                    "unit `{id}` is not bound to composition source `{}` at commit `{}`, run {}, attempt {}",
+                    inputs.source.repository,
+                    inputs.source.commit_sha,
+                    inputs.source.workflow_run_id,
+                    inputs.source.workflow_run_attempt
+                ),
+            ));
+        }
+        if envelope.identities.contract_digest != inputs.contract_digest {
+            violations.push(Violation::new(
+                "handoff-contract-mismatch",
+                format!(
+                    "unit `{id}` contract `{}` differs from composition contract `{}`",
+                    envelope.identities.contract_digest, inputs.contract_digest
+                ),
+            ));
+        }
+        if envelope.inputs.toolchain.channel != inputs.policy.toolchain_channel {
+            violations.push(Violation::new(
+                "handoff-toolchain-mismatch",
+                format!(
+                    "unit `{id}` toolchain `{}` differs from composition toolchain `{}`",
+                    envelope.inputs.toolchain.channel, inputs.policy.toolchain_channel
+                ),
+            ));
+        }
+        if let Some(migration) = &envelope.identities.migration {
+            if migration
+                .central_bundle_digest
+                .as_ref()
+                .is_some_and(|digest| digest != &inputs.migrations.central.bundle_digest)
+            {
+                violations.push(Violation::new(
+                    "handoff-central-migration-mismatch",
+                    format!("unit `{id}` carries a different central migration bundle"),
+                ));
+            }
+            if migration
+                .regional_bundle_digest
+                .as_ref()
+                .is_some_and(|digest| digest != &inputs.migrations.regional.bundle_digest)
+                || migration
+                    .regional_generation
+                    .is_some_and(|generation| generation != inputs.migrations.regional.generation)
+            {
+                violations.push(Violation::new(
+                    "handoff-regional-migration-mismatch",
+                    format!("unit `{id}` carries a different regional migration identity"),
+                ));
+            }
+        }
+        if let Some(catalogs) = &envelope.identities.catalogs {
+            for (name, digest) in [("model", &catalogs.model), ("tool", &catalogs.tool)] {
+                if let Some(digest) = digest
+                    && inputs.catalogs.get(name) != Some(digest)
+                {
+                    violations.push(Violation::new(
+                        "handoff-catalog-mismatch",
+                        format!("unit `{id}` carries a different `{name}` catalogue digest"),
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(admin) = envelopes.get("central-schema-admin")
+        && admin.output.digest != inputs.migrations.central.admin_image_digest
+    {
+        violations.push(Violation::new(
+            "handoff-central-admin-image-mismatch",
+            "the central migration admin image digest differs from the central-schema-admin artifact digest",
+        ));
+    }
+    if !violations.is_empty() {
+        violations.sort();
+        violations.dedup();
+        return Err(ToolError::many(Exit::CompositionIncompatible, violations));
+    }
+
+    let manifest = new_manifest(inputs, envelopes)?;
+    manifest.validate(true)?;
+    Ok(manifest)
 }
 
 // Keep this accumulator together so one admission run reports every malformed
