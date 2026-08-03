@@ -4264,6 +4264,7 @@ name = "hands-image"
 version = "0.1.0"
 dependencies = [
  "aex-hands-agent",
+ "cargo_metadata",
  "clap",
  "serde",
  "serde_json",

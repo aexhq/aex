@@ -13,6 +13,7 @@
 
 mod build;
 mod image;
+mod sbom;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -63,6 +64,18 @@ enum Command {
         /// The `CycloneDX` inventory for the staged guest binary.
         #[arg(long)]
         agent_sbom: PathBuf,
+    },
+    /// Builds the ARM64 guest and writes one AWS `MicroVM` service context.
+    ///
+    /// This is the release recipe. Its child build argv and SBOM projection are
+    /// fixed in source, so CI has no unrecorded shell pre-step.
+    Artifact {
+        /// Which of the eight image variants to produce.
+        #[arg(long)]
+        variant: String,
+        /// An empty directory that becomes the root of the service ZIP.
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Prints the `CreateMicrovmImage` inputs for one variant.
     Publish {
@@ -119,6 +132,12 @@ enum RunError {
     /// A reused context could smuggle stale files into the service artifact.
     #[error("the build-context directory is not empty: {}", .0.display())]
     OutputNotEmpty(PathBuf),
+    /// A fixed child build command failed.
+    #[error("the artifact build step failed: {0}")]
+    ArtifactBuild(String),
+    /// The shipped dependency inventory could not be generated.
+    #[error("the agent SBOM could not be generated: {0}")]
+    Sbom(String),
 }
 
 /// Wraps an I/O error with the path that produced it.
@@ -136,6 +155,16 @@ fn write_context(
     agent: &Path,
     agent_sbom: &Path,
 ) -> Result<PathBuf, RunError> {
+    let sbom = std::fs::read(agent_sbom).map_err(io_at(agent_sbom))?;
+    write_context_bytes(variant, out, agent, &sbom)
+}
+
+fn write_context_bytes(
+    variant: &Variant,
+    out: &Path,
+    agent: &Path,
+    agent_sbom: &[u8],
+) -> Result<PathBuf, RunError> {
     std::fs::create_dir_all(out).map_err(io_at(out))?;
     let mut existing = std::fs::read_dir(out).map_err(io_at(out))?;
     if existing.next().transpose().map_err(io_at(out))?.is_some() {
@@ -144,8 +173,49 @@ fn write_context(
     let dockerfile = out.join("Dockerfile");
     std::fs::write(&dockerfile, build::containerfile(variant)).map_err(io_at(&dockerfile))?;
     std::fs::copy(agent, out.join("hands-agent")).map_err(io_at(agent))?;
-    std::fs::copy(agent_sbom, out.join("agent.cdx.json")).map_err(io_at(agent_sbom))?;
+    let sbom_path = out.join("agent.cdx.json");
+    std::fs::write(&sbom_path, agent_sbom).map_err(io_at(&sbom_path))?;
     Ok(dockerfile)
+}
+
+fn target_root() -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
+}
+
+fn build_release_artifact(variant: &Variant, out: &Path) -> Result<PathBuf, RunError> {
+    let argv = [
+        "zigbuild",
+        "--locked",
+        "--release",
+        "--package",
+        "hands-agent",
+        "--target",
+        image::GUEST_TARGET,
+    ];
+    let status = std::process::Command::new("cargo")
+        .args(argv)
+        .status()
+        .map_err(|error| RunError::ArtifactBuild(error.to_string()))?;
+    if !status.success() {
+        return Err(RunError::ArtifactBuild(format!(
+            "cargo {} exited with {status}",
+            argv.join(" ")
+        )));
+    }
+    let agent = target_root()
+        .join(image::GUEST_TARGET)
+        .join("release")
+        .join("hands-agent");
+    if !agent.is_file() {
+        return Err(RunError::ArtifactBuild(format!(
+            "the fixed guest output does not exist: {}",
+            agent.display()
+        )));
+    }
+    let manifest = Path::new("runtimes/hands-agent/Cargo.toml");
+    let agent_sbom = sbom::generate(manifest, image::GUEST_TARGET)
+        .map_err(|error| RunError::Sbom(error.to_string()))?;
+    write_context_bytes(variant, out, &agent, &agent_sbom)
 }
 
 /// Runs the whole tool.
@@ -195,6 +265,12 @@ fn run(cli: &Cli) -> Result<(), RunError> {
             } else {
                 Err(RunError::Build(format!("docker exited with {status}")))
             }
+        }
+        Command::Artifact { variant, out } => {
+            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let written = build_release_artifact(&variant, out)?;
+            println!("{}", written.display());
+            Ok(())
         }
         Command::Publish { variant, region } => {
             let variant = Variant::parse(variant).map_err(RunError::Variant)?;
@@ -437,5 +513,23 @@ mod tests {
         // write to and the tool links no AWS SDK, so there is nothing for a
         // credential to be used by.
         assert!(matches!(cli.command, Command::Publish { .. }));
+    }
+
+    #[test]
+    fn the_release_artifact_command_has_only_variant_and_output_authority() {
+        let cli = Cli::parse_from([
+            "hands-image",
+            "artifact",
+            "--variant",
+            "4gb-browser",
+            "--out",
+            "target/microvm/hands-image-4gb-browser",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Command::Artifact { variant, out }
+                if variant == "4gb-browser"
+                    && out == std::path::Path::new("target/microvm/hands-image-4gb-browser")
+        ));
     }
 }
