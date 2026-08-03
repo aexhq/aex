@@ -17,7 +17,7 @@ use crate::artifact::{
 };
 use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
-use crate::evidence::Receipt;
+use crate::evidence::{FreshnessPolicy, Receipt};
 use crate::graph::inputs::Unit;
 
 /// Claims whose truth comes from a CI action or scanner rather than the source
@@ -73,6 +73,7 @@ pub fn certify(
     claims: CertificationClaims,
     files: CertificationFiles<'_>,
     receipts: &[Receipt],
+    freshness: &FreshnessPolicy,
 ) -> Result<ArtifactEnvelope> {
     validate_draft(&draft, unit)?;
     validate_workflow(&draft, &claims.workflow)?;
@@ -147,7 +148,24 @@ pub fn certify(
     let license_bytes = read(files.license_inventory, "certify-license-inventory-missing")?;
     let provenance_bytes = read(files.provenance_bundle, "certify-provenance-bundle-missing")?;
 
-    let receipt_refs = validate_receipts(&draft, unit, &claims.workflow, receipts)?;
+    draft.source.workflow = claims.workflow.clone();
+    draft.output.location = claims.location.clone();
+    let artifact_subject_digest = draft.compute_artifact_subject_digest()?;
+    if artifact_subject_digest != draft.artifact_subject_digest {
+        return Err(ToolError::single(
+            Exit::ArtifactMismatch,
+            "certify-artifact-subject-drift",
+            "applying certification claims changed the artifact subject identity",
+        ));
+    }
+    let receipt_refs = validate_receipts(
+        &draft,
+        unit,
+        &claims.workflow,
+        &artifact_subject_digest,
+        receipts,
+        freshness,
+    )?;
     let mut licenses = claims.licenses;
     licenses.inventory_digest = Some(canon::digest_bytes(&license_bytes));
     let mut provenance = claims.provenance;
@@ -185,8 +203,6 @@ pub fn certify(
     }
 
     validate_signature(unit, &claims.signature)?;
-    draft.source.workflow = claims.workflow;
-    draft.output.location = claims.location;
     if !valid_sha256(&licenses.policy_digest)
         || licenses.verdict != "allowed"
         || !licenses.denials.is_empty()
@@ -220,6 +236,16 @@ pub fn certify(
 
 fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
     let mut violations = Vec::new();
+    let recomputed_subject = draft.compute_artifact_subject_digest()?;
+    if draft.artifact_subject_digest != recomputed_subject {
+        violations.push(Violation::new(
+            "certify-artifact-subject-mismatch",
+            format!(
+                "draft artifactSubjectDigest `{}` does not match the canonical artifact subject `{recomputed_subject}`",
+                draft.artifact_subject_digest
+            ),
+        ));
+    }
     if draft.unit.id != unit.id
         || draft.unit.kind != unit.kind
         || draft.unit.plane != unit.plane
@@ -280,7 +306,9 @@ fn validate_receipts(
     draft: &ArtifactEnvelope,
     unit: &Unit,
     workflow: &Workflow,
+    artifact_subject_digest: &str,
     receipts: &[Receipt],
+    freshness: &FreshnessPolicy,
 ) -> Result<Vec<ReceiptRef>> {
     let mut by_class = BTreeMap::new();
     let mut violations = Vec::new();
@@ -303,6 +331,43 @@ fn validate_receipts(
                 ),
             ));
             continue;
+        }
+        let Some(freshness_rule) = freshness.class.get(&receipt.class) else {
+            violations.push(Violation::new(
+                "certify-receipt-freshness-class",
+                format!(
+                    "receipt `{}` has class `{}` with no freshness policy",
+                    receipt.receipt_id, receipt.class
+                ),
+            ));
+            continue;
+        };
+        match freshness_rule.bound_to.as_str() {
+            "artifact" => {
+                if receipt.subject.artifact_subject_digest.as_deref()
+                    != Some(artifact_subject_digest)
+                {
+                    violations.push(Violation::new(
+                        "certify-receipt-artifact-subject",
+                        format!(
+                            "receipt `{}` is not bound to artifact subject `{artifact_subject_digest}`",
+                            receipt.receipt_id
+                        ),
+                    ));
+                    continue;
+                }
+            }
+            "commit" | "release" | "none" => {}
+            binding => {
+                violations.push(Violation::new(
+                    "certify-receipt-freshness-binding",
+                    format!(
+                        "receipt class `{}` has unknown freshness binding `{binding}`",
+                        receipt.class
+                    ),
+                ));
+                continue;
+            }
         }
         if by_class.insert(receipt.class.clone(), receipt).is_some() {
             violations.push(Violation::new(

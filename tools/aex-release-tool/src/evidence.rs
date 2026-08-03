@@ -67,9 +67,9 @@ pub struct Inputs {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Subject {
-    /// Artifact envelope this receipt is bound to.
+    /// Receipt-independent artifact subject this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact_envelope_digest: Option<String>,
+    pub artifact_subject_digest: Option<String>,
     /// Release this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_id: Option<String>,
@@ -720,6 +720,69 @@ pub fn attach(receipt: Receipt, kind: &str, file: &std::path::Path, uri: &str) -
     receipt.seal()
 }
 
+/// Bind an already-earned receipt to one receipt-independent artifact subject.
+///
+/// This is an explicit, auditable transformation: the input receipt must be
+/// sound, the draft subject must recompute exactly, and source plus unit scope
+/// must already agree. Certification never performs this mutation implicitly.
+///
+/// # Errors
+/// Returns a classified refusal for an unsound receipt, tampered artifact
+/// subject, cross-source/unit binding or attempted rebind.
+pub fn bind_artifact(
+    mut receipt: Receipt,
+    envelope: &crate::artifact::ArtifactEnvelope,
+) -> Result<Receipt> {
+    receipt.verify()?;
+    let artifact_subject_digest = envelope.compute_artifact_subject_digest()?;
+    if envelope.artifact_subject_digest != artifact_subject_digest {
+        return Err(ToolError::single(
+            Exit::ArtifactMismatch,
+            "bind-artifact-subject-mismatch",
+            format!(
+                "envelope artifactSubjectDigest `{}` does not match the canonical artifact subject `{artifact_subject_digest}`",
+                envelope.artifact_subject_digest
+            ),
+        ));
+    }
+    if receipt.source.repository != envelope.source.repository
+        || receipt.source.commit_sha != envelope.source.commit_sha
+        || !receipt
+            .subject
+            .unit_ids
+            .iter()
+            .any(|unit| unit == &envelope.unit.id)
+    {
+        return Err(ToolError::single(
+            Exit::EvidenceUnsound,
+            "bind-artifact-scope",
+            format!(
+                "receipt `{}` does not cover unit `{}` at the envelope's exact repository and commit",
+                receipt.receipt_id, envelope.unit.id
+            ),
+        ));
+    }
+    if receipt
+        .subject
+        .artifact_subject_digest
+        .as_deref()
+        .is_some_and(|bound| bound != artifact_subject_digest)
+    {
+        return Err(ToolError::single(
+            Exit::EvidenceUnsound,
+            "bind-artifact-rebind",
+            format!(
+                "receipt `{}` is already bound to another artifact subject",
+                receipt.receipt_id
+            ),
+        ));
+    }
+    receipt.subject.artifact_subject_digest = Some(artifact_subject_digest);
+    let bound = receipt.seal()?;
+    bound.verify()?;
+    Ok(bound)
+}
+
 /// Freshness classes and their requirement.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -735,7 +798,7 @@ pub struct FreshnessPolicy {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FreshnessRule {
-    /// What the receipt must be bound to: `envelope`, `commit`, `release` or
+    /// What the receipt must be bound to: `artifact`, `commit`, `release` or
     /// `none`.
     pub bound_to: String,
     /// Maximum age in hours, where one applies.
@@ -780,11 +843,11 @@ pub fn check_freshness(
             ),
         ));
     }
-    if rule.bound_to == "envelope" && receipt.subject.artifact_envelope_digest.is_none() {
+    if rule.bound_to == "artifact" && receipt.subject.artifact_subject_digest.is_none() {
         violations.push(Violation::new(
             "evidence-stale",
             format!(
-                "receipt `{}` of class `{}` must be bound to an artifact envelope digest",
+                "receipt `{}` of class `{}` must be bound to an artifact subject digest",
                 receipt.receipt_id, receipt.class
             ),
         ));
@@ -1319,7 +1382,7 @@ mod freshness_tests {
 schema = "aex.freshness-policy.v1"
 
 [class.unit]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "bound to the exact artifact; there is nothing for age to invalidate"
 
 [class.smoke]

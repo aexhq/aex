@@ -44,6 +44,41 @@ and packages, fixed runner paths, encrypted plan object and KMS identity, and an
 explicit present/absent state snapshot with backend configuration identity.
 No artifact was published and no hosted system was touched by this slice.
 
+### Non-circular artifact evidence identity
+
+`envelopeDigest` remains the self-digest of the complete artifact envelope,
+including its receipt references. Receipts do not bind to that digest: doing so
+would require a receipt to predict the digest of an envelope that does not yet
+contain the receipt. Artifact-scoped freshness now binds
+`subject.artifactSubjectDigest` instead.
+
+`artifactSubjectDigest` is RFC 8785 canonical JSON over an explicit
+`aex.artifact-subject.v1` projection: unit, media, exact clean source repository,
+commit and ref, the complete build-input block, and the complete output byte
+identity. The output projection includes size, target, symbols and every OCI
+manifest/config/layer digest. It excludes the workflow execution, publication
+location, scanner/provenance verdicts and receipt references. A local draft can
+therefore mint the subject immediately after packaging. `evidence bind-artifact`
+verifies an already-earned receipt and the recomputed draft subject, requires
+its repository, commit and unit scope to agree, refuses rebinding, sets only
+`artifactSubjectDigest`, and reseals it to a new auditable receipt digest.
+Certification applies the exact workflow and immutable location, recomputes the
+subject, refuses any drift, verifies every artifact-bound receipt names it
+exactly, inserts the receipt refs, then seals the complete envelope. It never
+silently binds or rewrites evidence.
+
+The exclusions are deliberate. Workflow/run identity remains an independent
+exact receipt and envelope binding, and the final envelope still binds the
+content-addressed publication location. Neither changes the bytes or input
+closure a test or scanner observed. Supply-chain verdicts are evidence about
+the subject, never inputs to its identity. Computing one small canonical
+projection in addition to the full envelope digest is bounded by envelope size
+and does not hash artifact bytes again.
+
+This identity change earns no evidence by itself. CI must still run each real
+per-unit producer and pass its sealed receipt to `artifact certify`; missing,
+misbound, stale or failing receipts remain refusals.
+
 ## 1. What was implemented
 
 ### `tools/aex-release-tool/`

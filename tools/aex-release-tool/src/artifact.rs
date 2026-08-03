@@ -766,6 +766,9 @@ pub struct ArtifactEnvelope {
     pub schema: String,
     /// Self-digest over the canonical bytes with this field removed.
     pub envelope_digest: String,
+    /// Receipt-independent identity of the artifact bytes and everything that
+    /// shaped them.
+    pub artifact_subject_digest: String,
     /// What was built.
     pub unit: UnitIdentity,
     /// How it is encoded.
@@ -1260,11 +1263,66 @@ const LOCATION_KINDS: &[&str] = &[
 ];
 
 impl ArtifactEnvelope {
+    /// Recompute the receipt-independent artifact subject identity.
+    ///
+    /// The subject deliberately excludes the workflow run, publication
+    /// location, supply-chain verdicts and receipt references. Those fields
+    /// describe who certified or where content-addressed bytes are stored; they
+    /// do not change the bytes, source or build-input closure a receipt tested.
+    /// The complete output identity remains in the projection, including OCI
+    /// manifest, config and layer digests.
+    ///
+    /// # Errors
+    /// Propagates serialization or canonicalization failure.
+    pub fn compute_artifact_subject_digest(&self) -> Result<String> {
+        let mut source = serde_json::to_value(&self.source).map_err(|err| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-unserializable",
+                err.to_string(),
+            )
+        })?;
+        let source = source.as_object_mut().ok_or_else(|| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-source-shape",
+                "artifact source did not serialize as an object",
+            )
+        })?;
+        source.remove("workflow");
+
+        let mut output = serde_json::to_value(&self.output).map_err(|err| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-unserializable",
+                err.to_string(),
+            )
+        })?;
+        let output = output.as_object_mut().ok_or_else(|| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-output-shape",
+                "artifact output did not serialize as an object",
+            )
+        })?;
+        output.remove("location");
+
+        canon::digest_document(&serde_json::json!({
+            "schema": "aex.artifact-subject.v1",
+            "unit": &self.unit,
+            "media": &self.media,
+            "source": source,
+            "inputs": &self.inputs,
+            "output": output,
+        }))
+    }
+
     /// Recompute and set the self-digest.
     ///
     /// # Errors
     /// Propagates canonicalization failure.
     pub fn seal(mut self) -> Result<Self> {
+        self.artifact_subject_digest = self.compute_artifact_subject_digest()?;
         "sha256:0".clone_into(&mut self.envelope_digest);
         let value = serde_json::to_value(&self).map_err(|err| {
             ToolError::single(
@@ -1482,6 +1540,16 @@ impl ArtifactEnvelope {
                     ),
                 ));
             }
+        }
+        let recomputed_subject = self.compute_artifact_subject_digest()?;
+        if recomputed_subject != self.artifact_subject_digest {
+            structural.push(Violation::new(
+                "artifact-subject-digest-mismatch",
+                format!(
+                    "recorded artifactSubjectDigest `{}` does not match the canonical artifact subject `{recomputed_subject}`",
+                    self.artifact_subject_digest
+                ),
+            ));
         }
         let recomputed = {
             let value = serde_json::to_value(self).map_err(|err| {

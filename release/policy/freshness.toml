@@ -5,8 +5,8 @@
 # staleness nobody notices.
 #
 # `bound_to` is what the receipt must name:
-#   envelope  the exact artifact envelope digest; age is meaningless because
-#             the bytes cannot change underneath it
+#   artifact  the receipt-independent artifact subject digest; age is
+#             meaningless because the bytes and build inputs cannot change
 #   commit    the exact source commit
 #   release   the exact releaseId
 #   none      nothing; only age bounds it
@@ -16,47 +16,47 @@ schema = "aex.freshness-policy.v1"
 # --- bound to the artifact ----------------------------------------------------
 
 [class.unit]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "bound to bytes that cannot change; there is nothing for age to invalidate"
 
 [class.property]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.contract]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.conformance]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.lint]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.deny]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class."package-integrity"]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.sbom]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.license]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 [class.determinism]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "a rebuild that produced the same digest is a fact about those bytes"
 
 [class.boundary]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "as unit"
 
 # --- bound to the commit ------------------------------------------------------
@@ -68,7 +68,7 @@ rationale = "engine behaviour is a property of the source, not of one packaging"
 # --- advisory: bytes do not change, the world does -----------------------------
 
 [class.vulnerability]
-bound_to = "envelope"
+bound_to = "artifact"
 max_age_hours = 168
 rationale = "the artifact is fixed but the advisory database is not; a week bounds how stale the verdict can be"
 
@@ -149,7 +149,7 @@ max_age_hours = 720
 rationale = "a restore drill is expensive and its subject changes slowly"
 
 [class."arch-qualification"]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "an architecture is qualified for exact bytes on a real host, or it is not qualified"
 
 # --- routing ---------------------------------------------------------------------

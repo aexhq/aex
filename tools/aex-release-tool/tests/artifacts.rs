@@ -486,6 +486,72 @@ fn receipt_refs_are_bound_to_the_exact_build_attempt() {
 }
 
 #[test]
+fn artifact_subject_excludes_receipt_refs_but_the_envelope_digest_does_not() {
+    let envelope = envelope_from(valid_envelope()).seal().unwrap();
+    let subject_digest = envelope.artifact_subject_digest.clone();
+    let envelope_digest = envelope.envelope_digest.clone();
+
+    let mut with_another_receipt = envelope;
+    with_another_receipt.receipts[0].receipt_digest = digest(0x7a);
+    let with_another_receipt = with_another_receipt.seal().unwrap();
+
+    assert_eq!(with_another_receipt.artifact_subject_digest, subject_digest);
+    assert_ne!(with_another_receipt.envelope_digest, envelope_digest);
+}
+
+#[test]
+fn artifact_subject_binds_bytes_source_inputs_and_complete_oci_identity() {
+    let envelope = envelope_from(valid_envelope()).seal().unwrap();
+    let subject_digest = envelope.artifact_subject_digest.clone();
+
+    let mut changed = envelope.clone();
+    changed.source.commit_sha = "b".repeat(40);
+    assert_ne!(
+        changed.seal().unwrap().artifact_subject_digest,
+        subject_digest
+    );
+
+    let mut changed = envelope.clone();
+    changed.inputs.input_closure_digest = digest(0x71);
+    assert_ne!(
+        changed.seal().unwrap().artifact_subject_digest,
+        subject_digest
+    );
+
+    let mut changed = envelope.clone();
+    changed.output.digest = digest(0x72);
+    assert_ne!(
+        changed.seal().unwrap().artifact_subject_digest,
+        subject_digest
+    );
+
+    let mut changed = envelope.clone();
+    changed.output.oci_child_digest = Some(digest(0x73));
+    changed.output.oci_config_digest = Some(digest(0x74));
+    changed.output.oci_layer_digests = vec![digest(0x75), digest(0x76)];
+    assert_ne!(
+        changed.seal().unwrap().artifact_subject_digest,
+        subject_digest
+    );
+}
+
+#[test]
+fn artifact_subject_survives_workflow_execution_and_content_addressed_relocation() {
+    let envelope = envelope_from(valid_envelope()).seal().unwrap();
+    let subject_digest = envelope.artifact_subject_digest.clone();
+    let envelope_digest = envelope.envelope_digest.clone();
+
+    let mut certified_elsewhere = envelope;
+    certified_elsewhere.source.workflow.run_id = "456".to_owned();
+    certified_elsewhere.output.location.uri =
+        "s3://immutable-bucket/sha256/another-location".to_owned();
+    let certified_elsewhere = certified_elsewhere.seal().unwrap();
+
+    assert_eq!(certified_elsewhere.artifact_subject_digest, subject_digest);
+    assert_ne!(certified_elsewhere.envelope_digest, envelope_digest);
+}
+
+#[test]
 fn a_licence_denial_or_an_unapproved_advisory_denies_the_supply_chain() {
     let mut value = valid_envelope();
     value["licenses"]["verdict"] = serde_json::json!("denied");

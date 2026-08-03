@@ -29,6 +29,7 @@ pub fn valid_envelope() -> Value {
     json!({
         "schema": "aex.artifact-envelope.v1",
         "envelopeDigest": digest(1),
+        "artifactSubjectDigest": digest(2),
         "unit": { "id": "regional-session-api", "kind": "rust-lambda", "plane": "regional" },
         "media": { "mediaType": "application/zip", "form": "zip" },
         "source": {

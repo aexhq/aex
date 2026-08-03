@@ -37,7 +37,7 @@ fn receipts(classes: &[&str]) -> Vec<Receipt> {
             value["class"] = serde_json::json!(class);
             value["receiptId"] = serde_json::json!(format!("rc_{class}"));
             value["subject"] = serde_json::json!({
-                "artifactEnvelopeDigest": digest(1),
+                "artifactSubjectDigest": digest(1),
                 "unitIds": [UNIT]
             });
             serde_json::from_value::<Receipt>(value)

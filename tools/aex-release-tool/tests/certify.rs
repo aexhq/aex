@@ -7,9 +7,10 @@ use std::collections::BTreeMap;
 use aex_release_tool::artifact::{
     Licenses, Location, Provenance, Signature, Toolchain, Vulnerabilities, Workflow, plan,
 };
+use aex_release_tool::canon;
 use aex_release_tool::certify::{CertificationClaims, CertificationFiles, certify};
 use aex_release_tool::describe::{LocalBuild, describe};
-use aex_release_tool::evidence::Receipt;
+use aex_release_tool::evidence::{FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::{Unit, Units};
 use common::docs::{BUILDER, digest, sha1, valid_receipt};
 
@@ -26,12 +27,24 @@ fn unit() -> Unit {
         .unwrap()
 }
 
-fn receipt(class: &str, unit: &str) -> Receipt {
+fn freshness() -> FreshnessPolicy {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../release/policy/freshness.toml"),
+    )
+    .unwrap();
+    toml::from_str(&text).unwrap()
+}
+
+fn receipt(class: &str, unit: &str, artifact_subject_digest: &str) -> Receipt {
     let mut value = valid_receipt();
     value["receiptId"] = serde_json::json!(format!("rc_{class}"));
     value["class"] = serde_json::json!(class);
     value["lane"] = serde_json::json!("main");
-    value["subject"] = serde_json::json!({ "unitIds": [unit] });
+    value["subject"] = serde_json::json!({
+        "artifactSubjectDigest": artifact_subject_digest,
+        "unitIds": [unit]
+    });
     serde_json::from_value::<Receipt>(value)
         .unwrap()
         .seal()
@@ -169,7 +182,7 @@ impl Fixture {
         let receipts = unit
             .required_receipts
             .iter()
-            .map(|class| receipt(class, &unit.id))
+            .map(|class| receipt(class, &unit.id, &draft.artifact_subject_digest))
             .collect();
         Self {
             _temp: temp,
@@ -198,6 +211,7 @@ impl Fixture {
                 provenance_bundle: &self.provenance,
             },
             &self.receipts,
+            &freshness(),
         )
     }
 }
@@ -223,6 +237,108 @@ fn certification_derives_file_identities_and_required_receipt_refs() {
         envelope.receipts.len(),
         fixture.unit.required_receipts.len()
     );
+    assert_eq!(
+        envelope.artifact_subject_digest,
+        fixture.draft.artifact_subject_digest
+    );
+    assert_ne!(envelope.envelope_digest, fixture.draft.envelope_digest);
+}
+
+#[test]
+fn certification_refuses_a_receipt_for_another_artifact_subject() {
+    let mut fixture = Fixture::new();
+    fixture.receipts[0].subject.artifact_subject_digest = Some(digest(0x7b));
+    fixture.receipts[0] = fixture.receipts[0].clone().seal().unwrap();
+
+    let err = fixture.certify().unwrap_err();
+    assert!(err.rules().contains(&"certify-receipt-artifact-subject"));
+}
+
+#[test]
+fn certification_recomputes_and_refuses_a_tampered_draft_subject() {
+    let mut fixture = Fixture::new();
+    fixture.draft.artifact_subject_digest = digest(0x7c);
+
+    let err = fixture.certify().unwrap_err();
+    assert!(err.rules().contains(&"certify-artifact-subject-mismatch"));
+}
+
+#[test]
+fn cli_binds_preexisting_receipts_before_certification_inserts_their_refs() {
+    let mut fixture = Fixture::new();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let draft_path = fixture._temp.path().join("draft-envelope.json");
+    std::fs::write(&draft_path, canon::to_file_bytes(&fixture.draft).unwrap()).unwrap();
+
+    let mut bound_receipts = Vec::new();
+    for (index, receipt) in fixture.receipts.iter().enumerate() {
+        let mut unbound = receipt.clone();
+        unbound.subject.artifact_subject_digest = None;
+        let unbound = unbound.seal().unwrap();
+        let original_digest = unbound.receipt_digest.clone();
+        let receipt_path = fixture._temp.path().join(format!("receipt-{index}.json"));
+        let bound_path = fixture._temp.path().join(format!("bound-{index}.json"));
+        std::fs::write(&receipt_path, canon::to_file_bytes(&unbound).unwrap()).unwrap();
+
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_aex-release-tool"))
+            .arg("--root")
+            .arg(&root)
+            .arg("evidence")
+            .arg("bind-artifact")
+            .arg("--receipt")
+            .arg(&receipt_path)
+            .arg("--envelope")
+            .arg(&draft_path)
+            .arg("--out")
+            .arg(&bound_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "bind-artifact failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bound: Receipt = serde_json::from_slice(&std::fs::read(bound_path).unwrap()).unwrap();
+        assert_ne!(bound.receipt_digest, original_digest);
+        assert_eq!(
+            bound.subject.artifact_subject_digest.as_deref(),
+            Some(fixture.draft.artifact_subject_digest.as_str())
+        );
+        bound.verify().unwrap();
+        bound_receipts.push(bound);
+    }
+
+    fixture.receipts = bound_receipts;
+    let certified = fixture.certify().unwrap();
+    assert_eq!(
+        certified.artifact_subject_digest,
+        fixture.draft.artifact_subject_digest
+    );
+}
+
+#[test]
+fn artifact_binding_refuses_tampered_scope_and_rebinding() {
+    let fixture = Fixture::new();
+
+    let mut wrong_scope = fixture.receipts[0].clone();
+    wrong_scope.source.commit_sha = "b".repeat(40);
+    wrong_scope.subject.artifact_subject_digest = None;
+    let wrong_scope = wrong_scope.seal().unwrap();
+    let err = aex_release_tool::evidence::bind_artifact(wrong_scope, &fixture.draft).unwrap_err();
+    assert!(err.rules().contains(&"bind-artifact-scope"));
+
+    let mut tampered_draft = fixture.draft.clone();
+    tampered_draft.artifact_subject_digest = digest(0x7d);
+    let err =
+        aex_release_tool::evidence::bind_artifact(fixture.receipts[0].clone(), &tampered_draft)
+            .unwrap_err();
+    assert!(err.rules().contains(&"bind-artifact-subject-mismatch"));
+
+    let mut rebound = fixture.receipts[0].clone();
+    rebound.subject.artifact_subject_digest = Some(digest(0x7e));
+    let rebound = rebound.seal().unwrap();
+    let err = aex_release_tool::evidence::bind_artifact(rebound, &fixture.draft).unwrap_err();
+    assert!(err.rules().contains(&"bind-artifact-rebind"));
 }
 
 #[test]

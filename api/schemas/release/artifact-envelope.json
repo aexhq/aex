@@ -8,6 +8,7 @@
   "required": [
     "schema",
     "envelopeDigest",
+    "artifactSubjectDigest",
     "unit",
     "media",
     "source",
@@ -27,6 +28,10 @@
   "properties": {
     "schema": { "const": "aex.artifact-envelope.v1" },
     "envelopeDigest": { "$ref": "#/$defs/sha256" },
+    "artifactSubjectDigest": {
+      "$ref": "#/$defs/sha256",
+      "description": "Receipt-independent RFC 8785 digest of aex.artifact-subject.v1: unit, media, exact source excluding workflow execution, build inputs and immutable output byte identities excluding publication location."
+    },
     "unit": {
       "type": "object",
       "additionalProperties": false,

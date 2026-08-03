@@ -616,6 +616,18 @@ enum EvidenceCommand {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Bind an earned receipt to a receipt-independent artifact subject and reseal it.
+    BindArtifact {
+        /// Sound receipt whose source and unit scope already cover the artifact.
+        #[arg(long)]
+        receipt: PathBuf,
+        /// Draft or certified envelope carrying the artifact subject identity.
+        #[arg(long)]
+        envelope: PathBuf,
+        /// Where to write the bound receipt. Defaults to the input receipt.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Verify one receipt.
     Verify {
         /// The receipt.
@@ -1351,6 +1363,7 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         .iter()
         .map(|path| read_json(path))
         .collect::<Result<Vec<_>>>()?;
+    let freshness: FreshnessPolicy = read_toml(&root.join("release/policy/freshness.toml"))?;
     let envelope = aex_release_tool::certify::certify(
         draft,
         unit,
@@ -1362,6 +1375,7 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
             provenance_bundle,
         },
         &receipts,
+        &freshness,
     )?;
     write_canonical(out, &envelope)?;
     emit(
@@ -1369,6 +1383,7 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         &serde_json::json!({
             "unit": envelope.unit.id,
             "envelopeDigest": envelope.envelope_digest,
+            "artifactSubjectDigest": envelope.artifact_subject_digest,
             "artifactDigest": envelope.output.digest,
             "location": envelope.output.location,
         }),
@@ -1756,6 +1771,26 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                     "receiptId": attached.receipt_id,
                     "receiptDigest": attached.receipt_digest,
                     "attachments": attached.attachments,
+                }),
+            )
+        }
+        EvidenceCommand::BindArtifact {
+            receipt,
+            envelope,
+            out,
+        } => {
+            let loaded: Receipt = read_json(receipt)?;
+            let original_receipt_digest = loaded.receipt_digest.clone();
+            let envelope: ArtifactEnvelope = read_json(envelope)?;
+            let bound = evidence::bind_artifact(loaded, &envelope)?;
+            write_canonical(out.as_deref().unwrap_or(receipt.as_path()), &bound)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "receiptId": bound.receipt_id,
+                    "originalReceiptDigest": original_receipt_digest,
+                    "receiptDigest": bound.receipt_digest,
+                    "artifactSubjectDigest": bound.subject.artifact_subject_digest,
                 }),
             )
         }

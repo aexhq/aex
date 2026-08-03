@@ -290,6 +290,7 @@ fn build_envelope(
     ArtifactEnvelope {
         schema: "aex.artifact-envelope.v1".to_owned(),
         envelope_digest: "sha256:0".to_owned(),
+        artifact_subject_digest: "sha256:0".to_owned(),
         unit: UnitIdentity {
             id: build.unit.id.clone(),
             kind: build.unit.kind.clone(),
