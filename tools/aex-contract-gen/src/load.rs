@@ -389,6 +389,9 @@ struct LimitEntry {
     id: String,
     /// `scalar` or `map`.
     shape: String,
+    /// Complete ordered dimension vocabulary for a map limit.
+    #[serde(default)]
+    dimensions: Vec<String>,
     /// One-line documentation.
     doc: String,
 }
@@ -405,6 +408,7 @@ fn build_limits(file: &LimitsFile) -> Vec<LimitRow> {
             } else {
                 LimitShape::Scalar
             },
+            dimensions: entry.dimensions.clone(),
             doc: entry.doc.clone(),
         })
         .collect()

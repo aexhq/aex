@@ -45,6 +45,32 @@ impl LimitValue {
             Self::Map(_) => LimitShape::Map,
         }
     }
+
+    /// Whether this is one complete positive value for `id`.
+    ///
+    /// A map with the right outer shape but a missing, extra or zero-valued
+    /// dimension is not a limit value: accepting it would move the fallback
+    /// decision into each serving edge.
+    #[must_use]
+    pub fn is_complete_for(&self, id: LimitId) -> bool {
+        match self {
+            Self::Scalar(value) => {
+                id.shape() == LimitShape::Scalar
+                    && id.dimensions().is_empty()
+                    && value.value.get() > 0
+            }
+            Self::Map(value) => {
+                id.shape() == LimitShape::Map
+                    && value.values.len() == id.dimensions().len()
+                    && id.dimensions().iter().all(|dimension| {
+                        value
+                            .values
+                            .get(*dimension)
+                            .is_some_and(|number| number.get() > 0)
+                    })
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +104,7 @@ mod tests {
             assert!(seen.insert(id), "duplicate default `{id}`");
             match expected.shape() {
                 LimitShape::Scalar => {
+                    assert!(expected.dimensions().is_empty());
                     assert!(
                         row["value"].as_u64().is_some_and(|value| value > 0),
                         "scalar default `{id}` is not a positive integer"
@@ -88,6 +115,14 @@ mod tests {
                         .as_object()
                         .unwrap_or_else(|| panic!("map default `{id}` is not an object"));
                     assert!(!dimensions.is_empty(), "map default `{id}` is empty");
+                    assert_eq!(dimensions.len(), expected.dimensions().len());
+                    assert!(
+                        expected
+                            .dimensions()
+                            .iter()
+                            .all(|dimension| dimensions.contains_key(*dimension)),
+                        "map default `{id}` differs from registered dimensions"
+                    );
                     for (dimension, value) in dimensions {
                         assert!(!dimension.is_empty(), "`{id}` has an empty dimension");
                         assert!(

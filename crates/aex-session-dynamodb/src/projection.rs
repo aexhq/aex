@@ -21,10 +21,14 @@ use crate::error::{Idempotence, StoreError, classify};
 use crate::paging::{PageBudget, PagePosition};
 use crate::plan::key;
 use crate::wire_pending::{
-    FeedFrontier, KeyRevocation, ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
+    FeedFrontier, KeyRevocation, ProjectedLimitBundle, ProjectedLimitBundleHead,
+    ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
 };
 
-pub use crate::projection_limit::{WORKSPACE_LIMIT, decode_limit, decode_limit_at, limit_key};
+pub use crate::projection_limit::{
+    WORKSPACE_LIMIT, decode_limit, decode_limit_at, decode_limit_bundle, decode_limit_bundle_head,
+    limit_bundle_head_key, limit_bundle_key, limit_key,
+};
 
 /// The `itemType` of a workspace placement.
 pub const WORKSPACE_PLACEMENT: &str = "workspace_placement";
@@ -147,6 +151,26 @@ pub trait WorkspaceProjection: Send + Sync + 'static {
         budget: PageBudget,
         after: Option<&PagePosition>,
     ) -> Result<ProjectionPage<ProjectedWorkspaceLimit>, StoreError>;
+
+    /// Strongly reads the complete-set revision fence.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for absence, transport or strict decode failure.
+    async fn read_limit_bundle_head(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundleHead, StoreError>;
+
+    /// Strongly reads the complete payload selected by the head.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for absence, transport or strict decode failure.
+    async fn read_limit_bundle(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundle, StoreError>;
 }
 
 /// The reader.
@@ -286,6 +310,34 @@ impl WorkspaceProjection for ProjectionReader {
                 detail: error.to_string(),
             })?;
         Ok(ProjectionPage { items, next })
+    }
+
+    async fn read_limit_bundle_head(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundleHead, StoreError> {
+        let (pk, sk) = limit_bundle_head_key(workspace);
+        let item = self
+            .get(&pk, &sk)
+            .await?
+            .ok_or_else(|| StoreError::Misconfigured {
+                table: self.table.clone(),
+            })?;
+        Ok(decode_limit_bundle_head(&item, workspace)?)
+    }
+
+    async fn read_limit_bundle(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundle, StoreError> {
+        let (pk, sk) = limit_bundle_key(workspace);
+        let item = self
+            .get(&pk, &sk)
+            .await?
+            .ok_or_else(|| StoreError::Misconfigured {
+                table: self.table.clone(),
+            })?;
+        Ok(decode_limit_bundle(&item, workspace)?)
     }
 }
 

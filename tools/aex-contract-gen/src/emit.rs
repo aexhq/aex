@@ -976,6 +976,25 @@ fn rust_limits(ir: &ContractIr, digest: &str) -> String {
     source.line("        }");
     source.line("    }");
     source.blank();
+    source.doc(
+        4,
+        "The complete ordered dimension vocabulary for a map limit.",
+    );
+    source.line("    #[must_use]");
+    source.line("    pub const fn dimensions(self) -> &'static [&'static str] {");
+    source.line("        match self {");
+    for row in &ir.limits {
+        let dimensions = row
+            .dimensions
+            .iter()
+            .map(|dimension| quote(dimension))
+            .collect::<Vec<_>>()
+            .join(", ");
+        source.arm(12, &row.variant, &format!("&[{dimensions}]"));
+    }
+    source.line("        }");
+    source.line("    }");
+    source.blank();
     source.doc(4, "Resolves a wire spelling.");
     source.line("    #[must_use]");
     source.line("    pub fn parse(text: &str) -> Option<Self> {");

@@ -101,6 +101,8 @@ pub struct LimitRow {
     pub variant: String,
     /// Whether the effective value is a scalar or a keyed map.
     pub shape: LimitShape,
+    /// Complete ordered dimension vocabulary for a map limit.
+    pub dimensions: Vec<String>,
     /// One-line documentation.
     pub doc: String,
 }

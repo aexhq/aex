@@ -121,6 +121,60 @@ impl LimitId {
         }
     }
 
+    /// The complete ordered dimension vocabulary for a map limit.
+    #[must_use]
+    pub const fn dimensions(self) -> &'static [&'static str] {
+        match self {
+            Self::ContextToolResultBytes => &[],
+            Self::SessionMaterializedAgents => &[],
+            Self::ApiJsonBody => &[],
+            Self::TelemetryBatch => &[
+                "encoded_bytes",
+                "decoded_bytes",
+                "records",
+                "observation_bytes",
+                "attributes",
+                "attribute_key_bytes",
+                "attribute_value_bytes",
+                "array_elements",
+            ],
+            Self::TelemetryIngestRate => &[
+                "sustained_bytes_per_second",
+                "burst_bytes",
+                "sustained_requests_per_second",
+                "burst_requests",
+            ],
+            Self::TelemetryMetricSeries => &[],
+            Self::QueryFilter => &[
+                "depth",
+                "leaves",
+                "children_per_boolean",
+                "in_values",
+                "string_bytes",
+            ],
+            Self::QueryPage => &["items", "serialized_bytes"],
+            Self::StreamFrame => &["records", "encoded_bytes"],
+            Self::MetricAggregate => &[
+                "interval_min_seconds",
+                "interval_max_seconds",
+                "group_fields",
+                "calculations",
+                "buckets_per_series",
+                "rows",
+            ],
+            Self::ContentBundleExpand => &["expanded_bytes", "entries", "path_bytes"],
+            Self::ToolsIoSafety => &[
+                "web_fetch_bytes",
+                "shell_output_bytes",
+                "grep_input_bytes",
+                "head_tail_input_bytes",
+                "walk_files",
+                "list_entries",
+                "list_depth",
+            ],
+        }
+    }
+
     /// Resolves a wire spelling.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {

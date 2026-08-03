@@ -15,12 +15,17 @@ use aws_sdk_dynamodb::Client;
 use crate::attr::{Item, ItemBuilder, n, s, stamp};
 use crate::error::{Idempotence, Resolution, StoreError, classify};
 use crate::plan::Participant;
-use crate::projection_limit::{WORKSPACE_LIMIT, decode_limit_at, limit_key};
+use crate::projection_limit::{
+    WORKSPACE_LIMIT, WORKSPACE_LIMIT_BUNDLE, WORKSPACE_LIMIT_BUNDLE_HEAD, decode_limit_at,
+    limit_bundle_head_key, limit_bundle_key, limit_key,
+};
 use crate::wire_pending::ProjectedWorkspaceLimit;
 
 const LIMIT_PARTICIPANT: Participant = Participant::new("authz.limit");
 
 const LIMIT_WRITE_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND #limit_id = :limit_id AND (#revision < :revision OR (#revision = :revision AND #value = :value AND #source = :source AND #changed_at = :changed_at)))";
+const BUNDLE_HEAD_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND (#revision < :revision OR (#revision = :revision AND #defaults_revision = :defaults_revision AND #changed_at = :changed_at)))";
+const BUNDLE_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND (#revision < :revision OR (#revision = :revision AND #limits = :limits)))";
 
 /// One complete effective-limit projection selected by regional capacity.
 ///
@@ -43,11 +48,160 @@ pub struct LimitWrite {
     pub changed_at: Timestamp,
 }
 
+/// One complete, atomically published effective-limit bundle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitBundleWrite {
+    /// Workspace whose admission is governed.
+    pub workspace: WorkspaceId,
+    /// Authority revision shared by all member rows.
+    pub revision: u64,
+    /// Canonical default document revision used by the authority.
+    pub defaults_revision: u64,
+    /// When the authority changed this effective set.
+    pub changed_at: Timestamp,
+    /// Every registered effective limit in registry order.
+    pub limits: Vec<aex_wire::models::EffectiveWorkspaceLimit>,
+}
+
 /// The regional capacity authority's narrow projection writer.
 #[derive(Debug, Clone)]
 pub struct CapacityLimitProjectionWriter {
     client: Client,
     table: String,
+}
+
+/// Builds the projection action for one member row.
+///
+/// # Errors
+///
+/// As [`CapacityLimitProjectionWriter::put_limit`], before transport.
+pub fn limit_put(
+    table: &str,
+    write: &LimitWrite,
+) -> Result<aws_sdk_dynamodb::types::builders::PutBuilder, StoreError> {
+    let item = limit_item(write)?;
+    let value = encoded_value(write)?;
+    Ok(aws_sdk_dynamodb::types::Put::builder()
+        .table_name(table)
+        .set_item(Some(item))
+        .condition_expression(LIMIT_WRITE_CONDITION)
+        .expression_attribute_names("#pk", "pk")
+        .expression_attribute_names("#item_type", "itemType")
+        .expression_attribute_names("#workspace_id", "workspaceId")
+        .expression_attribute_names("#limit_id", "limitId")
+        .expression_attribute_names("#revision", "revision")
+        .expression_attribute_names("#value", "effectiveValue")
+        .expression_attribute_names("#source", "source")
+        .expression_attribute_names("#changed_at", "changedAt")
+        .expression_attribute_values(":item_type", s(WORKSPACE_LIMIT))
+        .expression_attribute_values(":workspace_id", s(write.workspace.to_string()))
+        .expression_attribute_values(":limit_id", s(write.id.as_str()))
+        .expression_attribute_values(":revision", n(write.revision))
+        .expression_attribute_values(":value", s(value))
+        .expression_attribute_values(":source", s(write.source.as_str()))
+        .expression_attribute_values(":changed_at", stamp(write.changed_at)))
+}
+
+/// Builds the strong completeness-head action.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] when the bundle is incomplete or inconsistent.
+pub fn limit_bundle_head_put(
+    table: &str,
+    write: &LimitBundleWrite,
+) -> Result<aws_sdk_dynamodb::types::builders::PutBuilder, StoreError> {
+    validate_bundle(write)?;
+    let (pk, sk) = limit_bundle_head_key(write.workspace);
+    let item = ItemBuilder::new(WORKSPACE_LIMIT_BUNDLE_HEAD)
+        .set("pk", s(pk))
+        .set("sk", s(sk))
+        .set("workspaceId", s(write.workspace.to_string()))
+        .set("revision", n(write.revision))
+        .set("defaultsRevision", n(write.defaults_revision))
+        .set("changedAt", stamp(write.changed_at))
+        .build();
+    Ok(aws_sdk_dynamodb::types::Put::builder()
+        .table_name(table)
+        .set_item(Some(item))
+        .condition_expression(BUNDLE_HEAD_CONDITION)
+        .expression_attribute_names("#pk", "pk")
+        .expression_attribute_names("#item_type", "itemType")
+        .expression_attribute_names("#workspace_id", "workspaceId")
+        .expression_attribute_names("#revision", "revision")
+        .expression_attribute_names("#defaults_revision", "defaultsRevision")
+        .expression_attribute_names("#changed_at", "changedAt")
+        .expression_attribute_values(":item_type", s(WORKSPACE_LIMIT_BUNDLE_HEAD))
+        .expression_attribute_values(":workspace_id", s(write.workspace.to_string()))
+        .expression_attribute_values(":revision", n(write.revision))
+        .expression_attribute_values(":defaults_revision", n(write.defaults_revision))
+        .expression_attribute_values(":changed_at", stamp(write.changed_at)))
+}
+
+/// Builds the complete bundle-payload action.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] when the bundle is incomplete, inconsistent or not
+/// serializable.
+pub fn limit_bundle_put(
+    table: &str,
+    write: &LimitBundleWrite,
+) -> Result<aws_sdk_dynamodb::types::builders::PutBuilder, StoreError> {
+    validate_bundle(write)?;
+    let limits = serde_json::to_string(&write.limits).map_err(|error| StoreError::Invalid {
+        detail: format!("effective-limit bundle could not be encoded: {error}"),
+    })?;
+    let (pk, sk) = limit_bundle_key(write.workspace);
+    let item = ItemBuilder::new(WORKSPACE_LIMIT_BUNDLE)
+        .set("pk", s(pk))
+        .set("sk", s(sk))
+        .set("workspaceId", s(write.workspace.to_string()))
+        .set("revision", n(write.revision))
+        .set("limits", s(limits.clone()))
+        .build();
+    Ok(aws_sdk_dynamodb::types::Put::builder()
+        .table_name(table)
+        .set_item(Some(item))
+        .condition_expression(BUNDLE_CONDITION)
+        .expression_attribute_names("#pk", "pk")
+        .expression_attribute_names("#item_type", "itemType")
+        .expression_attribute_names("#workspace_id", "workspaceId")
+        .expression_attribute_names("#revision", "revision")
+        .expression_attribute_names("#limits", "limits")
+        .expression_attribute_values(":item_type", s(WORKSPACE_LIMIT_BUNDLE))
+        .expression_attribute_values(":workspace_id", s(write.workspace.to_string()))
+        .expression_attribute_values(":revision", n(write.revision))
+        .expression_attribute_values(":limits", s(limits)))
+}
+
+fn validate_bundle(write: &LimitBundleWrite) -> Result<(), StoreError> {
+    if write.limits.len() != LimitId::ALL.len() {
+        return Err(StoreError::Invalid {
+            detail: format!(
+                "effective-limit bundle has {} rows, expected {}",
+                write.limits.len(),
+                LimitId::ALL.len()
+            ),
+        });
+    }
+    for (expected, limit) in LimitId::ALL.iter().copied().zip(&write.limits) {
+        if limit.id != expected
+            || limit.revision != write.revision
+            || limit.changed_at != write.changed_at
+            || limit.effective_value.shape() != expected.shape()
+        {
+            return Err(StoreError::Invalid {
+                detail: format!(
+                    "effective-limit bundle row `{}` disagrees with `{}` at revision {}",
+                    limit.id.as_str(),
+                    expected.as_str(),
+                    write.revision
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 impl CapacityLimitProjectionWriter {
@@ -161,10 +315,10 @@ fn encoded_value(write: &LimitWrite) -> Result<String, StoreError> {
 }
 
 fn limit_item(write: &LimitWrite) -> Result<Item, StoreError> {
-    if write.effective_value.shape() != write.id.shape() {
+    if !write.effective_value.is_complete_for(write.id) {
         return Err(StoreError::Invalid {
             detail: format!(
-                "effective limit value shape {:?} differs from registered shape {:?}",
+                "effective limit value {:?} is not complete and positive for registered shape {:?}",
                 write.effective_value.shape(),
                 write.id.shape()
             ),
@@ -225,7 +379,7 @@ mod tests {
     use crate::wire_pending::ProjectedWorkspaceLimit;
     use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::limits::LimitId;
-    use aex_wire::models::{LimitMapValue, LimitScalarValue, LimitSource, LimitValue};
+    use aex_wire::models::{LimitMapValue, LimitSource, LimitValue};
     use aex_wire::types::{DecimalU128, Timestamp};
 
     fn write() -> LimitWrite {
