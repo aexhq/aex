@@ -93,9 +93,10 @@ module "public_lb" {
 module "stream_service" {
   source = "../../modules/ecs-service"
 
-  name         = var.stream_service.name
-  cluster_arn  = module.cluster.arn
-  cluster_name = var.cluster_name
+  name                   = var.stream_service.name
+  task_definition_family = "aex-${var.plane}-${var.region}-${var.stream_service.name}"
+  cluster_arn            = module.cluster.arn
+  cluster_name           = var.cluster_name
 
   image          = var.stream_service.image
   cpu            = var.stream_service.cpu

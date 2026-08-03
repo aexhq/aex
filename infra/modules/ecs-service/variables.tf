@@ -8,6 +8,19 @@ variable "name" {
   }
 }
 
+variable "task_definition_family" {
+  type        = string
+  description = "Plane- and region-qualified ECS task definition family for the service."
+
+  validation {
+    condition = (
+      can(regex("^aex-(dev|prd)-[a-z]{2}-[a-z]+-[0-9]-[a-z][a-z0-9-]{2,50}$", var.task_definition_family))
+      && endswith(var.task_definition_family, "-${var.name}")
+    )
+    error_message = "The task definition family must be `aex-<dev|prd>-<region>-<service-name>`."
+  }
+}
+
 variable "cluster_arn" {
   type        = string
   description = "ECS cluster the service runs in."
