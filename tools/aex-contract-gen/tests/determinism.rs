@@ -221,6 +221,8 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             "secrets_list",
             "session_approval_get",
             "session_approvals_list",
+            "session_run_get",
+            "session_runs_list",
         ]),
     );
 
